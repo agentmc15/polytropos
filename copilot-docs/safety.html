@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Safety and cost boundaries</title>
+  <link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to main content</a>
+  <nav aria-label="Primary"><!-- navigation placeholder --></nav>
+  <main id="main">
+    <h1>Safety and cost boundaries</h1>
+    <h1 id="safety-and-cost-boundaries">Safety and cost boundaries</h1>
+<p>This guide is a map of what in this repository&#x27;s Copilot CLI bundle and documentation generator can spend AI Credits (AIC), what is model-free/read-only, and where the honesty boundaries are.</p>
+<h2 id="what-can-spend-aic-versus-what-is-free">What can spend AIC versus what is free</h2>
+<ul><li><strong>Can spend AIC:</strong> dispatching a skill or agent in a live Copilot CLI session (for example <code>/route</code>, <code>/architect</code>, or <code>copilot --agent NAME -p &quot;TASK&quot;</code>), and any kit execution driven through <code>/execute</code> or <code>bin/copilot_execute.py</code> against a real Copilot CLI invocation.</li><li><strong>Model-free / read-only:</strong> installing the bundle (<code>bin/harness_select.py</code>), reading usage history (<code>bin/copilot_usage.py</code>), pricing and preference lookups (<code>bin/copilot_pricing.py</code>, <code>bin/copilot_prefs.py</code>), and everything in this documentation generator (<code>bin/copilot_docs.py build</code>/<code>check</code>/<code>report</code>).</li></ul>
+<h2 id="tests-builds-and-verifiers-never-invoke-a-real-harness-cli">Tests, builds, and verifiers never invoke a real harness CLI</h2>
+<p>Every test and kit verify command in this repository is required to run without spending a real user&#x27;s AI Credits or touching the network. Tests that exercise dispatch logic stub or mock the Copilot/Codex/Claude CLI entirely; the only sanctioned live-CLI smoke paths are explicit <code>--dry-run</code>/<code>--demo</code> flags, which spawn nothing.</p>
+<h2 id="no-real-home-access-in-this-documentation-generator">No real home access in this documentation generator</h2>
+<p><code>bin/copilot_docs.py</code> never reads or writes a real user home directory. It resolves its manifest and docs root from its own file location inside this repository, reads pricing and preferences through the repository&#x27;s own <code>data/pricing.copilot.json</code> and <code>prefs/copilot.json</code> (never <code>~/.copilot</code>), and every test for it uses temporary directories.</p>
+<h2 id="prospective-estimates-versus-historical-usage-estimates">Prospective estimates versus historical usage estimates</h2>
+<p>Two kinds of numbers appear across this center and are never mixed:</p>
+<ul><li>A <strong>prospective document estimate</strong> (in <code>AIC-REPORT.md</code>) is a forecast of what authoring one Markdown document in this center would cost, computed before any real generation happens.</li><li>A <strong>historical usage estimate</strong> (from <code>bin/copilot_usage.py</code>) is an accounting of AI Credits already spent in past sessions, read from local session logs after the fact.</li></ul>
+<p>Neither one is derived from the other, and neither is a bill.</p>
+<h2 id="aic-versus-aiu-and-api-equivalent-proxy-honesty">AIC versus AIU, and API-equivalent/proxy honesty</h2>
+<p>Copilot itself reports usage in AI Usage units (AIU); this repository&#x27;s pricing engine works in AI Credits (AIC), a separate accounting unit defined by <code>data/pricing.copilot.json</code>&#x27;s own billing-unit data. Figures labeled <strong>API-equivalent</strong> or <strong>relative-burn proxy</strong> anywhere in this repository (including for subscription-billed Codex activity) are never presented as an actual bill — a proxy dollar figure never enters a billed total.</p>
+<h2 id="preferences-never-rewrite-an-agent-s-own-frontmatter">Preferences never rewrite an agent&#x27;s own frontmatter</h2>
+<p><code>prefs/copilot.json</code> pins or excludes model ids only for tier resolution performed by this repository&#x27;s own drivers (for example <code>bin/copilot_execute.py</code>&#x27;s escalation ladder). It never edits a <code>*.agent.md</code> file&#x27;s own frontmatter <code>model:</code> default — dispatching an agent directly, with no override, still resolves through Copilot&#x27;s own agent-frontmatter mechanism untouched by this repository&#x27;s preferences.</p>
+<h2 id="serial-kit-execution-and-what-independent-means">Serial kit execution and what <code>independent:</code> means</h2>
+<p>Kit execution through <code>/execute</code> runs one task at a time against <code>bin/copilot_execute.py</code> — there is no parallel-subagent fan-out equivalent to Claude Code&#x27;s Agent tool. A task marked <code>independent:</code> in a kit&#x27;s <code>TASKS.md</code> means it is safe to run in any order relative to its siblings, not that it runs concurrently with them.</p>
+<h2 id="journal-privacy-and-generated-doc-provenance">Journal privacy and generated-doc provenance</h2>
+<p>The daily work journal reads session logs strictly read-only and writes its output only under a gitignored <code>journal/</code> tree, so personal data never lands in git. Separately, every generated artifact in this documentation center (<code>index.html</code>, <code>install.html</code>, <code>safety.html</code>, <code>AIC-REPORT.md</code>, <code>aic-report.html</code>, <code>aic-report.json</code>) is produced entirely by <code>bin/copilot_docs.py build</code> from the authored Markdown and current pricing/preference data — never hand-edited, and always reproducible by re-running <code>build</code>.</p>
+<h2 id="stop-if">Stop if</h2>
+<p>Treat any of the following as a hard stop rather than proceeding:</p>
+<ul><li>An installed agent or skill still shows the literal placeholder text <code>{{POLYTROPOS_ROOT}}</code> instead of a resolved path — reinstall before trusting it.</li><li><code>python3 bin/copilot_docs.py check</code> reports drift against current pricing — the pricing snapshot this center was built against is stale; rebuild before trusting its numbers.</li><li>A configured pin in <code>prefs/copilot.json</code> resolves to a model id that is also in the configured excludes — this is a hard configuration error, not a resolvable preference.</li><li>A verify command or skill instruction asks you to invoke a real harness CLI (<code>copilot</code>, <code>codex</code>, or <code>claude</code>) from inside a test or automated check rather than an interactive session — that is unsafe and out of scope for anything automated in this repository.</li></ul>
+    <p class="source-link"><a href="SAFETY.md">View Markdown source</a></p>
+  </main>
+</body>
+</html>

@@ -1,0 +1,432 @@
+{
+  "schema": "copilot-docs/aic-report/v1",
+  "pricing_snapshot": {
+    "path": "data/pricing.copilot.json",
+    "cached_date": "2026-07-25",
+    "pricing_sha256": "0e787ee9bdb2a76d74689ab5bbba7d8efea12054b6643c764932564f57b67bb1",
+    "roster_sha256": "774e2d66ae13ff6a869f7915c264790802b15be56bb03d9e5355aa0d58363b71"
+  },
+  "prefs_snapshot": {
+    "source": null,
+    "pins": {},
+    "excludes": [],
+    "notes": [],
+    "resolved": {
+      "mid": "claude-sonnet-5",
+      "strong": "claude-opus-4.8"
+    },
+    "resolved_via": {
+      "mid": "roster-default",
+      "strong": "roster-default"
+    }
+  },
+  "inputs": {
+    "prefs": {
+      "pins": {},
+      "excludes": []
+    }
+  },
+  "documents": [
+    {
+      "path": "README.md",
+      "kind": "markdown",
+      "title": "GitHub Copilot CLI Documentation Center",
+      "authoring_mode": "estimated",
+      "sources_sha256": "6d6256283d669f7216815af8729a2ef620922b86d35bcd12baef719d39db7b55",
+      "measurement": {
+        "bytes": 3586,
+        "words": 564,
+        "lexemes": 858,
+        "ai_output_lexemes": 858
+      },
+      "cost": {
+        "model_id": "claude-sonnet-5",
+        "model_display": "Claude Sonnet 5",
+        "model_vendor": "anthropic",
+        "model_tier": "mid",
+        "symbolic_tier": "mid",
+        "symbolic_profile": "S",
+        "runtime_profile_label": "__copilot_docs__S",
+        "assumed_input_tokens": 40000,
+        "cache_hit_assumed": 0.8,
+        "rates_used": "base",
+        "warnings": [],
+        "usd": 0.030979999999999997,
+        "aic": 3.098,
+        "uncertainty": "Prospective estimate: assumes the manifest's declared input-token convention and treats this document's own measured lexeme count as a stand-in for model output tokens \u2014 not a historical usage measurement."
+      },
+      "resolved_model_id": "claude-sonnet-5"
+    },
+    {
+      "path": "index.html",
+      "kind": "html",
+      "title": "GitHub Copilot CLI Documentation Center",
+      "authoring_mode": "estimated",
+      "markdown_source": "README.md",
+      "measurement": {
+        "bytes": 5063
+      },
+      "cost": {
+        "usd": 0.0,
+        "aic": 0.0,
+        "note": "HTML is a deterministic render of its Markdown source \u2014 zero cost"
+      }
+    },
+    {
+      "path": "INSTALL.md",
+      "kind": "markdown",
+      "title": "Installing the Copilot CLI bundle",
+      "authoring_mode": "estimated",
+      "sources_sha256": "227dc33ab75ee1d793a26986515e484dcd31d8dae38a596c03093f5369f4b3d8",
+      "measurement": {
+        "bytes": 3516,
+        "words": 551,
+        "lexemes": 800,
+        "ai_output_lexemes": 800
+      },
+      "cost": {
+        "model_id": "claude-sonnet-5",
+        "model_display": "Claude Sonnet 5",
+        "model_vendor": "anthropic",
+        "model_tier": "mid",
+        "symbolic_tier": "mid",
+        "symbolic_profile": "S",
+        "runtime_profile_label": "__copilot_docs__S",
+        "assumed_input_tokens": 40000,
+        "cache_hit_assumed": 0.8,
+        "rates_used": "base",
+        "warnings": [],
+        "usd": 0.030399999999999996,
+        "aic": 3.0399999999999996,
+        "uncertainty": "Prospective estimate: assumes the manifest's declared input-token convention and treats this document's own measured lexeme count as a stand-in for model output tokens \u2014 not a historical usage measurement."
+      },
+      "resolved_model_id": "claude-sonnet-5"
+    },
+    {
+      "path": "install.html",
+      "kind": "html",
+      "title": "Installing the Copilot CLI bundle",
+      "authoring_mode": "estimated",
+      "markdown_source": "INSTALL.md",
+      "measurement": {
+        "bytes": 5011
+      },
+      "cost": {
+        "usd": 0.0,
+        "aic": 0.0,
+        "note": "HTML is a deterministic render of its Markdown source \u2014 zero cost"
+      }
+    },
+    {
+      "path": "SAFETY.md",
+      "kind": "markdown",
+      "title": "Safety and cost boundaries",
+      "authoring_mode": "estimated",
+      "sources_sha256": "d2fc439cfd523d194431b8913d0b6dc47e9b7ab742042557863cac8e7ca275b5",
+      "measurement": {
+        "bytes": 4945,
+        "words": 762,
+        "lexemes": 1118,
+        "ai_output_lexemes": 1118
+      },
+      "cost": {
+        "model_id": "claude-sonnet-5",
+        "model_display": "Claude Sonnet 5",
+        "model_vendor": "anthropic",
+        "model_tier": "mid",
+        "symbolic_tier": "mid",
+        "symbolic_profile": "S",
+        "runtime_profile_label": "__copilot_docs__S",
+        "assumed_input_tokens": 40000,
+        "cache_hit_assumed": 0.8,
+        "rates_used": "base",
+        "warnings": [],
+        "usd": 0.03358,
+        "aic": 3.3579999999999997,
+        "uncertainty": "Prospective estimate: assumes the manifest's declared input-token convention and treats this document's own measured lexeme count as a stand-in for model output tokens \u2014 not a historical usage measurement."
+      },
+      "resolved_model_id": "claude-sonnet-5"
+    },
+    {
+      "path": "safety.html",
+      "kind": "html",
+      "title": "Safety and cost boundaries",
+      "authoring_mode": "estimated",
+      "markdown_source": "SAFETY.md",
+      "measurement": {
+        "bytes": 6802
+      },
+      "cost": {
+        "usd": 0.0,
+        "aic": 0.0,
+        "note": "HTML is a deterministic render of its Markdown source \u2014 zero cost"
+      }
+    },
+    {
+      "path": "SKILLS.md",
+      "kind": "markdown",
+      "title": "Skills reference",
+      "authoring_mode": "estimated",
+      "sources_sha256": "46a4ab75f076330710cf66b0a031c139734bf6012bb32ce77dc257b314acef56",
+      "measurement": {
+        "bytes": 21388,
+        "words": 3534,
+        "lexemes": 4974,
+        "ai_output_lexemes": 3947
+      },
+      "cost": {
+        "model_id": "claude-opus-4.8",
+        "model_display": "Claude Opus 4.8",
+        "model_vendor": "anthropic",
+        "model_tier": "strong",
+        "symbolic_tier": "strong",
+        "symbolic_profile": "M",
+        "runtime_profile_label": "__copilot_docs__M",
+        "assumed_input_tokens": 150000,
+        "cache_hit_assumed": 0.8,
+        "rates_used": "base",
+        "warnings": [],
+        "usd": 0.308675,
+        "aic": 30.867499999999996,
+        "uncertainty": "Prospective estimate: assumes the manifest's declared input-token convention and treats this document's own measured lexeme count as a stand-in for model output tokens \u2014 not a historical usage measurement."
+      },
+      "resolved_model_id": "claude-opus-4.8"
+    },
+    {
+      "path": "skills.html",
+      "kind": "html",
+      "title": "Skills reference",
+      "authoring_mode": "estimated",
+      "markdown_source": "SKILLS.md",
+      "measurement": {
+        "bytes": 25352
+      },
+      "cost": {
+        "usd": 0.0,
+        "aic": 0.0,
+        "note": "HTML is a deterministic render of its Markdown source \u2014 zero cost"
+      }
+    },
+    {
+      "path": "AGENTS.md",
+      "kind": "markdown",
+      "title": "Agents reference",
+      "authoring_mode": "estimated",
+      "sources_sha256": "7e930b484c27123e8049f11cc3c1c658ddf5eab0ee9032d52a4bc1aac014f0c5",
+      "measurement": {
+        "bytes": 16474,
+        "words": 2659,
+        "lexemes": 3991,
+        "ai_output_lexemes": 2979
+      },
+      "cost": {
+        "model_id": "claude-opus-4.8",
+        "model_display": "Claude Opus 4.8",
+        "model_vendor": "anthropic",
+        "model_tier": "strong",
+        "symbolic_tier": "strong",
+        "symbolic_profile": "M",
+        "runtime_profile_label": "__copilot_docs__M",
+        "assumed_input_tokens": 150000,
+        "cache_hit_assumed": 0.8,
+        "rates_used": "base",
+        "warnings": [],
+        "usd": 0.284475,
+        "aic": 28.447499999999998,
+        "uncertainty": "Prospective estimate: assumes the manifest's declared input-token convention and treats this document's own measured lexeme count as a stand-in for model output tokens \u2014 not a historical usage measurement."
+      },
+      "resolved_model_id": "claude-opus-4.8"
+    },
+    {
+      "path": "agents.html",
+      "kind": "html",
+      "title": "Agents reference",
+      "authoring_mode": "estimated",
+      "markdown_source": "AGENTS.md",
+      "measurement": {
+        "bytes": 20766
+      },
+      "cost": {
+        "usd": 0.0,
+        "aic": 0.0,
+        "note": "HTML is a deterministic render of its Markdown source \u2014 zero cost"
+      }
+    },
+    {
+      "path": "MODELS.md",
+      "kind": "markdown",
+      "title": "Models and preferences",
+      "authoring_mode": "estimated",
+      "sources_sha256": "fe8a9be562732e93d0ad6fe437068e09355cb11b21c48364767fdd2c4b883996",
+      "measurement": {
+        "bytes": 16706,
+        "words": 2724,
+        "lexemes": 4224,
+        "ai_output_lexemes": 1577
+      },
+      "cost": {
+        "model_id": "claude-opus-4.8",
+        "model_display": "Claude Opus 4.8",
+        "model_vendor": "anthropic",
+        "model_tier": "strong",
+        "symbolic_tier": "strong",
+        "symbolic_profile": "M",
+        "runtime_profile_label": "__copilot_docs__M",
+        "assumed_input_tokens": 150000,
+        "cache_hit_assumed": 0.8,
+        "rates_used": "base",
+        "warnings": [],
+        "usd": 0.249425,
+        "aic": 24.9425,
+        "uncertainty": "Prospective estimate: assumes the manifest's declared input-token convention and treats this document's own measured lexeme count as a stand-in for model output tokens \u2014 not a historical usage measurement."
+      },
+      "resolved_model_id": "claude-opus-4.8"
+    },
+    {
+      "path": "models.html",
+      "kind": "html",
+      "title": "Models and preferences",
+      "authoring_mode": "estimated",
+      "markdown_source": "MODELS.md",
+      "measurement": {
+        "bytes": 20426
+      },
+      "cost": {
+        "usd": 0.0,
+        "aic": 0.0,
+        "note": "HTML is a deterministic render of its Markdown source \u2014 zero cost"
+      }
+    },
+    {
+      "path": "COSTS.md",
+      "kind": "markdown",
+      "title": "Costs and AIC accounting",
+      "authoring_mode": "estimated",
+      "sources_sha256": "af37aa7c8406beef39ce2cacd9024e3ea489138e07d9f613c364f438635c4df9",
+      "measurement": {
+        "bytes": 8430,
+        "words": 1350,
+        "lexemes": 1881,
+        "ai_output_lexemes": 1881
+      },
+      "cost": {
+        "model_id": "claude-opus-4.8",
+        "model_display": "Claude Opus 4.8",
+        "model_vendor": "anthropic",
+        "model_tier": "strong",
+        "symbolic_tier": "strong",
+        "symbolic_profile": "M",
+        "runtime_profile_label": "__copilot_docs__M",
+        "assumed_input_tokens": 150000,
+        "cache_hit_assumed": 0.8,
+        "rates_used": "base",
+        "warnings": [],
+        "usd": 0.257025,
+        "aic": 25.7025,
+        "uncertainty": "Prospective estimate: assumes the manifest's declared input-token convention and treats this document's own measured lexeme count as a stand-in for model output tokens \u2014 not a historical usage measurement."
+      },
+      "resolved_model_id": "claude-opus-4.8"
+    },
+    {
+      "path": "costs.html",
+      "kind": "html",
+      "title": "Costs and AIC accounting",
+      "authoring_mode": "estimated",
+      "markdown_source": "COSTS.md",
+      "measurement": {
+        "bytes": 10368
+      },
+      "cost": {
+        "usd": 0.0,
+        "aic": 0.0,
+        "note": "HTML is a deterministic render of its Markdown source \u2014 zero cost"
+      }
+    },
+    {
+      "path": "WORKFLOWS.md",
+      "kind": "markdown",
+      "title": "Practical workflows",
+      "authoring_mode": "estimated",
+      "sources_sha256": "b6be08fe48cf1e8c0c6b8a8d773d5b89c586395795ed37959684199dda064e1b",
+      "measurement": {
+        "bytes": 12380,
+        "words": 1997,
+        "lexemes": 2713,
+        "ai_output_lexemes": 2713
+      },
+      "cost": {
+        "model_id": "claude-sonnet-5",
+        "model_display": "Claude Sonnet 5",
+        "model_vendor": "anthropic",
+        "model_tier": "mid",
+        "symbolic_tier": "mid",
+        "symbolic_profile": "M",
+        "runtime_profile_label": "__copilot_docs__M",
+        "assumed_input_tokens": 150000,
+        "cache_hit_assumed": 0.8,
+        "rates_used": "base",
+        "warnings": [],
+        "usd": 0.11112999999999999,
+        "aic": 11.113,
+        "uncertainty": "Prospective estimate: assumes the manifest's declared input-token convention and treats this document's own measured lexeme count as a stand-in for model output tokens \u2014 not a historical usage measurement."
+      },
+      "resolved_model_id": "claude-sonnet-5"
+    },
+    {
+      "path": "workflows.html",
+      "kind": "html",
+      "title": "Practical workflows",
+      "authoring_mode": "estimated",
+      "markdown_source": "WORKFLOWS.md",
+      "measurement": {
+        "bytes": 14708
+      },
+      "cost": {
+        "usd": 0.0,
+        "aic": 0.0,
+        "note": "HTML is a deterministic render of its Markdown source \u2014 zero cost"
+      }
+    },
+    {
+      "path": "AIC-REPORT.md",
+      "kind": "markdown",
+      "title": "AIC Report",
+      "authoring_mode": "deterministic",
+      "self_reference": true,
+      "measurement": {
+        "bytes": null,
+        "words": null,
+        "lexemes": null,
+        "ai_output_lexemes": null
+      },
+      "cost": {
+        "usd": 0.0,
+        "aic": 0.0,
+        "note": "self-referential artifact: its own byte size does not exist yet when it is generated, so its measured-size fields are null/n/a and it always carries zero authoring/render cost."
+      }
+    },
+    {
+      "path": "aic-report.html",
+      "kind": "html",
+      "title": "AIC Report",
+      "authoring_mode": "deterministic",
+      "self_reference": true,
+      "measurement": {
+        "bytes": null,
+        "words": null,
+        "lexemes": null,
+        "ai_output_lexemes": null
+      },
+      "cost": {
+        "usd": 0.0,
+        "aic": 0.0,
+        "note": "self-referential artifact: its own byte size does not exist yet when it is generated, so its measured-size fields are null/n/a and it always carries zero authoring/render cost."
+      },
+      "markdown_source": "AIC-REPORT.md"
+    }
+  ],
+  "totals": {
+    "usd": 1.30569,
+    "aic": 130.569
+  }
+}

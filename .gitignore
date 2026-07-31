@@ -1,0 +1,21 @@
+.claude/settings.local.json
+__pycache__/
+.DS_Store
+# daily-journal output + inbox (personal data — never committed)
+/journal/
+# routing-trend snapshot store (generated local data — never committed)
+/trends/
+# memory-skill fact store (private user data — never committed)
+/memory/
+# copilot model prefs — user pins/excludes (user data — never committed)
+/prefs/
+# telemetry snapshot store (personal cost data — never committed)
+/telemetry/
+
+# generated value reports (personal dollar data, session ids, machine paths — never committed)
+/value-report*.html
+
+# kit_verify_hook.py verify-pass markers (timestamped proof-of-verify, kit-local, any slug —
+# never committed; matches .claude/kits/<slug>/verify-pass/ for every kit, not the kit files
+# beside it)
+/.claude/kits/*/verify-pass/

@@ -1,0 +1,19 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "polytropos-local",
+  "description": "Local marketplace for the polytropos plugin (per-task model routing and cost optimization).",
+  "owner": {
+    "name": "agentmc15"
+  },
+  "plugins": [
+    {
+      "name": "polytropos",
+      "description": "Per-task model routing and cost estimation for Claude Code: pick the right model (Fable 5 / Opus 4.8 / Sonnet 5 / Haiku 4.5), estimate cost before running, track historical spend, and use Fable 5 optimally.",
+      "author": {
+        "name": "agentmc15"
+      },
+      "category": "productivity",
+      "source": "./"
+    }
+  ]
+}

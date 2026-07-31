@@ -1,0 +1,594 @@
+# polytropos — executor guardrails
+
+This repo is a Claude Code plugin (model routing + cost optimization). It is installed live at
+user scope from this directory via a local marketplace — **skill files are runtime behavior, not
+just docs**. Edit accordingly.
+
+## Invariants (violating any of these is a wrong change, even if it "works")
+
+- **`data/pricing.json` is the single numeric source of truth.** Never hardcode prices, price
+  ratios, model IDs, or pricing dates into skills or scripts — instruct/compute from pricing.json
+  at run time. Exception: `README.md` and `docs/` tables are labeled snapshots tied to
+  `cached_date`; update them only together with pricing.json. A gloss directly beside its field
+  name (e.g. "`cache_read_multiplier` (0.1×)") is acceptable in skills; a standalone literal is not.
+  Generated mirrors `skills/route/references/pricing.json` and `skills/fable-check/references/pricing.json`
+  keep aesop-vendored copies of those skills self-contained — never edit a mirror by hand;
+  regenerate with `python3 bin/sync_pricing_refs.py` whenever `data/pricing.json` changes
+  (`tests/test_pricing_refs.py` fails on drift).
+- **`data/pricing.copilot.json` is the Copilot-side numeric source of truth** — same rules as pricing.json: never hardcode Copilot prices, credit values, plan allowances, or model IDs into `copilot/` content or scripts; derive them at run time (the AIC unit itself is data: `billing_unit.usd_per_credit`). README/docs Copilot tables are labeled snapshots tied to its `cached_date`. The two pricing files never merge, and neither harness's config reads the other's file; bundle files under `copilot/.github/` reference `{{POLYTROPOS_ROOT}}`, resolved to an absolute path only by `bin/harness_select.py` at install time.
+- **`data/pricing.codex.json` is the Codex-side numeric source of truth** — same rules: never hardcode Codex prices, cache multipliers, plan facts, or model IDs into `codex/` content or scripts; derive them at run time. Its GPT-5.6 model ids are best-effort (see its `model_ids_note`) — corrections land there and only there. Subscription (ChatGPT-plan) Codex runs are usage-limited, not token-billed: every dollar figure shown for them is a labeled API-equivalent relative-burn proxy, never a bill (`billed_usd` stays null). The three pricing files never merge and no harness reads another's; the daily journal counts Codex activity and may additionally show a clearly-labeled API-equivalent relative-burn proxy priced from `pricing.codex.json` at run time (wired read-only into `bin/journal_*.py` by the `journal-augment` kit) — never a bill: `billed_usd` stays null and the proxy never enters the digest's priced totals. Bundle files under `codex/` carry `{{POLYTROPOS_ROOT}}`, resolved only by `bin/harness_select.py` at install time, which never writes `config.toml` and never overwrites a differing `AGENTS.md`.
+- **Never invoke the real `copilot` CLI from tests, kit verify commands, or anything run during execution** — `copilot -p` / `copilot --agent` calls spend the user's real AI Credits and hit the network, and the user has a live `~/.copilot`. `bin/copilot_execute.py` and `bin/copilot_ralph.py` take injectable dispatch runners; tests stub or mock every dispatch (temp stub executables and temp `--copilot-home` dirs only), and `--dry-run` / `--demo` are the only sanctioned CLI smoke paths. `bin/copilot_usage.py` reads `~/.copilot/session-state/*/events.jsonl` strictly read-only at run time (never the `*.db` stores, never a write, never a `copilot` invocation); its tests use synthetic fixtures in temp `--copilot-home` dirs and never touch the real `~/.copilot`.
+- **The daily journal is read-only ingestion with gitignored output.** `bin/journal_*.py` read `~/.claude/projects`, `~/.copilot/session-state`, and `~/.codex` strictly read-only at run time (JSONL only — never a `*.db`/SQLite open, never a CLI invocation to gather); output, inbox, and config live under gitignored `journal/`; the digest carries metadata only (no transcript text); the summarizer's `claude -p` dispatch is injectable, mocked in every test, and `--dry-run` prints the prompts and spawns nothing; Codex activity is counted and may additionally carry a clearly-labeled API-equivalent relative-burn proxy sourced from `data/pricing.codex.json` at run time — never presented as a bill (`billed_usd` stays null, the codex source stays `priced: false`/`usd: null`, and proxy dollars never enter `usd_priced`).
+- **Python is stdlib-only** (`bin/`, `tests/`). No pip installs, no requirements files, no pytest.
+- **Skills resolve plugin files via `${CLAUDE_PLUGIN_ROOT}`**, with "relative to this SKILL.md"
+  as the stated fallback (resolve to absolute before shelling out — bash cwd is not the skill
+  dir). The one exception: commands written into `~/.claude/settings.json` (statusline) must be
+  literal absolute paths — that env var doesn't exist outside plugin context.
+- **The architect and execute skills share one kit contract — keep them in sync.** If you touch
+  either `skills/architect/SKILL.md` or `skills/execute/SKILL.md`, re-check both against:
+  layout `.claude/kits/<slug>/PLAN.md` + `TASKS.md` (+ `NOTES.md`, owned by execute); task fields
+  `id`, `title`, `status`, `model`, brief, acceptance, verify; status vocabulary exactly
+  `pending | in-progress | done | blocked`; phase headings; `depends:`/`independent:` marking;
+  and the rule that a task's `model` field overrides the implementer agent's frontmatter at
+  dispatch.
+- **Never touch `~/.claude/` or anything outside this repo.** Do not re-install or refresh the
+  plugin.
+- **Do not commit or push** unless the user explicitly asks.
+- **The memory store (`memory/` at the repo root) is gitignored user data.** Fact files under
+  it are private, local-only, and never committed (`.gitignore` carries a root-anchored
+  `/memory/` — the leading slash is load-bearing so `skills/memory/` stays tracked). Runtime
+  code touches the store only via the `bin/memory_*.py` engines' explicit `--memory-dir`
+  seam, and every test/verify uses temp `--memory-dir` fixtures with an explicit `--now` —
+  never a real store, zero `Path.home()` in the memory code. Recall is pull-only,
+  relevance-gated, and budget-capped by design: nothing may ever bulk-inject the store, its
+  index, or uncapped fact sets into a session's context.
+
+## How to run things
+
+```bash
+# from the repo root
+python3 -m unittest discover -s tests -v          # full test suite — run before claiming any script task done
+python3 bin/cost_report.py --days 30              # transcript cost report (markdown to stdout)
+python3 bin/session_cost.py                       # one session's cost + all-Fable counterfactual (main + subagents, read-only)
+python3 bin/routing_scorecard.py --demo           # routing-quality scorecard smoke (synthetic kit, no real data)
+python3 bin/routing_scorecard.py --demo --live    # live re-route signal smoke (synthetic mid-run kit, upgrade-only, never frontier)
+python3 bin/routing_scorecard.py --demo --history # cross-kit routing-history smoke (synthetic kits, dollars labeled partial)
+python3 bin/routing_scorecard.py --demo --by-task # per-task dollars smoke (synthetic kit; shared warm agent + missing transcript honesty proofs)
+python3 bin/routing_scorecard.py --demo --history --trend # cross-repo + trend smoke (two synthetic repos, two dated snapshots, text trend table)
+python3 bin/copilot_pricing.py est M claude-fable-5   # Copilot-side cost estimate (USD + AIC)
+python3 bin/copilot_ralph.py --demo               # Ralph goal-loop mock (no model, no network, no AIC)
+python3 bin/copilot_usage.py --days 30            # Copilot usage report (reads ~/.copilot read-only)
+python3 bin/codex_pricing.py models --profile M   # Codex-side roster + estimates (API $ + burn index vs cheapest)
+python3 bin/codex_usage.py --days 30                  # Codex usage report (reads ~/.codex read-only; honest unpriced fallback)
+python3 bin/journal_collect.py --print            # today's work-journal digest (reads ~/.claude, ~/.copilot, ~/.codex read-only; writes journal/)
+python3 bin/journal_summarize.py --dry-run        # show the journal prompts + routed model (spawns nothing)
+python3 bin/journal_askpack.py --print            # ready-to-paste Teams/Outlook/Copilot-Studio ask-prompts (offline; writes gitignored journal/; lands with the journal-augment kit)
+python3 bin/journal_plan.py check                 # next-day runbook: cards due/overdue today (reads/writes only gitignored journal/plan/; spawns nothing; lands with the next-day-runbook kit)
+python3 bin/memory_recall.py --demo               # budget-capped memory recall smoke (synthetic store in its own temp dir; gate + stale + budget visible; lands with the memory-skill kit)
+python3 bin/memory_store.py review                # memory staleness report (read-only over the gitignored memory/ store; empty store prints its friendly line; lands with the memory-skill kit)
+python3 bin/copilot_pricing.py knobs              # Copilot reasoning-effort facts from pricing.copilot.json (display-form ladder + interactive-picker mechanism notes; lands with the effort-dial kit)
+python3 bin/codex_pricing.py knobs                # Codex reasoning-effort ladder + modes notes from pricing.codex.json (lands with the effort-dial kit)
+python3 bin/copilot_pricing.py prefs              # active Copilot model pins/excludes + what each tier now resolves to (gitignored prefs/copilot.json + per-run flags; lands with the copilot-model-prefs kit)
+echo '{"model":{"id":"claude-fable-5","display_name":"Fable 5"},"cost":{"total_cost_usd":1.23},"context_window":{"used_percentage":42},"rate_limits":{"five_hour":{"used_percentage":12},"seven_day":{"used_percentage":34}}}' | python3 bin/statusline.py
+```
+
+## When executing a kit task
+
+- Run the task's **verify command yourself, from the repo root, before claiming done**. Your
+  claim without its output counts as failure.
+- The brief is authoritative. If it conflicts with repo reality (beyond shifted line numbers),
+  stop and report the discrepancy — do not improvise a different fix.
+- Check `.claude/kits/<slug>/PLAN.md` for the active kit's out-of-scope fence before starting.
+  For `harden-plugin` specifically: no LICENSE/version/packaging work, no `~`
+  path portability refactors, no pricing.json value edits, no new skills.
+  For `aesop-bridge` specifically: nothing outside this repo (the aesop checkout at
+  `/path/to/aesop` is reference-only), no `aesop init`/`compile` in
+  this repo, no pricing.json edits, no new skills; `skills/*/references/pricing.json` mirrors
+  are generated — only `bin/sync_pricing_refs.py` writes them.
+  For `copilot-harness` specifically: nothing outside this repo — `~/.copilot` included
+  (`bin/harness_select.py install` runs only against a temp `--copilot-home` during this kit);
+  no node/npm/`aesop compile`; no edits to `data/pricing.json`, `.claude-plugin/`, `skills/`,
+  or the completed kits; `data/pricing.copilot.json` is created/edited only by its own tasks;
+  bundle files under `copilot/.github/` carry the `{{POLYTROPOS_ROOT}}` placeholder, never
+  an absolute path; no Phase-2 features (architect/execute port, Ralph loop, lessons-loop).
+  For `copilot-workflow` specifically: NEVER invoke the real `copilot` CLI in any form — it
+  spends real AI Credits and hits the network (every CLI flag needed is pinned in that kit's
+  PLAN.md); tests stub or mock every dispatch and `--dry-run`/`--demo` are the only CLI smoke
+  paths; installs go only to temp `--copilot-home` dirs; the aesop clone is session-scoped
+  reference material that may be absent — every aesop fact is pinned in the briefs (commit
+  5506617); `bin/harness_select.py` is the one existing script that kit may extend; no edits
+  to either pricing file, no new Claude Code skills, no Phase-3 items (aesop compile
+  round-trip, cost visibility).
+  For `copilot-costviz` specifically: NEVER invoke the real `copilot` CLI in any form — the
+  events.jsonl usage surface is pinned in that kit's PLAN.md (observed on Copilot CLI
+  v1.0.68); during execution nothing reads OR writes the real `~/.copilot` —
+  `bin/copilot_usage.py` targets it read-only at runtime only, and every test/verify uses
+  synthetic `events.jsonl` fixtures in temp `--copilot-home`/`--session-dir` dirs; never open
+  the `*.db` session stores; `bin/copilot_pricing.py` is the one existing script that kit may
+  extend (`--pool-aic`, additive so `bin/copilot_ralph.py` stays untouched) and
+  `tests/test_copilot_pricing.py` the one existing test file; `bin/cost_report.py` is a
+  read-only model; the aesop compile round-trip is a proposal doc only
+  (`docs/AESOP-COMPILE-PROPOSAL.md`, facts pinned at aesop@5506617) — no aesop-repo work, no
+  node, no Ralph per-tick live-cost scraper; no edits to either pricing file, no new skills.
+  For `daily-journal` specifically: ingestion is STRICTLY read-only — the journal scripts
+  target `~/.claude/projects`, `~/.copilot/session-state`, and `~/.codex` at runtime only;
+  during execution every test/verify uses synthetic fixtures in temp dirs
+  (`--claude-projects`/`--copilot-home`/`--codex-home`/`--journal-dir`/`--launch-agents-dir`
+  always overridden; `Path.home()` only in the four pinned runtime-default constants, never
+  tests); never open a `*.db`/SQLite file (JSONL only — Cursor/VS Code are deferred stubs);
+  never invoke a real `claude`/`copilot`/`codex` CLI or `launchctl` from tests or verify
+  commands — the summarizer's `claude -p` dispatch is injectable, mocked in tests, and
+  `--dry-run` prints prompts and spawns nothing; journal output + inbox live under gitignored
+  `journal/` and tests write journals only to temp dirs; no Codex prices invented (counted,
+  unpriced); existing bin scripts are imported read-only, never edited; no edits to either
+  pricing file; `skills/journal/` is the ONE sanctioned addition under `skills/`; no
+  Graph/MCP/OAuth/network work (deferred by design).
+  For `fusion-tier1` specifically: the architect/execute shared kit contract is the #1
+  invariant — skill edits are BODY-only (YAML frontmatter untouched; the plugin is live) and
+  every pinned contract element must survive in BOTH `skills/architect/SKILL.md` and
+  `skills/execute/SKILL.md` (kit layout, task fields, status vocabulary, phase headings,
+  `depends:`/`independent:`, the model-override rule) — no new required task field anywhere
+  (warm clusters ride on existing fields plus free-text preamble hints); warm-sidekick
+  guidance stays OPT-IN (`independent:` disjoint-file tasks still fan out fresh, warm
+  clusters require the SAME `model` pin, the verifier is always a fresh spawn); the
+  lean-driver rule never removes the run-the-verify-command-yourself invariant;
+  `bin/cost_report.py`, `bin/session_cost.py`, and `bin/copilot_execute.py` are reused
+  read-only via importlib — never edited; `bin/routing_scorecard.py` is read-only (`--demo`
+  writes only to its own temp dir, never into a kit dir or NOTES.md) and its tests use
+  synthetic fixtures in temp dirs with `--projects-dir`/`--kits-dir` always overridden —
+  never the real `~/.claude`; zero `Path.home()` in the two new Python files; missing
+  NOTES.md or ledger-free notes degrade to status-only output with a note, and
+  zero-denominator rates render null/`n/a` — never fabricated; no edits to either pricing
+  file and no hardcoded prices or model ids (tier vocabulary, the `fable`→`frontier` alias
+  map, synthetic fixture values in tests, and pinned demo token VOLUMES are the sanctioned
+  exceptions — demo model ids are computed from `data/pricing.json` at run time); sanctioned
+  existing-file edits are ONLY the two skills, `README.md`, and CLAUDE.md's pinned T8
+  run-line; no Tier-2 features (dynamic mid-kit re-routing, autonomy dial) and no
+  main-session model-switch implementation (upstream-only, documented in
+  `docs/FUSION-TIER1.md`); no Copilot-side changes.
+  For `fusion-tier2` specifically: the architect/execute shared kit contract stays byte-intact
+  — skill edits BODY-only (frontmatter untouched; the plugin is live), every pinned contract
+  element survives in BOTH `skills/architect/SKILL.md` and `skills/execute/SKILL.md`, no new
+  REQUIRED task field anywhere (`autonomy:` is an OPTIONAL PLAN.md line; `parse_tasks` needs
+  no change); mid-kit re-routing is UPGRADE-ONLY, exactly one tier step (haiku→sonnet,
+  sonnet→opus), NEVER auto-routes to frontier/Fable (the per-task evidence-carrying escalation
+  valve stays the only path to Fable, its mechanism unchanged), and NEVER rewrites a TASKS.md
+  `model` field — it is a runtime dispatch override logged as `reroute:` lines in NOTES.md
+  (appended by the orchestrator, never by a script); the autonomy dial defaults to ADVISORY
+  (print-only — nothing is auto-changed when off) and `mode=applied` auto-upgrades are capped
+  by the budget guardrail; `bin/routing_scorecard.py` is extended ADDITIVELY only — existing
+  flags, output shapes, the Tier-1 `--demo` numbers, and `tests/test_routing_scorecard.py`
+  stay untouched and green (new tests go in `tests/test_reroute_live.py`);
+  `bin/cost_report.py`, `bin/session_cost.py`, and `bin/copilot_execute.py` stay reuse-only
+  via importlib, never edited; every test/verify uses synthetic kits in temp dirs
+  (`--kits-dir` always overridden), never the real `~/.claude`, zero `Path.home()` in
+  new/edited Python, and the `--live` path never loads pricing and rejects `--session`; no
+  hardcoded prices or real model ids (tier vocabulary, the `fable`→`frontier` alias, the
+  pinned live-policy constants — threshold, min-sample, budget cap — and synthetic fixtures
+  are the sanctioned literals); sanctioned edit targets are ONLY the two skills,
+  `bin/routing_scorecard.py`, `docs/FUSION-TIER1.md`'s Deferred pointer, and CLAUDE.md's
+  pinned run-line, with new files `tests/test_reroute_live.py` and `docs/FUSION-TIER2.md`; no
+  README changes, no new skills, no Copilot-side changes, no changes to
+  `/route`/`/escalate`/`/fable-check`, no auto-downgrade, no scorecard-over-time aggregation,
+  no main-session model switching.
+  For `routing-history` specifically: the architect/execute shared kit contract stays
+  byte-intact — skill edits BODY-only (frontmatter untouched; the plugin is live), every
+  pinned contract element survives in BOTH `skills/architect/SKILL.md` and
+  `skills/execute/SKILL.md` including the Tier-2 runtime-override clause verbatim, and no new
+  REQUIRED task field anywhere (the `session:` line is an OPTIONAL, execute-owned NOTES.md
+  line — precedent `outcome:`/`reroute:`; `parse_tasks` needs no change; the orchestrator
+  records it at END of run via a READ-ONLY best-effort transcript-stem lookup and SKIPS it
+  when ambiguous — never a guessed id, never a write under `~/.claude`); the /architect
+  addition is ONE ADVISORY bullet (consult `--history` when choosing initial pins) — NO
+  auto-pin-setting, no auto-downgrade, and the fusion re-routing/escalation semantics are
+  untouched; `bin/routing_scorecard.py` is extended ADDITIVELY only — existing flags, output
+  shapes, exit codes, the Tier-1 `--demo` numbers, AND the Tier-2 `--demo --live` numbers
+  stay byte-stable, and `tests/test_routing_scorecard.py` + `tests/test_reroute_live.py` stay
+  byte-untouched (new tests go in `tests/test_routing_history.py`); `bin/cost_report.py`,
+  `bin/session_cost.py`, and `bin/copilot_execute.py` stay reuse-only via importlib, never
+  edited, and history parsing/attribution reuses
+  `parse_tasks`/`parse_outcomes`/`parse_reroutes`/`tier_for`/`effective_alias`/the
+  `session_cost` pipeline — never re-implemented; dollars are fully OPTIONAL and degrading —
+  aggregated only over kits carrying `session:` lines with a LABELED `partial`/`full`
+  coverage, one `collect()` per scope (shared session ids priced once in the aggregate),
+  missing transcripts noted and skipped, NEVER a fabricated or zeroed stand-in figure,
+  ledger-free kits degrade to status-only, zero-denominator rates render null/`n/a`, and
+  with zero `session:` lines `--history` never loads pricing; every test/verify uses
+  synthetic kits and transcripts in temp dirs (`--kits-dir`/`--projects-dir` always
+  overridden — never the real `~/.claude`), zero `Path.home()` in new/edited Python; no
+  hardcoded prices or real model ids (tier vocabulary, the `fable`→`frontier` alias,
+  `HISTORY_SCHEMA_VERSION`, and synthetic fixtures are the sanctioned literals — demo/test
+  transcript ids are computed from `data/pricing.json` at run time); sanctioned edit targets
+  are ONLY `bin/routing_scorecard.py`, the two skills, `docs/FUSION-TIER2.md`'s
+  Still-deferred pointer, and CLAUDE.md's pinned T6 run-line, with new files
+  `tests/test_routing_history.py` and `docs/ROUTING-HISTORY.md`; no README changes, no new
+  skills, no Copilot-side changes, no changes to `/route`/`/escalate`/`/fable-check`, no
+  per-task dollar attribution, no cross-repo or time-series aggregation, no main-session
+  model switching.
+  For `per-task-dollars` specifically: the architect/execute shared kit contract stays
+  byte-intact — the ONLY skill edited is `skills/execute/SKILL.md`, BODY-only (frontmatter
+  untouched; the plugin is live), `skills/architect/SKILL.md` is NEVER edited (audited
+  byte-unchanged — any diff in it is a defect), every pinned contract element survives in
+  BOTH skills including the Tier-2 runtime-override clause verbatim, and no new REQUIRED
+  task field anywhere (the `agent:` line is a fourth OPTIONAL, execute-owned NOTES.md line —
+  precedent `outcome:`/`reroute:`/`session:`; grammar `agent: <task-id> id=<agent-id>
+  role=<implementer|verifier|escalation> model=<model>`; `parse_tasks` needs no change; the
+  orchestrator records it at dispatch return, never any script, phase reviewers/scouts
+  deliberately unrecorded); the HONESTY BOUNDARY is absolute — the orchestrator's
+  main-session transcript is ONE un-attributable line NEVER split per task by any heuristic,
+  a warm-cluster shared transcript (same agent id on several tasks) is attributed to the
+  CLUSTER as a unit and never divided, a recorded agent id whose `*.output` is gone prices
+  null + a note (never a zero or a guess), a per-task figure is only ever the sum of
+  transcripts that actually exist, unattributed transcripts get one honest line (never
+  silently dropped or assigned to a task), coverage is labeled full/partial/null, kits with
+  no `agent:` lines degrade to n/a with the whole-kit `--session` dollars unchanged, and the
+  parts-vs-whole reconciliation is a note, never an adjustment; `bin/routing_scorecard.py`
+  is extended ADDITIVELY a FOURTH time — existing flags, signatures, output shapes, exit
+  codes, and all THREE prior demos' numbers (`--demo`, `--demo --live`, `--demo --history`)
+  stay byte-stable, `--by-task` REQUIRES `--session` and without the flag the `--session`
+  output is byte-identical (no `by_task` key, `MD_H2S` and `build_scorecard` untouched), and
+  `tests/test_routing_scorecard.py` + `tests/test_reroute_live.py` +
+  `tests/test_routing_history.py` stay byte-untouched (new tests go in
+  `tests/test_per_task_dollars.py`); `bin/cost_report.py`, `bin/session_cost.py`, and
+  `bin/copilot_execute.py` stay reuse-only via importlib, never edited — every transcript is
+  priced through `sc.collect`, never a re-implementation; every test/verify uses synthetic
+  kits, transcripts, and `*.output` fixtures in temp dirs
+  (`--kits-dir`/`--projects-dir`/`--tasks-dir` always overridden — never the real `~/.claude`
+  or the real tmp tasks scratch), zero `Path.home()` in new/edited Python; no hardcoded
+  prices or real model ids (tier vocabulary, the `fable`→`frontier` alias,
+  `BYTASK_SCHEMA_VERSION`, `AGENT_ROLES`, the `DEMO_BYTASK_VOLUMES` token counts, the
+  half-cent reconciliation epsilon, and synthetic fixtures are the sanctioned literals —
+  demo/test transcript ids are computed from `data/pricing.json` at run time); sanctioned
+  edit targets are ONLY `bin/routing_scorecard.py`, `skills/execute/SKILL.md`,
+  `docs/ROUTING-HISTORY.md`'s pinned pointer paragraph, and CLAUDE.md's pinned T6 run-line,
+  with new files `tests/test_per_task_dollars.py` and `docs/PER-TASK-DOLLARS.md`; no README
+  changes, no new skills, no Copilot-side changes, no changes to
+  `/route`/`/escalate`/`/fable-check`, no estimated splitting under any label, no per-task
+  dollars in `--history`, no auto-pin/auto-downgrade, no cross-kit or time-series per-task
+  aggregation, no main-session model switching.
+  For `crossrepo-trend` specifically: NO skill is edited — `skills/` stays byte-unchanged
+  (`git diff --quiet -- skills` in every verify; a change there is out of scope, stop and
+  report) and therefore no shared-contract edit at all; `bin/routing_scorecard.py` is
+  extended ADDITIVELY a FIFTH time — existing flags, signatures, output shapes, exit codes,
+  and ALL FOUR prior demos' numbers (`--demo`, `--demo --live`, `--demo --history`,
+  `--demo --by-task`) stay byte-stable, a lone `--kits-dir` (or none) keeps `--history`
+  output BYTE-IDENTICAL to today (kit names unprefixed, JSON key set exactly the eight
+  pre-existing keys — no `kits_dirs`, no `- scanned` lines), and the FOUR frozen test files
+  (`tests/test_routing_scorecard.py`, `tests/test_reroute_live.py`,
+  `tests/test_routing_history.py`, `tests/test_per_task_dollars.py`) stay byte-untouched
+  (new tests go in `tests/test_crossrepo_trend.py`); cross-repo mode namespaces kit rows as
+  `<label>/<kit>` (labels derived from the kits-dir path — `<repo>/.claude/kits` → the repo
+  basename — or overridden via a `label=path` token; duplicate labels suffixed + noted,
+  never silently merged), aggregates tiers/re-routes globally, and prices dollars through
+  the SAME single `--projects-dir` under the unchanged degradation ladder (one `collect()`
+  per scope, union ids priced once, missing transcripts noted + skipped, coverage labeled —
+  never a fabricated figure); the ONE sanctioned real write in the whole script is
+  `--history --snapshot`, which writes a date-named JSON card (`<YYYY-MM-DD>.json`,
+  latest-wins per day) ONLY under the snapshot dir (default: gitignored `trends/`;
+  `write_snapshot` validates the date grammar so nothing can escape the dir) — every other
+  mode stays read-only, `--snapshot` is rejected with `--demo`, tests write snapshots only
+  to temp `--snapshot-dir` dirs, and pure `--trend` scans no kits and never loads pricing;
+  the trend is TEXT-ONLY (no charts/plots) and needs ≥2 snapshots to be called a trend (one
+  snapshot renders the point plus a "no trend yet" note; zero → n/a; malformed/rogue
+  snapshot files skipped + noted — never fabricated); `scan_kits`/`history_tier_stats`/
+  `tally_reroutes`/`build_history`/`kit_cost_summary` and the `session_cost` pipeline are
+  reused read-only, never edited or re-implemented; every test/verify uses synthetic kits,
+  transcripts, and snapshot stores in temp dirs (`--kits-dir`/`--projects-dir`/
+  `--snapshot-dir` always overridden — never the real `~/.claude`), zero `Path.home()` in
+  new/edited Python; no hardcoded prices or real model ids (tier vocabulary, the
+  `fable`→`frontier` alias, `TREND_SCHEMA_VERSION`, the filename/date/label grammar
+  regexes, the `trends` dir name, the pinned demo snapshot dates, and synthetic fixtures
+  are the sanctioned literals — demo/test transcript ids are computed from
+  `data/pricing.json` at run time); sanctioned edit targets are ONLY
+  `bin/routing_scorecard.py`, `.gitignore`, `docs/ROUTING-HISTORY.md`'s pinned pointer
+  paragraph, and CLAUDE.md's pinned run-line, with new files
+  `tests/test_crossrepo_trend.py` and `docs/ROUTING-TRENDS.md`; no journal coupling, no
+  README changes, no new skills, no Copilot-side changes, no changes to
+  `/route`/`/escalate`/`/fable-check`, no auto-snapshot scheduling, no per-task or
+  per-agent trend aggregation, no main-session model switching.
+  For `codex-harness` specifically: NEVER invoke the real `codex` CLI in any form — it spends
+  the user's real ChatGPT-subscription usage limits (or API dollars) and hits the network,
+  and a live `~/.codex` exists (`bin/codex_execute.py` takes injectable dispatch/verify
+  runners, tests stub or mock every dispatch via temp stub executables and `--codex-bin`,
+  and `--dry-run` is the only CLI smoke path); the real `~/.codex` is never read or written
+  by any test or verify command — the ONE exception is task T1's bounded read-only research
+  peek (the exact `ls`/`head -c` command list is pinned in its brief; JSONL/TOML text only,
+  never a `*.db`, never a write, findings recorded as key names/shapes/ids only in
+  `.claude/kits/codex-harness/RESEARCH.md`) — everything else uses synthetic fixtures in
+  temp `--codex-home` dirs, and at run time `bin/codex_usage.py` reads `~/.codex` strictly
+  read-only, JSONL only; `data/pricing.codex.json` is created/edited only by its own tasks —
+  the THREE pricing files never merge, no harness reads another's, and during that kit the
+  journal invariant stood: `bin/journal_*.py` were never edited and Codex stayed
+  counted-but-unpriced there (since superseded — the `journal-augment` kit wires
+  `pricing.codex.json` into the journal as a clearly-labeled relative-burn proxy, never a
+  bill); GPT-5.6 model ids and subscription
+  inclusion are UNCONFIRMED — id corrections land only in `data/pricing.codex.json` (via its
+  task's sanctioned RESEARCH.md substitution, reported never silent), and no task invents a
+  fast/ultra CLI flag, a price multiplier for them, a plan allowance, or a `runway`
+  subcommand; subscription runs are never given an unlabeled dollar figure —
+  `billed_usd` stays null and every proxy carries its "not a bill" labeling; bundle files
+  under `codex/` carry `{{POLYTROPOS_ROOT}}`, never an absolute path; installs run
+  only against temp `--codex-home` dirs during the kit, never write `config.toml`, and never
+  overwrite a differing `AGENTS.md`; `bin/harness_select.py` is the one existing script the
+  kit may extend (claude-code/copilot behavior byte-stable) and pre-existing test files stay
+  byte-untouched except T7's single pinned method in `tests/test_harness_select.py` (new
+  tests go in the four `tests/test_codex_*.py` files); no edits to `data/pricing.json` or
+  `data/pricing.copilot.json`, no new skills, no aesop/node work, no `codex/aesop.yaml`;
+  sanctioned existing-file edits are ONLY `bin/harness_select.py`, that one test method,
+  README.md's pinned insertion, and CLAUDE.md's pinned insertions.
+  For `journal-augment` specifically: the journal's OFFLINE invariant is absolute — the
+  ask-the-tools feature is PURE TEXT GENERATION (ready-to-paste prompts the user runs in
+  their own Copilot Studio / Teams / Outlook, pasting bullet results into
+  `journal/inbox.md`); no Graph/OAuth/MCP/network/secrets in any form and no
+  `urllib`/`http.client`/`socket` import in any new or edited file; `bin/codex_usage.py`,
+  `bin/codex_pricing.py`, `bin/copilot_pricing.py`, `bin/cost_report.py`,
+  `bin/copilot_usage.py`, and `bin/copilot_execute.py` are reused read-only via importlib
+  — never edited — with Codex tokens priced through `codex_usage.parse_rollout`/
+  `match_model`/`price_tokens` and `PROXY_DISCLAIMER` referenced verbatim, never retyped
+  or re-implemented; Codex proxy honesty is absolute — the codex report keeps
+  `priced: false` and `usd: null` on every path, the proxy lives ONLY in
+  `sources.codex_cli.extra.codex_proxy` with `billed_usd: null`, it never enters
+  `totals.usd_priced` or any billed figure, `build_digest` stays untouched, and the frozen
+  report/digest key sets stay exact (everything additive rides inside `extra` values,
+  `notes`, and `signals` — `harness`/`harness_error` are the only new signals keys);
+  `pricing_codex` is an OPTIONAL ctx key and `None` keeps `collect_codex` behavior
+  test-identical; rollout reads touch ONLY the digest day's `sessions/YYYY/MM/DD` dir,
+  JSONL only, never a `*.db`; the FOUR frozen journal test files
+  (`tests/test_journal_{sources,collect,summarize,schedule}.py`) and
+  `bin/journal_schedule.py` stay byte-untouched (new tests go ONLY in
+  `tests/test_journal_codex_augment.py`, `tests/test_journal_askpack.py`, and
+  `tests/test_journal_advisor.py`); the harness advisor is ADVISORY-ONLY — deterministic
+  signals in `signals.harness`, nothing auto-executes, no auto-pin, no main-session model
+  switching, command templates only from the repo-pinned dispatch shapes (never an
+  invented CLI flag) — and the three pricing files never merge: the advisor may LOAD all
+  three but never mixes rates across files, and no price or real model id is hardcoded
+  anywhere new (GPT-5.6 ids NEVER appear as literals in code or tests — computed from
+  `data/pricing.codex.json` at run time; tier/profile vocabulary, `MAX_ASK_BULLETS`,
+  `ADVISOR_PROFILES`/`ADVISOR_CACHE_HIT`, the pinned command templates, pinned note text,
+  and synthetic fixture ids are the sanctioned literals); every test/verify uses synthetic
+  fixtures in temp dirs with every root flag overridden and `--utc`, zero `Path.home()`
+  beyond the four pre-existing constants (none in `bin/journal_askpack.py`,
+  `bin/journal_advisor.py`, or any new test), the summarizer dispatch stays
+  injectable/mocked and `--dry-run` spawns nothing; sanctioned existing-file edits are
+  ONLY `bin/journal_sources.py`, `bin/journal_collect.py`, `bin/journal_summarize.py`,
+  `skills/journal/SKILL.md` (BODY-only, frontmatter byte-intact), `docs/DAILY-JOURNAL.md`,
+  and one pinned sentence swap each in `docs/HOW-IT-WORKS.md` + `docs/how-it-works.html`,
+  with new files `bin/journal_askpack.py`, `bin/journal_advisor.py`, and the three new
+  test files — CLAUDE.md and README.md are NOT executor edit targets (the architect
+  pre-made CLAUDE.md's insertions); no new skills, no edits to any pricing file, no
+  Copilot-/Codex-harness changes, and the deferred set stays deferred (Graph/OAuth/MCP
+  connectors, Cursor/VS Code adapters, weekly rollups, auto-execution of next-day tasks).
+  For `next-day-runbook` specifically: NO scheduler and NO unattended dispatch in any form
+  — the user tabled scheduling, so no launchd/`StartCalendarInterval`, `pmset`, cron,
+  daemon, `launchctl`, or auto-run work anywhere (`bin/journal_schedule.py` stays
+  byte-untouched and the runbook is never wired into the scheduled run);
+  `bin/journal_plan.py` contains ZERO `subprocess` — generating ready-to-paste command
+  TEXT is the feature, spawning a harness is forbidden, and the What/How enrichment is
+  in-session via the pinned `prompt` output, never a dispatch; the journal's offline
+  invariant is absolute (no network/OAuth/MCP/secrets, no `urllib`/`http.client`/`socket`
+  import, flat text/JSON only, never a `*.db`/`sqlite3`); the script takes NO home-dir
+  flag — its inputs are `--journal-dir` and the committed pricing files, its ONLY writes
+  are `<journal-dir>/plan/<YYYY-MM-DD>.md` (date grammar validated before any output path
+  is composed) under gitignored `journal/`, and `journal/plan/seed.md` is user input read
+  with the inbox grammar and NEVER truncated or rewritten; harness commands and estimates
+  come ONLY from `journal_advisor.build_harness_signal` with pricing dicts from the
+  `cost_report`/`copilot_usage`/`codex_usage` loaders (all reused read-only via importlib
+  — the advisor, the collectors/summarizer, and the three pricing files are never edited
+  and rates never cross harnesses); Codex figures stay labeled API-equivalent proxies,
+  never a bill, and codex_cli is NEVER cost-ranked into the deterministic ideal pick;
+  absent data degrades to `est n/a`/the pinned unavailable line/an honest note — never a
+  fabricated or zeroed figure, never a guessed model id; rebuilds preserve user state
+  (checkboxes, `deferred-to:`, `first-planned:`, ids, enriched What/How bodies) while
+  refreshing only Harness blocks, never silently drop a card, never rewrite historical
+  plan files, and are byte-idempotent (no timestamps in rendered bodies); every
+  test/verify uses temp `--journal-dir` dirs with `--utc` where day membership matters
+  (never a real home dir), zero `Path.home()` in the new files (the budget stays 3 in
+  `journal_collect.py` + 1 in `journal_schedule.py`); no hardcoded prices or real model
+  ids — `claude-*`/GPT-5.6 ids never appear as literals in code, tests, or the new doc
+  (tier vocabulary, `TIER_TO_SLOT`, `EST_PROFILE = "M"`, `PLAN_SCHEMA = 1`, the `plan`
+  dir name and `seed.md`, the date-stem regex, `SEED_MARKERS`, `MAX_PLAN_CARDS`, pinned
+  heading/note/prompt/reason text, est format strings, and synthetic fixture ids in tests
+  are the sanctioned literals); ALL seven pre-existing `tests/test_journal_*.py` files
+  stay byte-untouched — new tests go ONLY in `tests/test_journal_plan.py`; sanctioned
+  edit targets are ONLY `skills/journal/SKILL.md` (BODY-only, frontmatter byte-intact —
+  the plugin is live) and `docs/DAILY-JOURNAL.md`'s pinned pointer paragraph, with new
+  files `bin/journal_plan.py`, `tests/test_journal_plan.py`, and
+  `docs/NEXT-DAY-RUNBOOK.md` — CLAUDE.md and README.md are NOT executor edit targets (the
+  architect pre-made CLAUDE.md's run-line and this fence); no digest/schema coupling (no
+  new `signals` key, `journal_collect.py` untouched), no `.gitignore` change, no new
+  skills, no Copilot-/Codex-side changes, no changes to `/route`/`/escalate`/
+  `/fable-check`, and the deferred set stays deferred (the scheduler itself — tabled by
+  the user, auto-dispatch of planned tasks, plan-due signals in the digest, weekly
+  rollups, Graph/OAuth/MCP connectors).
+  For `harness-parity` specifically: `aesop compile`/node/npm are NEVER run — the Copilot
+  bundle stays manifest↔hand-authored↔test-consistent, and every Copilot capability lands
+  as ONE atomic task editing `copilot/aesop.yaml` `primitives.agents`, the hand-authored
+  `copilot/.github/agents/<name>.agent.md`, and the additive `tests/test_copilot_bundle.py`
+  seam together (the roster test is set equality — the suite is green at every task
+  boundary); the Codex rule is the same atomicity minus the manifest
+  (`codex/prompts/<name>.md` + the `PORTED_PROMPT_STEMS` seam in
+  `tests/test_codex_bundle.py`; `codex/AGENTS.md` is touched only by the pinned T9
+  paragraph); the ported capability names are exactly `usage`, `journal`, `frontier-check`,
+  `escalate` on BOTH harnesses — never `fable*` or `cost-report` on a non-Claude harness,
+  and `grep -rni fable codex` must stay empty; the THREE pricing files stay byte-untouched
+  and no new file hardcodes a price, ratio, allowance, or model id — frontier ids are
+  DERIVED at run time via each harness's own engine (`copilot_pricing.py models --json` /
+  `codex_pricing.py models --json`), the ONE sanctioned model-id literal is the Copilot
+  `.agent.md` frontmatter `model:` pin (non-frontier, read from `data/pricing.copilot.json`
+  at implementation time, kept live by the bundle tests' pricing-key + tier checks), Codex
+  prompts carry NO `model:` line, and no file under `codex/` contains a real
+  `pricing.codex.json` model id; the bin engines (`copilot_usage.py`, `codex_usage.py`,
+  `journal_*.py`, `copilot_execute.py`, `codex_execute.py`, `copilot_pricing.py`,
+  `codex_pricing.py`, `harness_select.py`) are wrapped read-only and NEVER edited, and
+  bundle bodies quote only flags that exist on the real argparse surfaces; the ported
+  journal instructs the in-session `--dry-run` two-pass flow ONLY (headless
+  `journal_summarize.py` dispatches the Claude CLI — never recommended from a non-Claude
+  bundle file), and the ported escalate mirrors the execute drivers' ladder
+  (strictly-above tiers, first model in file order, skip empty) with Codex subscription
+  dollars always a labeled API-equivalent proxy, never a bill; NEVER invoke the real
+  `copilot`/`codex`/`claude` CLI from any task, test, or verify command — the
+  `copilot -p`/`codex exec` lines inside bundle bodies are runtime instructions the kit
+  never executes; bundle files carry `{{POLYTROPOS_ROOT}}`, never an absolute path,
+  never `${CLAUDE_PLUGIN_ROOT}`, never another harness's pricing path; test edits are
+  ADDITIVE at the pinned seams only (`WORKFLOW_AGENT_TIERS` entries +
+  `PortedAgentContractTests`; `PORTED_PROMPT_STEMS`/the `EXPECTED_PROMPT_STEMS` union + the
+  single pinned T2 roster-test rename + `PortedPromptContractTests`) with every other test
+  class/method byte-intact; sanctioned edit targets are ONLY `copilot/aesop.yaml`,
+  `copilot/.github/copilot-instructions.md`, `codex/AGENTS.md`,
+  `tests/test_copilot_bundle.py`, and `tests/test_codex_bundle.py`, with new files the
+  eight ported bundle files
+  (`copilot/.github/agents/{usage,journal,frontier-check,escalate}.agent.md`,
+  `codex/prompts/{usage,journal,frontier-check,escalate}.md`); the ten pre-existing bundle
+  files (five agents + five prompts), `copilot/.github/skills/`, `skills/`, `bin/`,
+  `data/`, `.claude-plugin/`, `docs/`, `README.md`, and the completed kits stay
+  byte-untouched; no new Copilot skills (agents only — `lessons-loop` stays the lone
+  skill), no Ralph-loop work, no `bin/harness_select.py` changes (its globs already
+  install new files), no new bin scripts or engines, no Claude-side skill changes, no
+  commit or push.
+  For `memory-skill` specifically: the memory store is gitignored USER DATA — the
+  root-anchored `/memory/` entry lands in `.gitignore` as its own independent task (the
+  leading slash is load-bearing: an unanchored pattern would also ignore `skills/memory/`),
+  no fact file is ever committed, and no test/verify ever reads or writes a real store
+  (temp `--memory-dir` fixtures with an explicit `--now`, always; zero `Path.home()` in any
+  new file — the runtime default store derives from the plugin root like `journal/`);
+  recall is PULL-only and budget-capped — no hook, no settings wiring, no session-start or
+  per-turn auto-injection, `bin/memory_recall.py` is strictly read-only over the store (its
+  `--demo` writes only inside its own temp dir) and its output is capped by the pinned
+  `MAX_FACTS`/`BUDGET_CHARS` constants with the relevance gate allowed to return nothing
+  (empty recall exits 0 — never loosen a pinned gate/budget constant to make a test pass);
+  ranking is pure-stdlib lexical (no embeddings, no vector store, no pip, no network, no
+  model call — zero `subprocess` in either engine, no `urllib`/`http.client`/`socket`
+  import, and `import yaml` is a fence violation: the flat `key: value` frontmatter grammar
+  is the schema); the feature prices NOTHING — no pricing file is read, imported, or edited
+  and no price or real model id appears in any new file; `memory_recall.py` reuses
+  `memory_store.py` via importlib read-only, never re-implementing the schema functions,
+  and no pre-existing `bin/` or `tests/` file is edited; `skills/memory/` is the ONE
+  sanctioned addition under `skills/` (existing skills, the shared architect/execute kit
+  contract, `.claude-plugin/`, `copilot/`, `codex/`, and the completed kits stay
+  byte-untouched — cross-harness memory parity is a FUTURE kit, mirroring how
+  `harness-parity` followed `codex-harness`); the personal memory system under
+  `~/.claude-personal/` is reference-only and never read at runtime, written, or touched;
+  sanctioned edit targets are ONLY `.gitignore` (the pinned two-line append) plus the six
+  new files (`bin/memory_store.py`, `bin/memory_recall.py`, `tests/test_memory_store.py`,
+  `tests/test_memory_recall.py`, `skills/memory/SKILL.md`, `docs/MEMORY-SKILL.md`) —
+  CLAUDE.md and README.md are NOT executor edit targets (the architect pre-made CLAUDE.md's
+  run-lines, the store invariant, and this fence); no commit, no push.
+  For `effort-dial` specifically: the dial is the GPT-5.6 reasoning-effort ladder ONLY — no
+  `ultra`/`fast`/multi-agent mode work (CLI surfaces unpublished; no flag or multiplier
+  invented), no long-context threshold-tier SCHEMA modeling in either pricing file (the
+  authoritative step-up rates live in each file's labeled `long_context_note`), and no
+  model-variant-selection-as-effort feature; effort level vocabularies are DATA — each
+  harness's `knobs.reasoning_efforts` in its OWN pricing file, derived at run time via the
+  new `knobs` subcommands, never hardcoded in scripts or bundle bodies (Codex lowercase
+  tokens incl. `xhigh`; Copilot Title-Case display forms incl. 'Extra High' — the two
+  vocabularies never mix, `grep -rn "minimal" codex/` stays empty post-T2, and new bundle
+  bodies never enumerate the ladder); the Copilot mechanism is the INTERACTIVE `/model`-picker
+  arrow-key "Reasoning" setting (per-model; rows showing '—' have no dial) — NO headless flag
+  is confirmed, so `bin/copilot_execute.py` is byte-untouched and nothing under `copilot/`
+  may contain `--effort` or `model_reasoning_effort` (Codex keeps its confirmed
+  `-c model_reasoning_effort=<level>` / `codex_execute.py --effort`, and `bin/codex_execute.py`
+  is also byte-untouched); every live CLI fact is a pinned 2026-07-18 capture in the kit's
+  PLAN.md — NEVER invoke the real `copilot`/`codex`/`claude` CLI from any task, test, or
+  verify command to "check"; still-unconfirmed items (headless surface, the four unobserved
+  display renderings, best-effort ids) stay labeled with a single correctable point in the
+  relevant pricing file; `data/pricing.codex.json` gets NO rate-value changes (the `xhigh`
+  correction + GA/ultra/long-context notes only) and the three Copilot GPT-5.6 rows land
+  CONFIRMED (GitHub Models-and-pricing doc + Sol's picker panel), appended at the END of the
+  models object with `cached_date` unchanged; test edits are additive at pinned seams only
+  (`WORKFLOW_AGENT_TIERS` + `EffortAgentContractTests`; the `EXPECTED_PROMPT_STEMS`/
+  `EXPECTED_SKILL_STEMS` unions — `PORTED_*` tuples untouched — +
+  `EffortPromptContractTests`/`EffortSkillContractTests`; one `KnobsCmdTests` class per
+  pricing test file); sanctioned edit targets are ONLY `data/pricing.copilot.json` and
+  `data/pricing.codex.json` (pinned blocks), `bin/copilot_pricing.py` + `bin/codex_pricing.py`
+  (additive `knobs` subcommand each), the four test files above, `copilot/aesop.yaml`,
+  `copilot/.github/copilot-instructions.md`, `codex/AGENTS.md`, and the six pinned
+  enumeration-swap lines in `codex/prompts/{route,escalate,frontier-check}.md` +
+  `codex/skills/{route,escalate,frontier-check}/SKILL.md`, with new files
+  `copilot/.github/agents/effort.agent.md`, `codex/prompts/effort.md`,
+  `codex/skills/effort/SKILL.md`, and `docs/EFFORT-DIAL.md` — `data/pricing.json`, `skills/`,
+  `.claude-plugin/`, README.md, `bin/harness_select.py`, all other pre-existing bundle files,
+  and the completed kits stay byte-untouched (CLAUDE.md and README.md are NOT executor edit
+  targets; the architect pre-made the run-lines and this fence); no commit, no push.
+  For `copilot-skills-parity` specifically: NEVER invoke the real `copilot`/`codex`/`claude`
+  CLI from any task, test, or verify command (command lines WRITTEN into skill bodies are
+  runtime instructions the kit never executes — verify commands are unittest discovery and
+  greps only), and every Copilot CLI skills fact is a pinned 2026-07-18 capture in the kit's
+  PLAN.md — no re-research, no network; every skill lands ATOMICALLY — `copilot/aesop.yaml`
+  `primitives.skills` entry + `copilot/.github/skills/<name>/SKILL.md` + its additive
+  `tests/test_copilot_bundle.py` seam in ONE task (the skills roster test is set equality,
+  the manifest parser is line-oriented so entries match `- lessons-loop`'s exact indentation,
+  and the suite is green at every task boundary); skill frontmatter is `name` + `description`
+  ONLY (a `model:` line in a skill is a defect — the same-named agents keep the pins; skills
+  run on the session's model) and NO frontmatter value contains an unquoted `: ` (breaks
+  Copilot's real YAML loader — sweep-tested on agents, and this kit adds the skills twin);
+  skill bodies are condensed operative twins of the same-named agents (never bare pointers,
+  never verbatim copies), shell to the engines via `{{POLYTROPOS_ROOT}}` (never an
+  absolute path, never `${CLAUDE_PLUGIN_ROOT}`, never another harness's pricing path), derive
+  every vocabulary/number at run time (never enumerate the effort ladder, never a
+  `data/pricing.copilot.json` models key in any skill file), keep the AIC-are-real-money
+  framing, and quote ONLY flags on the PLAN-pinned argparse surfaces; the effort skill
+  teaches the interactive `/model` picker only ("unconfirmed" for headless — nothing under
+  `copilot/` may contain `--effort` or `model_reasoning_effort`) and the execute skill is
+  HONEST about orchestration (it drives `bin/copilot_execute.py` status/run/review plus
+  `--agent` dispatches serially — never a faked parallel-subagent equivalent); the ported
+  capability names stay `usage`/`frontier-check` — never `cost-report` or `fable*` as a
+  Copilot skill name; `bin/harness_select.py` is BYTE-UNTOUCHED (its skills glob already
+  installs `copilot/.github/skills/*` — verified in-tree) as is every other `bin/` engine;
+  test edits are additive at the pinned seams only (the T1 generic skill sweeps + one
+  contract class per skill; `FrontmatterYamlSafetyTests` and every other pre-existing
+  class/method byte-intact); sanctioned edit targets are ONLY `copilot/aesop.yaml`,
+  `copilot/.github/copilot-instructions.md` (append-only; both doctrine sentences stay
+  byte-verbatim), and `tests/test_copilot_bundle.py`, with new files the eight
+  `copilot/.github/skills/{route,usage,journal,frontier-check,escalate,effort,architect,execute}/SKILL.md`
+  dirs and `docs/COPILOT-PARITY.md` — `skills/`, `codex/`, `bin/`, `data/` (all three
+  pricing files), `.claude-plugin/`, README.md, the ten `*.agent.md` files,
+  `copilot/.github/skills/lessons-loop/`, and the completed kits stay byte-untouched
+  (CLAUDE.md and README.md are NOT executor edit targets; the architect pre-made this
+  fence); no extension-SDK slash commands or VS Code `.prompt.md` work, no new agents, no
+  memory/setup skill port, no Claude-side skill changes; no commit, no push.
+  For `copilot-model-prefs` specifically: Copilot CLI ONLY — pins/excludes change WHICH
+  model a tier resolves to, NEVER WHEN a tier is used (no force-frontier switch, no
+  tier-promotion knob, escalation trigger and tier walk-order untouched) and nothing
+  under `codex/`, `skills/` (Claude side), or `.claude-plugin/` changes; the prefs file
+  `prefs/copilot.json` is gitignored USER DATA (root-anchored `/prefs/` — the leading
+  slash is load-bearing) — never committed, never auto-created, no sample file shipped,
+  and no task/test/verify ever creates or reads a real prefs file at the default path
+  (temp `--prefs` fixtures or `--no-prefs`, always; nothing is applied to the real
+  `~/.copilot`); NEVER invoke the real `copilot`/`codex`/`claude` CLI from any task,
+  test, or verify command (command lines WRITTEN into bundle bodies are runtime
+  instructions the kit never executes); all prefs logic (load, per-tier flag-over-file
+  pin merge, exclude union, validation, conflict, `resolve_tier`) lives ONLY in the new
+  `bin/copilot_prefs.py`, reused by both engines via the pinned importlib loader — never
+  duplicated; engine changes are ADDITIVE only — `escalation_ladder`/`run_task` gain
+  default-`None` `prefs` kwargs (result gains only `prefs_notes`, and only when prefs are
+  active), `run` gains only `--pin TIER=MODEL_ID`/`--exclude MODEL_ID`/`--prefs`/
+  `--no-prefs`, `copilot_pricing.py` gains only the `prefs` subcommand, and with no prefs
+  flags and no prefs file every existing flag, signature, output shape, exit code, and
+  demo/dry-run byte-stays (`status`/`review` and `models`/`est`/`runway`/`knobs`
+  untouched); honesty is absolute — a pin-vs-exclude conflict is a hard exit-2 error from
+  any source combination (never a silent winner), a malformed prefs file degrades to a
+  note and a stale entry is skipped with a note (never a crash), an exclusion-emptied
+  tier is skipped and an emptied frontier means the ladder tops out lower (stated, never
+  a fabricated rung), and the initial dispatch errors rather than silently jumping tiers;
+  bundle edits are BODY-only to exactly the four skills + four agents
+  (`route`/`architect`/`escalate`/`frontier-check`) plus one pinned execute-skill
+  sentence — frontmatter byte-intact, no roster change (`copilot/aesop.yaml`,
+  `copilot-instructions.md`, `lessons-loop`, and every other bundle file byte-untouched),
+  new paragraphs id-free (`SkillNoModelIdTests` sweeps skills; agents follow the same
+  discipline) and quoting only the new argparse surfaces; test edits are additive at
+  pinned append seams only in `tests/test_copilot_execute.py`,
+  `tests/test_copilot_pricing.py`, and `tests/test_copilot_bundle.py` (every pre-existing
+  class/method/constant byte-intact; new tests otherwise in
+  `tests/test_copilot_prefs.py`); no hardcoded prices or real model ids anywhere new
+  (tier vocabulary, `PREFS_SCHEMA_VERSION`, the `prefs`/`copilot.json` names,
+  flag-grammar strings, pinned message text, and synthetic `fake-*` fixture ids are the
+  sanctioned literals — doc examples use placeholders and point at `models --json`); zero
+  `Path.home()` and zero `subprocess`/network imports in `bin/copilot_prefs.py`;
+  sanctioned edit targets are ONLY `bin/copilot_execute.py`, `bin/copilot_pricing.py`,
+  the three test files above, the nine bundle files above, and `.gitignore` (the pinned
+  two-line `/prefs/` append), with new files `bin/copilot_prefs.py`,
+  `tests/test_copilot_prefs.py`, and `docs/COPILOT-PINS.md` — CLAUDE.md and README.md are
+  NOT executor edit targets (the architect pre-made the run-line and this fence); no
+  prefs flags on `review`, no prefs-writing CLI, no `COPILOT_MODEL`/settings.json wiring,
+  no prefs-aware `models` row markers, no Codex-/Claude-side prefs parity (future kits);
+  no commit, no push.

@@ -1,0 +1,275 @@
+{
+  "source": "Artificial Analysis",
+  "index_name": "Artificial Analysis Intelligence Index",
+  "index_version": "v4.1",
+  "cached_date": "2026-07-24",
+  "transcribed_from": "screenshots of artificialanalysis.ai captured 2026-07-24; figures are read from bar labels, not an API export \u2014 re-verify against the live site before treating any single value as exact; re-verified 2026-07-25 against higher-resolution captures of both charts",
+  "evaluations": [
+    "GDPval-AA v2",
+    "tau^3-Banking",
+    "Terminal-Bench v2.1",
+    "SciCode",
+    "Humanity's Last Exam",
+    "GPQA Diamond",
+    "CritPt",
+    "AA-Omniscience",
+    "AA-LCR"
+  ],
+  "metric_notes": {
+    "intelligence_index": "Composite across the 9 evaluations above. Higher is better. Whole numbers as published.",
+    "usd_per_task": "Weighted average USD per Intelligence Index task, segmented by token type (answer, reasoning, cache write, cache hit, input). Lower is better. NOT this repo's pricing \u2014 it is a benchmark-workload cost, useful for RELATIVE comparison only.",
+    "value": "Derived, not published: intelligence_index / usd_per_task. A ratio for ranking, never a price."
+  },
+  "caveats": [
+    "Benchmark cost per task reflects the AA workload's token mix, which is not your workload. Use it to rank value, never to forecast a bill \u2014 for dollars, price your own usage through data/pricing*.json.",
+    "The index is a general-capability composite. Coding Index and Agentic Index are separate boards and rank differently; a model strong here is not automatically strong at agentic tool use.",
+    "'Claude Fable 5 (with fallback)' is AA's harness-level entry, not a bare model \u2014 it includes a fallback path, so its cost is not a clean single-model figure.",
+    "Effort/reasoning level is part of the identity of an entry: the same model at a different effort is a different point on both axes.",
+    "Cost bars are stacked by token type (answer, reasoning, cache write, cache hit, input). The reasoning segment is the dominant term for high-effort entries \u2014 which is why effort, not model, is the biggest cost lever."
+  ],
+  "entries": [
+    {
+      "label": "Claude Opus 5 (max)",
+      "model": "claude-opus-5",
+      "effort": "max",
+      "provider": "anthropic",
+      "intelligence_index": 61,
+      "usd_per_task": 2.03,
+      "open_weights": false
+    },
+    {
+      "label": "Claude Opus 5 (xhigh)",
+      "model": "claude-opus-5",
+      "effort": "xhigh",
+      "provider": "anthropic",
+      "intelligence_index": 60,
+      "usd_per_task": 1.56,
+      "open_weights": false
+    },
+    {
+      "label": "Claude Fable 5 (w/ fallback)",
+      "model": "claude-fable-5",
+      "effort": "max",
+      "provider": "anthropic",
+      "intelligence_index": 60,
+      "usd_per_task": 2.75,
+      "open_weights": false
+    },
+    {
+      "label": "GPT-5.6 Sol (max)",
+      "model": "gpt-5.6-sol",
+      "effort": "max",
+      "provider": "openai",
+      "intelligence_index": 59,
+      "usd_per_task": 1.04,
+      "open_weights": false
+    },
+    {
+      "label": "GPT-5.6 Sol (xhigh)",
+      "model": "gpt-5.6-sol",
+      "effort": "xhigh",
+      "provider": "openai",
+      "intelligence_index": 58,
+      "usd_per_task": 0.68,
+      "open_weights": false
+    },
+    {
+      "label": "Claude Opus 5 (medium)",
+      "model": "claude-opus-5",
+      "effort": "medium",
+      "provider": "anthropic",
+      "intelligence_index": 56,
+      "usd_per_task": 0.62,
+      "open_weights": false
+    },
+    {
+      "label": "GPT-5.6 Sol (high)",
+      "model": "gpt-5.6-sol",
+      "effort": "high",
+      "provider": "openai",
+      "intelligence_index": 56,
+      "usd_per_task": 0.45,
+      "open_weights": false
+    },
+    {
+      "label": "Claude Opus 4.8 (max)",
+      "model": "claude-opus-4-8",
+      "effort": "max",
+      "provider": "anthropic",
+      "intelligence_index": 56,
+      "usd_per_task": 1.8,
+      "open_weights": false
+    },
+    {
+      "label": "GPT-5.6 Terra (max)",
+      "model": "gpt-5.6-terra",
+      "effort": "max",
+      "provider": "openai",
+      "intelligence_index": 55,
+      "usd_per_task": 0.82,
+      "open_weights": false
+    },
+    {
+      "label": "GPT-5.5 (xhigh)",
+      "model": "gpt-5.5",
+      "effort": "xhigh",
+      "provider": "openai",
+      "intelligence_index": 55,
+      "usd_per_task": 0.99,
+      "open_weights": false
+    },
+    {
+      "label": "Grok 4.5 (high)",
+      "model": "grok-4.5",
+      "effort": "high",
+      "provider": "spacexai",
+      "intelligence_index": 54,
+      "usd_per_task": 0.31,
+      "open_weights": false
+    },
+    {
+      "label": "GPT-5.6 Sol (medium)",
+      "model": "gpt-5.6-sol",
+      "effort": "medium",
+      "provider": "openai",
+      "intelligence_index": 54,
+      "usd_per_task": 0.31,
+      "open_weights": false
+    },
+    {
+      "label": "Claude Sonnet 5 (max)",
+      "model": "claude-sonnet-5",
+      "effort": "max",
+      "provider": "anthropic",
+      "intelligence_index": 53,
+      "usd_per_task": 1.53,
+      "open_weights": false
+    },
+    {
+      "label": "GPT-5.6 Terra (xhigh)",
+      "model": "gpt-5.6-terra",
+      "effort": "xhigh",
+      "provider": "openai",
+      "intelligence_index": 52,
+      "usd_per_task": 0.48,
+      "open_weights": false
+    },
+    {
+      "label": "GPT-5.6 Luna (max)",
+      "model": "gpt-5.6-luna",
+      "effort": "max",
+      "provider": "openai",
+      "intelligence_index": 51,
+      "usd_per_task": 0.21,
+      "open_weights": false
+    },
+    {
+      "label": "Gemini 3.6 Flash",
+      "model": "gemini-3.6-flash",
+      "effort": "default",
+      "provider": "google",
+      "intelligence_index": 50,
+      "usd_per_task": 0.5,
+      "open_weights": false
+    },
+    {
+      "label": "GPT-5.6 Sol (low)",
+      "model": "gpt-5.6-sol",
+      "effort": "low",
+      "provider": "openai",
+      "intelligence_index": 49,
+      "usd_per_task": 0.2,
+      "open_weights": false
+    },
+    {
+      "label": "GPT-5.6 Luna (xhigh)",
+      "model": "gpt-5.6-luna",
+      "effort": "xhigh",
+      "provider": "openai",
+      "intelligence_index": 49,
+      "usd_per_task": 0.14,
+      "open_weights": false
+    },
+    {
+      "label": "GPT-5.6 Terra (high)",
+      "model": "gpt-5.6-terra",
+      "effort": "high",
+      "provider": "openai",
+      "intelligence_index": 49,
+      "usd_per_task": 0.34,
+      "open_weights": false
+    },
+    {
+      "label": "GPT-5.6 Luna (high)",
+      "model": "gpt-5.6-luna",
+      "effort": "high",
+      "provider": "openai",
+      "intelligence_index": 46,
+      "usd_per_task": 0.09,
+      "open_weights": false
+    },
+    {
+      "label": "GPT-5.6 Terra (medium)",
+      "model": "gpt-5.6-terra",
+      "effort": "medium",
+      "provider": "openai",
+      "intelligence_index": 46,
+      "usd_per_task": 0.18,
+      "open_weights": false
+    },
+    {
+      "label": "GPT-5.6 Terra (low)",
+      "model": "gpt-5.6-terra",
+      "effort": "low",
+      "provider": "openai",
+      "intelligence_index": 40,
+      "usd_per_task": 0.15,
+      "open_weights": false
+    },
+    {
+      "label": "GPT-5.6 Luna (medium)",
+      "model": "gpt-5.6-luna",
+      "effort": "medium",
+      "provider": "openai",
+      "intelligence_index": 38,
+      "usd_per_task": 0.05,
+      "open_weights": false
+    },
+    {
+      "label": "Nemotron 3 Ultra",
+      "model": "nemotron-3-ultra",
+      "effort": "default",
+      "provider": "nvidia",
+      "intelligence_index": 38,
+      "usd_per_task": 0.24,
+      "open_weights": true
+    },
+    {
+      "label": "Gemini 3.5 Flash-Lite",
+      "model": "gemini-3.5-flash-lite",
+      "effort": "default",
+      "provider": "google",
+      "intelligence_index": 36,
+      "usd_per_task": 0.09,
+      "open_weights": false
+    },
+    {
+      "label": "GPT-5.6 Luna (low)",
+      "model": "gpt-5.6-luna",
+      "effort": "low",
+      "provider": "openai",
+      "intelligence_index": 33,
+      "usd_per_task": 0.04,
+      "open_weights": false
+    },
+    {
+      "label": "Claude 4.5 Haiku",
+      "model": "claude-haiku-4-5",
+      "effort": "default",
+      "provider": "anthropic",
+      "intelligence_index": 30,
+      "usd_per_task": 0.24,
+      "open_weights": false
+    }
+  ]
+}

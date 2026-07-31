@@ -1,0 +1,67 @@
+# aesop.yaml — source of truth for the polytropos GitHub Copilot harness bundle.
+#
+# aesop (github:agentmc15/aesop) is the harness-engineering backbone for this side of the
+# monorepo. The sibling .github/ tree is this manifest's emitted output, hand-authored in the
+# formats aesop's copilot emitter produces as of commit 5506617 (one pinned divergence: agents
+# use the .agent.md extension Copilot CLI documents; aesop emits .md — both are accepted by
+# GitHub's config reference; reconciling the emitter is a Phase-2 proposal for the aesop repo).
+# `aesop compile` is NOT run in this repo; tests/test_copilot_bundle.py enforces that this
+# manifest and .github/ stay consistent. Edit the manifest first, then the bundle, then rerun
+# the tests.
+version: 1
+project:
+  name: polytropos-copilot
+  stack:
+    - python3-stdlib
+  commands:
+    test: python3 -m unittest discover -s tests   # run from the repo root, one level up
+  invariants:
+    - "Derive every number from `data/pricing.copilot.json` at run time — it is the single source of truth for Copilot-side pricing; never quote prices, credit values, or model ids from memory."
+    - "The AIC unit is data (billing_unit.usd_per_credit), not prose."
+    - "The Claude Code plugin at the repo root is a separate harness surface: never mix ${CLAUDE_PLUGIN_ROOT} paths into .github/ content, and never point Copilot files at data/pricing.json."
+    - "Bundle files reference {{POLYTROPOS_ROOT}}; bin/harness_select.py resolves it to an absolute path at install time. No absolute paths inside copilot/.github/."
+harnesses:
+  - copilot
+pathway:
+  profile: token-lean
+registries:
+  - builtin
+primitives:
+  instructions:
+    blocks:
+      - scope: project
+        content: |
+          ## polytropos (Copilot harness)
+          Derive every number from `data/pricing.copilot.json` at run time — it is the single source of truth for Copilot-side pricing; never quote prices, credit values, or model ids from memory.
+          Before any expensive run, use the `route` agent to pick the model tier and estimate cost in AIC.
+          Beyond routing, six ported agents complete the optimizer surface: the usage agent (historical Copilot spend from local logs, read-only), the context-weight agent (measures what filled the context window), the bench-routing agent (checks a benchmark-informed routing recommendation against measured outcomes), the journal agent (the daily work journal), the frontier-check agent (is a task worth the frontier tier), and the escalate agent (verify-gated dispatch that climbs the tiers only on failure).
+          The effort agent controls the reasoning-effort dial: Copilot's "Reasoning" setting is adjusted interactively in the /model picker with the left/right arrow keys (a per-model property — rows showing a dash have no dial; no headless flag is confirmed), and the level names are derived at run time from the pricing data's knobs, never from memory.
+          Every optimizer capability is also invocable as a skill — type /route, /usage, /context-weight, /bench-routing, /journal, /frontier-check, /escalate, /effort, /architect, /execute, or /budget in the prompt (or let Copilot auto-load one when the request matches its description); the same-named custom agents remain the persona surface for isolated --agent runs, and /skills reload picks up newly installed skills in-session.
+  agents:
+    - route
+    - architect
+    - implementer
+    - verifier
+    - reviewer
+    - usage
+    - context-weight
+    - bench-routing
+    - journal
+    - frontier-check
+    - escalate
+    - effort
+  skills:
+    - lessons-loop
+    - route
+    - usage
+    - context-weight
+    - bench-routing
+    - journal
+    - frontier-check
+    - effort
+    - escalate
+    - architect
+    - execute
+    - budget
+state:
+  dir: tasks/

@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Installing the Copilot CLI bundle</title>
+  <link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to main content</a>
+  <nav aria-label="Primary"><!-- navigation placeholder --></nav>
+  <main id="main">
+    <h1>Installing the Copilot CLI bundle</h1>
+    <h1 id="installing-the-copilot-cli-bundle">Installing the Copilot CLI bundle</h1>
+<p>This guide covers installing this repository&#x27;s Copilot CLI skills and agents, what gets copied where, and how to find them once installed.</p>
+<h2 id="install-preview-and-install-commands">Install preview and install commands</h2>
+<p>Preview what an install would do without writing anything:</p>
+<pre><code class="language-bash">python3 bin/harness_select.py install --harness copilot --dry-run</code></pre>
+<p>Run the real install:</p>
+<pre><code class="language-bash">python3 bin/harness_select.py install --harness copilot</code></pre>
+<h3 id="optional-copilot-home-dir">Optional <code>--copilot-home DIR</code></h3>
+<p>By default the installer targets the Copilot CLI&#x27;s own home directory. Pass <code>--copilot-home DIR</code> to target a different directory instead — useful for trying the bundle in an isolated location before installing it into your real Copilot home.</p>
+<h2 id="what-is-copied">What is copied</h2>
+<p>The install copies two kinds of files:</p>
+<ul><li>Every <code>*.agent.md</code> file under <code>copilot/.github/agents/</code> is copied to the Copilot home&#x27;s <code>agents/</code> directory, keeping the same filename.</li><li>Every file under <code>copilot/.github/skills/</code> is copied to the Copilot home&#x27;s <code>skills/</code> directory, keeping the same relative path.</li></ul>
+<p>In both cases, every occurrence of the <code>{{POLYTROPOS_ROOT}}</code> placeholder in the source text is replaced with this repository&#x27;s own absolute path as the file is copied — Copilot CLI has no <code>${CLAUDE_PLUGIN_ROOT}</code>-style variable to resolve a bundle&#x27;s own location at run time, so the placeholder has to become a literal path at install time instead.</p>
+<h2 id="in-session-discovery">In-session discovery</h2>
+<p>Once installed, use these commands inside a Copilot CLI session:</p>
+<ul><li><code>/skills reload</code> — picks up newly installed or changed skills without restarting the session.</li><li><code>/skills</code> — opens the skills management view, where installed skills can be toggled on or off.</li><li><code>/skills list</code> — lists every installed skill.</li><li><code>/skills info NAME</code> — shows one skill&#x27;s frontmatter and source path (replace <code>NAME</code> with a skill&#x27;s name).</li><li><code>/agent</code> — opens the agent picker to switch the session into one of the installed custom agents.</li></ul>
+<h2 id="requesting-a-skill-or-agent-explicitly">Requesting a skill or agent explicitly</h2>
+<ul><li><strong>Explicit skill request:</strong> type something like &quot;Use the <code>/route</code> skill to pick a model for this task&quot; in a prompt. A skill can also auto-load on its own when a request&#x27;s wording matches its <code>description:</code> frontmatter — but neither path makes <code>/route</code> a native, user-defined slash command; see <a href="safety.html">`SAFETY.md`</a> for the exact honesty around this.</li><li><strong>Agent one-shot dispatch:</strong> run <code>copilot --agent AGENT_NAME -p &quot;TASK&quot;</code>, or pick the agent from the <code>/agent</code> picker. <code>AGENT_NAME</code> and <code>TASK</code> are placeholders — substitute the installed agent&#x27;s name and your own prompt text.</li></ul>
+<h2 id="personal-agent-precedence-and-stale-copies">Personal-agent precedence and stale copies</h2>
+<p>Copilot CLI reads custom agents from both a project&#x27;s own <code>.github/agents/</code> and the user-level Copilot home&#x27;s <code>agents/</code> directory, and on a name collision the user-level (home-dir) copy wins. If you already have a personal agent with the same name as one in this bundle, installing this bundle will shadow it everywhere that Copilot home is active. Conversely, if you edit a skill or agent in this repository, the copy already installed in your Copilot home is now stale until you re-run the install.</p>
+<h2 id="troubleshooting-literal-placeholder-text">Troubleshooting: literal placeholder text</h2>
+<p>If a skill or agent shows the literal text <code>{{POLYTROPOS_ROOT}}</code> instead of a real path, the installed copy predates a repository change, or it was installed by hand instead of through <code>bin/harness_select.py</code>. Re-run the real install command above to refresh it; the installer always resolves the placeholder as it copies each file.</p>
+    <p class="source-link"><a href="INSTALL.md">View Markdown source</a></p>
+  </main>
+</body>
+</html>

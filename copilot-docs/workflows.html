@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Practical workflows</title>
+  <link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to main content</a>
+  <nav aria-label="Primary"><!-- navigation placeholder --></nav>
+  <main id="main">
+    <h1>Practical workflows</h1>
+    <h1 id="practical-workflows">Practical workflows</h1>
+<p>This guide walks through the day-to-day procedures for using this repository&#x27;s Copilot CLI bundle: routing a task to the right model, running a planned kit end to end, verifying and escalating work, reviewing cost, running the daily journal, tuning reasoning effort, and feeding the lessons loop. Every command below is copy/paste-safe with <code>&lt;...&gt;</code> placeholders — no live model id, price, or date is typed anywhere on this page; see <a href="models.html">`MODELS.md`</a> and <a href="costs.html">`COSTS.md`</a> for those generated facts.</p>
+<p><strong>Skill or agent?</strong> A skill layers instructions onto whatever session you already have open; an agent switches you into an isolated, separate context that may carry its own configured model. Reach for a skill to keep working in the current session, and for an agent when you want a cleanly separate run — or let the driver dispatch one for you, as <code>execute</code> does for <code>implementer</code>, <code>reviewer</code>, and <code>verifier</code>.</p>
+<p><strong>How a skill is actually requested.</strong> Typing <code>/name</code> inside a prompt (for example <code>/route please size this task</code>) explicitly requests a skill, and skills can also auto-load when their own <code>description:</code> matches what you&#x27;re doing. This is not a custom, user-defined Copilot slash-command registry — it is Copilot&#x27;s own skill-loading mechanism acting on a bundle-supplied <code>description:</code>, not a command this repository invented.</p>
+<p><strong>Agents and models.</strong> An agent&#x27;s frontmatter can pin a literal model id, so its behavior is more predictable across runs than a skill layered onto an arbitrary session — though a kit task&#x27;s own <code>model</code> field, when the <code>execute</code> driver dispatches that agent, overrides whatever the agent&#x27;s frontmatter otherwise pins.</p>
+<p><strong>Check active preferences first.</strong> Before trusting a tier name to mean one particular model, or estimating what something will cost, check active preferences, which is free and read-only:</p>
+<pre><code class="language-bash">python3 bin/copilot_pricing.py prefs</code></pre>
+<p>A pin or exclude can change which model a tier resolves to, or remove a model from eligibility entirely.</p>
+<p><strong>Free versus AIC-spending.</strong> Anything that only dry-runs, checks status, reads preferences, estimates cost, reads knob data, or reads a usage log is model-free and safe to run at any time. Anything that actually dispatches a skill or agent against a live Copilot CLI session — a real <code>/route</code>, <code>/architect</code>, or <code>/execute</code> run, or <code>copilot --agent &lt;NAME&gt; -p &quot;&lt;TASK&gt;&quot;</code> — spends real AI Credits (AIC). Every workflow below labels its AIC-spending steps explicitly and pairs each one with a free predecessor wherever one exists.</p>
+<h2 id="route-a-task">Route a task</h2>
+<p>Ground a model choice in what has actually been learned and what is currently allowed, rather than a guess. First, read whatever the lessons loop has recorded for this project (see <a href="#lessons-loop">Lessons loop</a> below) and check active preferences with the free command shown above — a pin or exclude can mean the tier you&#x27;d otherwise reach for resolves to a different model, or isn&#x27;t eligible at all.</p>
+<p>Size the task to a runtime profile instead of guessing a token count by hand, and estimate one or two plausible tiers before committing — both free and read-only:</p>
+<pre><code class="language-bash">python3 bin/copilot_pricing.py models --profile &lt;PROFILE&gt;
+python3 bin/copilot_pricing.py est &lt;PROFILE&gt; &lt;MODEL_ID&gt;</code></pre>
+<p>Replace <code>&lt;PROFILE&gt;</code> with one of the profile keys from <code>MODELS.md</code>&#x27;s task-profiles table and <code>&lt;MODEL_ID&gt;</code> with one of the model ids from its roster table. Once a candidate looks right, this is where dispatching actually spends AIC: either request the routing skill explicitly in a prompt (<code>/route &lt;describe the task&gt;</code>) or switch into the <code>route</code> agent for an isolated recommendation.</p>
+<p>Keep the two roles separate. A routing recommendation (<code>route</code>, or <code>frontier-check</code> for the frontier-worth question specifically) is a <em>prospective</em> opinion about upcoming work. A usage report (see <a href="#usage-and-cost-review">Usage and cost review</a> below) is a <em>historical</em> account of what has already been spent. Never treat one as a stand-in for the other.</p>
+<h2 id="architect-execute">Architect → execute</h2>
+<p>This is the two-phase workflow for planning, then running, a larger piece of work as a kit.</p>
+<p>Requesting the planning skill or agent (<code>/architect &lt;describe the goal&gt;</code>, or the isolated <code>architect</code> agent — <strong>this dispatch spends AIC</strong>) produces a kit under <code>tasks/kits/&lt;slug&gt;/</code>: a plan and a set of self-contained task briefs. It creates only <code>PLAN.md</code> and <code>TASKS.md</code>; it never implements anything itself, and it never touches the driver&#x27;s own <code>NOTES.md</code>.</p>
+<p>Before dispatching anything against that kit, check its status, which is free and read-only:</p>
+<pre><code class="language-bash">python3 bin/copilot_execute.py status --kit &lt;slug&gt;</code></pre>
+<p>Preview a run without spending anything:</p>
+<pre><code class="language-bash">python3 bin/copilot_execute.py run --kit &lt;slug&gt; --dry-run</code></pre>
+<p>Run for real only once the dry-run looks right — this step spends AIC:</p>
+<pre><code class="language-bash">python3 bin/copilot_execute.py run --kit &lt;slug&gt;</code></pre>
+<p>At a phase boundary, a review pass (the <code>reviewer</code> agent, driver-dispatched or invoked by hand — <strong>AIC-spending</strong>) reads the plan and the completed phase&#x27;s actual diff for drift, scope creep, or contract breakage before the next phase starts.</p>
+<p>A task&#x27;s own <code>model</code> field in <code>TASKS.md</code> is the dispatch pin: when the driver dispatches an implementer for that task, that field overrides whatever the implementer agent&#x27;s frontmatter otherwise pins, on a per-task basis. Execution itself is serial — the driver runs one task at a time against <code>bin/copilot_execute.py</code>, with no parallel-subagent fan-out here. A task marked <code>independent:</code> is safe to run in any order relative to its siblings; it does not mean it runs concurrently with them. Escalation notes and lesson candidates recorded during a kit run are written by the execute driver into <code>NOTES.md</code> — never by an individual implementer task.</p>
+<h2 id="verify-escalate">Verify → escalate</h2>
+<p>This is the pattern for one task with a machine-checkable outcome, trying the cheapest plausible tier first.</p>
+<p>Before trusting any claim of success, run the task&#x27;s own verify command yourself, exactly as written — this predecessor step is usually free, since verify commands are typically tests or checks, not model dispatches:</p>
+<pre><code class="language-bash">&lt;the task&#x27;s own verify command&gt;</code></pre>
+<p>Follow that with independent verification rather than trusting a self-report: a fresh-context recheck (the <code>verifier</code> agent — <strong>AIC-spending</strong>) rechecks the actual files against every acceptance bullet, never simply trusting the implementer&#x27;s own claim.</p>
+<p>On a failure, retry once on the same tier with the concrete failing evidence attached, not a vague restatement, before considering any change of model. Climb to a stronger tier only after that retry also fails, one tier at a time, frontier last — the <code>escalate</code> skill or agent (<strong>AIC-spending when dispatched</strong>) encodes exactly this ladder: cheapest sufficient tier first, escalating only on repeated, evidenced failure, never jumping straight to the frontier tier.</p>
+<p>If even the top of the ladder fails the machine check, stop and report that plainly. Do not force a pass, and do not silently keep retrying past what the evidence supports.</p>
+<h2 id="usage-and-cost-review">Usage and cost review</h2>
+<p>Two different questions, answered by two different commands, never blended together.</p>
+<p>Before work, get a prospective estimate — free and read-only:</p>
+<pre><code class="language-bash">python3 bin/copilot_pricing.py est &lt;PROFILE&gt; &lt;MODEL_ID&gt;</code></pre>
+<p>This forecasts what one task of roughly that size would cost on that model; it is not a record of anything that has actually happened.</p>
+<p>After work, get a historical usage report — also free and read-only, and no real CLI dispatch is needed to gather it, since it reads locally logged session history that already exists:</p>
+<pre><code class="language-bash">python3 bin/copilot_usage.py --days &lt;N&gt;</code></pre>
+<p>Interpret the output carefully. Multi-model sessions are attributed by the report to that session&#x27;s <em>last</em> model at the full-token-split level, which is an approximation rather than an exact per-model accounting; the report&#x27;s separate output-tokens-only, per-turn view is the exact cross-model slice, at the cost of leaving input tokens out of that view. Copilot&#x27;s own reported unit is AIU (AI Usage units), shown alongside this repository&#x27;s own AIC estimate as a cross-check — the two are never treated as equal or convertible. Any subscription-billed or API-equivalent figure elsewhere in this repository (for example a relative-burn proxy for a usage-limited harness) is explicitly labeled as a proxy and never merged into a billed total. Neither command above requires a live Copilot, Codex, or Claude CLI dispatch to gather its figures — both work entirely from data already on disk.</p>
+<h2 id="daily-journal">Daily journal</h2>
+<p>Run the deterministic collector first — free, read-only, and reproducible:</p>
+<pre><code class="language-bash">python3 bin/journal_collect.py --print</code></pre>
+<p>Preview the summarizer without spending anything:</p>
+<pre><code class="language-bash">python3 bin/journal_summarize.py --dry-run</code></pre>
+<p>This prints the prompts and the model it would route to; it spawns nothing. Once that preview looks right, write the actual summaries in-session by requesting the <code>journal</code> skill or agent to produce the narrative, technical, and next-day-plan summaries directly in the current conversation, rather than launching a separate headless process — <strong>this step spends AIC</strong>.</p>
+<p>The collector reads session logs strictly read-only and writes its digest with metadata only, never transcript text, into a gitignored <code>journal/</code> tree, so personal data never lands in git.</p>
+<p>An optional next-day plan is advisory, not dispatch: a runbook or plan card is a printed suggestion for what to pick up tomorrow, and nothing in this repository auto-schedules or auto-dispatches it. Reading it is free:</p>
+<pre><code class="language-bash">python3 bin/journal_plan.py check</code></pre>
+<h2 id="effort-and-frontier-decision">Effort and frontier decision</h2>
+<p>Read the knob data before assuming a model supports adjustable reasoning effort — free and read-only:</p>
+<pre><code class="language-bash">python3 bin/copilot_pricing.py knobs</code></pre>
+<p>Some models expose no reasoning-effort control at all; that is a data-driven fact from the pricing snapshot, not a guess. The only confirmed mechanism today is the interactive <code>/model</code> picker: change reasoning effort by opening the picker and using its arrow-key Reasoning setting on the currently selected model row. No headless flag or settings key for this is confirmed — don&#x27;t script around one that hasn&#x27;t been verified to exist.</p>
+<p>Increase reasoning effort by one step only on real evidence, not by default — for example a task that genuinely needed deeper reasoning and visibly ran out of it at the current setting. Distinguish a thinking-time gap from a capability gap: more reasoning effort on the same model buys it more time to think within its own capability ceiling, it does not turn a weaker model into a stronger one. If the failure looks like the model fundamentally lacks the capability rather than having rushed, that is a tier question (see <a href="#verify-escalate">Verify → escalate</a> above), not an effort-knob question.</p>
+<p>Prefer a strong-tier model before the frontier tier, unless the evidence says otherwise. The frontier tier is reserved for work that a strong-tier model has already been given a fair shot at, with adequate reasoning effort where applicable, and has demonstrably failed — not a default starting point.</p>
+<h2 id="lessons-loop">Lessons loop</h2>
+<p>Load recorded lessons at the start of a session or task, so past corrections and past escalations inform the very first routing choice instead of only the next one.</p>
+<p>Record a lesson immediately after a human correction, and immediately after any model escalation. A correction from the person you&#x27;re working with, or a tier climb during <a href="#verify-escalate">Verify → escalate</a> above, is exactly the moment worth capturing, before the detail is lost to the next task.</p>
+<p>Keep each recorded lesson concise and project-scoped: a short, durable rule tied to this repository&#x27;s own conventions and past mistakes, not a sprawling narrative and not general advice that belongs in a model&#x27;s own training rather than this project&#x27;s memory.</p>
+<p>Feed future routing without hardcoding a model id or a ranking. A lesson should read like &quot;verify X before trusting Y&quot; or &quot;this kind of task needed escalation last time,&quot; not &quot;always use a specific model id&quot; — the roster and its tiers can and do change, and a lesson that hardcodes today&#x27;s model id or its relative ranking goes stale exactly when the pricing data is updated.</p>
+    <p class="source-link"><a href="WORKFLOWS.md">View Markdown source</a></p>
+  </main>
+</body>
+</html>

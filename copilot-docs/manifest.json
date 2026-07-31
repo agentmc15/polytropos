@@ -1,0 +1,91 @@
+{
+  "schema": "copilot-docs/v1",
+  "source_sets": {
+    "pricing": [
+      "data/pricing.copilot.json",
+      "bin/copilot_pricing.py",
+      "bin/copilot_prefs.py"
+    ],
+    "installer": [
+      "bin/harness_select.py"
+    ],
+    "skills": [
+      "copilot/.github/skills/*/SKILL.md"
+    ],
+    "agents": [
+      "copilot/.github/agents/*.agent.md"
+    ],
+    "bundle": [
+      "copilot/.github/copilot-instructions.md",
+      "copilot/aesop.yaml"
+    ],
+    "existing-guides": [
+      "README.md",
+      "docs/COPILOT-HARNESS.md",
+      "docs/COPILOT-WORKFLOW.md",
+      "docs/COPILOT-PARITY.md",
+      "docs/COPILOT-COSTVIZ.md",
+      "docs/EFFORT-DIAL.md",
+      "docs/DAILY-JOURNAL.md",
+      "docs/how-it-works.html"
+    ]
+  },
+  "documents": [
+    {
+      "markdown": "README.md",
+      "html": "index.html",
+      "title": "GitHub Copilot CLI Documentation Center",
+      "authoring": { "mode": "estimated", "tier": "mid", "input_profile": "S" },
+      "sources": ["pricing", "installer", "skills", "agents", "bundle", "existing-guides"]
+    },
+    {
+      "markdown": "INSTALL.md",
+      "html": "install.html",
+      "title": "Installing the Copilot CLI bundle",
+      "authoring": { "mode": "estimated", "tier": "mid", "input_profile": "S" },
+      "sources": ["installer", "skills", "agents", "bundle"]
+    },
+    {
+      "markdown": "SAFETY.md",
+      "html": "safety.html",
+      "title": "Safety and cost boundaries",
+      "authoring": { "mode": "estimated", "tier": "mid", "input_profile": "S" },
+      "sources": ["pricing", "installer"]
+    },
+    {
+      "markdown": "SKILLS.md",
+      "html": "skills.html",
+      "title": "Skills reference",
+      "authoring": { "mode": "estimated", "tier": "strong", "input_profile": "M" },
+      "sources": ["skills", "bundle", "installer", "pricing"]
+    },
+    {
+      "markdown": "AGENTS.md",
+      "html": "agents.html",
+      "title": "Agents reference",
+      "authoring": { "mode": "estimated", "tier": "strong", "input_profile": "M" },
+      "sources": ["agents", "bundle", "installer", "pricing"]
+    },
+    {
+      "markdown": "MODELS.md",
+      "html": "models.html",
+      "title": "Models and preferences",
+      "authoring": { "mode": "estimated", "tier": "strong", "input_profile": "M" },
+      "sources": ["pricing", "agents", "bundle"]
+    },
+    {
+      "markdown": "COSTS.md",
+      "html": "costs.html",
+      "title": "Costs and AIC accounting",
+      "authoring": { "mode": "estimated", "tier": "strong", "input_profile": "M" },
+      "sources": ["pricing", "existing-guides"]
+    },
+    {
+      "markdown": "WORKFLOWS.md",
+      "html": "workflows.html",
+      "title": "Practical workflows",
+      "authoring": { "mode": "estimated", "tier": "mid", "input_profile": "M" },
+      "sources": ["skills", "agents", "pricing", "bundle", "existing-guides"]
+    }
+  ]
+}
