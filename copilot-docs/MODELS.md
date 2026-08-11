@@ -16,16 +16,22 @@ each symbolic tier (`cheap`, `mid`, `strong`, `frontier`) currently resolves to 
 <!-- BEGIN GENERATED: model-preferences -->
 Snapshot: `data/pricing.copilot.json` (cached_date 2026-08-11) — pricing sha256 `878154cfb099d2c948a0ae9acf98b216e79e90f13668c037086ab9dc2db549d8`, roster sha256 `fc3431a0951d3ef4cddc6ed7950358bc9602cea1b23393b7f10281bed22054ed`.
 
-- Prefs source: `(none — defaults)`
+- Prefs source: `prefs/copilot.json`
 
-- No pins active.
+| Tier | Pinned model |
+|---|---|
+| frontier | `gpt-5.6-sol` |
 
-- No excludes active.
+| Excluded model |
+|---|
+| `claude-fable-5` |
 
 | Tier | Resolves to | Via |
 |---|---|---|
 | mid | `claude-sonnet-5` | roster-default |
 | strong | `claude-opus-4.8` | roster-default |
+
+> pin frontier=gpt-5.6-sol is a cross-tier override (model's own tier: strong)
 <!-- END GENERATED: model-preferences -->
 
 ## How tier resolution works
@@ -57,7 +63,7 @@ Snapshot: `data/pricing.copilot.json` (cached_date 2026-08-11) — pricing sha25
 
 | Model | Display | Vendor | Tier | Input $/MTok | Cached input $/MTok | Output $/MTok | Notes | Preference |
 |---|---|---|---|---|---|---|---|---|
-| `claude-fable-5` | Claude Fable 5 | anthropic | frontier | 10.0 | 1.0 | 50.0 | The standout model on this roster — the best available, and not close. Sole frontier tier. Reserve it for the hardest work: long-horizon agentic runs, large migrations, and problems a strong-tier model already failed on. Worth its AIC precisely when a strong-tier model would fail. | eligible |
+| `claude-fable-5` | Claude Fable 5 | anthropic | frontier | 10.0 | 1.0 | 50.0 | The standout model on this roster — the best available, and not close. Sole frontier tier. Reserve it for the hardest work: long-horizon agentic runs, large migrations, and problems a strong-tier model already failed on. Worth its AIC precisely when a strong-tier model would fail. | excluded |
 | `claude-opus-4.8` | Claude Opus 4.8 | anthropic | strong | 5.0 | 0.5 | 25.0 | Strongest non-Fable Anthropic model; the default strong-tier pick for multi-file features, hard debugging, architecture, and review. | eligible |
 | `claude-opus-4.7` | Claude Opus 4.7 | anthropic | strong | 5.0 | 0.5 | 25.0 | Same published rate as Opus 4.8; kept selectable because /model lists it. Prefer 4.8 for new work. | eligible |
 | `claude-opus-4.6` | Claude Opus 4.6 | anthropic | strong | 5.0 | 0.5 | 25.0 | Same published rate as Opus 4.8; kept selectable because /model lists it. Prefer 4.8 for new work. | eligible |
