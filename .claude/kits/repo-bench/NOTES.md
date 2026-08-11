@@ -513,6 +513,22 @@ T19 carries `review=none`: no independent verifier ran, only orchestrator probes
 both branches. Recorded as it happened rather than as `clean` — the same correction made to
 T17R's line earlier, and the distinction that separates a checked claim from an asserted one.
 
+## T20 — the false-negative bound, and the interval discipline
+
+The pyright run's 9-of-14 out-of-scope flags now get a MEASURED bound instead of
+speculation: a second, conditional grade with the full candidate patch (test surface still
+restored from base), rendered as `solved lies in [lower, upper]` — lower routing-grade,
+upper explicitly labelled forgeable-by-construction. The diagnostic lives at
+`oracles["full_patch"]`; nothing routing-grade reads it, proven by mutation twice (a
+diagnostic pass cannot increment solved_n; capability order reading the upper bound breaks
+two tests). The verifier measured the cost claim rather than trusting it: 2 test-cmd runs
+per cell pre-T20, 2 with --no-full-patch-check, 3 with the diagnostic on.
+
+Two shapes worth reusing: the implementer refused the brief's own `None`-sentinel spec,
+citing the kit's recorded trap history — briefs are not exempt from the lessons ledger.
+And quoting only the interval's upper bound is quoting a forgeable number; the skill now
+says so.
+
 ## Ledger
 
 Read the T2 outcome with this context: its implementer dispatch STALLED on a harness
@@ -600,4 +616,7 @@ agent: T18 id=aee41aa50575282f5 role=verifier model=sonnet findings=0 confirmed=
 outcome: T18 model=sonnet attempts=1 result=pass review=clean run=2026-07-31-63c6
 agent: T19 id=a6b52d95693e6af6f role=implementer model=sonnet
 outcome: T19 model=sonnet attempts=1 result=pass review=none run=2026-07-31-63c6
+agent: T20 id=a95f08266b7033eee role=implementer model=opus
+agent: T20 id=ac2ef5dd91eb94dfb role=verifier model=sonnet findings=0 confirmed=0 result=accepted
+outcome: T20 model=opus attempts=1 result=pass review=clean run=2026-07-31-63c6
 session: abf847f3-aa57-4b8d-a3b9-394a063e8762

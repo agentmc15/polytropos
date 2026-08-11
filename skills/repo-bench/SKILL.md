@@ -212,6 +212,57 @@ the candidate added to `.gitignore` first, a pure rename) can be missing from it
 excludes such a change either way — the list is evidence, not the fence. Never read a short
 out-of-scope list as proof that a candidate stayed in scope.
 
+### The full-patch diagnostic — how big is that false negative?
+
+The first completed live run made the cost measurable for the first time: **9 of 14 cells** read
+`not solved` *with* work reverted from outside the reference patch's scope, including plausible,
+genuinely-fixing edits to a different source file. So the absolute `solved` rates understate
+every candidate — and nothing in the output said by how much.
+
+The **full-patch diagnostic** bounds it. On exactly the false-negative suspects — the tests
+oracle was available, the in-scope grade read `not solved`, *and* the candidate made recorded
+out-of-scope changes — the engine grades a **second** substrate: the same base state, the
+candidate's **entire** patch (its test-file edits are still restored from base — that law does
+not bend), the same reference test blobs. It runs `--test-cmd` once more per such cell. **No
+model is dispatched**, so it spends no `--max-usd` dollars; it costs toolchain time.
+
+**It is forgeable by construction, and that is not a flaw to be fixed — it is the price of the
+question.** The diagnostic substrate contains whatever the candidate wrote outside scope,
+including the file `--test-cmd` actually executes. A pass there can mean "a correct fix that
+lived in another file" *or* "the harness was rewritten," and this substrate cannot tell them
+apart. So it feeds **nothing**: not `solved`, not the capability order, not the evidence floor,
+not the tier map, not the daily-driver pick, not `apply`.
+
+**Read it as a bound, never as a score.** The verdict prints, per candidate:
+
+> `false-negative bound: N of the M not-solved cells pass with the full patch applied — solved
+> lies in [lower, upper] of objective_n; the upper bound is DIAGNOSTIC (forgeable), the lower
+> bound is routing-grade`
+
+The **interval is the honest answer**. Quoting the upper bound alone is quoting a forgeable
+number; quoting the lower bound alone is quoting a number you now know is an undercount. Say
+both. The measurement table's `full-patch DIAGNOSTIC` column shows `-` (not run), `still fails`,
+`PASSES — possible false negative`, or `n/a`, and every passing diagnostic lists the
+out-of-scope paths that were applied **verbatim** — so if the candidate rewrote `run_tests.py`,
+you will see `run_tests.py` sitting right there. The tool deliberately does **not** classify
+those paths as "harness-adjacent" or "innocent"; naming a class of dangerous filenames is
+exactly the enumeration mistake this whole grading design exists to avoid. Look at the list
+yourself and say what you see.
+
+Two readings that would be wrong:
+
+- **A degenerate interval is not proof of no false negatives.** When the diagnostic did not run
+  — `--no-full-patch-check`, an envelope written before the feature existed, or no suspect cells
+  — `upper == lower`, and the card says how many cells actually got a reading. Nobody looked is
+  not the same as nothing there.
+- **A passing diagnostic is not a `solved`.** It never becomes one, in any column, and a run
+  whose every diagnostic passed still ranks, tiers, floors and picks exactly as it would with
+  the feature switched off.
+
+`--no-full-patch-check` (on `run`) disables it entirely and restores the pre-feature cost
+profile. It is off-by-default-on — the diagnostic is the honest default, because an unbounded
+false-negative rate is a worse number than a bounded one.
+
 ## Targets that must build or install first — `--setup-cmd` and `--setup-key`
 
 Sandboxes are history-free tree extractions, so they contain the repo's source and nothing
@@ -402,8 +453,10 @@ a user "nothing is written outside the run":
   `--store-dir` (where the run lands; defaults to a `benchruns/` store), `--live` and
   `--max-usd` (BOTH required to spend anything), `--claude-bin` (the dispatch binary — point it
   at a stub in any test context), `--keep-work` (keep the per-cell sandboxes instead of
-  deleting them after grading, useful for inspecting a run by hand). Without `--live --max-usd`
-  it prints the plan and refuses with a non-zero exit.
+  deleting them after grading, useful for inspecting a run by hand), `--no-full-patch-check`
+  (switch off the full-patch diagnostic described above — it is on by default, dispatches no
+  model, and costs one extra `--test-cmd` run per false-negative-suspect cell). Without
+  `--live --max-usd` it prints the plan and refuses with a non-zero exit.
 - **`verdict`** — `--run` (required), `--store-dir`, `--goal tiers|daily-driver|both` (default
   `both`), `--min-tasks` (raise the evidence floor for this render only), `--benchmarks`
   (override the published-index file for the D10 published leg), `--kits-dir` (override the
@@ -448,6 +501,12 @@ a user "nothing is written outside the run":
    rather than folded silently into a clean-looking number — and call out any `not solved`
    cell that carries reverted out-of-scope paths, which may be a false negative rather than a
    failure (see the tests-oracle section above).
+   **Always relay the false-negative bound as an interval** — `solved lies in [lower, upper]` —
+   with the lower bound labelled routing-grade and the upper bound labelled diagnostic and
+   forgeable. Quoting either end alone misrepresents the run: the lower end alone is a number
+   you know understates the candidate, and the upper end alone is a number a rewritten test
+   harness could have produced. If a diagnostic passed, name the applied out-of-scope paths it
+   listed and let the reader judge them; do not summarise them as "harmless" or "suspicious".
 4. **Test-path detection is a naive substring match**, not a glob or path-segment match — a
    file whose path merely *contains* one of the test markers (for example something like
    `latest/foo.py` or `contest_data.py`) can be incidentally treated as a test file, which

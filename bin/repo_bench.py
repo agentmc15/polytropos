@@ -3286,6 +3286,76 @@ SUBSTRATE_APPLY_FAILED_NOTE = (
     "oracle is unavailable for this cell rather than reporting a failure it did not measure"
 )
 
+#: T20 -- THE FULL-PATCH DIAGNOSTIC, and the single sentence that keeps it harmless.
+#:
+#: The whitelist above buys its forgery-proofness with a FALSE NEGATIVE: a candidate that
+#: genuinely fixes the bug in a file the reference patch never touched has that work left out
+#: of the substrate and reads `not solved`. The first COMPLETED live run measured the size of
+#: that cost for the first time -- 9 of 14 cells carried `not solved` WITH work reverted from
+#: outside the reference patch's scope -- and nothing in the output bounded how many of those
+#: were real failures. Absolute rates therefore understate every candidate by an unknown
+#: amount, which is a different failure from being wrong: it is being unquantified.
+#:
+#: This diagnostic quantifies it, by grading a SECOND substrate that DELIBERATELY BREAKS the
+#: in-scope rule: the task's base state + the candidate's ENTIRE captured patch + the reference
+#: test blobs (test-pattern paths are still restored from base -- T7R's law is not relaxed
+#: here, only the reference-scope whitelist is). Breaking the rule is what makes the number
+#: useful and is EXACTLY what makes it forgeable: the candidate's own `run_tests.py`,
+#: `conftest.py`, `Makefile` or planted `sitecustomize.py` IS applied to this substrate, so a
+#: pass here means either "a correct fix that lived in another file" or "the harness was
+#: rewritten", and this substrate cannot tell those apart. That is not a defect to be fixed by
+#: a smarter check -- it is the price of the question, and the reason the answer is a BOUND.
+#:
+#: SO IT FEEDS NOTHING. Not `solved`, not the capability order, not the D7 evidence floor, not
+#: the tier map, not the daily-driver pick, not `apply`. `solved` remains oracle-(a)-in-scope
+#: only, forever (R6). The rendering rule is bound-not-score: `solved` lies in
+#: `[lower, upper]`, the LOWER bound routing-grade and the UPPER bound diagnostic; quoting the
+#: upper bound alone is quoting a forgeable number.
+#:
+#: AND IT DOES NOT CLASSIFY PATHS. The out-of-scope paths that were applied are listed
+#: VERBATIM, never sorted into "harness-adjacent" and "innocent" -- deciding which filenames
+#: are dangerous is the enumeration mistake that produced the sixth ring of this leak family
+#: (NOTES). The label carries the trust level; the reader sees `run_tests.py` in the list if it
+#: is there.
+FULL_PATCH_DIAGNOSTIC_LABEL = (
+    "full-patch DIAGNOSTIC — includes out-of-scope changes the candidate made, including "
+    "files the test command may execute; forgeable by construction; NEVER routing-grade"
+)
+
+#: The four reasons a cell records the diagnostic as NOT RUN. Each is a fact about the cell,
+#: never a result: a not-run diagnostic bounds nothing, and the renderer must not let an
+#: absent upper bound read as "no false negatives here".
+FULL_PATCH_NOT_RUN_DISABLED = "not run: disabled by --no-full-patch-check"
+FULL_PATCH_NOT_RUN_TESTS_UNAVAILABLE = (
+    "not run: the tests oracle was unavailable for this cell — there is no in-scope grade to "
+    "bound"
+)
+FULL_PATCH_NOT_RUN_SOLVED = (
+    "not run: the in-scope grade already passed — a `solved` cell has no false negative to "
+    "bound"
+)
+FULL_PATCH_NOT_RUN_NO_OUT_OF_SCOPE = (
+    "not run: the candidate made no recorded out-of-scope changes — the full patch and the "
+    "in-scope slice are the same tree, so the diagnostic could only repeat the in-scope grade"
+)
+
+#: The diagnostic's own apply failure. Distinct wording from `SUBSTRATE_APPLY_FAILED_NOTE`
+#: because it means something weaker: the ROUTING-GRADE grade is unaffected (it applied its own
+#: smaller slice successfully), only the bound is unavailable for this cell.
+FULL_PATCH_APPLY_FAILED_NOTE = (
+    "the candidate's full patch did not apply to the reconstructed base state — the DIAGNOSTIC "
+    "is unavailable for this cell (the in-scope grade beside it is unaffected)"
+)
+
+#: What a cell's note says when the diagnostic PASSES. Deliberately shaped as a bound and a
+#: suspicion rather than a correction: it never says the candidate was right.
+FULL_PATCH_PASSED_NOTE = (
+    "full-patch DIAGNOSTIC passed where the in-scope grade did not — this cell is a POSSIBLE "
+    "false negative, bounded not corrected: the same substrate would also pass if the "
+    "candidate had rewritten whatever the test command executes, so read it beside the "
+    "applied out-of-scope paths and never as a `solved`"
+)
+
 _DIFF_GIT_HEADER_RE = re.compile(r"^diff --git ")
 
 
@@ -3519,6 +3589,48 @@ def _split_patch_by_scope(candidate_patch, scope):
     return "".join(in_scope), sorted(set(out_of_scope))
 
 
+def _apply_diff_slice(substrate, diff_text, git_runner=None):
+    """`git apply` one already-chosen slice of a candidate patch into `substrate`.
+
+    The MECHANICS only. Which slice is a POLICY decision and it deliberately does not live
+    here: `build_grade_substrate` chooses the reference patch's scope (the routing-grade
+    whitelist) and `build_full_patch_substrate` chooses everything-but-the-test-surface (the
+    T20 diagnostic). Sharing the mechanics keeps the two from drifting on HOW a patch is
+    applied; keeping the policy at the two call sites is what stops an edit aimed at the
+    diagnostic from quietly widening the grade that routing reads.
+
+    The patch file is written to a SYSTEM temp dir and unlinked the moment `git apply` returns
+    -- never under the run dir, where it would sit one `../` from a candidate's cwd (F1).
+    An empty slice is a successful no-op, not an error. Returns `(applied, output)`.
+    """
+    if not (diff_text or "").strip():
+        return True, ""
+    with tempfile.TemporaryDirectory(prefix="repo-bench-slice-") as holder:
+        patch_file = Path(holder) / "slice.patch"
+        patch_file.write_text(diff_text)
+        rc, out = git_sandbox(substrate, "apply", str(patch_file), git_runner=git_runner)
+        patch_file.unlink()
+    return rc == 0, (out or "").strip()
+
+
+def _write_reference_test_blobs(substrate, task):
+    """The withheld `test_blobs`, written LAST into a grade substrate -> the paths written.
+
+    Last, always: they encode the fix, so they must win over anything the candidate's applied
+    slice put at the same path. They are written into CONSTRUCTED substrates only -- never into
+    the sandbox a candidate works in (THE LEAK RULE), and that is true of the T20 diagnostic
+    substrate too, which is likewise built after the candidate's dispatch has returned and
+    swept before the next one starts.
+    """
+    written = []
+    for rel_path, blob in (task.get("test_blobs") or {}).items():
+        target = Path(substrate) / rel_path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(blob)
+        written.append(rel_path)
+    return sorted(written)
+
+
 def build_grade_substrate(task, candidate_patch, dest, target_repo, git_runner=None,
                           templates=None):
     """F1's whitelist: CONSTRUCT the tree oracle (a) grades, from three trusted pieces.
@@ -3571,22 +3683,11 @@ def build_grade_substrate(task, candidate_patch, dest, target_repo, git_runner=N
     scope = _reference_scope_paths(task.get("reference_patch"))
     in_scope_diff, out_of_scope = _split_patch_by_scope(candidate_patch, scope)
 
-    applied = True
-    if in_scope_diff.strip():
-        with tempfile.TemporaryDirectory(prefix="repo-bench-inscope-") as holder:
-            patch_file = Path(holder) / "in-scope.patch"
-            patch_file.write_text(in_scope_diff)
-            rc, out = git_sandbox(substrate, "apply", str(patch_file), git_runner=git_runner)
-            patch_file.unlink()
-        if rc != 0:
-            applied = False
-            notes.append(f"{SUBSTRATE_APPLY_FAILED_NOTE}: {(out or '').strip()}")
-
-    if applied:
-        for rel_path, blob in (task.get("test_blobs") or {}).items():
-            target = substrate / rel_path
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(blob)
+    applied, apply_out = _apply_diff_slice(substrate, in_scope_diff, git_runner=git_runner)
+    if not applied:
+        notes.append(f"{SUBSTRATE_APPLY_FAILED_NOTE}: {apply_out}")
+    else:
+        _write_reference_test_blobs(substrate, task)
 
     return {
         "path": str(substrate),
@@ -3757,6 +3858,228 @@ def _touched_test_paths(patch_text, test_patterns=DEFAULT_TEST_PATTERNS):
         path for path, _text in _split_diff_by_file(patch_text or "")
         if path and _matches_test_pattern(path, test_patterns)
     })
+
+
+def build_full_patch_substrate(task, candidate_patch, dest, target_repo, git_runner=None,
+                               templates=None, test_patterns=DEFAULT_TEST_PATTERNS):
+    """T20's DIAGNOSTIC substrate -- the in-scope rule broken on purpose, and only here.
+
+        the diagnostic result is a function of
+            (the task's base state, the candidate's WHOLE patch minus its test-surface edits,
+             the reference test blobs)
+
+    Read that beside `build_grade_substrate`'s invariant and the difference is the whole point:
+    the second term is no longer filtered through the reference patch's scope, so a fix the
+    candidate placed in a file the reference never touched IS applied -- and so is a rewritten
+    `run_tests.py`. See `FULL_PATCH_DIAGNOSTIC_LABEL` for why that trade is acceptable exactly
+    as long as nothing downstream of `solved` reads the result.
+
+    What is NOT relaxed, and must not be:
+      * test-pattern paths are stripped from the applied slice and the reference `test_blobs`
+        are still written last, so a candidate's edits to the test surface cannot count here
+        either (T7R's law survives the diagnostic intact);
+      * the base state is still built by `prepare_cell_sandbox` from the read-only target, and
+        a `--setup-cmd` template's artifacts are still content-verified before overlay (the
+        caller does that check, exactly as `oracle_tests` does);
+      * this substrate is built in ITS OWN throwaway copy, AFTER the in-scope grade has
+        completed, and is swept before the next dispatch -- it contains candidate-written bytes
+        by design, so the leak questions invert (NOTES: construction AND lifetime) and the
+        answer to both is that nothing here is an input to any other grade, and nothing here
+        outlives its own `TemporaryDirectory`.
+
+    Returns `{"path", "applied", "applied_out_of_scope", "restored_test_paths", "notes"}`.
+    `applied_out_of_scope` is the VERBATIM list of applied paths the reference patch did not
+    put in scope -- the evidence that lets a reader see a rewritten harness in a passing
+    diagnostic. It is never classified, filtered by name, or summarised.
+    """
+    info, _baseline = prepare_cell_sandbox(
+        task, target_repo, dest, git_runner=git_runner, templates=templates
+    )
+    substrate = Path(info["path"])
+    notes = []
+
+    # The one thing the diagnostic still withholds: the candidate's own test-surface edits.
+    applied_diff = _strip_test_hunks(candidate_patch, test_patterns)
+    restored = _touched_test_paths(candidate_patch, test_patterns)
+    # Reported off the APPLIED slice, so the list says what really reached this substrate
+    # rather than what the candidate wrote somewhere.
+    scope = _reference_scope_paths(task.get("reference_patch"))
+    _in_scope, applied_out_of_scope = _split_patch_by_scope(applied_diff, scope)
+
+    applied, apply_out = _apply_diff_slice(substrate, applied_diff, git_runner=git_runner)
+    if not applied:
+        notes.append(f"{FULL_PATCH_APPLY_FAILED_NOTE}: {apply_out}")
+    else:
+        _write_reference_test_blobs(substrate, task)
+
+    return {
+        "path": str(substrate),
+        "applied": applied,
+        "applied_out_of_scope": applied_out_of_scope,
+        "restored_test_paths": restored,
+        "notes": notes,
+    }
+
+
+def full_patch_not_run(reason):
+    """The diagnostic's NOT-RUN record: same key set as a run one, all-None where a result
+    would be, plus the reason.
+
+    A dict rather than a bare `None` on purpose. The skipped-cell `"oracles": None` sentinel is
+    trap 1 in `_expand_oracles`, and it cost a renderer four labelled `n/a`s the first time; a
+    record that keeps its shape cannot become one blank column later.
+    """
+    return {
+        "oracle": "tests-full-patch",
+        "run": False,
+        "available": False,
+        "passed": None,
+        "rc": None,
+        "reason": reason,
+        "notes": "",
+        "applied_out_of_scope": None,
+        "restored_test_paths": None,
+        "test_seconds": None,
+        "label": FULL_PATCH_DIAGNOSTIC_LABEL,
+    }
+
+
+def full_patch_not_run_reason(tests_oracle, out_of_scope, enabled=True):
+    """T20's conditional gate -> the not-run reason, or `None` meaning "run it".
+
+    ONE function so the run loop, the tests and any later caller cannot each decide the
+    population differently. The population is exactly the false-negative SUSPECTS: an
+    objectively-graded cell that did NOT pass in scope and DID have work reverted from outside
+    the reference patch's scope. Everything else records not-run and spends nothing -- no model
+    dispatch either way (this oracle never dispatches), but a `--test-cmd` execution is real
+    toolchain time and PLAN D11 exposure, and neither is bought for a cell whose answer is
+    already known.
+    """
+    if not enabled:
+        return FULL_PATCH_NOT_RUN_DISABLED
+    if not (tests_oracle or {}).get("available"):
+        return FULL_PATCH_NOT_RUN_TESTS_UNAVAILABLE
+    if (tests_oracle or {}).get("passed") is not False:
+        return FULL_PATCH_NOT_RUN_SOLVED
+    if not out_of_scope:
+        return FULL_PATCH_NOT_RUN_NO_OUT_OF_SCOPE
+    return None
+
+
+def oracle_tests_full_patch(
+    task, candidate_patch, test_cmd, test_runner, scratch_dir, target_repo=None,
+    git_runner=None, test_patterns=DEFAULT_TEST_PATTERNS, templates=None,
+):
+    """T20's diagnostic grade -- a BOUND on the in-scope oracle's false negatives, never a grade.
+
+    Result shape mirrors `oracle_tests` (`available` / `passed` / `rc` / `notes`) plus the
+    mandatory `label`, the verbatim `applied_out_of_scope` paths, the test-surface paths that
+    were restored anyway, and its own `test_seconds`.
+
+    `test_seconds` is its OWN field and never any cell's `wall_seconds` -- the same rule
+    `--setup-cmd` time follows, and for the same reason: oracle (d) is what the daily-driver
+    pick reads, and charging a model for a second execution of the target's test command would
+    corrupt the one axis that is about cost rather than capability.
+
+    NO MODEL IS DISPATCHED HERE, so `would_exceed_ceiling` is deliberately NOT called -- stated
+    rather than left ambiguous. PLAN D1's ceiling governs money, every dollar of which is a
+    dispatch; this oracle costs one more execution of the user's own `--test-cmd` (toolchain
+    time, $0 in model spend) and is gated by `full_patch_not_run_reason` and
+    `--no-full-patch-check` instead. If this ever grows a dispatch, it must go through
+    `would_exceed_ceiling` like every other one.
+
+    Unavailable for exactly the same reasons `oracle_tests` is, and `passed` stays `None` in
+    every one of them: absence is not failure and is certainly not a pass (D5/R6).
+    """
+    if not test_cmd:
+        return {
+            "oracle": "tests-full-patch", "run": True, "available": False, "passed": None,
+            "rc": None, "reason": None, "notes": "no --test-cmd supplied",
+            "applied_out_of_scope": None, "restored_test_paths": None, "test_seconds": None,
+            "label": FULL_PATCH_DIAGNOSTIC_LABEL,
+        }
+    # The same precondition `oracle_tests` carries, mirrored here so this function is safe to
+    # call DIRECTLY and not only behind `full_patch_not_run_reason`. It is not the gate checked
+    # twice: the gate decides whether this cell is a false-negative suspect, while this decides
+    # whether the task has a discriminating oracle at all. An issue-replay task whose fix
+    # touched no tests has no withheld blobs, so `--test-cmd` here would grade the repo's own
+    # visible tests -- green at base, and a bound built out of a guaranteed pass is worse than
+    # no bound.
+    if task["mode"] == "issue-replay" and not task.get("oracle_tests_available"):
+        return {
+            "oracle": "tests-full-patch", "run": True, "available": False, "passed": None,
+            "rc": None, "reason": None,
+            "notes": "issue-replay task's fix touched no tests -- no discriminating oracle",
+            "applied_out_of_scope": None, "restored_test_paths": None, "test_seconds": None,
+            "label": FULL_PATCH_DIAGNOSTIC_LABEL,
+        }
+    if target_repo is None or not task.get("base_commit"):
+        return {
+            "oracle": "tests-full-patch", "run": True, "available": False, "passed": None,
+            "rc": None, "reason": None, "notes": SUBSTRATE_UNAVAILABLE_NOTE,
+            "applied_out_of_scope": None, "restored_test_paths": None, "test_seconds": None,
+            "label": FULL_PATCH_DIAGNOSTIC_LABEL,
+        }
+    if templates is not None:
+        record = templates.prepare(task)
+        if not record["ok"]:
+            return {
+                "oracle": "tests-full-patch", "run": True, "available": False, "passed": None,
+                "rc": None, "reason": None,
+                "notes": f"{SETUP_FAILED_NOTE} (exit {record['rc']})",
+                "applied_out_of_scope": None, "restored_test_paths": None,
+                "test_seconds": None, "label": FULL_PATCH_DIAGNOSTIC_LABEL,
+            }
+        tampered = templates.verify(record)
+        if tampered:
+            return {
+                "oracle": "tests-full-patch", "run": True, "available": False, "passed": None,
+                "rc": None, "reason": None,
+                "notes": f"{ARTIFACT_TAMPERED_NOTE} ({', '.join(tampered)})",
+                "applied_out_of_scope": None, "restored_test_paths": None,
+                "test_seconds": None, "label": FULL_PATCH_DIAGNOSTIC_LABEL,
+            }
+
+    runner = test_runner or default_test_runner
+    scratch_dir = Path(scratch_dir)
+    scratch_dir.mkdir(parents=True, exist_ok=True)
+
+    started = time.monotonic()
+    with tempfile.TemporaryDirectory(prefix="repo-bench-fullpatch-", dir=str(scratch_dir)) as tmp:
+        built = build_full_patch_substrate(
+            task, candidate_patch, Path(tmp) / "substrate", target_repo, git_runner=git_runner,
+            templates=templates, test_patterns=test_patterns,
+        )
+        if not built["applied"]:
+            return {
+                "oracle": "tests-full-patch", "run": True, "available": False, "passed": None,
+                "rc": None, "reason": None, "notes": "; ".join(built["notes"]),
+                "applied_out_of_scope": built["applied_out_of_scope"],
+                "restored_test_paths": built["restored_test_paths"],
+                "test_seconds": round(time.monotonic() - started, 3),
+                "label": FULL_PATCH_DIAGNOSTIC_LABEL,
+            }
+        rc, _output = runner(test_cmd, built["path"])
+    test_seconds = round(time.monotonic() - started, 3)
+
+    notes = list(built["notes"])
+    if rc == 0:
+        notes.append(FULL_PATCH_PASSED_NOTE)
+    return {
+        "oracle": "tests-full-patch",
+        "run": True,
+        "available": True,
+        "passed": (rc == 0),
+        "rc": rc,
+        "reason": None,
+        "notes": "; ".join(notes),
+        # VERBATIM, never classified (T20 item 5 / NOTES' sixth ring): if `run_tests.py` was
+        # applied to this substrate, the reader sees `run_tests.py`.
+        "applied_out_of_scope": built["applied_out_of_scope"],
+        "restored_test_paths": built["restored_test_paths"],
+        "test_seconds": test_seconds,
+        "label": FULL_PATCH_DIAGNOSTIC_LABEL,
+    }
 
 
 def _skipped_cell(task_id, model_id, estimated_usd, reason=SKIPPED_COST_CEILING):
@@ -3949,6 +4272,7 @@ def _expand_oracles(cell, grade):
     oracles = cell.get("oracles")
     tests_raw = (oracles or {}).get("tests") or {}
     structural_raw = (oracles or {}).get("structural") or {}
+    full_patch_raw = (oracles or {}).get("full_patch") or {}
 
     tests_available = bool(tests_raw.get("available"))
     # `solved` is this AND: an unavailable oracle can never be `solved`, and `passed` is only
@@ -3994,6 +4318,27 @@ def _expand_oracles(cell, grade):
         else:
             judge["status"] = "unparseable"
 
+    # T20's diagnostic, expanded into a shape a renderer cannot mistake for a grade. Note what
+    # it does NOT feed: `solved` above is computed from `tests_raw` alone and this block is
+    # read by nothing but the bound line and its own table column. An envelope written before
+    # T20 has no `full_patch` key at all, and `run: False` with a stated reason is the honest
+    # reading of that — never a `False` that would read as "the diagnostic said no".
+    full_patch = {
+        "run": bool(full_patch_raw.get("run")),
+        "available": bool(full_patch_raw.get("available")),
+        "passed": (
+            full_patch_raw.get("passed") if full_patch_raw.get("available") else None
+        ),
+        "reason": full_patch_raw.get("reason") or (
+            None if full_patch_raw else "no diagnostic record in this envelope"
+        ),
+        "applied_out_of_scope": full_patch_raw.get("applied_out_of_scope"),
+        "restored_test_paths": full_patch_raw.get("restored_test_paths"),
+        "test_seconds": full_patch_raw.get("test_seconds"),
+        "notes": full_patch_raw.get("notes") or "",
+        "label": FULL_PATCH_DIAGNOSTIC_LABEL,
+    }
+
     return {
         "task_id": cell.get("task_id"),
         "candidate": cell.get("model"),
@@ -4001,6 +4346,7 @@ def _expand_oracles(cell, grade):
         "tests": tests,
         "structural": structural,
         "judge": judge,
+        "full_patch": full_patch,
         # Oracle (d): read straight off the cell, `None`s preserved as `None`.
         "cost": {"usd": cell.get("usd"), "usd_basis": cell.get("usd_basis")},
         "latency": {"wall_seconds": cell.get("wall_seconds")},
@@ -4096,6 +4442,48 @@ def _candidate_summary(candidate, rows):
         if not r["tests"]["solved"] and r["candidate_modified_out_of_scope"]
     )
 
+    # T20: the BOUND, and the arithmetic that keeps it a bound.
+    #
+    # `solved_n` (below) is untouched and stays the routing-grade number: the lower end of the
+    # interval IS it, and every consumer -- `_capability_order`, `_tier_map`, the D7 floor,
+    # `_daily_driver`, `apply` -- reads that and never this block. The upper end adds the
+    # diagnostic passes among the not-solved cells and is FORGEABLE by construction, which is
+    # why it is only ever rendered as the far end of an interval.
+    #
+    # `diagnostic_run_n` is carried beside the counts on purpose: a run with the diagnostic
+    # disabled produces `upper == lower`, and without that count a reader could take a
+    # degenerate interval as evidence there are no false negatives, when it is evidence that
+    # nobody looked.
+    not_solved_rows = [r for r in objective if not r["tests"]["solved"]]
+    diagnostic_ran = [r for r in not_solved_rows if r["full_patch"]["available"]]
+    diagnostic_passed = [r for r in diagnostic_ran if r["full_patch"]["passed"] is True]
+    false_negative_bound = {
+        "objective_n": objective_n,
+        "not_solved_n": len(not_solved_rows),
+        "diagnostic_run_n": len(diagnostic_ran),
+        "diagnostic_passed_n": len(diagnostic_passed),
+        "diagnostic_passed_task_ids": sorted(r["task_id"] for r in diagnostic_passed),
+        # The interval. `solved_lower` is the routing-grade count, verbatim.
+        "solved_lower": solved_n,
+        "solved_upper": solved_n + len(diagnostic_passed),
+        "label": FULL_PATCH_DIAGNOSTIC_LABEL,
+    }
+    # Per flagged cell, the diagnostic's own answer -- so the false-negative NOTE cites a
+    # measurement instead of speculating. `applied_out_of_scope` rides along VERBATIM.
+    flagged_diagnostic = {}
+    for r in objective:
+        if r["tests"]["solved"] or not r["candidate_modified_out_of_scope"]:
+            continue
+        fp = r["full_patch"]
+        if not fp["available"]:
+            status = fp["reason"] or "diagnostic unavailable"
+        elif fp["passed"]:
+            applied = ", ".join(fp["applied_out_of_scope"] or []) or "(none recorded)"
+            status = f"diagnostic PASSES — possible false negative; applied: {applied}"
+        else:
+            status = "diagnostic still fails with the full patch applied"
+        flagged_diagnostic[r["task_id"]] = status
+
     return {
         "candidate": candidate,
         "cells_n": len(rows),
@@ -4110,7 +4498,11 @@ def _candidate_summary(candidate, rows):
         "solved_with_test_edits": solved_with_test_edits,
         "touched_tests_n": sum(1 for r in rows if r["candidate_touched_tests"]),
         "not_solved_with_out_of_scope": not_solved_with_out_of_scope,
+        "not_solved_with_out_of_scope_diagnostic": flagged_diagnostic,
         "out_of_scope_n": sum(1 for r in rows if r["candidate_modified_out_of_scope"]),
+        # T20 -- a BOUND, never a score. Deliberately not near `solved_n` in the dict and
+        # deliberately not summed into anything: no consumer of this card reads it.
+        "false_negative_bound": false_negative_bound,
         # Oracle (c) -- subjective, labelled, never part of `solved`.
         "judge": {
             **judge_counts,
@@ -4622,6 +5014,10 @@ def build_verdict(run_dir, goal, pricing, benchmarks_path=None, kits_dir=None, m
     labels.append(SOLVED_SOURCE_LABEL)
     labels.append(STRUCTURAL_LABEL)
     labels.append(JUDGE_LABEL)
+    # T20: rides on every card, because the diagnostic COLUMN renders on every card. A column
+    # whose trust level is only explained when it happens to be populated is a column someone
+    # will eventually quote out of a run where the label was absent.
+    labels.append(FULL_PATCH_DIAGNOSTIC_LABEL)
     labels.append(THREE_LEGS_LABEL)
     if below_floor:
         labels.insert(0, _below_floor_label(min_tasks))
@@ -4684,6 +5080,21 @@ def _judge_cell_text(row):
     return f"{NA} ({row['judge']['status']})"
 
 
+def _full_patch_cell_text(row):
+    """T20's column: `-` (not run), `still fails`, `PASSES — possible false negative`, `n/a`.
+
+    Four strings and no number. A diagnostic result is not a score and must never render as
+    one; `PASSES` carries its suspicion in the words rather than in a column header a reader
+    might skim past.
+    """
+    fp = row["full_patch"]
+    if not fp["run"]:
+        return "-"
+    if not fp["available"]:
+        return NA
+    return "PASSES — possible false negative" if fp["passed"] else "still fails"
+
+
 def _similarity_cell_text(row):
     """Oracle (b) as one table cell: `files/hunks/loc` similarity, or `n/a`. Never a zero
     standing in for an unavailable comparison."""
@@ -4721,10 +5132,11 @@ def render_verdict_markdown(card):
 
     lines.append("## measurement (one column per oracle; `n/a` = that oracle was unavailable)")
     lines.append(
-        "| task | candidate | (a) tests | (b) similarity files/hunks/loc | (c) judge | "
+        "| task | candidate | (a) tests | full-patch DIAGNOSTIC | "
+        "(b) similarity files/hunks/loc | (c) judge | "
         "(d) usd | (d) wall s | touched tests | out-of-scope (excluded) | skipped |"
     )
-    lines.append("|" + "---|" * 10)
+    lines.append("|" + "---|" * 11)
     for row in card["measurements"]:
         touched = row["candidate_touched_tests"]
         touched_txt = NA if touched is None else (", ".join(touched) if touched else "-")
@@ -4735,6 +5147,7 @@ def render_verdict_markdown(card):
         usd_txt = NA if usd is None else f"{usd:.4f} ({row['cost']['usd_basis'] or NA})"
         lines.append(
             f"| {row['task_id']} | {row['candidate']} | {_tests_cell_text(row)} | "
+            f"{_full_patch_cell_text(row)} | "
             f"{_similarity_cell_text(row)} | {_judge_cell_text(row)} | {usd_txt} | "
             f"{_fmt_num(row['latency']['wall_seconds'])} | {touched_txt} | {oos_txt} | "
             f"{row['skipped'] or '-'} |"
@@ -4785,14 +5198,39 @@ def render_verdict_markdown(card):
                 f"from the base state, so those edits were never applied and did not earn "
                 f"the pass)"
             )
+        # T20: the bound, printed once per candidate, immediately under oracle (a) so nobody
+        # reads the solved count without it. Always rendered when there is an objective
+        # reading at all -- a degenerate interval that says the diagnostic never ran is a
+        # different (and honest) statement from no line at all.
+        b = s["false_negative_bound"]
+        if b["objective_n"]:
+            line = (
+                f"  false-negative bound: {b['diagnostic_passed_n']} of the "
+                f"{b['not_solved_n']} not-solved cell(s) pass with the full patch applied — "
+                f"solved lies in [{b['solved_lower']}, {b['solved_upper']}] of "
+                f"{b['objective_n']}; the upper bound is DIAGNOSTIC (forgeable), the lower "
+                f"bound is routing-grade   [{FULL_PATCH_DIAGNOSTIC_LABEL}]"
+            )
+            if b["diagnostic_run_n"] < b["not_solved_n"]:
+                line += (
+                    f"   — the diagnostic produced a reading on {b['diagnostic_run_n']} of "
+                    f"those {b['not_solved_n']} cell(s); an unrun diagnostic bounds nothing, "
+                    f"so this interval is not a claim that the rest are genuine failures"
+                )
+            lines.append(line)
         if s["not_solved_with_out_of_scope"]:
             lines.append(
                 f"  NOTE — `not solved` WITH work reverted from outside the reference patch's "
                 f"scope on: {', '.join(s['not_solved_with_out_of_scope'])}. "
                 f"{CANDIDATE_OUT_OF_SCOPE_NOTE} Read those cell(s) as possible FALSE "
                 f"NEGATIVES: the reverted paths are in the measurement table, and a fix that "
-                f"lived only there was undone before the test command ran."
+                f"lived only there was undone before the test command ran. What the "
+                f"full-patch DIAGNOSTIC measured on each of them (a bound, not a verdict):"
             )
+            for task_id, status in sorted(
+                s["not_solved_with_out_of_scope_diagnostic"].items()
+            ):
+                lines.append(f"    {task_id}: {status}")
         lines.append("")
 
     lines.append("## the rule, as applied")
@@ -4922,6 +5360,13 @@ def cmd_verdict(args):
         "below_floor_label": card["below_floor_label"],
         "rule": card["rule"],
         "capability_order": card["capability_order"],
+        # T20: the bound, machine-readable, and deliberately its OWN key rather than a field
+        # inside `capability_order` — a reader (or a later engine) that walks the capability
+        # rows must not be able to pick the diagnostic up by accident. Nothing in this file
+        # reads it back; `apply` does not know it exists.
+        "false_negative_bounds": {
+            s["candidate"]: s["false_negative_bound"] for s in card["summaries"]
+        },
         "tier_map": card["tier_map"],
         "daily_driver": card["daily_driver"],
         "three_legs": card["three_legs"],
@@ -5575,6 +6020,71 @@ def cmd_demo(args):
             f"available={tamper_oracle['available']} passed={tamper_oracle['passed']} — "
             f"absence, never a failed candidate"
         )
+        # ---- part 6: the full-patch DIAGNOSTIC, and the bound it buys (T20) ---------------
+        # The general-mode run above already produced BOTH populations the diagnostic exists
+        # to separate, so it is rendered rather than re-run: one candidate solved the task in
+        # scope (the diagnostic is not run at all for it), and the other rewrote `run_tests.py`
+        # — an out-of-scope path, `not solved` in scope, and therefore exactly a false-negative
+        # SUSPECT. Its diagnostic PASSES, which is the whole point: a pass here cannot tell a
+        # correct fix in another file from a rewritten harness, so it renders as the forgeable
+        # UPPER bound of an interval and the applied path is listed VERBATIM underneath it.
+        print("")
+        print(
+            "repo_bench demo — the full-patch DIAGNOSTIC: bounding the false negatives "
+            "without reopening the forgery"
+        )
+        print("")
+        general_run_id = list_runs(general_store)[0][0]["run_id"]
+        cmd_verdict(build_parser().parse_args([
+            "verdict", "--run", general_run_id, "--store-dir", str(general_store),
+            "--goal", "both",
+        ]))
+        # The card is rebuilt (rather than read back out of the envelope) because the STORED
+        # verdict is a deliberate subset — the per-candidate `summaries` are rendered, not
+        # persisted. Same pure function, same run dir, no second write.
+        general_card = build_verdict(general_run_dir, "both", None)
+        general_summaries = {s["candidate"]: s for s in general_card["summaries"]}
+        forger_summary = general_summaries.get(laggard_id, {})
+        solver_summary = general_summaries.get(solver_id, {})
+        forger_bound = forger_summary.get("false_negative_bound", {})
+        solver_bound = solver_summary.get("false_negative_bound", {})
+        forger_diag = (forger_cell or {}).get("oracles", {}).get("full_patch", {})
+        solver_diag = (solver_cell or {}).get("oracles", {}).get("full_patch", {})
+        order_by_candidate = {r["candidate"]: r for r in general_card["capability_order"]}
+
+        print("")
+        print("proved (full-patch diagnostic):")
+        print(
+            f"  25. the false-negative population is BOUNDED, not corrected: {laggard_id} "
+            f"solved {forger_bound.get('solved_lower')}/"
+            f"{forger_bound.get('objective_n')} in scope and the diagnostic passed on "
+            f"{forger_bound.get('diagnostic_passed_n')} of its "
+            f"{forger_bound.get('not_solved_n')} not-solved cell(s), so solved lies in "
+            f"[{forger_bound.get('solved_lower')}, {forger_bound.get('solved_upper')}] — "
+            f"lower bound routing-grade, upper bound DIAGNOSTIC"
+        )
+        print(
+            f"  26. and the forgery stays VISIBLE inside it: that diagnostic passed="
+            f"{forger_diag.get('passed')} with applied out-of-scope path(s) "
+            f"{forger_diag.get('applied_out_of_scope')} listed verbatim — never classified as "
+            f"harness-adjacent, because the label carries the trust level and the reader sees "
+            f"run_tests.py"
+        )
+        print(
+            f"  27. a passing diagnostic changes NOTHING downstream: {laggard_id} still ranks "
+            f"solved_n={order_by_candidate.get(laggard_id, {}).get('solved_n')}/"
+            f"{order_by_candidate.get(laggard_id, {}).get('objective_n')}, tier map "
+            f"{general_card['tier_map']['slots']}, daily driver "
+            f"{general_card['daily_driver']['pick']}, below_floor="
+            f"{general_card['below_floor']} (apply still refuses it)"
+        )
+        print(
+            f"  28. and it is never bought where it would answer nothing: {solver_id} solved "
+            f"its cell in scope, so its diagnostic was not run at all "
+            f"(run={solver_diag.get('run')}, reason={solver_diag.get('reason')!r}) and its "
+            f"interval is the degenerate [{solver_bound.get('solved_lower')}, "
+            f"{solver_bound.get('solved_upper')}]"
+        )
         print("")
         print(
             "no model dispatched, no network, no money spent; nothing written outside "
@@ -6220,10 +6730,35 @@ def cmd_run(args, runner=None, adapter=None, git_runner=None, test_runner=None):
                     )
                 structural_oracle = oracle_structural(task["reference_patch"], record["patch"])
 
+                # T20: the diagnostic, and every word of its placement is load-bearing. It runs
+                # AFTER the in-scope grade has completed (so it cannot influence the number
+                # routing reads), in its OWN throwaway substrate under `work/` that its
+                # `TemporaryDirectory` sweeps before this loop reaches the next dispatch, and
+                # only on the false-negative SUSPECTS (`full_patch_not_run_reason`). It
+                # dispatches no model, so no ceiling check applies -- see the oracle's
+                # docstring, which says so rather than leaving the absence ambiguous.
+                full_patch_reason = full_patch_not_run_reason(
+                    tests_oracle, tests_oracle.get("out_of_scope"),
+                    enabled=not getattr(args, "no_full_patch_check", False),
+                )
+                if full_patch_reason is None:
+                    full_patch_oracle = oracle_tests_full_patch(
+                        task, record["patch"], args.test_cmd, test_runner, work_dir,
+                        target_repo=card["repo"], git_runner=git_runner, templates=templates,
+                    )
+                else:
+                    full_patch_oracle = full_patch_not_run(full_patch_reason)
+
                 cell = dict(record)
                 cell["estimated_usd"] = estimate
                 cell["skipped"] = None
-                cell["oracles"] = {"tests": tests_oracle, "structural": structural_oracle}
+                cell["oracles"] = {
+                    "tests": tests_oracle,
+                    "structural": structural_oracle,
+                    # A SEPARATE key beside oracle (a), never merged into it: `solved` is read
+                    # off `oracles["tests"]` alone and this record is unreachable from there.
+                    "full_patch": full_patch_oracle,
+                }
                 # F2: visible, never punitive -- the test surface was restored from base
                 # before grading, so this could not have earned a `solved`; T8 still gets to
                 # see that the candidate went there.
@@ -6245,6 +6780,15 @@ def cmd_run(args, runner=None, adapter=None, git_runner=None, test_runner=None):
                     notes.append(
                         f"{task['task_id']} x {cid}: {CANDIDATE_OUT_OF_SCOPE_NOTE} "
                         f"({', '.join(out_of_scope)})"
+                    )
+                # T20: the bound's own evidence, at run level. The applied paths ride along
+                # VERBATIM so a reader of the notes alone can see a rewritten harness sitting
+                # underneath a passing diagnostic.
+                if full_patch_oracle.get("passed") is True:
+                    notes.append(
+                        f"{task['task_id']} x {cid}: {FULL_PATCH_PASSED_NOTE} — applied "
+                        f"out-of-scope path(s): "
+                        f"{', '.join(full_patch_oracle['applied_out_of_scope']) or '(none)'}"
                     )
                 cells.append(cell)
 
@@ -6474,6 +7018,20 @@ def build_parser():
     p_run.add_argument(
         "--keep-work", action="store_true",
         help="keep each cell's sandbox under <run-dir>/work instead of deleting it",
+    )
+    p_run.add_argument(
+        "--no-full-patch-check", action="store_true",
+        help=(
+            "skip T20's full-patch DIAGNOSTIC. On by default, because a `solved` count with no "
+            "bound on its false negatives understates every candidate by an unknown amount. "
+            "The diagnostic re-runs --test-cmd once per false-negative-suspect cell (toolchain "
+            "time; NO model dispatch, so no --max-usd dollars) against a substrate carrying the "
+            "candidate's WHOLE patch — forgeable by construction, so it is rendered as the "
+            "UPPER bound of an interval and never feeds `solved`, the tier map, the evidence "
+            "floor, the daily-driver pick or `apply`. Pass this to get the pre-T20 cost profile "
+            "back; the verdict then shows a degenerate interval and says the diagnostic did not "
+            "run rather than implying there are no false negatives."
+        ),
     )
     p_run.set_defaults(func=cmd_run)
 

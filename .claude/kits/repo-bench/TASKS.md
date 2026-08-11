@@ -1081,6 +1081,119 @@ python3 -m unittest discover -s tests -p 'test_guardrails_layout.py' -q
 
 ## Post-completion — gaps found by real use (execute-authored, after kit sign-off)
 
+### T20 — the full-patch diagnostic: bound the false negatives without reopening the forgery
+- status: done
+- model: opus
+- depends: T19
+
+**Added by execute after the first completed live run** (`benchruns/2026-08-10-d89a`, pyright,
+7 tasks × haiku+sonnet, $25.18). The run worked, but 9 of 14 cells carried the
+`not solved WITH work reverted from outside the reference patch's scope` flag — haiku 5/7,
+sonnet 4/7. The whitelist reverts any candidate change outside the reference patch's files, so
+a CORRECT fix placed in a different file (sonnet's issue-11475 had work reverted from
+`analyzer/typeEvaluatorTypes.ts`, a plausible fix site) reads `not solved`. The absolute rates
+systematically understate every candidate, and nothing in the output bounds HOW MUCH.
+
+**What must NOT change — state it before the fix:** the scope rule IS the forgery protection.
+The harness forgery (`run_tests.py` → `sys.exit(0)`) was closed precisely because out-of-scope
+changes never reach the substrate, and T12R/T17R's lesson is that enumeration cannot make
+widening safe. Therefore `solved` remains in-scope-tests-only, forever (R6). Any number that
+includes out-of-scope work is forgeable BY CONSTRUCTION and may never feed `solved`, the
+capability order, the D7 floor, the tier map, the daily-driver pick, or `apply`.
+
+**The fix — a second, labeled, diagnostic grade:**
+
+1. **`oracle_tests_full_patch(...)`** — grades a substrate built as: pristine base +
+   `setup_patch` (general mode) + the candidate's ENTIRE captured patch + the reference test
+   blobs, with the test surface still restored from base first (T7R law — test-file edits
+   still cannot count), artifacts still hash-verified, in its own fresh copy that is swept
+   after. Result shape mirrors `oracle_tests` plus a mandatory label:
+   `"full-patch DIAGNOSTIC — includes out-of-scope changes the candidate made, including
+   files the test command may execute; forgeable by construction; NEVER routing-grade"`.
+2. **Run it conditionally** — only when ALL of: the tests oracle is available; the in-scope
+   grade was `passed: False`; and `candidate_modified_out_of_scope` is non-empty. That is
+   exactly the false-negative-suspect population (9 of 14 cells in the live run). A cell whose
+   in-scope grade passed, or that had no out-of-scope work, records the diagnostic as
+   not-run (`None` + reason), spending nothing. `--no-full-patch-check` disables it entirely
+   for users who want the old cost profile; absent flag = on, because the diagnostic is the
+   honest default.
+3. **The ceiling covers it.** Each diagnostic run executes `--test-cmd` once more (~90s on
+   pyright, $0 in model spend — it is toolchain time). Record its wall-clock in its own field
+   (never in the cell's `wall_seconds`, same rule as setup time). No model dispatch is
+   involved, so `would_exceed_ceiling` is not in play — but say so in the code comment rather
+   than leaving the absence ambiguous.
+4. **Render it as a bound, not a score.** In the verdict's measurement table, a new diagnostic
+   column showing `-` (not run), `still fails`, or `PASSES — possible false negative`. In the
+   per-candidate section, one line:
+   `false-negative bound: N of the M not-solved cells pass with the full patch applied —
+   solved lies in [solved_n, solved_n + N] of objective_n; the upper bound is DIAGNOSTIC
+   (forgeable), the lower bound is routing-grade`. The capability order, tier map, floor, and
+   daily-driver pick use ONLY the lower bound, unchanged. The existing false-negative NOTE on
+   flagged cells now cites the diagnostic result instead of speculating.
+5. **The forgery stays visible in the diagnostic.** When a diagnostic passes AND the
+   candidate's out-of-scope paths are listed, the reader can see `run_tests.py` there if it
+   was touched. Do not attempt to classify paths as "harness-adjacent" — that is the
+   enumeration mistake again. List the applied out-of-scope paths on the diagnostic result,
+   verbatim, and let the label carry the trust level.
+6. **Ask both leak questions of the new substrate** (NOTES: construction AND lifetime). It
+   contains candidate-written bytes BY DESIGN — that is its purpose — so the questions
+   invert: (a) it must never contaminate the in-scope substrate, the template artifact
+   store, or any later cell's grading — build it in its own copy, after the in-scope grade
+   completes, and sweep it before the next dispatch; (b) nothing from it may be written
+   anywhere a later candidate could read (the store buffering rules apply to its records
+   exactly as to dispatch records).
+7. **Tests** (stub runners, fixture repos, no real installers):
+   - the pyright pattern: candidate fixes the bug in a DIFFERENT source file → in-scope
+     `not solved` + diagnostic PASSES + the bound line renders with the right arithmetic;
+   - the forgery pattern: candidate rewrites the `--test-cmd` entry point, touching no
+     test-pattern path → in-scope `not solved` + diagnostic passes + `run_tests.py` listed
+     verbatim in the applied paths + `solved`/floor/tier/daily-driver all UNCHANGED —
+     assert each of those four explicitly;
+   - genuine failure: both grades fail → bound adds nothing;
+   - the conditional gate: diagnostic not run when in-scope passed, when no out-of-scope
+     work existed, or when `--no-full-patch-check` is set;
+   - isolation: after a diagnostic run, the in-scope substrate result is byte-identical to
+     a run with the diagnostic disabled (property test), and no diagnostic artifact survives
+     into the next cell's ancestry (extend the ancestry sweep);
+   - a mutation check on the rendering: a diagnostic pass must be UNABLE to increment
+     `solved_n` — assert by constructing the verdict from a results.json where the
+     diagnostic passed and confirming `solved_n` ignores it.
+8. **`skills/repo-bench/SKILL.md`**: document the diagnostic, the bound-not-score rule, the
+   `--no-full-patch-check` flag, and the reading order: the interval `[lower, upper]` is the
+   honest answer; quoting the upper bound alone is quoting a forgeable number.
+
+**Do NOT** let the diagnostic feed `solved` or anything downstream of it, classify out-of-scope
+paths by name, run the diagnostic before the in-scope grade, leave its substrate or records
+readable by a later candidate, or weaken any existing leak/forgery assertion.
+
+**Acceptance:** the false-negative population gets a measured bound; `solved` and everything
+downstream is provably unchanged by diagnostic results; the forgery case is visible and
+harmless; the conditional gate and isolation properties hold; suite green and only grows.
+
+**Verify:**
+```bash
+cd "$(git rev-parse --show-toplevel)"
+python3 -m unittest discover -s tests -p 'test_repo_bench.py' -q
+python3 - <<'PY'
+import importlib.util, inspect
+spec = importlib.util.spec_from_file_location("repo_bench", "bin/repo_bench.py")
+rb = importlib.util.module_from_spec(spec); spec.loader.exec_module(rb)
+assert callable(getattr(rb, "oracle_tests_full_patch", None)), "diagnostic oracle missing"
+src = open("bin/repo_bench.py").read()
+assert "NEVER routing-grade" in src, "diagnostic label missing its trust level"
+osrc = inspect.getsource(rb.oracle_tests_full_patch)
+assert "label" in osrc, "diagnostic result carries no label"
+print("T20 probe OK")
+PY
+python3 bin/repo_bench.py demo > /tmp/rb_t20_demo.txt
+grep -q "BELOW EVIDENCE FLOOR" /tmp/rb_t20_demo.txt
+grep -qiE 'full-patch|false negative' /tmp/rb_t20_demo.txt
+grep -nE '"npm"|"pip"|pip install|npm ci' tests/test_repo_bench.py && exit 1 || echo "no test invokes a real installer"
+git diff --quiet bin/claude_execute.py bin/cost_report.py bin/routing_scorecard.py bin/bench_routing.py
+python3 -m unittest discover -s tests -q
+python3 -m unittest discover -s tests -p 'test_guardrails_layout.py' -q
+```
+
 ### T19 — close the two recorded gaps: failure-path deletion, and the exclusion count
 - status: done
 - model: sonnet

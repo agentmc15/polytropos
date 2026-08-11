@@ -3657,6 +3657,17 @@ def _inspect_ancestry(cwd, needles, run_dir=None):
             str(p.relative_to(run_dir)) for p in run_dir.rglob("site-*") if p.is_dir()
         ),
         "setup_patches": sorted(str(p.relative_to(run_dir)) for p in run_dir.rglob("*.patch")),
+        # T20: the full-patch DIAGNOSTIC's substrate carries the candidate's WHOLE patch and
+        # the withheld `test_blobs`, and it is built under `<run-dir>/work` — one `../` from
+        # the next candidate's cwd. Its LIFETIME is the property: it must not exist while any
+        # dispatch is live. (Its own `TemporaryDirectory` is what enforces that; this is the
+        # check that would notice if someone ever hoisted it out of the `with`.)
+        "grade_substrates": sorted(
+            str(p.relative_to(run_dir))
+            for p in run_dir.rglob("repo-bench-fullpatch-*")
+        ) + sorted(
+            str(p.relative_to(run_dir)) for p in run_dir.rglob("repo-bench-grade-*")
+        ),
         "task_files": sorted(str(p.relative_to(run_dir)) for p in (run_dir / "tasks").glob("*")),
         "dispatch_files": sorted(
             str(p.relative_to(run_dir)) for p in (run_dir / "dispatches").glob("*")
@@ -3793,6 +3804,10 @@ class SolutionAncestryTests(unittest.TestCase):
             self.assertEqual(obs["task_files"], [], f"tasks/ was populated mid-run: {obs}")
             self.assertEqual(obs["dispatch_files"], [], f"dispatches/ was populated mid-run: {obs}")
             self.assertEqual(obs["plan_files"], [], f"plan.json was readable mid-run: {obs}")
+            self.assertEqual(
+                obs["grade_substrates"], [],
+                f"a grade substrate (in-scope or T20 diagnostic) was live: {obs}",
+            )
         for obs in judge_dispatches:
             self.assertFalse(
                 obs["under_run_dir"],
@@ -4712,8 +4727,16 @@ class RunLoopOraclesTests(unittest.TestCase):
             )
             for cell in results["cells"]:
                 self.assertIn("oracles", cell)
-                self.assertEqual(set(cell["oracles"]), {"tests", "structural"})
+                # T20 narrowed this from an exact set to a superset: the cell now also carries
+                # the full-patch DIAGNOSTIC under its own key. The two graded oracles are still
+                # asserted present, and `test_the_diagnostic_lives_beside_solved_and_never_in_it`
+                # below pins that the new key is separate from — and unreadable by — `solved`.
+                self.assertLessEqual({"tests", "structural"}, set(cell["oracles"]))
+                self.assertIn("full_patch", cell["oracles"])
                 self.assertEqual(cell["oracles"]["structural"]["label"], rb.STRUCTURAL_LABEL)
+                self.assertEqual(
+                    cell["oracles"]["full_patch"]["label"], rb.FULL_PATCH_DIAGNOSTIC_LABEL
+                )
 
     def test_a_genuine_fix_reads_green_and_a_task_without_blobs_stays_unavailable(self):
         with tempfile.TemporaryDirectory() as td:
@@ -7592,8 +7615,12 @@ def _candidate_that(mutate):
     return runner
 
 
-def _run_general_harness_fixture(td, mutate, *, keep_work=False):
-    """One stubbed general-mode run over `build_harness_fixture_repo` -> (results, run_dir)."""
+def _run_general_harness_fixture(td, mutate, *, keep_work=False, no_full_patch_check=False):
+    """One stubbed general-mode run over `build_harness_fixture_repo` -> (results, run_dir).
+
+    `no_full_patch_check` (T20) switches the full-patch DIAGNOSTIC off, which is how the
+    isolation tests obtain the pre-T20 behaviour to compare against byte for byte.
+    """
     td = Path(td)
     repo = td / "target"
     build_harness_fixture_repo(repo)
@@ -7605,6 +7632,8 @@ def _run_general_harness_fixture(td, mutate, *, keep_work=False):
     ]
     if keep_work:
         argv.append("--keep-work")
+    if no_full_patch_check:
+        argv.append("--no-full-patch-check")
     args = rb.build_parser().parse_args(argv)
     with contextlib.redirect_stdout(io.StringIO()):
         rb.cmd_run(args, runner=_candidate_that(mutate), test_runner=_harness_test_runner)
@@ -9999,6 +10028,437 @@ class PlanCliCalibrationTests(unittest.TestCase):
             card = json.loads(out.getvalue())
             self.assertTrue(card["calibration"]["available"])
             self.assertEqual(card["calibration"]["n_cells"], 1)
+
+
+# ---------------------------------------------------------------------------------------------
+# T20 — the full-patch DIAGNOSTIC. Same fixture family as `HarnessForgeryTests` on purpose: the
+# whitelist those tests pin is precisely what produces the false negatives these tests bound, and
+# the forgery they proved harmless must STAY harmless now that a second substrate applies it.
+#
+# `build_harness_fixture_repo` gives three shapes off one repo:
+#   * fix `calc.py`      -> in scope -> genuinely `solved` (diagnostic must not run at all)
+#   * fix `alt.py`       -> out of scope, but the suite really passes -> THE PYRIGHT PATTERN
+#   * rewrite `run_tests.py` -> out of scope, suite passes for the wrong reason -> THE FORGERY
+# The last two are indistinguishable to the diagnostic BY CONSTRUCTION. That is why it bounds
+# and never scores.
+
+
+def _run_harness_fixture_pair(td, mutate):
+    """The same stubbed general-mode run twice — diagnostic ON, then OFF.
+
+    -> `((on_results, on_run_dir), (off_results, off_run_dir))`. Both runs build a FRESH
+    fixture repo of their own, so the only difference between them is the flag. The OFF run IS
+    the pre-T20 behaviour, which is what makes it a usable baseline for "the diagnostic moved
+    nothing".
+    """
+    td = Path(td)
+    return (
+        _run_general_harness_fixture(td / "on", mutate),
+        _run_general_harness_fixture(td / "off", mutate, no_full_patch_check=True),
+    )
+
+
+class FullPatchDiagnosticTests(unittest.TestCase):
+    """T20 — bound the false negatives; never reopen the forgery."""
+
+    # -- the population it exists for -------------------------------------------------------
+
+    def test_a_correct_fix_in_an_out_of_scope_file_reads_not_solved_and_the_diagnostic_passes(self):
+        """THE PYRIGHT PATTERN, which is why this task exists at all.
+
+        In the first completed live run, 9 of 14 cells carried `not solved` WITH work reverted
+        from outside the reference patch's scope — one of them a plausible, genuinely-fixing
+        edit to a different source file. `alt.py` is that shape: the stub suite really does pass
+        because of it, and the in-scope grade really must still read `not solved`.
+        """
+        with tempfile.TemporaryDirectory() as td:
+            results, run_dir = _run_general_harness_fixture(
+                td, lambda cwd: (cwd / "alt.py").write_text('MODE = "PATCHED"\n')
+            )
+            cell = next(c for c in results["cells"] if not c["skipped"])
+
+            # The in-scope grade is unchanged and stays the routing-grade number.
+            self.assertTrue(cell["oracles"]["tests"]["available"])
+            self.assertFalse(cell["oracles"]["tests"]["passed"])
+            self.assertEqual(cell["candidate_modified_out_of_scope"], ["alt.py"])
+
+            diag = cell["oracles"]["full_patch"]
+            self.assertTrue(diag["run"])
+            self.assertTrue(diag["available"], diag)
+            self.assertTrue(diag["passed"], diag)
+            self.assertEqual(diag["applied_out_of_scope"], ["alt.py"])
+            self.assertEqual(diag["label"], rb.FULL_PATCH_DIAGNOSTIC_LABEL)
+            self.assertIn("NEVER routing-grade", diag["label"])
+            self.assertIsNotNone(diag["test_seconds"])
+
+            # …and the BOUND renders with the arithmetic the brief pins.
+            card = rb.build_verdict(run_dir, "both", None)
+            summary = next(s for s in card["summaries"] if s["candidate"] == cell["model"])
+            bound = summary["false_negative_bound"]
+            self.assertEqual(bound["objective_n"], 1)
+            self.assertEqual(bound["not_solved_n"], 1)
+            self.assertEqual(bound["diagnostic_run_n"], 1)
+            self.assertEqual(bound["diagnostic_passed_n"], 1)
+            self.assertEqual(bound["solved_lower"], summary["solved_n"])
+            self.assertEqual(bound["solved_upper"], summary["solved_n"] + 1)
+
+            markdown = rb.render_verdict_markdown(card)
+            self.assertIn(
+                "false-negative bound: 1 of the 1 not-solved cell(s) pass with the full patch "
+                "applied — solved lies in [0, 1] of 1",
+                markdown,
+            )
+            self.assertIn("the upper bound is DIAGNOSTIC (forgeable)", markdown)
+            self.assertIn("the lower bound is routing-grade", markdown)
+            # The old NOTE cited nothing; it cites the measurement now.
+            self.assertIn("diagnostic PASSES — possible false negative", markdown)
+            table = markdown.partition("## measurement")[2].partition("## per candidate")[0]
+            self.assertIn("full-patch DIAGNOSTIC", table)
+            self.assertIn("PASSES — possible false negative", table)
+
+    def test_the_harness_forgery_passes_the_diagnostic_and_moves_nothing_downstream(self):
+        """THE FORGERY, and the four things it must NOT be able to move.
+
+        The candidate rewrites the file `--test-cmd` invokes and touches no module and no
+        test-pattern path — the Phase 4 reviewer's forgery, verbatim. Its diagnostic passes,
+        because the diagnostic applies exactly what the in-scope grade refuses to. That is
+        acceptable ONLY because `solved`, the evidence floor, the tier map and the daily-driver
+        pick are all provably identical to a run with the diagnostic switched off. Each of the
+        four is asserted explicitly rather than inferred from one comparison.
+        """
+        def forge(cwd):
+            (cwd / "run_tests.py").write_text("import sys; sys.exit(0)  # FORGED\n")
+
+        with tempfile.TemporaryDirectory() as td:
+            (on, on_dir), (off, off_dir) = _run_harness_fixture_pair(Path(td), forge)
+            on_cell = next(c for c in on["cells"] if not c["skipped"])
+
+            # in scope: still not solved, exactly as `HarnessForgeryTests` pins it
+            self.assertTrue(on_cell["oracles"]["tests"]["available"])
+            self.assertFalse(on_cell["oracles"]["tests"]["passed"])
+            self.assertEqual(on_cell["candidate_touched_tests"], [])
+
+            # the diagnostic passes — and names the harness VERBATIM, unclassified
+            diag = on_cell["oracles"]["full_patch"]
+            self.assertTrue(diag["passed"], diag)
+            self.assertEqual(diag["applied_out_of_scope"], ["run_tests.py"])
+            self.assertTrue(
+                any("run_tests.py" in n and rb.FULL_PATCH_PASSED_NOTE in n
+                    for n in on["notes"]),
+                on["notes"],
+            )
+            markdown = rb.render_verdict_markdown(rb.build_verdict(on_dir, "both", None))
+            self.assertIn("run_tests.py", markdown)
+
+            # THE FOUR, each asserted on its own rather than through one blanket comparison.
+            on_card = rb.build_verdict(on_dir, "both", None)
+            off_card = rb.build_verdict(off_dir, "both", None)
+            on_sum = next(s for s in on_card["summaries"])
+            off_sum = next(s for s in off_card["summaries"])
+
+            # 1. `solved`
+            self.assertEqual(on_sum["solved_n"], off_sum["solved_n"])
+            self.assertEqual(on_sum["solved_n"], 0)
+            self.assertEqual(on_sum["solved_rate"], off_sum["solved_rate"])
+            self.assertEqual(on_sum["solved_task_ids"], off_sum["solved_task_ids"])
+            self.assertEqual(on_card["capability_order"], off_card["capability_order"])
+            # 2. the evidence floor
+            self.assertEqual(on_card["below_floor"], off_card["below_floor"])
+            self.assertTrue(on_card["below_floor"])
+            self.assertEqual(on_sum["objective_n"], off_sum["objective_n"])
+            # 3. the tier map
+            self.assertEqual(on_card["tier_map"], off_card["tier_map"])
+            # 4. the daily-driver pick
+            self.assertEqual(
+                on_card["daily_driver"]["pick"], off_card["daily_driver"]["pick"]
+            )
+
+            # …and `apply` refuses it either way — a passing diagnostic buys no route to prefs.
+            prefs = Path(td) / "prefs.json"
+            for run_dir in (on_dir, off_dir):
+                with contextlib.redirect_stdout(io.StringIO()):
+                    rb.cmd_verdict(rb.build_parser().parse_args([
+                        "verdict", "--run", run_dir.name,
+                        "--store-dir", str(run_dir.parent), "--goal", "both",
+                    ]))
+                with self.assertRaises(ValueError) as ctx:
+                    rb.apply_verdict(run_dir, prefs, rb._cr().load_pricing())
+                self.assertIn("below-floor verdict is never applied", str(ctx.exception))
+            self.assertFalse(prefs.exists())
+
+    def test_the_conditional_gate_buys_nothing_it_cannot_answer(self):
+        """Item 2's gate, all four branches. A diagnostic run costs one more execution of the
+        target's arbitrary `--test-cmd` (PLAN D11 exposure, toolchain time), so it is bought
+        only for the false-negative SUSPECTS."""
+        def fix_in_scope(cwd):
+            calc = cwd / "calc.py"
+            calc.write_text(calc.read_text().replace("x > 10", "x >= 10"))
+
+        with tempfile.TemporaryDirectory() as td:
+            td = Path(td)
+
+            # (a) the in-scope grade PASSED — nothing to bound
+            solved, _d = _run_general_harness_fixture(td / "solved", fix_in_scope)
+            cell = next(c for c in solved["cells"] if not c["skipped"])
+            self.assertTrue(cell["oracles"]["tests"]["passed"])
+            self.assertFalse(cell["oracles"]["full_patch"]["run"])
+            self.assertEqual(
+                cell["oracles"]["full_patch"]["reason"], rb.FULL_PATCH_NOT_RUN_SOLVED
+            )
+
+            # (b) no out-of-scope work at all — the two substrates would be the same tree
+            nothing, _d = _run_general_harness_fixture(td / "nothing", lambda cwd: None)
+            cell = next(c for c in nothing["cells"] if not c["skipped"])
+            self.assertFalse(cell["oracles"]["tests"]["passed"])
+            self.assertEqual(cell["candidate_modified_out_of_scope"], [])
+            self.assertFalse(cell["oracles"]["full_patch"]["run"])
+            self.assertEqual(
+                cell["oracles"]["full_patch"]["reason"],
+                rb.FULL_PATCH_NOT_RUN_NO_OUT_OF_SCOPE,
+            )
+
+            # (c) --no-full-patch-check
+            off, _d = _run_general_harness_fixture(
+                td / "off", lambda cwd: (cwd / "alt.py").write_text('MODE = "PATCHED"\n'),
+                no_full_patch_check=True,
+            )
+            cell = next(c for c in off["cells"] if not c["skipped"])
+            self.assertEqual(cell["candidate_modified_out_of_scope"], ["alt.py"])
+            self.assertFalse(cell["oracles"]["full_patch"]["run"])
+            self.assertEqual(
+                cell["oracles"]["full_patch"]["reason"], rb.FULL_PATCH_NOT_RUN_DISABLED
+            )
+
+            # (d) the tests oracle was never available — there is no in-scope grade to bound
+            self.assertEqual(
+                rb.full_patch_not_run_reason({"available": False, "passed": None}, ["x.py"]),
+                rb.FULL_PATCH_NOT_RUN_TESTS_UNAVAILABLE,
+            )
+
+    def test_a_genuine_failure_adds_nothing_to_the_bound(self):
+        """The population's other half: out-of-scope work that does NOT make the suite pass.
+        The diagnostic runs, reads `still fails`, and the interval stays degenerate — which is
+        the whole reason it is worth running rather than assuming."""
+        with tempfile.TemporaryDirectory() as td:
+            results, run_dir = _run_general_harness_fixture(
+                td, lambda cwd: (cwd / "notes.md").write_text("looked around, gave up\n")
+            )
+            cell = next(c for c in results["cells"] if not c["skipped"])
+            self.assertFalse(cell["oracles"]["tests"]["passed"])
+            self.assertEqual(cell["candidate_modified_out_of_scope"], ["notes.md"])
+            diag = cell["oracles"]["full_patch"]
+            self.assertTrue(diag["run"])
+            self.assertTrue(diag["available"])
+            self.assertFalse(diag["passed"])
+
+            card = rb.build_verdict(run_dir, "both", None)
+            summary = next(s for s in card["summaries"] if s["candidate"] == cell["model"])
+            bound = summary["false_negative_bound"]
+            self.assertEqual(bound["diagnostic_run_n"], 1)
+            self.assertEqual(bound["diagnostic_passed_n"], 0)
+            self.assertEqual(bound["solved_upper"], bound["solved_lower"])
+            markdown = rb.render_verdict_markdown(card)
+            self.assertIn("still fails", markdown)
+            self.assertIn("diagnostic still fails with the full patch applied", markdown)
+
+    # -- the rendering mutation check -------------------------------------------------------
+
+    def test_a_passing_diagnostic_cannot_increment_solved_n(self):
+        """ITEM 7's mutation check, done at the RENDERING boundary rather than through a run:
+        an envelope is constructed in which every cell's in-scope grade FAILED and every cell's
+        diagnostic PASSED. If any arithmetic anywhere folded the diagnostic into oracle (a),
+        this candidate would read 4/4; `solved` must read 0/4 and every downstream consumer
+        must agree with it."""
+        with tempfile.TemporaryDirectory() as td:
+            store = Path(td) / "store"
+            cells = []
+            for n in range(4):
+                cell = _v_cell(f"t{n}", "fake-alpha-1", passed=False)
+                cell["candidate_modified_out_of_scope"] = ["somewhere/else.py"]
+                cell["oracles"]["full_patch"] = {
+                    "oracle": "tests-full-patch", "run": True, "available": True,
+                    "passed": True, "rc": 0, "reason": None,
+                    "notes": rb.FULL_PATCH_PASSED_NOTE,
+                    "applied_out_of_scope": ["somewhere/else.py"],
+                    "restored_test_paths": [], "test_seconds": 0.1,
+                    "label": rb.FULL_PATCH_DIAGNOSTIC_LABEL,
+                }
+                cells.append(cell)
+            _run_id, run_dir = _write_run(store, cells)
+
+            card = rb.build_verdict(run_dir, "both", None, min_tasks=4)
+            summary = next(s for s in card["summaries"] if s["candidate"] == "fake-alpha-1")
+            self.assertEqual(summary["solved_n"], 0, "a diagnostic pass reached `solved_n`")
+            self.assertEqual(summary["objective_n"], 4)
+            self.assertEqual(summary["solved_rate"], 0.0)
+            order = next(
+                r for r in card["capability_order"] if r["candidate"] == "fake-alpha-1"
+            )
+            self.assertEqual(order["solved_n"], 0)
+            self.assertEqual(order["solved_rate"], 0.0)
+            # …and the bound is present, correct, and clearly the other number.
+            bound = summary["false_negative_bound"]
+            self.assertEqual((bound["solved_lower"], bound["solved_upper"]), (0, 4))
+            self.assertIn(
+                "solved lies in [0, 4] of 4", rb.render_verdict_markdown(card)
+            )
+
+    # -- isolation (item 6: construction AND lifetime, inverted) ----------------------------
+
+    def test_the_in_scope_grade_is_byte_identical_with_the_diagnostic_on_and_off(self):
+        """THE CONTAMINATION PROPERTY. This substrate holds candidate-written bytes BY DESIGN,
+        so the leak question inverts: not "can a candidate influence it" but "can it influence
+        anything else". The routing-grade grade is the thing that must not move, and it is
+        compared as bytes across three candidate shapes — a forgery, an out-of-scope fix, and
+        an in-scope fix — rather than argued about.
+        """
+        shapes = {
+            "forgery": lambda cwd: (cwd / "run_tests.py").write_text("# FORGED\n"),
+            "out-of-scope-fix": lambda cwd: (cwd / "alt.py").write_text('MODE = "PATCHED"\n'),
+            "in-scope-fix": lambda cwd: (cwd / "calc.py").write_text(
+                (cwd / "calc.py").read_text().replace("x > 10", "x >= 10")
+            ),
+        }
+        for label, mutate in shapes.items():
+            with self.subTest(shape=label):
+                with tempfile.TemporaryDirectory() as td:
+                    (on, _on_dir), (off, _off_dir) = _run_harness_fixture_pair(Path(td), mutate)
+                on_cell = next(c for c in on["cells"] if not c["skipped"])
+                off_cell = next(c for c in off["cells"] if not c["skipped"])
+                self.assertEqual(
+                    json.dumps(on_cell["oracles"]["tests"], sort_keys=True),
+                    json.dumps(off_cell["oracles"]["tests"], sort_keys=True),
+                    "the diagnostic changed the in-scope grade it is supposed to bound",
+                )
+                self.assertEqual(
+                    on_cell["candidate_modified_out_of_scope"],
+                    off_cell["candidate_modified_out_of_scope"],
+                )
+                self.assertEqual(
+                    json.dumps(on_cell["oracles"]["structural"], sort_keys=True),
+                    json.dumps(off_cell["oracles"]["structural"], sort_keys=True),
+                )
+                # …and the OFF run really did skip it, so this is not two identical no-ops.
+                self.assertTrue(on_cell["oracles"]["full_patch"]["run"] or label == "in-scope-fix")
+                self.assertFalse(off_cell["oracles"]["full_patch"]["run"])
+
+    def test_no_diagnostic_substrate_survives_its_own_grading(self):
+        """LIFETIME, checked directly. The substrate carries the candidate's whole patch AND
+        the withheld `test_blobs`; it lives under `<run-dir>/work`, one `../` from the next
+        candidate's cwd, so it may not outlive the grading that built it — not even under
+        `--keep-work`, which preserves cell sandboxes and has nothing to say about a throwaway
+        grade tree. `SolutionAncestryTests` checks the same property from the other side, at
+        every live dispatch."""
+        with tempfile.TemporaryDirectory() as td:
+            results, run_dir = _run_general_harness_fixture(
+                td, lambda cwd: (cwd / "alt.py").write_text('MODE = "PATCHED"\n'),
+                keep_work=True,
+            )
+            cell = next(c for c in results["cells"] if not c["skipped"])
+            self.assertTrue(
+                cell["oracles"]["full_patch"]["run"], "no diagnostic ran — nothing was proved"
+            )
+            leftovers = sorted(
+                str(p.relative_to(run_dir)) for p in run_dir.rglob("repo-bench-fullpatch-*")
+            )
+            self.assertEqual(leftovers, [], f"a diagnostic substrate survived: {leftovers}")
+
+    def test_the_diagnostic_lives_beside_solved_and_never_in_it(self):
+        """The structural statement, asserted rather than assumed: the cell key is separate,
+        the expanded row keeps them apart, and `_tests_cell_text` — the ONLY renderer of the
+        `solved` column — has three legal strings and none of them is the diagnostic's."""
+        row = {
+            "tests": {"available": True, "solved": False, "notes": ""},
+            "full_patch": {
+                "run": True, "available": True, "passed": True, "reason": None,
+                "applied_out_of_scope": ["x.py"], "restored_test_paths": [],
+                "test_seconds": 0.1, "notes": "", "label": rb.FULL_PATCH_DIAGNOSTIC_LABEL,
+            },
+        }
+        self.assertEqual(rb._tests_cell_text(row), "not solved")
+        self.assertEqual(rb._full_patch_cell_text(row), "PASSES — possible false negative")
+        row["full_patch"]["passed"] = False
+        self.assertEqual(rb._full_patch_cell_text(row), "still fails")
+        row["full_patch"]["run"] = False
+        self.assertEqual(rb._full_patch_cell_text(row), "-")
+        row["full_patch"].update(run=True, available=False)
+        self.assertEqual(rb._full_patch_cell_text(row), rb.NA)
+
+    def test_a_pre_t20_envelope_renders_the_column_as_not_run_rather_than_crashing(self):
+        """Every envelope written before this task has no `full_patch` key at all. That is
+        absence, and it renders as `-` with a stated reason — never as a `False` that would
+        read as "the diagnostic said no", and never as a KeyError."""
+        with tempfile.TemporaryDirectory() as td:
+            store = Path(td) / "store"
+            _run_id, run_dir = _write_run(store, [_v_cell("t1", "fake-alpha-1", passed=False)])
+            card = rb.build_verdict(run_dir, "both", None)
+            row = card["measurements"][0]
+            self.assertFalse(row["full_patch"]["run"])
+            self.assertEqual(row["full_patch"]["reason"], "no diagnostic record in this envelope")
+            summary = card["summaries"][0]
+            self.assertEqual(summary["false_negative_bound"]["diagnostic_run_n"], 0)
+            markdown = rb.render_verdict_markdown(card)
+            self.assertIn("an unrun diagnostic bounds nothing", markdown)
+
+    def test_the_diagnostic_still_restores_the_test_surface(self):
+        """T7R's law is NOT relaxed by T20. A candidate that rewrites a test-pattern path to
+        pass gets that edit stripped from the diagnostic substrate too — the diagnostic widens
+        the REFERENCE-SCOPE whitelist and nothing else."""
+        with tempfile.TemporaryDirectory() as td:
+            td = Path(td)
+            repo = td / "target"
+            base = build_harness_fixture_repo(repo)
+            blobs = {"tests/test_calc.py": "# the withheld reference test\n"}
+            task = _oracle_task(base, mode="general", blobs=blobs, scope_path="calc.py")
+
+            def mutate(cwd):
+                (cwd / "alt.py").write_text('MODE = "PATCHED"\n')
+                (cwd / "tests" / "test_calc.py").write_text("# CANDIDATE REWROTE THIS\n")
+
+            patch, _sandbox = _candidate_patch_for(repo, base, mutate, td / "cand")
+            built = rb.build_full_patch_substrate(task, patch, td / "substrate", repo)
+            self.assertTrue(built["applied"], built["notes"])
+            self.assertEqual(built["restored_test_paths"], ["tests/test_calc.py"])
+            self.assertEqual(
+                (Path(built["path"]) / "tests" / "test_calc.py").read_text(),
+                blobs["tests/test_calc.py"],
+                "the candidate's test-file edit survived into the diagnostic substrate",
+            )
+            # …while the out-of-scope module edit — the whole point — did arrive.
+            self.assertIn("PATCHED", (Path(built["path"]) / "alt.py").read_text())
+            self.assertEqual(built["applied_out_of_scope"], ["alt.py"])
+
+    def test_the_diagnostic_refuses_a_task_with_no_discriminating_oracle(self):
+        """Called DIRECTLY, past the gate, on an issue-replay task whose fix touched no tests:
+        there are no withheld blobs, so `--test-cmd` would grade the repo's own visible tests
+        and pass at base. A bound built from a guaranteed pass is worse than no bound, so the
+        oracle reports itself unavailable and `passed` stays `None`."""
+        with tempfile.TemporaryDirectory() as td:
+            td = Path(td)
+            repo = td / "target"
+            base = build_harness_fixture_repo(repo)
+            task = _oracle_task(base, mode="issue-replay", scope_path="calc.py")
+            task["oracle_tests_available"] = False
+            calls = []
+            result = rb.oracle_tests_full_patch(
+                task, "", "cmd", lambda cmd, cwd: calls.append(cwd) or (0, "OK"),
+                td / "scratch", target_repo=repo,
+            )
+        self.assertFalse(result["available"])
+        self.assertIsNone(result["passed"])
+        self.assertEqual(calls, [], "the diagnostic ran a test command it could not read")
+
+    def test_the_diagnostic_dispatches_no_model(self):
+        """Item 3, asserted rather than described: this oracle takes no dispatch runner, no
+        adapter and no pricing, and its only subprocess seam is the injected `test_runner`. A
+        model dispatch would have to appear in its signature to exist."""
+        params = set(inspect.signature(rb.oracle_tests_full_patch).parameters)
+        for forbidden in ("runner", "adapter", "pricing", "claude_bin", "max_usd", "spent_usd"):
+            self.assertNotIn(forbidden, params)
+        source = inspect.getsource(rb.oracle_tests_full_patch)
+        self.assertNotIn("would_exceed_ceiling(", source)
+        self.assertIn("would_exceed_ceiling", source)  # …but the absence is EXPLAINED
+        self.assertIn("label", source)
 
 
 if __name__ == "__main__":
