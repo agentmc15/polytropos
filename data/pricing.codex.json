@@ -1,6 +1,6 @@
 {
-  "cached_date": "2026-07-10",
-  "update_from": "API rates: OpenAI 'Previewing GPT-5.6 Sol' post (2026-06-26), re-confirmed against the OpenAI model-pricing table captured 2026-07-10 (GPT-5.6 Sol/Terra/Luna default-tier rates match exactly; that table also lists GPT-5.3-Codex at $1.75/$0.175/$14.00 and long-context threshold tiers not yet modeled here). Re-check https://platform.openai.com/docs/pricing once GA. Plan prices: https://openai.com/chatgpt/pricing. GA re-confirmed 2026-07-18 against the announcement + API pricing table (Sol/Terra/Luna default rates match this file exactly; long-context step-up tiers now published — recorded in long_context_note, deliberately not yet modeled).",
+  "cached_date": "2026-08-11",
+  "update_from": "API rates: OpenAI 'Previewing GPT-5.6 Sol' post (2026-06-26), re-confirmed against the OpenAI model-pricing table captured 2026-07-10 (GPT-5.6 Sol/Terra/Luna default-tier rates match exactly; that table also lists GPT-5.3-Codex at $1.75/$0.175/$14.00 and long-context threshold tiers not yet modeled here). Re-check https://platform.openai.com/docs/pricing once GA. Plan prices: https://openai.com/chatgpt/pricing. GA re-confirmed 2026-07-18 against the announcement + API pricing table (Sol/Terra/Luna default rates match this file exactly; long-context step-up tiers now published — recorded in long_context_note, deliberately not yet modeled). OpenAI cut 2026-07-30 (Terra -20%, Luna -80%; Sol unchanged); re-verified 2026-08-11 against openai.com/index/advancing-the-price-performance-frontier-with-gpt-5-6.",
   "model_ids_note": "UNCONFIRMED ids: the article names capability tiers (Sol/Terra/Luna), not id strings. These ids follow the lowercase-dot-version convention precedented by the doc-confirmed gpt-5.3-codex id on the Copilot side. Confirm against Codex CLI's /model picker (or ~/.codex/config.toml / rollout turn_context records) and correct them HERE (only here) if the CLI disagrees. Roster minimal by design: only GPT-5.6 rates are authoritative from the article; add other Codex-selectable models only with captured authoritative rates. Exception: 'codex-auto-review' is a non-selectable, non-routing observed id (Codex Desktop's auto-review feature) whose backing model the rollouts do not expose; its rate is an ASSUMED best-effort equal to GPT-5.3-Codex — clearly labeled, not authoritative — correct or remove if the true rate surfaces.",
   "billing_modes": {
     "api": {
@@ -17,19 +17,46 @@
   "cache_write_multiplier": 1.25,
   "cache_min_life_minutes": 30,
   "cache_note": "GPT-5.6 and later: explicit cache breakpoints with a 30-minute minimum cache life. Cache writes bill at 1.25x the uncached input rate; cache reads get the 90% cached-input discount (0.1x). Cached rates are computed from these multipliers at run time — never stored per model.",
-  "long_context_note": "Authoritative long-context step-up rates (GA API pricing table, captured 2026-07-18), NOT modeled in this file's schema — the codex estimator prices default-tier rates only, and threshold-tier modeling is a separate kit's concern. Single correctable point: GPT-5.6 Sol >272K input → $10.00/$1.00/$45.00; Terra >272K → $5.00/$0.50/$22.50; Luna >200K → $2.00/$0.20/$9.00 (input/cached-input/output per 1M tokens).",
+  "long_context_note": "Authoritative long-context step-up rates (GA API pricing table, captured 2026-07-18, step-ups re-captured 2026-08-11 after the 2026-07-30 cut), NOT modeled in this file's schema — the codex estimator prices default-tier rates only, and threshold-tier modeling is a separate kit's concern. Single correctable point: GPT-5.6 Sol >272K input → $10.00/$1.00/$45.00; Terra >272K → $4.00/$0.40/$18.00; Luna >200K → $0.40/$0.04/$1.80 (input/cached-input/output per 1M tokens).",
   "plans": {
-    "plus": { "usd_per_month": 20, "included_usage": null, "note": "Usage-limited; no published token allowance exists — never fabricate one." },
-    "pro": { "usd_per_month": 200, "included_usage": null, "note": "Higher limits than Plus; still no published token allowance." },
-    "business": { "usd_per_month": null, "included_usage": null, "note": "Per-seat pricing varies; org-managed limits." },
-    "enterprise": { "usd_per_month": null, "included_usage": null, "note": "Custom pricing; org-managed limits." }
+    "plus": {
+      "usd_per_month": 20,
+      "included_usage": null,
+      "note": "Usage-limited; no published token allowance exists — never fabricate one."
+    },
+    "pro": {
+      "usd_per_month": 200,
+      "included_usage": null,
+      "note": "Higher limits than Plus; still no published token allowance."
+    },
+    "business": {
+      "usd_per_month": null,
+      "included_usage": null,
+      "note": "Per-seat pricing varies; org-managed limits."
+    },
+    "enterprise": {
+      "usd_per_month": null,
+      "included_usage": null,
+      "note": "Custom pricing; org-managed limits."
+    }
   },
   "knobs": {
-    "reasoning_efforts": ["minimal", "low", "medium", "high", "xhigh", "max"],
+    "reasoning_efforts": [
+      "minimal",
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max"
+    ],
     "reasoning_efforts_note": "Ascending API tokens (GPT-5.6 announcement, 2026-07-18 capture). 'max' is the new deepest level with GPT-5.6 — it gives even more reasoning time than 'xhigh' — and may need to be toggled on in settings in ChatGPT Work and Codex. Effort is set per model.",
     "modes": {
-      "ultra": { "note": "New with GPT-5.6: coordinates four agents in parallel by default to accelerate complex work (the API's multi-agent beta). A MODE, not a rung on the reasoning-effort ladder. CLI surface and pricing unpublished as of the 2026-07-18 capture — no flag or multiplier invented." },
-      "fast": { "note": "Codex fast mode: priority processing for time-sensitive work — the published speed lever. CLI surface and pricing impact unpublished as of cached_date — no flag or multiplier invented." }
+      "ultra": {
+        "note": "New with GPT-5.6: coordinates four agents in parallel by default to accelerate complex work (the API's multi-agent beta). A MODE, not a rung on the reasoning-effort ladder. CLI surface and pricing unpublished as of the 2026-07-18 capture — no flag or multiplier invented."
+      },
+      "fast": {
+        "note": "Codex fast mode: priority processing for time-sensitive work — the published speed lever. CLI surface and pricing impact unpublished as of cached_date — no flag or multiplier invented."
+      }
     }
   },
   "models": {
@@ -45,17 +72,17 @@
       "display": "GPT-5.6 Terra",
       "vendor": "openai",
       "tier": "mid",
-      "input_per_mtok": 2.5,
-      "output_per_mtok": 15.0,
-      "notes": "Balanced everyday tier — competitive with GPT-5.5 at 2x cheaper. The default workhorse: day-to-day coding, tests, docs, refactors."
+      "input_per_mtok": 2.0,
+      "output_per_mtok": 12.0,
+      "notes": "Balanced everyday tier — competitive with GPT-5.5 at 2x cheaper. The default workhorse: day-to-day coding, tests, docs, refactors. Repriced -20% 2026-07-30."
     },
     "gpt-5.6-luna": {
       "display": "GPT-5.6 Luna",
       "vendor": "openai",
       "tier": "cheap",
-      "input_per_mtok": 1.0,
-      "output_per_mtok": 6.0,
-      "notes": "Fast & affordable tier, lowest cost: classification, extraction, formatting, lookups, bulk — and the cheap speed lever."
+      "input_per_mtok": 0.2,
+      "output_per_mtok": 1.2,
+      "notes": "Fast & affordable tier, lowest cost: classification, extraction, formatting, lookups, bulk — and the cheap speed lever. Repriced -80% 2026-07-30."
     },
     "codex-auto-review": {
       "display": "Codex auto-review (Codex Desktop)",
@@ -69,10 +96,30 @@
   },
   "tier_note": "Tier vocabulary is shared across all three harnesses (cheap|mid|strong|frontier). OpenAI ships three durable tiers, so 'strong' is unpopulated on this roster: tier resolution takes the first model in file order carrying the tier, skipping upward past empty tiers (strong resolves to the frontier model today). The 'codex-auto-review' entry carries tier 'non-routing' (outside the vocabulary) so resolve_tier never selects it — it exists only so the journal can price an observed, non-selectable id.",
   "task_profiles": {
-    "XS": { "label": "Quick Q&A / one-liner fix", "input_tokens": 10000, "output_tokens": 1000 },
-    "S": { "label": "Single-file change / small script", "input_tokens": 40000, "output_tokens": 4000 },
-    "M": { "label": "Feature across a few files", "input_tokens": 150000, "output_tokens": 15000 },
-    "L": { "label": "Multi-file refactor / large feature", "input_tokens": 400000, "output_tokens": 40000 },
-    "XL": { "label": "Long-horizon agentic run / migration", "input_tokens": 1500000, "output_tokens": 100000 }
+    "XS": {
+      "label": "Quick Q&A / one-liner fix",
+      "input_tokens": 10000,
+      "output_tokens": 1000
+    },
+    "S": {
+      "label": "Single-file change / small script",
+      "input_tokens": 40000,
+      "output_tokens": 4000
+    },
+    "M": {
+      "label": "Feature across a few files",
+      "input_tokens": 150000,
+      "output_tokens": 15000
+    },
+    "L": {
+      "label": "Multi-file refactor / large feature",
+      "input_tokens": 400000,
+      "output_tokens": 40000
+    },
+    "XL": {
+      "label": "Long-horizon agentic run / migration",
+      "input_tokens": 1500000,
+      "output_tokens": 100000
+    }
   }
 }

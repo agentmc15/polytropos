@@ -63,8 +63,8 @@ fabrication. Codex's flag is already live in `bin/codex_execute.py` and needed n
 - **API pricing table (GA, captured 2026-07-18).** Default-tier USD/1M for Sol/Terra/Luna
   matches `data/pricing.codex.json`'s existing rates exactly — no rate value changed in that
   file this kit. Long-context step-up tiers are recorded as a note only in both pricing files'
-  `long_context_note` (Sol >272K → $10/$1/$45, Terra >272K → $5/$0.50/$22.50, Luna >200K →
-  $2/$0.20/$9) — never modeled as schema.
+  `long_context_note` (re-captured 2026-08-11 after OpenAI's 2026-07-30 cut, Terra -20% / Luna -80%:
+  Sol >272K → $10/$1/$45, Terra >272K → $4/$0.40/$18, Luna >200K → $0.40/$0.04/$1.80) — never modeled as schema.
 
 The pricing files are the live source of truth for all of the above; this section names the
 provenance as a labeled 2026-07-18 snapshot, not a substitute for reading the data.

@@ -98,8 +98,8 @@ multiplier (0.1×), not stored separately.
 | Tier | Model | $ in/MTok | $ cached-in/MTok | $ out/MTok |
 |---|---|---:|---:|---:|
 | frontier | `gpt-5.6-sol` | $5.00 | $0.50 | $30.00 |
-| mid | `gpt-5.6-terra` | $2.50 | $0.25 | $15.00 |
-| cheap | `gpt-5.6-luna` | $1.00 | $0.10 | $6.00 |
+| mid | `gpt-5.6-terra` | $2.00 | $0.20 | $12.00 |
+| cheap | `gpt-5.6-luna` | $0.20 | $0.02 | $1.20 |
 | non-routing † | `codex-auto-review` | $1.75 | $0.175 | $14.00 |
 
 † `codex-auto-review` is Codex Desktop's built-in auto-review feature — an observed, non-selectable
