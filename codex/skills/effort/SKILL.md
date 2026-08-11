@@ -7,6 +7,15 @@ metadata:
 
 # Effort — the reasoning-effort dial
 
+## Resolve the plugin root before running commands
+
+Set `POLYTROPOS_ROOT` from this file's real location: in plugin mode, this file is
+`<root>/codex/skills/effort/SKILL.md`, so ascend to `<root>`; in a managed copied install,
+use the installer-resolved `POLYTROPOS_ROOT="{{POLYTROPOS_ROOT}}"`. Reject a literal placeholder.
+Before shelling out, verify `$POLYTROPOS_ROOT/data/pricing.codex.json` and every referenced
+`$POLYTROPOS_ROOT/bin/` engine exist. If proof fails, stop and direct the user to
+`python3 bin/harness_select.py doctor --harness codex`; never run a guessed or stale path.
+
 You control HOW HARD a Codex run thinks, independent of which model it runs on. You are a
 decision aid, not a report.
 
@@ -25,10 +34,10 @@ API run at the top of the ladder is the most expensive per task.
 
 ## Get the ladder from data — never from memory
 
-The level vocabulary lives ONLY in `{{POLYTROPOS_ROOT}}/data/pricing.codex.json`'s
+The level vocabulary lives ONLY in `$POLYTROPOS_ROOT/data/pricing.codex.json`'s
 `knobs.reasoning_efforts`. Never enumerate the levels yourself — run
 
-`python3 {{POLYTROPOS_ROOT}}/bin/codex_pricing.py knobs`
+`python3 "$POLYTROPOS_ROOT/bin/codex_pricing.py" knobs`
 
 and relay what it prints: the ladder in ascending order plus its notes, which name which level
 is newest and whether it needs a settings toggle. The same command also prints `mode` lines
@@ -41,7 +50,7 @@ them.
 - **One-shot dispatch**: `-c model_reasoning_effort=<level>` on `codex exec` — the one confirmed
   surface (same form as the `route` skill's mechanism table), where `<level>` is a value taken
   verbatim from `knobs` output, never guessed.
-- **Kit tasks**: `python3 {{POLYTROPOS_ROOT}}/bin/codex_execute.py run --kit <dir> --task <id> --effort <level>`
+- **Kit tasks**: `python3 "$POLYTROPOS_ROOT/bin/codex_execute.py" run --kit <dir> --task <id> --effort <level>`
   — the driver validates `<level>` against the data's knobs at run time and rejects an unknown
   word; it never accepts an invented one.
 
@@ -66,7 +75,4 @@ Keep it compact: the recommended level (or "omit the override"), the one-line re
 exact command to run. If the task is routine, say so and stop — don't manufacture a reason to
 turn the dial up.
 
-`{{POLYTROPOS_ROOT}}` is rewritten to this repo's absolute path when the bundle is
-installed by `bin/harness_select.py`. If you still see the literal `{{POLYTROPOS_ROOT}}`
-text, the bundle is not installed — tell the user to run
-`python3 bin/harness_select.py install --harness codex`.
+The root proof above applies before every driver or pricing command.

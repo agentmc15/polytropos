@@ -1,163 +1,144 @@
 # The Codex harness
 
-A guide to the OpenAI Codex CLI side of this monorepo: the same per-task model routing and
-cost-awareness this plugin gives Claude Code, ported to Codex's own prompt/config mechanics.
+Polytropos is a repo-local Codex skills plugin for model routing, usage/context analysis, and
+verified execution workflows. It also ships four optional custom-agent definitions. Skills and
+agents are separate Codex surfaces: installing the plugin does not install the agents.
 
----
+## Quickstart from a fresh clone
 
-## What this is
-
-This repo now has three independent surfaces:
-
-- **Repo root** — the Claude Code plugin (`.claude-plugin/`, `skills/`, `bin/`), live-installed
-  via the local marketplace. Unchanged by this work.
-- **`copilot/`** — the GitHub Copilot harness bundle (see
-  [docs/COPILOT-HARNESS.md](COPILOT-HARNESS.md)).
-- **`codex/`** — the Codex harness bundle: `AGENTS.md` (Codex's global instructions surface) plus
-  a `prompts/` directory of custom prompts (`route`, `architect`, `implementer`, `verifier`,
-  `reviewer`), invoked as `/name` inside the Codex TUI. Codex has no per-prompt model pin and no
-  custom-agent files, so role→model mapping lives in data and in the execute driver instead of in
-  the prompt bodies.
-- **Shared core** — `data/` holds three pricing files that never merge (`pricing.json` for Claude
-  Code, `pricing.copilot.json` for Copilot, `pricing.codex.json` for Codex); `bin/codex_pricing.py`
-  is the Codex-side cost engine; `bin/harness_select.py` detects which harness(es) are on `PATH`
-  and materializes the right bundle into the right home.
-
-## Install into Codex CLI
+1. Open this repository in Codex and restart Codex so it discovers the repo marketplace at
+   `.agents/plugins/marketplace.json`.
+2. Open `/plugins`, find **Polytropos Local**, and install/enable **Polytropos**.
+3. Open `/skills` and confirm the twelve skills below appear. Invoke one explicitly with `$route`,
+   or let Codex select a skill from its description when your request matches.
+4. Optionally preview and install project agents:
 
 ```bash
-python3 bin/harness_select.py detect
-python3 bin/harness_select.py install --harness codex
+python3 bin/harness_select.py install --harness codex --repo-root . --codex-home <codex-home> --components plugin,agents --agent-scope project --dry-run
+python3 bin/harness_select.py install --harness codex --repo-root . --codex-home <codex-home> --components plugin,agents --agent-scope project
 ```
 
-`detect` reports whether `claude`, `copilot`, and `codex` are on `PATH` and prints the right next
-step for each. `install --harness codex` copies every `codex/prompts/*.md` file into
-`<home>/prompts/<same name>`, rewriting every `{{POLYTROPOS_ROOT}}` placeholder to this
-repo's absolute path — Codex prompts are read as plain files, so the placeholder is resolved at
-install time, the same mechanism the Copilot side uses. The default home is `~/.codex`; override
-it with `--codex-home <dir>`. Add `--dry-run` to see the destination paths without writing
-anything.
+Project agents land in this checkout's `.codex/agents/`. For user-scoped agents, choose
+`--agent-scope user`; they land beneath the explicitly supplied Codex home. Start a new task after
+changing agents, then use `/agent` to select or inspect the available role.
 
-**AGENTS.md no-clobber rule:** `codex/AGENTS.md` installs to `<home>/AGENTS.md`, but that file may
-already hold the user's own global Codex instructions — unlike Copilot's per-file `agents/`
-directory, Codex's `AGENTS.md` is a single shared file. The installer writes it if absent, reports
-"up to date" if an existing copy is byte-identical, and — if a differing copy already exists —
-**never overwrites it**; it skips the file and prints an instruction to merge
-`codex/AGENTS.md` in by hand. The installer never touches `config.toml`; if you want a persistent
-`model =` default or a `[profiles.*]` pin, add those lines yourself using the ids/rates from
-`codex_pricing.py models`.
+## What loads where
 
-## Route a task
+| Component | Source | Codex surface | Scope and lifecycle |
+|---|---|---|---|
+| Repository guidance | root `AGENTS.md` | desktop, CLI, IDE | Loaded as repository instructions; never installed by the plugin |
+| Plugin skills | `codex/skills/*/SKILL.md` | `/skills`, explicit `$name`, implicit matching | Canonical workflows, loaded from this repo plugin |
+| Custom agents | `codex/agents/*.toml` | `/agent` | Optional project or user copies; separate from plugin install |
+| Custom prompts | `codex/prompts/*.md` | legacy CLI prompt palette | Deprecated generated compatibility mirrors, not workflow sources |
+| Ownership data | `<codex-home>/polytropos/install-manifest.json` | setup/doctor only | Hashes and metadata for deliberate copied installs; no prompt content or credentials |
+| Plugin catalog | `.agents/plugins/marketplace.json` | `/plugins` | Repo marketplace pointing to the root `.codex-plugin/plugin.json` |
 
-Ask the `route` prompt before an expensive run, the same way you'd ask this plugin's `/route`
-skill or the Copilot bundle's `route` agent: `/route` inside a Codex CLI session.
+Codex desktop, CLI, and IDE support can evolve independently. Treat `/plugins`, `/skills`, and
+`/agent` in the Codex surface you are using as authoritative; the compatibility prompts exist for
+older CLI workflows only.
 
-The prompt's first job is figuring out **which billing mode you're in** — ChatGPT sign-in
-(usage-limited, not token-billed) or `OPENAI_API_KEY` (real dollars) — because the two framings
-read very differently. It then classifies the task into a tier (`cheap` / `mid` / `strong` /
-`frontier`; `strong` is currently unpopulated and resolves up to `frontier`), estimates cost or
-burn for 2-3 candidates, and returns a compact table plus the one command to act on it.
+## Skills
 
-There are six ways to act on a recommendation:
-
-| Mechanism | How |
+| Skill | Purpose |
 |---|---|
-| One-shot dispatch | `codex exec "<task>" --model <model-id>` (add `--full-auto` when it must edit files) |
-| Interactive switch | `/model` picker in the Codex TUI |
-| Session start | `codex --model <model-id>` |
-| Persistent default | `model = "<model-id>"` in `~/.codex/config.toml` (or `$CODEX_HOME/config.toml`) |
-| Named profile | `[profiles.<name>]` in `config.toml`, used via `codex --profile <name>` |
-| Reasoning effort | `-c model_reasoning_effort=<minimal\|low\|medium\|high\|max>` (`max` is new with GPT-5.6) |
+| `$architect` | Plan a complex change once as `tasks/kits/<slug>` |
+| `$bench-routing` | Inspect benchmark priors and Codex-dispatchable role recommendations |
+| `$context-weight` | Analyze rollout growth and resident-surface weight at honest Codex fidelity |
+| `$doctor` | Diagnose plugin, agent, copied-surface, ownership, and stale-path state read-only |
+| `$effort` | Choose the runtime-derived reasoning-effort level for one run |
+| `$escalate` | Try the cheapest sufficient tier behind a verify gate |
+| `$execute` | Continue an architected kit through status, dry-run, run, verify, and review |
+| `$frontier-check` | Decide whether the runtime frontier tier is justified |
+| `$journal` | Build the cross-harness daily work journal with dry-run safeguards |
+| `$memory` | Pull a bounded, relevance-gated set of private local facts |
+| `$route` | Pick the cheapest sufficient Codex tier and frame API cost or subscription burn honestly |
+| `$usage` | Analyze local Codex usage read-only, priced only when logs support it |
 
-Speed levers worth knowing about: the cheap tier (Luna) is the low-latency lane; Sol also launches
-on Cerebras at up to 750 tokens/sec (a speed fact, not a price); Codex **fast mode** exists for
-priority processing but its CLI flag is unpublished as of this doc's `cached_date` — check release
-notes, nothing here invents one; `max` reasoning effort and `ultra` mode trade speed for depth.
+The four optional agents are `kit-implementer`, `kit-verifier`, `phase-reviewer`, and
+`repo-explorer`. They deliberately carry no model or reasoning-effort pin; explicit delegation or
+the parent task chooses those values.
 
-## Pricing: API dollars vs subscription limits
+## Preview, diagnose, install, and update
 
-Codex has two disjoint ways to pay, and `codex_pricing.py est` always prints **both**, because
-there is no published conversion between them:
+Doctor and dry-run are byte-read-only:
 
-- **API mode** (`OPENAI_API_KEY`): the dollar figures below are real and authoritative.
-- **Subscription mode** (ChatGPT sign-in): Codex draws down opaque usage/rate limits, not
-  dollars. `billed_usd` is always `null`; the same dollar figure appears again labeled
-  **"API-equivalent (relative-burn proxy, not a bill)"**, alongside a burn index against the
-  cheapest same-profile model on the roster. This is never presented as a bill — it's the only
-  published proxy for "how much of my limits did that burn."
+```bash
+python3 bin/harness_select.py doctor --harness codex --repo-root . --codex-home <codex-home>
+python3 bin/harness_select.py doctor --harness codex --repo-root . --codex-home <codex-home> --json
+python3 bin/harness_select.py install --harness codex --repo-root . --codex-home <codex-home> --components plugin,agents --agent-scope project --dry-run --json
+```
 
-GPT-5.6 availability is a **limited preview to a select group of trusted partners** as of the
-article this data is transcribed from; whether your ChatGPT plan includes it at all is
-unconfirmed. If `/model` doesn't list a GPT-5.6 model, route among what it lists instead.
+The action states are `install`, `up-to-date`, `managed-update`, `conflict`, `unmanaged`, and
+`skip`. The plugin action never calls Codex; it validates the checked-in marketplace and tells you
+to restart, open `/plugins`, and enable Polytropos.
 
-The table below is a **snapshot of `data/pricing.codex.json`, cached `2026-07-10`** — a
-labeled point-in-time reference, not a live source; the file itself is authoritative. Prices are
-USD per million tokens (MTok); the cached-in column is computed as input × the cache-read
-multiplier (0.1×), not stored separately.
+For a previously managed copy whose destination is still byte-identical to the recorded install,
+preview and then request a refresh:
 
-| Tier | Model | $ in/MTok | $ cached-in/MTok | $ out/MTok |
-|---|---|---:|---:|---:|
-| frontier | `gpt-5.6-sol` | $5.00 | $0.50 | $30.00 |
-| mid | `gpt-5.6-terra` | $2.00 | $0.20 | $12.00 |
-| cheap | `gpt-5.6-luna` | $0.20 | $0.02 | $1.20 |
-| non-routing † | `codex-auto-review` | $1.75 | $0.175 | $14.00 |
+```bash
+python3 bin/harness_select.py install --harness codex --repo-root . --codex-home <codex-home> --components agents --agent-scope user --refresh-managed --dry-run
+python3 bin/harness_select.py install --harness codex --repo-root . --codex-home <codex-home> --components agents --agent-scope user --refresh-managed
+```
 
-† `codex-auto-review` is Codex Desktop's built-in auto-review feature — an observed, non-selectable
-id (rollout originator "Codex Desktop") with **no backing model exposed** in the logs. Its rate is
-an **assumed** best-effort equal to GPT-5.3-Codex (per the OpenAI pricing table captured
-`2026-07-10`), added only so `codex_usage.py` / the daily journal can price it as a labeled
-API-equivalent proxy. It is not a routing target — its `non-routing` tier is outside the
-`cheap|mid|strong|frontier` vocabulary and is skipped by `resolve_tier`. Correct or remove it if
-the true backing model surfaces.
+There is no force mode. A user-edited managed file or unrelated collision is a conflict and is
+preserved. Merge or rename it manually, rerun doctor, and start a new task after the state is
+clean. The installer never overwrites `config.toml` and no recovery step deletes an entire Codex
+home.
 
-Cache facts (GPT-5.6 and later, generation-wide, not per model): explicit cache breakpoints with a
-30-minute minimum cache life; cache **reads** get the 90% discount (0.1× the uncached input rate,
-the column above); cache **writes** bill at 1.25× the uncached input rate (an estimate-time
-exclusion — `codex_pricing.py est` leaves writes out of its projections, same as the sibling
-engines; `codex_usage.py` can't observe writes in the logs either, so it doesn't price them).
+## Architect to execute
 
-**Model ids:** `model_ids_note` in the data file flags the three GPT-5.6 ids as best-effort — the
-source article names capability tiers (Sol/Terra/Luna), not id strings. Treat Codex CLI's
-`/model` picker as authoritative if it disagrees, and correct ids in `data/pricing.codex.json`
-only — never anywhere else.
+Use `$architect` to create a kit, then inspect it without spending model usage:
 
-## Run kits on Codex
+```bash
+python3 bin/codex_execute.py status --kit tasks/kits/<slug>
+python3 bin/codex_execute.py run --kit tasks/kits/<slug> --dry-run
+```
 
-`bin/codex_execute.py status|run|review --kit tasks/kits/<slug>` dispatches a kit's tasks to the
-Codex CLI, mirroring `bin/copilot_execute.py`'s shape. A task's `model` field may be a concrete
-model id from `data/pricing.codex.json` or a tier word (`cheap|mid|strong|frontier`); tier words
-resolve to the first model in file order carrying that tier, skipping upward past any empty tier
-(today, `strong` resolves to Sol). A failed verify escalates to the next strictly-higher populated
-tier, carrying the failure evidence into the re-dispatch; an exhausted ladder marks the task
-`blocked`.
+Continue with `$execute` or a real driver run only after approving the dispatch. A non-dry
+`run`/`review` launches headless Codex and spends subscription usage or API-metered funds. The
+generic agents are convenient for interactive delegation but are not required by the driver.
 
-Always dry-run first: `run --dry-run` prints the exact `codex exec ... --full-auto ...` argv and
-spawns nothing. **A real (non-dry-run) `run`/`review` shells out to the actual `codex` binary,
-which calls a model** — it spends the user's real subscription usage limits or API dollars and
-hits the network. Treat it with the same care as a real Copilot or Claude dispatch.
+Routing, effort, usage, and journal values are derived at runtime from
+`data/pricing.codex.json`; subscription dollar figures remain labeled API-equivalent relative-burn
+proxies, never bills. `$context-weight` preserves Codex's no-content-provenance limit,
+`$bench-routing` preserves benchmark transcription limitations, and `$memory` injects only
+relevance-gated budget winners.
 
-## Usage report
+## Legacy copied installs and custom prompts
 
-`bin/codex_usage.py --days 30 [--codex-home DIR]` reads `~/.codex` strictly read-only —
-`session_index.jsonl`, `history.jsonl`, and date-pruned rollout JSONL files under `sessions/`;
-never a `*.db`, never a write, never a `codex` invocation.
+The old command remains compatible:
 
-It follows an honesty ladder: if rollout records carry token-usage fields, it prices them against
-`data/pricing.codex.json` and prints a per-model table plus the standing disclaimer, "Figures are
-API-equivalent dollars — a relative-burn proxy. Subscription (ChatGPT-plan) usage is usage-limited,
-not token-billed." If only session/history activity is present, it reports counts plus the line
-"no token usage found in these logs — activity counted, unpriced." If the home or its files are
-absent, it says so and exits cleanly. It never fabricates or zeroes a dollar figure to fill a gap.
+```bash
+python3 bin/harness_select.py install --harness codex --codex-home <codex-home> --dry-run
+```
 
-## Updating Codex prices
+It copies prompts, guidance, and skills under no-clobber rules. New installations should prefer
+the root plugin. To retain copied surfaces deliberately under ownership tracking, opt in:
 
-1. Edit `data/pricing.codex.json` only — pull fresh numbers from the URL in its own
-   `update_from` field.
-2. Bump its `cached_date`.
-3. Refresh this doc's snapshot table in the *same* change (it's hand-maintained, not generated).
-4. Rerun `python3 -m unittest discover -s tests` — `tests/test_codex_bundle.py` and the cost
-   engine's regression tests both read this file.
+```bash
+python3 bin/harness_select.py install --harness codex --repo-root . --codex-home <codex-home> --components skills,prompts,guidance --legacy-copy --dry-run
+```
 
-Re-check deliberately once GPT-5.6 exits limited preview: confirm the model ids against `/model`,
-confirm whether ChatGPT plans actually include it, and check whether fast mode or `ultra` have
-published CLI surfaces or price impacts yet — none of that is guessed here.
+Prompts are deprecated compatibility mirrors generated by `bin/sync_codex_surfaces.py`; `$route`
+is canonical, not bare `/route`. `python3 bin/sync_codex_surfaces.py check` detects drift without
+writing. A known old absolute repo path can be adopted only when normalization proves it matches a
+current source. Unknown content stays unmanaged/conflicted and is never overwritten.
+
+## Official Codex references
+
+- [Build plugins](https://developers.openai.com/plugins/build/plugins)
+- [Custom agents](https://learn.chatgpt.com/docs/agent-configuration/subagents)
+- [Build skills](https://learn.chatgpt.com/docs/build-skills)
+- [AGENTS.md](https://learn.chatgpt.com/docs/agent-configuration/agents-md)
+- [Custom prompts (deprecated)](https://learn.chatgpt.com/docs/custom-prompts)
+
+## Good next Codex additions
+
+- A Codex adapter for the existing repo-bench engine, with the same explicit spend ceiling.
+- An optional trusted verify hook; opt-in only, because hooks are runtime behavior.
+- Automation templates for recurring doctor, journal, or telemetry checks.
+- Plugin icons/screenshots and richer presentation assets.
+- Better context-fidelity analysis if Codex logs eventually expose provenance.
+
+Codex's built-in `/statusline` already covers the interactive status surface, so Claude's custom
+statusline setup does not need to be ported.

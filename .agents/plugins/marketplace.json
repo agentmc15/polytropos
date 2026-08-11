@@ -1,0 +1,21 @@
+{
+  "name": "polytropos-local",
+  "interface": {
+    "displayName": "Polytropos Local"
+  },
+  "plugins": [
+    {
+      "name": "polytropos",
+      "description": "Model routing, usage analysis, and verified execution workflows for Codex.",
+      "source": {
+        "source": "local",
+        "path": "./"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

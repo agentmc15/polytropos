@@ -42,7 +42,7 @@
       "kind": "markdown",
       "title": "GitHub Copilot CLI Documentation Center",
       "authoring_mode": "estimated",
-      "sources_sha256": "b79850a135a4b1975d3cdc264d05f409de519158a8f0c175eb5e2ea2ffe09769",
+      "sources_sha256": "c565410b4987adafe023cf55b2455d32b10ff789d46aab5531ffabda15271c0a",
       "measurement": {
         "bytes": 3586,
         "words": 564,
@@ -87,7 +87,7 @@
       "kind": "markdown",
       "title": "Installing the Copilot CLI bundle",
       "authoring_mode": "estimated",
-      "sources_sha256": "227dc33ab75ee1d793a26986515e484dcd31d8dae38a596c03093f5369f4b3d8",
+      "sources_sha256": "ad4503c56e6dce0048d1141b6042c665956e4463ef44c8e9deb21d900f124621",
       "measurement": {
         "bytes": 3516,
         "words": 551,
@@ -132,7 +132,7 @@
       "kind": "markdown",
       "title": "Safety and cost boundaries",
       "authoring_mode": "estimated",
-      "sources_sha256": "27818b0d61a197aa82abb6366d1169da1dcfeec4a968db544288d7b9c984e7f8",
+      "sources_sha256": "933d4a55e47eb4c3d517953a36f56ae37a575a7485593933793a31944f50d4a8",
       "measurement": {
         "bytes": 4945,
         "words": 762,
@@ -177,7 +177,7 @@
       "kind": "markdown",
       "title": "Skills reference",
       "authoring_mode": "estimated",
-      "sources_sha256": "896155c7e1d83b5f63c9a6411c9e2c7767ef84c803d0c639b37ca3c19d87a523",
+      "sources_sha256": "bdabe1a59cf5512227dac46424cc1c23b885dd89b59c063592a2e43420c08bab",
       "measurement": {
         "bytes": 21388,
         "words": 3534,
@@ -222,7 +222,7 @@
       "kind": "markdown",
       "title": "Agents reference",
       "authoring_mode": "estimated",
-      "sources_sha256": "fa9afb80a6826c6493fbdcdb52a44ed313830d2f4d63a364a6e19ccd8953531b",
+      "sources_sha256": "d63e0eb84e8b01322f1e96b11e1f98e855b78884d7bd15d61dd24c6d028acdd7",
       "measurement": {
         "bytes": 16474,
         "words": 2659,

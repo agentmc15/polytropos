@@ -63,10 +63,19 @@ Usage:
 """
 
 import argparse
+import hashlib
 import json
+import os
+import re
 import shutil
 import sys
+import tempfile
 from pathlib import Path
+
+try:
+    import tomllib
+except ImportError:  # pragma: no cover - Python 3.11+ in supported Codex environments
+    tomllib = None
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 BUNDLE_AGENTS = REPO_ROOT / "copilot" / ".github" / "agents"
@@ -74,7 +83,13 @@ BUNDLE_SKILLS = REPO_ROOT / "copilot" / ".github" / "skills"
 BUNDLE_CODEX_PROMPTS = REPO_ROOT / "codex" / "prompts"
 BUNDLE_CODEX_AGENTS_MD = REPO_ROOT / "codex" / "AGENTS.md"
 BUNDLE_CODEX_SKILLS = REPO_ROOT / "codex" / "skills"
+BUNDLE_CODEX_AGENTS = REPO_ROOT / "codex" / "agents"
+CODEX_PLUGIN_MANIFEST = REPO_ROOT / ".codex-plugin" / "plugin.json"
+CODEX_MARKETPLACE = REPO_ROOT / ".agents" / "plugins" / "marketplace.json"
 PLACEHOLDER = "{{POLYTROPOS_ROOT}}"
+CODEX_COMPONENTS = ("plugin", "agents", "skills", "prompts", "guidance")
+OWNERSHIP_RELATIVE = Path("polytropos") / "install-manifest.json"
+OWNERSHIP_VERSION = 1
 
 CLAUDE_CODE_MESSAGE = (
     "installed live from this repo via the local marketplace — nothing to install"
@@ -286,6 +301,450 @@ def install_codex(home, repo_root=None, dry_run=False):
     return results
 
 
+# ---- modern Codex setup engine ------------------------------------------------------------
+
+def _sha256_bytes(payload):
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _read_bytes(path):
+    return Path(path).read_bytes()
+
+
+def _resolved_bytes(source, repo_root):
+    raw = _read_bytes(source)
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return raw
+    return text.replace(PLACEHOLDER, str(Path(repo_root).resolve())).encode("utf-8")
+
+
+def _normalized_source_bytes(source):
+    """Hashable source form: checked-in placeholder retained, line endings normalized."""
+    raw = _read_bytes(source)
+    try:
+        return raw.decode("utf-8").replace("\r\n", "\n").encode("utf-8")
+    except UnicodeDecodeError:
+        return raw
+
+
+def _normalized_legacy_bytes(payload, source, repo_root):
+    """Return canonical placeholder form for a recognized legacy copy, else ``None``.
+
+    Recognition is deliberately strict: a candidate must differ from the current source only
+    by one absolute repository prefix occupying the source placeholder positions.
+    """
+    canonical = _normalized_source_bytes(source)
+    if PLACEHOLDER.encode() not in canonical:
+        return None
+    try:
+        text = payload.decode("utf-8").replace("\r\n", "\n")
+        expected = canonical.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+    candidates = {str(Path(repo_root).resolve())}
+    candidates.update(re.findall(r'POLYTROPOS_ROOT="(/[^"\n]+)"', text))
+    candidates.update(
+        re.findall(
+            r"(?:/Users/[^\s`'\"<>]+|/home/[^\s`'\"<>]+)(?=/(?:bin|data|codex)(?:/|\b))",
+            text,
+        )
+    )
+    matches = []
+    for candidate in sorted(candidates):
+        if text.replace(candidate, PLACEHOLDER) == expected:
+            matches.append(expected.encode("utf-8"))
+    return matches[0] if len(matches) == 1 else None
+
+
+def parse_codex_components(raw):
+    """Parse a comma list without filesystem or home-directory access."""
+    if raw is None:
+        return ("plugin", "agents")
+    values = [value.strip() for value in raw.split(",")]
+    if not values or any(not value for value in values):
+        raise ValueError("--components must be a non-empty comma-separated list")
+    duplicates = sorted({value for value in values if values.count(value) > 1})
+    if duplicates:
+        raise ValueError(f"duplicate component(s): {', '.join(duplicates)}")
+    unknown = sorted(set(values) - set(CODEX_COMPONENTS))
+    if unknown:
+        raise ValueError(f"unknown component(s): {', '.join(unknown)}")
+    return tuple(value for value in CODEX_COMPONENTS if value in values)
+
+
+def _load_ownership(codex_home):
+    path = Path(codex_home) / OWNERSHIP_RELATIVE
+    if not path.is_file():
+        return {"version": OWNERSHIP_VERSION, "bundle_version": None, "files": []}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {"version": None, "bundle_version": None, "files": [], "invalid": True}
+    if not isinstance(payload, dict) or not isinstance(payload.get("files"), list):
+        return {"version": None, "bundle_version": None, "files": [], "invalid": True}
+    return payload
+
+
+def _bundle_version(repo_root):
+    try:
+        payload = json.loads(
+            (Path(repo_root) / ".codex-plugin" / "plugin.json").read_text(encoding="utf-8")
+        )
+        return payload.get("version") if isinstance(payload, dict) else None
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def _ownership_key(component, destination, codex_home, repo_root):
+    destination = Path(destination)
+    for label, base in (("home", Path(codex_home)), ("project", Path(repo_root))):
+        try:
+            return f"{label}:{destination.relative_to(base).as_posix()}"
+        except ValueError:
+            continue
+    raise ValueError(f"destination escapes approved roots: {destination}")
+
+
+def _source_inventory(repo_root, codex_home, components, agent_scope):
+    root = Path(repo_root)
+    home = Path(codex_home)
+    inventory = []
+    if "agents" in components:
+        destination_root = root / ".codex" / "agents" if agent_scope == "project" else home / "agents"
+        for source in sorted((root / "codex" / "agents").glob("*.toml")):
+            inventory.append(("agents", source, destination_root / source.name))
+    if "skills" in components:
+        skill_root = root / "codex" / "skills"
+        for source in sorted(path for path in skill_root.rglob("*") if path.is_file()):
+            inventory.append(("skills", source, home / "skills" / source.relative_to(skill_root)))
+    if "prompts" in components:
+        prompt_root = root / "codex" / "prompts"
+        for source in sorted(prompt_root.glob("*.md")):
+            inventory.append(("prompts", source, home / "prompts" / source.name))
+    if "guidance" in components:
+        source = root / "codex" / "AGENTS.md"
+        if source.is_file():
+            inventory.append(("guidance", source, home / "AGENTS.md"))
+    return inventory
+
+
+def _validate_plugin_metadata(repo_root):
+    root = Path(repo_root).resolve()
+    manifest_path = root / ".codex-plugin" / "plugin.json"
+    marketplace_path = root / ".agents" / "plugins" / "marketplace.json"
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        marketplace = json.loads(marketplace_path.read_text(encoding="utf-8"))
+        skills_raw = manifest["skills"]
+        plugin = marketplace["plugins"][0]
+        source_raw = plugin["source"]["path"]
+        if manifest.get("name") != "polytropos" or plugin.get("name") != "polytropos":
+            raise ValueError("plugin identity mismatch")
+        for raw, base in ((skills_raw, root), (source_raw, root)):
+            if not isinstance(raw, str) or not raw.startswith("./"):
+                raise ValueError("plugin paths must begin with ./")
+            resolved = (base / raw).resolve()
+            if not resolved.is_relative_to(root) or not resolved.exists():
+                raise ValueError("plugin path is missing or escapes the repository")
+    except (OSError, KeyError, IndexError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        return False, str(exc)
+    return True, "repo marketplace and skills path are ready"
+
+
+def _validate_agent_sources(repo_root):
+    expected = {"kit-implementer", "kit-verifier", "phase-reviewer", "repo-explorer"}
+    paths = sorted((Path(repo_root) / "codex" / "agents").glob("*.toml"))
+    if {path.stem for path in paths} != expected:
+        return False, "canonical agent roster is missing or has drifted"
+    if tomllib is None:
+        return True, "canonical agent roster is present (schema parser unavailable)"
+    try:
+        for path in paths:
+            payload = tomllib.loads(path.read_text(encoding="utf-8"))
+            if set(payload) != {"name", "description", "developer_instructions"}:
+                raise ValueError(f"unexpected fields in {path.name}")
+            if payload["name"] != path.stem:
+                raise ValueError(f"name mismatch in {path.name}")
+            if not payload["description"].strip() or not payload["developer_instructions"].strip():
+                raise ValueError(f"empty required field in {path.name}")
+    except (OSError, TypeError, ValueError, tomllib.TOMLDecodeError) as exc:
+        return False, str(exc)
+    return True, "canonical agent schema is valid"
+
+
+def plan_codex_setup(
+    repo_root,
+    codex_home,
+    components=("plugin", "agents"),
+    agent_scope="project",
+    legacy_copy=False,
+    refresh_managed=False,
+):
+    """Build a deterministic setup plan using only the explicitly supplied roots."""
+    if repo_root is None:
+        raise ValueError("a repository root is required")
+    if codex_home is None:
+        raise ValueError("an explicit Codex home is required")
+    components = tuple(components)
+    unknown = set(components) - set(CODEX_COMPONENTS)
+    if unknown or len(set(components)) != len(components):
+        raise ValueError("components must be unique members of the supported component set")
+    copied = {"skills", "prompts", "guidance"} & set(components)
+    if copied and not legacy_copy:
+        raise ValueError("skills, prompts, and guidance copies require --legacy-copy")
+    if agent_scope not in {"project", "user"}:
+        raise ValueError("agent scope must be project or user")
+
+    root = Path(repo_root).resolve()
+    home = Path(codex_home).resolve()
+    ownership = _load_ownership(home)
+    owned = {
+        entry.get("destination"): entry
+        for entry in ownership.get("files", [])
+        if isinstance(entry, dict) and isinstance(entry.get("destination"), str)
+    }
+    actions = []
+
+    if "plugin" in components:
+        valid, reason = _validate_plugin_metadata(root)
+        actions.append(
+            {
+                "component": "plugin",
+                "source": str(root / ".agents" / "plugins" / "marketplace.json"),
+                "destination": "Codex /plugins",
+                "state": "up-to-date" if valid else "conflict",
+                "reason": reason if valid else f"plugin metadata invalid: {reason}",
+                "source_digest": None,
+                "destination_digest": None,
+            }
+        )
+
+    if "agents" in components:
+        valid, reason = _validate_agent_sources(root)
+        if not valid:
+            actions.append(
+                {
+                    "component": "agents",
+                    "source": str(root / "codex" / "agents"),
+                    "destination": str(
+                        root / ".codex" / "agents"
+                        if agent_scope == "project"
+                        else home / "agents"
+                    ),
+                    "state": "conflict",
+                    "reason": f"canonical agents invalid: {reason}",
+                    "source_digest": None,
+                    "destination_digest": None,
+                }
+            )
+
+    for component, source, destination in _source_inventory(
+        root, home, components, agent_scope
+    ):
+        source_normalized = _normalized_source_bytes(source)
+        source_digest = _sha256_bytes(source_normalized)
+        installed = _resolved_bytes(source, root)
+        installed_digest = _sha256_bytes(installed)
+        key = _ownership_key(component, destination, home, root)
+        record = owned.get(key)
+        destination_digest = None
+        state = "install"
+        reason = "destination is absent"
+        if destination.exists():
+            if not destination.is_file():
+                state, reason = "conflict", "destination exists but is not a file"
+            else:
+                current = _read_bytes(destination)
+                destination_digest = _sha256_bytes(current)
+                if current == installed:
+                    state, reason = "up-to-date", "destination matches the current bundle"
+                elif PLACEHOLDER.encode("utf-8") in current:
+                    state, reason = "conflict", "destination contains an unresolved literal placeholder"
+                elif record and record.get("installed_hash") == destination_digest:
+                    if refresh_managed:
+                        state, reason = "managed-update", "unchanged managed copy can be refreshed"
+                    else:
+                        state, reason = "unmanaged", "managed copy is stale; rerun with --refresh-managed"
+                elif record:
+                    state, reason = "conflict", "managed destination was edited; preserving user changes"
+                elif _normalized_legacy_bytes(current, source, root) is not None:
+                    state = "managed-update" if refresh_managed else "unmanaged"
+                    reason = (
+                        "recognized legacy copy can be adopted and refreshed"
+                        if refresh_managed
+                        else "recognized legacy copy; rerun with --refresh-managed to adopt"
+                    )
+                else:
+                    state, reason = "conflict", "unmanaged destination differs"
+        action = {
+            "component": component,
+            "source": str(source),
+            "destination": str(destination),
+            "state": state,
+            "reason": reason,
+            "source_digest": source_digest,
+            "destination_digest": destination_digest,
+            "_installed_digest": installed_digest,
+            "_content": installed,
+            "_ownership_key": key,
+        }
+        actions.append(action)
+
+    actions.sort(key=lambda action: (CODEX_COMPONENTS.index(action["component"]), action["destination"]))
+    return {
+        "version": OWNERSHIP_VERSION,
+        "bundle_version": _bundle_version(root),
+        "repo_root": str(root),
+        "codex_home": str(home),
+        "agent_scope": agent_scope,
+        "components": list(components),
+        "actions": actions,
+    }
+
+
+def _public_plan(plan):
+    return {
+        key: value
+        for key, value in plan.items()
+        if key != "actions"
+    } | {
+        "actions": [
+            {key: value for key, value in action.items() if not key.startswith("_")}
+            for action in plan["actions"]
+        ]
+    }
+
+
+def _atomic_write(path, payload):
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=str(path.parent))
+    temporary_path = Path(temporary)
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        temporary_path.replace(path)
+    except BaseException:
+        temporary_path.unlink(missing_ok=True)
+        raise
+
+
+def apply_codex_plan(plan, fail_after=None):
+    """Apply writable actions atomically as a group; ownership is always written last."""
+    blocking = [
+        action for action in plan["actions"] if action["state"] in {"conflict", "unmanaged"}
+    ]
+    if blocking:
+        raise ValueError("setup plan contains conflicts or unmanaged destinations; nothing written")
+    writable = [
+        action for action in plan["actions"] if action["state"] in {"install", "managed-update"}
+    ]
+    backups = {}
+    ownership_path = Path(plan["codex_home"]) / OWNERSHIP_RELATIVE
+    prior_manifest = ownership_path.read_bytes() if ownership_path.is_file() else None
+    try:
+        for index, action in enumerate(writable, start=1):
+            destination = Path(action["destination"])
+            backups[destination] = destination.read_bytes() if destination.is_file() else None
+            _atomic_write(destination, action["_content"])
+            if fail_after is not None and index >= fail_after:
+                raise RuntimeError("simulated setup write failure")
+
+        records = []
+        for action in plan["actions"]:
+            if action["component"] == "plugin" or action["state"] in {"conflict", "unmanaged", "skip"}:
+                continue
+            destination = Path(action["destination"])
+            if not destination.is_file():
+                continue
+            records.append(
+                {
+                    "component": action["component"],
+                    "destination": action["_ownership_key"],
+                    "bundle_version": plan["bundle_version"],
+                    "source_hash": action["source_digest"],
+                    "installed_hash": _sha256_bytes(destination.read_bytes()),
+                }
+            )
+        manifest = {
+            "version": OWNERSHIP_VERSION,
+            "bundle_version": plan["bundle_version"],
+            "files": sorted(records, key=lambda record: record["destination"]),
+        }
+        if records:
+            manifest_bytes = (json.dumps(manifest, indent=2, sort_keys=True) + "\n").encode("utf-8")
+            if prior_manifest != manifest_bytes:
+                _atomic_write(ownership_path, manifest_bytes)
+    except BaseException:
+        for destination, prior in reversed(list(backups.items())):
+            if prior is None:
+                destination.unlink(missing_ok=True)
+            else:
+                _atomic_write(destination, prior)
+        if prior_manifest is None:
+            ownership_path.unlink(missing_ok=True)
+        else:
+            _atomic_write(ownership_path, prior_manifest)
+        raise
+
+
+def doctor_codex(repo_root, codex_home):
+    """Read-only diagnostic plan covering every Codex surface."""
+    plan = plan_codex_setup(
+        repo_root,
+        codex_home,
+        components=CODEX_COMPONENTS,
+        agent_scope="project",
+        legacy_copy=True,
+        refresh_managed=False,
+    )
+    ownership = _load_ownership(codex_home)
+    checks = _public_plan(plan)
+    destination_agents = Path(repo_root).resolve() / ".codex" / "agents"
+    canonical = {path.name for path in (Path(repo_root) / "codex" / "agents").glob("*.toml")}
+    if destination_agents.is_dir():
+        for path in sorted(destination_agents.glob("*.toml")):
+            if path.name in canonical:
+                continue
+            checks["actions"].append(
+                {
+                    "component": "agents",
+                    "source": "",
+                    "destination": str(path),
+                    "state": "unmanaged",
+                    "reason": "agent is outside the canonical bundle; preserved for manual review",
+                    "source_digest": None,
+                    "destination_digest": _sha256_bytes(path.read_bytes()),
+                }
+            )
+    checks["actions"].sort(
+        key=lambda action: (CODEX_COMPONENTS.index(action["component"]), action["destination"])
+    )
+    checks["ownership_manifest"] = (
+        "invalid" if ownership.get("invalid") else "present" if ownership.get("files") else "absent"
+    )
+    checks["session_note"] = "Restart Codex or start a new session after enabling the plugin or changing agents."
+    return checks
+
+
+def render_codex_plan(plan, as_json=False):
+    public = _public_plan(plan)
+    if as_json:
+        return json.dumps(public, indent=2, sort_keys=True)
+    lines = []
+    for action in public["actions"]:
+        lines.append(
+            f"{action['component']}: {action['state']} — {action['destination']} ({action['reason']})"
+        )
+    if "plugin" in public["components"]:
+        lines.append("next: restart Codex, open /plugins, then install and enable Polytropos")
+    return "\n".join(lines)
+
+
 # ---- CLI ------------------------------------------------------------------------------------
 
 def cmd_detect(args):
@@ -311,12 +770,47 @@ def cmd_detect(args):
 
 
 def cmd_install(args):
+    codex_only_values = (
+        args.repo_root,
+        args.components,
+        args.agent_scope,
+        args.legacy_copy,
+        args.refresh_managed,
+        args.json,
+    )
+    if args.harness != "codex" and any(codex_only_values):
+        raise SystemExit("Codex setup flags may be used only with --harness codex")
+
     if args.harness == "claude-code":
         print(f"claude-code: {CLAUDE_CODE_MESSAGE}")
         return
 
     if args.harness == "codex":
+        modern = any(codex_only_values)
         home = Path(args.codex_home) if args.codex_home else (Path.home() / ".codex")
+        if modern:
+            if args.refresh_managed and args.codex_home is None:
+                raise SystemExit("--refresh-managed requires an explicit --codex-home")
+            try:
+                components = parse_codex_components(args.components)
+                plan = plan_codex_setup(
+                    Path(args.repo_root) if args.repo_root else REPO_ROOT,
+                    home,
+                    components=components,
+                    agent_scope=args.agent_scope or "project",
+                    legacy_copy=args.legacy_copy,
+                    refresh_managed=args.refresh_managed,
+                )
+            except ValueError as exc:
+                raise SystemExit(str(exc)) from exc
+            print(render_codex_plan(plan, as_json=args.json))
+            if args.dry_run:
+                return
+            if any(action["state"] == "conflict" for action in plan["actions"]):
+                raise SystemExit(2)
+            apply_codex_plan(plan)
+            return
+
         try:
             results = install_codex(home, dry_run=args.dry_run)
         except FileNotFoundError as e:
@@ -343,6 +837,23 @@ def cmd_install(args):
     verb = "would install" if args.dry_run else "installed"
     for dest in dest_paths:
         print(f"{verb} {dest}")
+
+
+def cmd_doctor(args):
+    if args.harness != "codex":
+        raise SystemExit("doctor currently supports only --harness codex")
+    root = Path(args.repo_root) if args.repo_root else REPO_ROOT
+    home = Path(args.codex_home) if args.codex_home else (Path.home() / ".codex")
+    try:
+        report = doctor_codex(root, home)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
+    if args.json:
+        print(json.dumps(report, indent=2, sort_keys=True))
+        return
+    print(render_codex_plan(report))
+    print(f"ownership: {report['ownership_manifest']}")
+    print(report["session_note"])
 
 
 def build_parser():
@@ -375,7 +886,37 @@ def build_parser():
     p_install.add_argument(
         "--dry-run", action="store_true", help="print what would be installed; write nothing",
     )
+    p_install.add_argument(
+        "--repo-root", default=None,
+        help="repository root containing the Codex bundle (Codex modern setup only)",
+    )
+    p_install.add_argument(
+        "--components", default=None,
+        help="comma-separated Codex components: plugin,agents,skills,prompts,guidance",
+    )
+    p_install.add_argument(
+        "--agent-scope", choices=["project", "user"], default=None,
+        help="install Codex agents for this project or the explicit user home",
+    )
+    p_install.add_argument(
+        "--legacy-copy", action="store_true",
+        help="allow deprecated copying of skills, prompts, or guidance",
+    )
+    p_install.add_argument(
+        "--refresh-managed", action="store_true",
+        help="refresh only destinations proven unchanged by the ownership manifest",
+    )
+    p_install.add_argument(
+        "--json", action="store_true", help="machine-readable Codex setup plan",
+    )
     p_install.set_defaults(func=cmd_install)
+
+    p_doctor = sub.add_parser("doctor", help="diagnose Codex plugin, agents, and legacy copies")
+    p_doctor.add_argument("--harness", choices=["codex"], required=True)
+    p_doctor.add_argument("--repo-root", default=None)
+    p_doctor.add_argument("--codex-home", default=None)
+    p_doctor.add_argument("--json", action="store_true")
+    p_doctor.set_defaults(func=cmd_doctor)
 
     return ap
 

@@ -1,6 +1,19 @@
 ---
-description: Do the expensive planning once — deep-plan a complex task and write an execution kit (PLAN.md + TASKS.md with model-pinned, self-contained briefs) under tasks/kits/<slug>/ for the execute driver to dispatch on cheaper models. Use for "architect this", "plan this big task", or to produce a Codex execution kit.
+description: "Do the expensive planning once — deep-plan a complex task and write an execution kit (PLAN.md + TASKS.md with model-pinned, self-contained briefs) under tasks/kits/<slug>/ for the execute driver to dispatch on cheaper models. Use for \"architect this\", \"plan this big task\", or to produce a Codex execution kit."
 ---
+
+> Deprecated compatibility prompt; prefer `$architect`.
+
+# Architect — plan once, emit a kit
+
+## Resolve the plugin root before running commands
+
+Set `POLYTROPOS_ROOT` from this file's real location: in plugin mode, this file is
+`<root>/codex/skills/architect/SKILL.md`, so ascend to `<root>`; in a managed copied install,
+use the installer-resolved `POLYTROPOS_ROOT="{{POLYTROPOS_ROOT}}"`. Reject a literal placeholder.
+Before shelling out, verify `$POLYTROPOS_ROOT/data/pricing.codex.json` and every referenced
+`$POLYTROPOS_ROOT/bin/` engine exist. If proof fails, stop and direct the user to
+`python3 bin/harness_select.py doctor --harness codex`; never run a guessed or stale path.
 
 You do the expensive meta-work once. Given a complex task, you produce a durable execution
 kit that a cheaper model can carry out task-by-task at near-frontier quality. You plan and
@@ -26,13 +39,13 @@ start `pending`.
 ## Pin every task's model — id or tier word, from data, never memory
 
 The `model` field accepts either a model id from
-`{{POLYTROPOS_ROOT}}/data/pricing.codex.json` or a tier word
+`$POLYTROPOS_ROOT/data/pricing.codex.json` or a tier word
 (`cheap|mid|strong|frontier`) resolved at dispatch time — model ids are unconfirmed for a
 preview generation, so a tier word survives an id correction that lands only in the pricing
 file. Derive every number by shelling to the engine, never from memory:
 
-- `python3 {{POLYTROPOS_ROOT}}/bin/codex_pricing.py models` — the roster with tiers.
-- `python3 {{POLYTROPOS_ROOT}}/bin/codex_pricing.py est <PROFILE> <MODEL_OR_TIER>`.
+- `python3 "$POLYTROPOS_ROOT/bin/codex_pricing.py" models` — the roster with tiers.
+- `python3 "$POLYTROPOS_ROOT/bin/codex_pricing.py" est <PROFILE> <MODEL_OR_TIER>`.
 
 Pin by tier: **cheap** — trivial/mechanical; **mid** — the default coding/tests/docs lane;
 **strong** — multi-file features, hard debugging, review, architecture; **frontier** —
@@ -48,12 +61,11 @@ limits or API dollars.
 
 ## Dispatch, model selection, and the placeholder
 
-This prompt carries no `model:` pin (Codex custom prompts cannot pin models). When
+This skill carries no `model:` pin — the desktop app supplies its own model. When
 `bin/codex_execute.py` dispatches a kit task non-interactively, it has already resolved that
 task's `model` field and passed it as `codex exec --model <id>` — the model that runs a
-dispatched task was chosen by the kit, not by this prompt re-routing. `{{POLYTROPOS_ROOT}}`
-resolves to this repo's absolute path only when installed by `bin/harness_select.py`; if you see
-the literal text, tell the user to run `python3 bin/harness_select.py install --harness codex`.
+dispatched task was chosen by the kit, not by this skill re-routing. The root proof above applies
+before every driver or pricing command.
 
 ## Output shape
 

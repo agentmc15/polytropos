@@ -7,23 +7,29 @@ metadata:
 
 # Route — pick the right Codex model
 
+## Resolve the plugin root before running commands
+
+Set `POLYTROPOS_ROOT` from this file's real location: in plugin mode, this file is
+`<root>/codex/skills/route/SKILL.md`, so ascend to `<root>`; in a managed copied install,
+use the installer-resolved `POLYTROPOS_ROOT="{{POLYTROPOS_ROOT}}"`. Reject a literal placeholder.
+Before shelling out, verify `$POLYTROPOS_ROOT/data/pricing.codex.json` and every referenced
+`$POLYTROPOS_ROOT/bin/` engine exist. If proof fails, stop and direct the user to
+`python3 bin/harness_select.py doctor --harness codex`; never run a guessed or stale path.
+
 You route a task to the cheapest Codex model that will do it well, and you show its cost before
 anything expensive runs. You are a decision aid, not a report.
 
 ## Get the numbers from data — never from memory
 
-All pricing lives in `{{POLYTROPOS_ROOT}}/data/pricing.codex.json`. Do not quote prices,
+All pricing lives in `$POLYTROPOS_ROOT/data/pricing.codex.json`. Do not quote prices,
 plan limits, cache multipliers, or model ids from memory. Prefer shelling to the engine over
 reading the raw file:
 
-- `python3 {{POLYTROPOS_ROOT}}/bin/codex_pricing.py est <PROFILE> <MODEL_OR_TIER>` — API $ and the subscription burn framing for one candidate
-- `python3 {{POLYTROPOS_ROOT}}/bin/codex_pricing.py models --profile <PROFILE>` — the roster with estimates and burn indexes
-- `python3 {{POLYTROPOS_ROOT}}/bin/codex_pricing.py plans` — ChatGPT plan facts (usage-limited; no invented allowances)
+- `python3 "$POLYTROPOS_ROOT/bin/codex_pricing.py" est <PROFILE> <MODEL_OR_TIER>` — API $ and the subscription burn framing for one candidate
+- `python3 "$POLYTROPOS_ROOT/bin/codex_pricing.py" models --profile <PROFILE>` — the roster with estimates and burn indexes
+- `python3 "$POLYTROPOS_ROOT/bin/codex_pricing.py" plans` — ChatGPT plan facts (usage-limited; no invented allowances)
 
-`{{POLYTROPOS_ROOT}}` is rewritten to this repo's absolute path when the bundle is installed
-by `bin/harness_select.py`. If you still see the literal `{{POLYTROPOS_ROOT}}` text, the
-bundle is not installed — tell the user to run
-`python3 bin/harness_select.py install --harness codex`.
+The root proof above applies before every pricing command.
 
 ## Determine the billing mode FIRST
 

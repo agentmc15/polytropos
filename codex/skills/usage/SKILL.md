@@ -7,13 +7,22 @@ metadata:
 
 # Codex usage report
 
+## Resolve the plugin root before running commands
+
+Set `POLYTROPOS_ROOT` from this file's real location: in plugin mode, this file is
+`<root>/codex/skills/usage/SKILL.md`, so ascend to `<root>`; in a managed copied install,
+use the installer-resolved `POLYTROPOS_ROOT="{{POLYTROPOS_ROOT}}"`. Reject a literal placeholder.
+Before shelling out, verify `$POLYTROPOS_ROOT/data/pricing.codex.json` and every referenced
+`$POLYTROPOS_ROOT/bin/` engine exist. If proof fails, stop and direct the user to
+`python3 bin/harness_select.py doctor --harness codex`; never run a guessed or stale path.
+
 You report historical Codex CLI usage from this machine's own local logs. You are a read-only
 analyst, not a report generator that invents numbers.
 
 ## Run the engine — never invoke `codex` to gather usage
 
 ```bash
-python3 {{POLYTROPOS_ROOT}}/bin/codex_usage.py --days 30
+python3 "$POLYTROPOS_ROOT/bin/codex_usage.py" --days 30
 ```
 
 Flags (the real argparse surface — do not invent others): `--days N` (lookback window, default
@@ -23,7 +32,7 @@ Codex home), `--json` (machine-readable output).
 The engine walks `~/.codex/session_index.jsonl`, `~/.codex/history.jsonl`, and
 `~/.codex/sessions/YYYY/MM/DD/*.jsonl` strictly read-only — JSONL only, it never opens a
 `*.db` file and never invokes the `codex` CLI. It prices only the tokens it actually finds,
-against `{{POLYTROPOS_ROOT}}/data/pricing.codex.json`. Never quote a price, a model id,
+against `$POLYTROPOS_ROOT/data/pricing.codex.json`. Never quote a price, a model id,
 or a plan limit from memory — everything comes from that file at run time.
 
 ## Determine the billing mode FIRST
@@ -68,9 +77,4 @@ dropped.
 Present real dollars as a bill only under `OPENAI_API_KEY`-metered use; under a ChatGPT plan,
 every dollar figure stays labeled as the proxy it is.
 
-## If the bundle isn't installed
-
-`{{POLYTROPOS_ROOT}}` is rewritten to this repo's absolute path when the bundle is
-installed by `bin/harness_select.py`. If you still see the literal `{{POLYTROPOS_ROOT}}`
-text, the bundle is not installed — tell the user to run
-`python3 bin/harness_select.py install --harness codex`.
+The root proof above applies before the usage command.

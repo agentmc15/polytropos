@@ -1,0 +1,33 @@
+{
+  "name": "polytropos",
+  "version": "0.5.0",
+  "description": "Model routing, relative-burn estimation, usage analysis, and verified execution workflows for Codex.",
+  "author": {
+    "name": "agentmc15"
+  },
+  "repository": "https://github.com/agentmc15/polytropos",
+  "license": "MIT",
+  "keywords": [
+    "codex",
+    "model-routing",
+    "cost-optimization"
+  ],
+  "skills": "./codex/skills/",
+  "interface": {
+    "displayName": "Polytropos",
+    "shortDescription": "Route Codex work and analyze usage",
+    "longDescription": "Choose an appropriate Codex model tier, estimate relative usage burn, analyze local activity, and run verified workflows.",
+    "developerName": "agentmc15",
+    "category": "Productivity",
+    "capabilities": [
+      "Read",
+      "Write"
+    ],
+    "websiteURL": "https://github.com/agentmc15/polytropos",
+    "defaultPrompt": [
+      "Route this task to the right Codex model tier.",
+      "Analyze my recent Codex usage.",
+      "Plan this change as a verified execution kit."
+    ]
+  }
+}

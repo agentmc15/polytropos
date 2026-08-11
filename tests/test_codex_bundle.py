@@ -61,7 +61,11 @@ EXPECTED_PROMPT_STEMS = {"route", "architect", "implementer", "verifier", "revie
 # they are deliberately NOT skills.
 PORTED_SKILL_STEMS = ("usage", "journal", "frontier-check", "escalate")
 WORKFLOW_SKILL_STEMS = ("architect", "route")
-EXPECTED_SKILL_STEMS = set(PORTED_SKILL_STEMS) | set(WORKFLOW_SKILL_STEMS) | {"effort"}
+EXPECTED_SKILL_STEMS = (
+    set(PORTED_SKILL_STEMS)
+    | set(WORKFLOW_SKILL_STEMS)
+    | {"effort", "execute", "doctor", "context-weight", "bench-routing", "memory"}
+)
 
 
 def _iter_bundle_files():

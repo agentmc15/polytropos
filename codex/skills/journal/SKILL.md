@@ -7,6 +7,15 @@ metadata:
 
 # Daily work journal
 
+## Resolve the plugin root before running commands
+
+Set `POLYTROPOS_ROOT` from this file's real location: in plugin mode, this file is
+`<root>/codex/skills/journal/SKILL.md`, so ascend to `<root>`; in a managed copied install,
+use the installer-resolved `POLYTROPOS_ROOT="{{POLYTROPOS_ROOT}}"`. Reject a literal placeholder.
+Before shelling out, verify `$POLYTROPOS_ROOT/data/pricing.codex.json` and every referenced
+`$POLYTROPOS_ROOT/bin/` engine exist. If proof fails, stop and direct the user to
+`python3 bin/harness_select.py doctor --harness codex`; never run a guessed or stale path.
+
 You generate the daily work journal — a read-only digest of what happened today across Claude
 Code, Copilot CLI, and Codex CLI, plus git activity, turned into three plain-language summaries.
 The collector engine is harness-agnostic: it already reads `~/.claude`, `~/.copilot`, and
@@ -16,7 +25,7 @@ Code or Copilot CLI would produce.
 ## Collect the digest
 
 ```bash
-python3 {{POLYTROPOS_ROOT}}/bin/journal_collect.py --print
+python3 "$POLYTROPOS_ROOT/bin/journal_collect.py" --print
 ```
 
 Flags (the real argparse surface — do not invent others): `--date YYYY-MM-DD` for a specific
@@ -30,7 +39,7 @@ gitignored `journal/<date>/` directory (`digest.json`), nowhere else.
 Print today's three prompts without dispatching anything:
 
 ```bash
-python3 {{POLYTROPOS_ROOT}}/bin/journal_summarize.py --date <date> --dry-run
+python3 "$POLYTROPOS_ROOT/bin/journal_summarize.py" --date <date> --dry-run
 ```
 
 Read `journal/<date>/digest.json` for the facts, follow each printed prompt's required
@@ -51,7 +60,7 @@ them into the digest. For Microsoft tools with no connector here (Copilot Studio
 Outlook):
 
 ```bash
-python3 {{POLYTROPOS_ROOT}}/bin/journal_askpack.py --date <date> --print
+python3 "$POLYTROPOS_ROOT/bin/journal_askpack.py" --date <date> --print
 ```
 
 This generates one ready-to-paste prompt per tool — run each inside that tool's own AI, then
@@ -61,7 +70,7 @@ generation only: no network, OAuth, Graph, or MCP call is ever added to fetch th
 ## Next-day runbook
 
 ```bash
-python3 {{POLYTROPOS_ROOT}}/bin/journal_plan.py build
+python3 "$POLYTROPOS_ROOT/bin/journal_plan.py" build
 ```
 
 writes a dated, checkable next-day plan at `journal/plan/<date>.md` — one card per planned
@@ -72,7 +81,7 @@ never a bill). Enrich the What/How bodies in-session (the summaries precedent �
 already paid for):
 
 ```bash
-python3 {{POLYTROPOS_ROOT}}/bin/journal_plan.py prompt
+python3 "$POLYTROPOS_ROOT/bin/journal_plan.py" prompt
 ```
 
 follow the printed prompt exactly (rewrite ONLY the What/How bodies; keep every other line
@@ -86,9 +95,4 @@ The digest is metadata-only — project and repo names, commit subjects, kit tas
 any inbox text, never transcript or message text. Everything the journal produces stays under
 the gitignored `journal/` directory; nothing here is committed to git.
 
-## If the bundle isn't installed
-
-`{{POLYTROPOS_ROOT}}` is rewritten to this repo's absolute path when the bundle is
-installed by `bin/harness_select.py`. If you still see the literal `{{POLYTROPOS_ROOT}}`
-text, the bundle is not installed — tell the user to run
-`python3 bin/harness_select.py install --harness codex`.
+The root proof above applies before every journal command.
