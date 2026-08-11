@@ -1,6 +1,19 @@
 ---
-description: Run one task on the cheapest sufficient GPT-5.6 tier behind a machine-checkable success check, escalating up the tiers — frontier last — only if the check fails. Use for "try it cheap first, fall back to the top model if it doesn't work" or an auto-escalating, verify-gated dispatch.
+description: "Run one task on the cheapest sufficient GPT-5.6 tier behind a machine-checkable success check, escalating up the tiers — frontier last — only if the check fails. Use for \"try it cheap first, fall back to the top model if it doesn't work\" or an auto-escalating, verify-gated dispatch."
 ---
+
+> Deprecated compatibility prompt; prefer `$escalate`.
+
+# Escalating dispatch
+
+## Resolve the plugin root before running commands
+
+Set `POLYTROPOS_ROOT` from this file's real location: in plugin mode, this file is
+`<root>/codex/skills/escalate/SKILL.md`, so ascend to `<root>`; in a managed copied install,
+use the installer-resolved `POLYTROPOS_ROOT="{{POLYTROPOS_ROOT}}"`. Reject a literal placeholder.
+Before shelling out, verify `$POLYTROPOS_ROOT/data/pricing.codex.json` and every referenced
+`$POLYTROPOS_ROOT/bin/` engine exist. If proof fails, stop and direct the user to
+`python3 bin/harness_select.py doctor --harness codex`; never run a guessed or stale path.
 
 You run ONE task through a cost-ascending ladder of Codex tiers, promoting to the next tier
 **only when a check fails** — so the frontier tier is spent on genuine difficulty, never on
@@ -33,7 +46,7 @@ script that exits non-zero on failure. State it explicitly.
 
 Default to the **cheapest tier you'd actually trust for this task**, from the data's
 `cheap|mid|strong|frontier` vocabulary via
-`python3 {{POLYTROPOS_ROOT}}/bin/codex_pricing.py models --json`. Use the `/route` prompt's
+`python3 "$POLYTROPOS_ROOT/bin/codex_pricing.py" models --json`. Use the `route` skill's
 framing if unsure. Per the data's `tier_note`, this roster is missing a populated `strong` tier,
 so asking for `strong` resolves UPWARD to the frontier model — the same skip-up rule
 `bin/codex_execute.py` implements. Never quote a model id or price from memory.
@@ -83,12 +96,9 @@ Always report which rung passed so the ladder's savings are visible.
 ## Kit tasks
 
 For a task that lives in a kit, prefer
-`python3 {{POLYTROPOS_ROOT}}/bin/codex_execute.py run --kit <dir> --task <id> [--effort E]`
+`python3 "$POLYTROPOS_ROOT/bin/codex_execute.py" run --kit <dir> --task <id> [--effort E]`
 — the driver implements this same ladder with statuses, NOTES writeback, and
-`--max-escalations`; this prompt is for one-off tasks outside a kit. For multi-task work, prefer
-the `architect` prompt over calling this in a loop.
+`--max-escalations`; this skill is for one-off tasks outside a kit. For multi-task work, prefer
+the `architect` skill over calling this in a loop.
 
-`{{POLYTROPOS_ROOT}}` is rewritten to this repo's absolute path when the bundle is
-installed by `bin/harness_select.py`. If you still see the literal `{{POLYTROPOS_ROOT}}`
-text, the bundle is not installed — tell the user to run
-`python3 bin/harness_select.py install --harness codex`.
+The root proof above applies before every driver or pricing command.

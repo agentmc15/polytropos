@@ -1,6 +1,19 @@
 ---
-description: Decide whether a task is worth the frontier-tier model in the GPT-5.6 family versus a mid or cheap candidate, and how to run it optimally — reasoning effort, task spec, refusal fallbacks. Use when the user asks "is the top model worth it here" or how to get the most out of it.
+description: "Decide whether a task is worth the frontier-tier model in the GPT-5.6 family versus a mid or cheap candidate, and how to run it optimally — reasoning effort, task spec, refusal fallbacks. Use when the user asks \"is the top model worth it here\" or how to get the most out of it."
 ---
+
+> Deprecated compatibility prompt; prefer `$frontier-check`.
+
+# Frontier-tier check
+
+## Resolve the plugin root before running commands
+
+Set `POLYTROPOS_ROOT` from this file's real location: in plugin mode, this file is
+`<root>/codex/skills/frontier-check/SKILL.md`, so ascend to `<root>`; in a managed copied install,
+use the installer-resolved `POLYTROPOS_ROOT="{{POLYTROPOS_ROOT}}"`. Reject a literal placeholder.
+Before shelling out, verify `$POLYTROPOS_ROOT/data/pricing.codex.json` and every referenced
+`$POLYTROPOS_ROOT/bin/` engine exist. If proof fails, stop and direct the user to
+`python3 bin/harness_select.py doctor --harness codex`; never run a guessed or stale path.
 
 You decide whether a task justifies the frontier tier of the GPT-5.6 family, and — if it
 does — how to run it well. You are a decision aid, not a report.
@@ -18,15 +31,15 @@ How the user pays decides which framing leads — establish it before anything e
 
 ## Get the numbers from data — never from memory
 
-All pricing lives in `{{POLYTROPOS_ROOT}}/data/pricing.codex.json`. Do not quote prices,
+All pricing lives in `$POLYTROPOS_ROOT/data/pricing.codex.json`. Do not quote prices,
 ratios, or model ids from memory.
 
-- `python3 {{POLYTROPOS_ROOT}}/bin/codex_pricing.py models --json` — the full roster;
+- `python3 "$POLYTROPOS_ROOT/bin/codex_pricing.py" models --json` — the full roster;
   filter for the row(s) whose `tier` is `"frontier"` to find today's frontier model.
-- `python3 {{POLYTROPOS_ROOT}}/bin/codex_pricing.py est <PROFILE> frontier` — `est`
+- `python3 "$POLYTROPOS_ROOT/bin/codex_pricing.py" est <PROFILE> frontier` — `est`
   accepts a tier word directly, so you never have to hardcode the model id it resolves to.
   Run the same command with `mid` and `cheap` to build the comparison ratios yourself.
-- `python3 {{POLYTROPOS_ROOT}}/bin/codex_pricing.py plans` — ChatGPT plan facts (no
+- `python3 "$POLYTROPOS_ROOT/bin/codex_pricing.py" plans` — ChatGPT plan facts (no
   invented allowances).
 
 Per the data's `tier_note`, this roster ships three durable tiers, so `strong` is unpopulated
@@ -91,12 +104,9 @@ inventing a flag.
 
 ## Standing recommendation
 
-- **Multi-task frontier-class work** → use the `architect` prompt instead of a raw dispatch:
+- **Multi-task frontier-class work** → use the `architect` skill instead of a raw dispatch:
   it plans once on the frontier tier and emits a kit that cheaper tiers execute.
-- **A single verify-gated task** → use the `escalate` prompt: it starts cheap, retries once on
+- **A single verify-gated task** → use the `escalate` skill: it starts cheap, retries once on
   failure evidence, and climbs the ladder only as far as the task needs — frontier last.
 
-`{{POLYTROPOS_ROOT}}` is rewritten to this repo's absolute path when the bundle is
-installed by `bin/harness_select.py`. If you still see the literal `{{POLYTROPOS_ROOT}}`
-text, the bundle is not installed — tell the user to run
-`python3 bin/harness_select.py install --harness codex`.
+The root proof above applies before every pricing command.

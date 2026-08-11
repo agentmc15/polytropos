@@ -15,6 +15,7 @@ re-run the installers rather than copying `~/.claude` or `~/.copilot` over.
 | `node` 20+ and `npm` | aesop (TypeScript) |
 | Claude Code CLI *(optional)* | to install/use the plugin |
 | GitHub Copilot CLI *(optional)* | to use the Copilot harness |
+| OpenAI Codex desktop or CLI *(optional)* | to use the Codex plugin skills and custom agents |
 | `gh auth login` *(optional)* | to push to GitHub |
 
 ## 1. Clone both, side by side
@@ -56,6 +57,12 @@ claude plugin install polytropos@polytropos-local
 # resolving the {{POLYTROPOS_ROOT}} placeholder to this repo's path
 python3 bin/harness_select.py install --harness copilot
 
+# Codex → restart Codex with this repo open, use /plugins to install and enable
+# Polytropos, then verify the twelve skills with /skills. Preview optional
+# project-agent installation before writing anything:
+python3 bin/harness_select.py install --harness codex --repo-root . --codex-home <codex-home> --components plugin,agents --agent-scope project --dry-run
+python3 bin/harness_select.py doctor --harness codex --repo-root . --codex-home <codex-home>
+
 # Statusline → run this skill inside a Claude Code session (writes an absolute
 # path into ~/.claude/settings.json, so it must be run here, not copied):
 #   /polytropos:setup
@@ -84,11 +91,11 @@ npm link                        # optional: put the `aesop` command on PATH
 
 ## The one gotcha: absolute paths don't transfer
 
-Do **not** copy `~/.claude/` or `~/.copilot/` from another machine — they contain hardcoded
+Do **not** copy `~/.claude/`, `~/.copilot/`, or a legacy copied Codex skill directory from another machine — they may contain hardcoded
 `/Users/<you>/...` paths (the plugin root, the `{{POLYTROPOS_ROOT}}` placeholder resolved at
-install time, and the statusline command). Re-run the three installers in step 2 instead; each one
-resolves paths to the new machine. Everything else — pricing data, kits, docs, tests — lives inside
-the repos.
+install time, and the statusline command). Re-run the relevant setup preview/doctor on the new
+machine. Codex plugin skills resolve from the relocated repo itself; only deliberate legacy copies
+need managed refresh. Everything else — pricing data, kits, docs, tests — lives inside the repos.
 
 ## Using it vs. developing it
 
