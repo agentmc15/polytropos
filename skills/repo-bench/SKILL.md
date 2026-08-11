@@ -13,6 +13,7 @@ sets for plugin-executed content; if it is unset, fall back to resolving
 ```bash
 python3 "${CLAUDE_PLUGIN_ROOT}/bin/repo_bench.py" plan --repo <path> --models <ids-or-tiers>
 python3 "${CLAUDE_PLUGIN_ROOT}/bin/repo_bench.py" run --repo <path> --models <ids-or-tiers> --live --max-usd <ceiling>
+python3 "${CLAUDE_PLUGIN_ROOT}/bin/repo_bench.py" regrade --run <run-id> --live --max-usd <ceiling>
 python3 "${CLAUDE_PLUGIN_ROOT}/bin/repo_bench.py" verdict --run <run-id>
 python3 "${CLAUDE_PLUGIN_ROOT}/bin/repo_bench.py" apply --run <run-id>
 python3 "${CLAUDE_PLUGIN_ROOT}/bin/repo_bench.py" list
@@ -34,6 +35,40 @@ user simply asking a benchmarking question does not count as that confirmation. 
 run the ceiling is re-checked before every single dispatch — candidate or judge — so a run that
 hits it stops cleanly mid-matrix rather than overspending; the remaining cells are marked
 skipped and the results are labelled `partial (cost-ceiling)`, never silently completed.
+
+### `regrade` — the same law, for a judge column a ceiling stranded
+
+Judge grading is a POST-LOOP pass, so budget is consumed candidate-first: a run that crosses its
+ceiling during grading has already dispatched (and paid for) every candidate cell and simply
+stops buying judge grades. The envelope records those as `skipped: cost-ceiling` and stays
+labelled `partial (cost-ceiling)`. **That is the signal to reach for `regrade`** — a verdict
+whose judge column is mostly `n/a (skipped: cost-ceiling)` is a run missing one of its four
+oracles, not a run that measured nothing there.
+
+`regrade --run <id>` re-dispatches ONLY those stranded grades. It **spends**, so it carries
+exactly the same law as `run`: never add `--live` yourself, always show the user what it will
+cost first (the command prints the pending count, the per-grade estimate and the total before it
+dispatches anything), and only construct the `--live --max-usd <ceiling>` form after the user has
+confirmed a ceiling in THIS conversation. The ceiling is a **fresh** budget for this invocation
+starting at $0.00 — never a continuation of the stopped run's arithmetic — and it is re-checked
+before every single grade, so a regrade that runs out stops cleanly, says so, and stays resumable
+by another one.
+
+What it deliberately does NOT do: re-dispatch candidate cells (their work is done, and a cell the
+ceiling cut is not finishable — `regrade` names those rather than pretending), touch a grade that
+completed, or re-dispatch an `empty-reference` skip (that is a design refusal, not a budget
+casualty — its reference strips to nothing, so one blind slot would render empty and deanonymise
+the pair). Every judge discipline is unchanged: slots re-randomized per grade, the reference
+stripped of its test hunks, `judge == candidate` refused, unparseable output recorded as such.
+
+Two things to relay honestly afterwards. **Spend is reported per invocation**, one line each with
+its own basis, and there is deliberately no combined total — a run priced `actual` plus a regrade
+priced `estimated` has no single basis, and every dollar this tool prints must carry one. And a
+**verdict rendered before the regrade is stamped `STALE VERDICT`** and `apply` refuses it: judge
+grades break capability ties, so re-run `verdict --run <id>` before quoting or applying anything.
+The `partial (cost-ceiling)` label comes off only when no cost-ceiling skip remains anywhere,
+cells included — a run whose CELLS were also cut stays partial no matter how many grades a
+regrade finishes.
 
 ### Size the ceiling against calibration, not against the raw estimate
 
@@ -457,6 +492,14 @@ a user "nothing is written outside the run":
   (switch off the full-patch diagnostic described above — it is on by default, dispatches no
   model, and costs one extra `--test-cmd` run per false-negative-suspect cell). Without
   `--live --max-usd` it prints the plan and refuses with a non-zero exit.
+- **`regrade`** — `--run` (required), `--store-dir`, `--live` and `--max-usd` (BOTH required to
+  spend anything, exactly as on `run`; the ceiling is this invocation's own, fresh from $0.00),
+  `--claude-bin`, `--judge-seed` (pin the blind slot assignment for every grade in this
+  invocation — omit it, which is the default, to keep PLAN D6's per-grade randomization).
+  Re-dispatches only the judge grades a cost ceiling stranded, merges them into the run's own
+  `results.json` in place, and records this invocation in a `regrades` entry with its own
+  ceiling, spend and basis. Without `--live --max-usd` it refuses with a non-zero exit. See the
+  section above before ever constructing the `--live` form.
 - **`verdict`** — `--run` (required), `--store-dir`, `--goal tiers|daily-driver|both` (default
   `both`), `--min-tasks` (raise the evidence floor for this render only), `--benchmarks`
   (override the published-index file for the D10 published leg), `--kits-dir` (override the

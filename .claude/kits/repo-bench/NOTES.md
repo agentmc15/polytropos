@@ -529,6 +529,23 @@ citing the kit's recorded trap history — briefs are not exempt from the lesson
 And quoting only the interval's upper bound is quoting a forgeable number; the skill now
 says so.
 
+## Decision: run 2026-08-10-d89a is NOT applied (recorded 2026-08-11)
+
+The first completed live verdict (pyright, 7 tasks x haiku+sonnet, sonnet 2/7 > haiku 0/7)
+stays advisory. Four reasons, each sufficient alone:
+- the run is labelled `partial (cost-ceiling)` — 6 of 14 judge grades never dispatched;
+- it predates T20, so its 9 flagged false-negative-suspect cells carry NO measured bound and
+  the absolute rates are known to systematically understate both candidates;
+- the daily-driver pick is, by the verdict's own note, a cost ordering among candidates with
+  zero demonstrated quick-task capability — applying it would write `daily_driver` from a
+  non-capability signal;
+- a two-candidate run fills only strong/mid; applying would override route defaults on the
+  thinnest map the floor permits.
+
+What a future APPLICABLE run looks like: post-T20 (diagnostic bounds rendered), judge column
+complete within its ceiling, ideally three candidates so no tier slot is empty, and a lower
+bound that still orders the candidates after the false-negative interval is considered.
+
 ## Ledger
 
 Read the T2 outcome with this context: its implementer dispatch STALLED on a harness
@@ -619,4 +636,7 @@ outcome: T19 model=sonnet attempts=1 result=pass review=none run=2026-07-31-63c6
 agent: T20 id=a95f08266b7033eee role=implementer model=opus
 agent: T20 id=ac2ef5dd91eb94dfb role=verifier model=sonnet findings=0 confirmed=0 result=accepted
 outcome: T20 model=opus attempts=1 result=pass review=clean run=2026-07-31-63c6
+agent: T21 id=a268a923352a92f5f role=implementer model=opus
+agent: T21 id=a0330fb09f031c085 role=verifier model=sonnet findings=0 confirmed=0 result=accepted
+outcome: T21 model=opus attempts=1 result=pass review=clean run=2026-07-31-63c6
 session: abf847f3-aa57-4b8d-a3b9-394a063e8762

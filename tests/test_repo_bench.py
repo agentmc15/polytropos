@@ -10461,5 +10461,800 @@ class FullPatchDiagnosticTests(unittest.TestCase):
         self.assertIn("label", source)
 
 
+# ---------------------------------------------------------------------------------------------
+# T21 — `regrade`. A ceiling stop during the POST-LOOP grading pass is a designed, permanent
+# outcome (PLAN D1) that strands the judge leg specifically: every candidate cell dispatched and
+# paid for, oracle (c) simply absent for the tail of the matrix. These tests hold the two things
+# a second spending invocation over an existing envelope must never get wrong — the spend gate
+# is `run`'s, not a second copy of it, and completed work is PROVABLY untouched.
+#
+# Everything below is offline and free: temp stores, synthetic envelopes written into them (the
+# GUARDRAILS-sanctioned shape for a store fixture), fake model ids priced from FIXTURE_PRICING,
+# and injected dispatch runners. No binary, no network, no cent.
+
+#: Diff-SHAPED on purpose (the T7R/F4c lesson): a bare string strips to no file blocks at all,
+#: which `grade_cells` reads as an empty reference and refuses to dispatch.
+_REGRADE_REFERENCE = (
+    "diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n@@ -1 +1 @@\n-before\n+after\n"
+)
+#: A reference that strips to nothing — the `empty-reference` skip, which is NOT a budget
+#: casualty and must survive a regrade untouched.
+_REGRADE_EMPTY_REFERENCE = (
+    "diff --git a/tests/test_a.py b/tests/test_a.py\n--- a/tests/test_a.py\n"
+    "+++ b/tests/test_a.py\n@@ -1 +1 @@\n-old\n+new\n"
+)
+
+_REGRADE_JUDGE = "fake-opus-1"
+_REGRADE_CANDIDATE = "fake-haiku-1"
+
+
+def _regrade_adapter():
+    """CLAUDE_ADAPTER with FIXTURE_PRICING bolted onto its pricing seam — obviously-fake model
+    ids, never a real price and never a real roster."""
+    return dict(rb.CLAUDE_ADAPTER, load_pricing=lambda: FIXTURE_PRICING)
+
+
+def _judge_stub_runner(output="GRADE A=correct B=partial EQUIVALENT=no", usage=None, rc=0):
+    """An injected dispatch runner for judge grades. `usage=None` (the default) means the
+    canned envelope carries no token counts, so each grade's `usd` IS its estimate exactly —
+    which is what lets a ceiling test do exact arithmetic instead of directional arithmetic."""
+    calls = []
+
+    def runner(argv, cwd):
+        calls.append({"argv": list(argv), "cwd": str(cwd)})
+        return rc, _canned_result_json(usage) + "\n" + output
+
+    runner.calls = calls
+    return runner
+
+
+def _regrade_task(task_id, reference=_REGRADE_REFERENCE):
+    return {
+        "task_id": task_id,
+        "mode": "issue-replay",
+        "statement": f"statement for {task_id}",
+        "subject": f"subject for {task_id}",
+        "reference_patch": reference,
+        "size_profile": "S",
+    }
+
+
+def _write_stranded_run(td, *, judge=_REGRADE_JUDGE, candidates=(_REGRADE_CANDIDATE,),
+                        skipped_cell=True, verdict=None, spend=None, write_tasks=True):
+    """A run whose judge column was cut mid-pass -> `(store, run_id, run_dir)`.
+
+    Five task×candidate cells, in this deliberate order:
+
+        idx 0  t1  grade COMPLETED               -> must stay byte-identical
+        idx 1  t2  grade skipped cost-ceiling    -> PENDING (this is what regrade finishes)
+        idx 2  t3  grade skipped empty-reference -> must stay skipped, never re-dispatched
+        idx 3  t4  grade skipped cost-ceiling,
+                   CELL skipped cost-ceiling     -> unfinishable: no patch to grade
+        idx 4  t5  grade skipped cost-ceiling    -> PENDING
+
+    The two pending grades are deliberately NON-ADJACENT (indices 1 and 4) so an implementation
+    that rebuilt the list by appending, or that merged positionally without a key, would show up
+    as reordering rather than passing by luck.
+    """
+    store = Path(td) / "store"
+    run_id, run_dir = rb.new_run_dir(store)
+    cells = [
+        _v_cell("t1", _REGRADE_CANDIDATE),
+        _v_cell("t2", _REGRADE_CANDIDATE),
+        _v_cell("t3", _REGRADE_CANDIDATE),
+        (_v_cell("t4", _REGRADE_CANDIDATE, skipped="cost-ceiling") if skipped_cell
+         else _v_cell("t4", _REGRADE_CANDIDATE)),
+        _v_cell("t5", _REGRADE_CANDIDATE),
+    ]
+    grades = [
+        _v_grade("t1", _REGRADE_CANDIDATE, "correct"),
+        _v_grade("t2", _REGRADE_CANDIDATE, None, skipped="cost-ceiling"),
+        _v_grade(
+            "t3", _REGRADE_CANDIDATE, None, skipped="empty-reference",
+            note=rb.JUDGE_EMPTY_REFERENCE_NOTE,
+        ),
+        _v_grade("t4", _REGRADE_CANDIDATE, None, skipped="cost-ceiling"),
+        _v_grade("t5", _REGRADE_CANDIDATE, None, skipped="cost-ceiling"),
+    ]
+    if not skipped_cell:
+        # The "everything finishable" shape: t4's grade becomes pending too.
+        pass
+    results = {
+        "store_schema_version": rb.STORE_SCHEMA_VERSION,
+        "run_id": run_id,
+        "repo": "/nonexistent/target",
+        "base_commit": "0" * 40,
+        "mode": "issue-replay",
+        "harness": "stub-harness",
+        "candidates": list(candidates),
+        "judge": judge,
+        "cells": cells,
+        "grades": grades,
+        "spend": spend or {"ceiling_usd": 1.0, "spent_usd": 0.75, "basis": "actual"},
+        "labels": [rb.SPEND_BASIS_LABELS["actual"], rb.COST_CEILING_LABEL],
+        "notes": ["cost ceiling reached before grading every cell"],
+    }
+    if verdict is not None:
+        results["verdict"] = verdict
+    (run_dir / "results.json").write_text(json.dumps(results, indent=2) + "\n")
+    if write_tasks:
+        for task_id in ("t1", "t2", "t4", "t5"):
+            task = _regrade_task(task_id)
+            (run_dir / "tasks" / f"{task_id}.json").write_text(json.dumps(task, indent=2) + "\n")
+        empty = _regrade_task("t3", reference=_REGRADE_EMPTY_REFERENCE)
+        (run_dir / "tasks" / "t3.json").write_text(json.dumps(empty, indent=2) + "\n")
+    return store, run_id, run_dir
+
+
+def _regrade_args(run_id, store, *extra):
+    return rb.build_parser().parse_args([
+        "regrade", "--run", str(run_id), "--store-dir", str(store), *extra,
+    ])
+
+
+def _run_dir_bytes(root):
+    """Every file under a RUN dir -> `{relative path: bytes}`. Byte-identity, not "looks the
+    same". Deliberately NOT named `_tree_snapshot` — that name is already taken by the
+    fixture-repo helper at the top of this module, and shadowing it silently rewires the
+    sandbox and read-only-target tests that depend on it."""
+    root = Path(root)
+    return {
+        str(p.relative_to(root)): p.read_bytes()
+        for p in sorted(root.rglob("*")) if p.is_file()
+    }
+
+
+class RegradeSpendGateTests(unittest.TestCase):
+    """T21 item 1 — the gate is `run`'s, enforced in `run`'s order, and it never spends."""
+
+    def test_missing_either_flag_refuses_and_never_reaches_the_runner(self):
+        for extra in ([], ["--live"], ["--max-usd", "5.0"]):
+            with self.subTest(extra=extra), tempfile.TemporaryDirectory() as td:
+                store, run_id, run_dir = _write_stranded_run(td)
+                before = (run_dir / "results.json").read_bytes()
+                runner = _judge_stub_runner()
+                args = _regrade_args(run_id, store, *extra)
+                with contextlib.redirect_stdout(io.StringIO()), \
+                        contextlib.redirect_stderr(io.StringIO()) as err, \
+                        self.assertRaises(SystemExit) as ctx:
+                    rb.cmd_regrade(args, runner=runner, adapter=_regrade_adapter())
+                self.assertEqual(ctx.exception.code, 2)
+                self.assertIn("--live", err.getvalue())
+                self.assertIn("--max-usd", err.getvalue())
+                self.assertEqual(runner.calls, [], "a refusal path reached the runner")
+                self.assertEqual((run_dir / "results.json").read_bytes(), before)
+
+    def test_the_cli_refusal_names_both_flags_on_stderr(self):
+        # The exact property the T21 verify probe asserts, held here too so a change to the
+        # wording fails in the suite rather than only in a shell block.
+        with tempfile.TemporaryDirectory() as td:
+            store, run_id, _ = _write_stranded_run(td)
+            args = _regrade_args(run_id, store)
+            with contextlib.redirect_stdout(io.StringIO()), \
+                    contextlib.redirect_stderr(io.StringIO()) as err, \
+                    self.assertRaises(SystemExit):
+                rb.cmd_regrade(args, runner=_explode_runner, adapter=_regrade_adapter())
+            self.assertIn("--live", err.getvalue())
+            self.assertIn("--max-usd", err.getvalue())
+
+    def test_a_malformed_ceiling_never_reaches_the_dispatch_loop(self):
+        for bad in ("nan", "inf", "-inf", "-1"):
+            with self.subTest(bad=bad), tempfile.TemporaryDirectory() as td:
+                store, run_id, run_dir = _write_stranded_run(td)
+                before = (run_dir / "results.json").read_bytes()
+                runner = _judge_stub_runner()
+                args = rb.build_parser().parse_args([
+                    "regrade", "--run", str(run_id), "--store-dir", str(store), "--live",
+                    f"--max-usd={bad}",
+                ])
+                with contextlib.redirect_stdout(io.StringIO()), \
+                        contextlib.redirect_stderr(io.StringIO()) as err, \
+                        self.assertRaises(SystemExit) as ctx:
+                    rb.cmd_regrade(args, runner=runner, adapter=_regrade_adapter())
+                self.assertEqual(ctx.exception.code, 2)
+                self.assertIn("finite", err.getvalue())
+                self.assertEqual(runner.calls, [], f"--max-usd {bad} reached the runner")
+                self.assertEqual((run_dir / "results.json").read_bytes(), before)
+
+    def test_the_ceiling_is_validated_before_the_store_is_even_opened(self):
+        # Order matters: a malformed ceiling must refuse for the CEILING's reason, not die on
+        # a run id it should never have looked up. This fails the moment the store read moves
+        # above `validate_ceiling`.
+        with tempfile.TemporaryDirectory() as td:
+            args = rb.build_parser().parse_args([
+                "regrade", "--run", "no-such-run", "--store-dir", str(Path(td) / "store"),
+                "--live", "--max-usd=nan",
+            ])
+            with contextlib.redirect_stdout(io.StringIO()), \
+                    contextlib.redirect_stderr(io.StringIO()) as err, \
+                    self.assertRaises(SystemExit) as ctx:
+                rb.cmd_regrade(args, runner=_explode_runner, adapter=_regrade_adapter())
+            self.assertEqual(ctx.exception.code, 2)
+            self.assertIn("finite", err.getvalue())
+
+    def test_the_per_dispatch_ceiling_check_is_the_shared_helper_not_a_copy(self):
+        with tempfile.TemporaryDirectory() as td:
+            store, run_id, _ = _write_stranded_run(td)
+            args = _regrade_args(run_id, store, "--live", "--max-usd", "100")
+            with mock.patch.object(
+                rb, "would_exceed_ceiling", wraps=rb.would_exceed_ceiling
+            ) as ceiling_spy, mock.patch.object(
+                rb, "validate_ceiling", wraps=rb.validate_ceiling
+            ) as validate_spy:
+                with contextlib.redirect_stdout(io.StringIO()):
+                    rb.cmd_regrade(
+                        args, runner=_judge_stub_runner(), adapter=_regrade_adapter()
+                    )
+            self.assertGreaterEqual(
+                ceiling_spy.call_count, 2,
+                "every judge grade must be ceiling-checked BEFORE it is dispatched",
+            )
+            # once for the CLI gate + once inside every `would_exceed_ceiling`
+            self.assertGreaterEqual(validate_spy.call_count, 3, validate_spy.call_args_list)
+
+    def test_the_ceiling_is_fresh_not_a_continuation_of_the_old_runs_arithmetic(self):
+        # The stranded run already recorded $0.75 against a $1.00 ceiling. A regrade under a
+        # ceiling SMALLER than that recorded spend must still dispatch: its budget starts at
+        # $0.00. If the old spend were carried in, nothing would ever be regradeable.
+        with tempfile.TemporaryDirectory() as td:
+            store, run_id, run_dir = _write_stranded_run(td)
+            unit = rb.estimate_dispatch_usd(
+                _REGRADE_JUDGE, rb.JUDGE_GRADE_PROFILE, FIXTURE_PRICING
+            )
+            self.assertLess(unit * 2, 0.75, "fixture pricing no longer makes this test sharp")
+            runner = _judge_stub_runner()
+            args = _regrade_args(run_id, store, "--live", "--max-usd", str(unit * 2.5))
+            with contextlib.redirect_stdout(io.StringIO()):
+                rb.cmd_regrade(args, runner=runner, adapter=_regrade_adapter())
+            self.assertEqual(len(runner.calls), 2)
+            results = json.loads((run_dir / "results.json").read_text())
+            self.assertAlmostEqual(results["regrades"][0]["spent_usd"], unit * 2)
+
+
+class RegradeTouchesOnlyStrandedGradesTests(unittest.TestCase):
+    """T21 item 2 — completed work is PROVABLY untouched, not merely un-mentioned."""
+
+    def _regrade(self, td, *extra, runner=None):
+        store, run_id, run_dir = _write_stranded_run(td)
+        before = json.loads((run_dir / "results.json").read_text())
+        runner = runner or _judge_stub_runner()
+        args = _regrade_args(run_id, store, "--live", "--max-usd", "100", *extra)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            rc = rb.cmd_regrade(args, runner=runner, adapter=_regrade_adapter())
+        after = json.loads((run_dir / "results.json").read_text())
+        return rc, before, after, runner, out.getvalue(), run_dir, store
+
+    def test_only_the_cost_ceiling_skips_with_a_dispatched_cell_are_re_dispatched(self):
+        with tempfile.TemporaryDirectory() as td:
+            rc, before, after, runner, text, _, _ = self._regrade(td)
+            self.assertEqual(rc, 0)
+            self.assertEqual(len(runner.calls), 2, "exactly the two pending grades")
+
+            # the COMPLETED grade, byte for byte
+            self.assertEqual(
+                json.dumps(after["grades"][0]), json.dumps(before["grades"][0]),
+                "a completed judge grade was rewritten",
+            )
+            # the EMPTY-REFERENCE skip: not a budget casualty, never re-dispatched (T7R law)
+            self.assertEqual(
+                json.dumps(after["grades"][2]), json.dumps(before["grades"][2]),
+                "an empty-reference skip was touched",
+            )
+            self.assertEqual(after["grades"][2]["skipped"], "empty-reference")
+            # the unfinishable cost-ceiling skip (its cell never ran)
+            self.assertEqual(
+                json.dumps(after["grades"][3]), json.dumps(before["grades"][3]),
+                "a grade whose candidate cell never ran was touched",
+            )
+            # the two PENDING grades are now real
+            for index in (1, 4):
+                self.assertIsNone(after["grades"][index]["skipped"])
+                self.assertIsNotNone(after["grades"][index]["grade"])
+                self.assertEqual(after["grades"][index]["judge_model"], _REGRADE_JUDGE)
+
+    def test_candidate_cells_are_never_re_dispatched(self):
+        with tempfile.TemporaryDirectory() as td:
+            _, before, after, runner, _, _, _ = self._regrade(td)
+            self.assertEqual(
+                json.dumps(after["cells"]), json.dumps(before["cells"]),
+                "regrade rewrote a candidate cell",
+            )
+            for call in runner.calls:
+                argv = call["argv"]
+                self.assertEqual(
+                    argv[argv.index("--model") + 1], _REGRADE_JUDGE,
+                    "a regrade dispatch went to a CANDIDATE model",
+                )
+
+    def test_nothing_is_reordered_dropped_or_appended(self):
+        with tempfile.TemporaryDirectory() as td:
+            _, before, after, _, _, _, _ = self._regrade(td)
+            self.assertEqual(
+                [(g["task_id"], g["candidate_model"]) for g in after["grades"]],
+                [(g["task_id"], g["candidate_model"]) for g in before["grades"]],
+                "the grades list was reordered or resized",
+            )
+
+    def test_the_judge_disciplines_are_grade_cells_and_are_not_re_derived(self):
+        source = inspect.getsource(rb.cmd_regrade)
+        self.assertIn("grade_cells(", source)
+        for forbidden in (
+            "oracle_judge(", "build_judge_prompt(", "parse_judge_output(",
+            "_strip_test_hunks(", "would_exceed_ceiling(", "math.isfinite",
+            "secrets.randbelow",
+        ):
+            self.assertNotIn(
+                forbidden, source,
+                f"cmd_regrade re-derives {forbidden} instead of reusing grade_cells",
+            )
+        self.assertIn("validate_ceiling(", source)
+
+    def test_the_blind_slot_audit_record_survives_and_the_reference_is_stripped(self):
+        with tempfile.TemporaryDirectory() as td:
+            runner = _judge_stub_runner()
+            _, _, after, _, _, _, _ = self._regrade(td, "--judge-seed", "1", runner=runner)
+            for index in (1, 4):
+                grade = after["grades"][index]
+                self.assertEqual(grade["slots"], {"A": "reference", "B": "candidate"})
+                self.assertEqual(grade["grade"]["slots"], grade["slots"])
+            # F4c / P1-F5: whatever reaches a judge prompt has been through the same
+            # `_strip_test_hunks` `grade_cells` applies — no test-path hunk in any prompt.
+            for call in runner.calls:
+                self.assertNotIn("tests/test_a.py", call["argv"][-1])
+
+    def test_slots_are_re_randomized_per_grade_by_default(self):
+        # PLAN D6, and NOT a formality: this property surfaced as a genuinely non-deterministic
+        # test result before `--judge-seed` was pinned in the verdict test below. Omitting the
+        # flag must keep the per-grade randomization `oracle_judge` performs — the seed is an
+        # opt-in reproducibility escape hatch, never the default.
+        with tempfile.TemporaryDirectory() as td:
+            store, run_id, run_dir = _write_stranded_run(td)
+            args = _regrade_args(run_id, store, "--live", "--max-usd", "100")
+            with mock.patch.object(rb.secrets, "randbelow", side_effect=[0, 1]) as spy:
+                with contextlib.redirect_stdout(io.StringIO()):
+                    rb.cmd_regrade(
+                        args, runner=_judge_stub_runner(), adapter=_regrade_adapter()
+                    )
+            self.assertEqual(spy.call_count, 2, "the slot seed was not drawn per grade")
+            results = json.loads((run_dir / "results.json").read_text())
+            self.assertEqual(results["grades"][1]["slots"], {"A": "candidate", "B": "reference"})
+            self.assertEqual(results["grades"][4]["slots"], {"A": "reference", "B": "candidate"})
+
+    def test_the_judge_cwd_stays_outside_the_run_dir_and_the_store(self):
+        with tempfile.TemporaryDirectory() as td:
+            _, _, _, runner, _, run_dir, store = self._regrade(td)
+            self.assertTrue(runner.calls)
+            for call in runner.calls:
+                cwd = Path(call["cwd"]).resolve()
+                self.assertNotEqual(cwd, run_dir.resolve())
+                self.assertNotIn(run_dir.resolve(), cwd.parents)
+                self.assertNotIn(Path(store).resolve(), cwd.parents)
+
+    def test_results_json_is_the_only_file_a_regrade_writes(self):
+        with tempfile.TemporaryDirectory() as td:
+            store, run_id, run_dir = _write_stranded_run(td)
+            before = _run_dir_bytes(run_dir)
+            args = _regrade_args(run_id, store, "--live", "--max-usd", "100")
+            with contextlib.redirect_stdout(io.StringIO()):
+                rb.cmd_regrade(args, runner=_judge_stub_runner(), adapter=_regrade_adapter())
+            after = _run_dir_bytes(run_dir)
+            self.assertEqual(
+                sorted(before), sorted(after), "a regrade added or removed a store file"
+            )
+            changed = [name for name in before if before[name] != after[name]]
+            self.assertEqual(changed, ["results.json"], changed)
+
+    def test_a_judge_that_is_also_a_candidate_refuses_before_any_dispatch(self):
+        with tempfile.TemporaryDirectory() as td:
+            store, run_id, run_dir = _write_stranded_run(
+                td, judge=_REGRADE_CANDIDATE, candidates=(_REGRADE_CANDIDATE,)
+            )
+            before = (run_dir / "results.json").read_bytes()
+            runner = _judge_stub_runner()
+            args = _regrade_args(run_id, store, "--live", "--max-usd", "100")
+            with contextlib.redirect_stdout(io.StringIO()), \
+                    contextlib.redirect_stderr(io.StringIO()) as err, \
+                    self.assertRaises(SystemExit) as ctx:
+                rb.cmd_regrade(args, runner=runner, adapter=_regrade_adapter())
+            self.assertEqual(ctx.exception.code, 2)
+            self.assertIn("hard refusal", err.getvalue())
+            self.assertEqual(runner.calls, [])
+            self.assertEqual((run_dir / "results.json").read_bytes(), before)
+
+    def test_the_judge_candidate_refusal_reads_the_cells_not_just_the_declared_list(self):
+        # `build_verdict` already treats a cell naming an undeclared model as a candidate. A
+        # refusal that trusted `candidates` alone would fail OPEN on that envelope and let a
+        # model grade its own patch — the exact fail-open shape this kit found four times.
+        with tempfile.TemporaryDirectory() as td:
+            store, run_id, run_dir = _write_stranded_run(
+                td, judge=_REGRADE_CANDIDATE, candidates=(),
+            )
+            before = (run_dir / "results.json").read_bytes()
+            runner = _judge_stub_runner()
+            args = _regrade_args(run_id, store, "--live", "--max-usd", "100")
+            with contextlib.redirect_stdout(io.StringIO()), \
+                    contextlib.redirect_stderr(io.StringIO()) as err, \
+                    self.assertRaises(SystemExit) as ctx:
+                rb.cmd_regrade(args, runner=runner, adapter=_regrade_adapter())
+            self.assertEqual(ctx.exception.code, 2)
+            self.assertIn("hard refusal", err.getvalue())
+            self.assertEqual(runner.calls, [])
+            self.assertEqual((run_dir / "results.json").read_bytes(), before)
+
+    def test_a_missing_task_record_leaves_its_grade_skipped_rather_than_guessing(self):
+        with tempfile.TemporaryDirectory() as td:
+            store, run_id, run_dir = _write_stranded_run(td)
+            (run_dir / "tasks" / "t5.json").unlink()
+            before = json.loads((run_dir / "results.json").read_text())
+            runner = _judge_stub_runner()
+            args = _regrade_args(run_id, store, "--live", "--max-usd", "100")
+            with contextlib.redirect_stdout(io.StringIO()):
+                rb.cmd_regrade(args, runner=runner, adapter=_regrade_adapter())
+            after = json.loads((run_dir / "results.json").read_text())
+            self.assertEqual(len(runner.calls), 1, "only t2 remained finishable")
+            self.assertEqual(
+                json.dumps(after["grades"][4]), json.dumps(before["grades"][4])
+            )
+            self.assertTrue(
+                any(rb.REGRADE_TASK_RECORD_MISSING_NOTE in n for n in after["notes"]),
+                after["notes"],
+            )
+
+
+class RegradeEnvelopeHonestyTests(unittest.TestCase):
+    """T21 item 4 — one envelope, two invocations, and no blurred number between them."""
+
+    def _regrade(self, run_id, store, *extra, runner=None, adapter=None):
+        runner = runner or _judge_stub_runner()
+        args = _regrade_args(run_id, store, *extra)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            rc = rb.cmd_regrade(args, runner=runner, adapter=adapter or _regrade_adapter())
+        return rc, runner, out.getvalue()
+
+    def test_a_regrades_entry_records_this_invocation(self):
+        with tempfile.TemporaryDirectory() as td:
+            store, run_id, run_dir = _write_stranded_run(td)
+            self._regrade(run_id, store, "--live", "--max-usd", "100")
+            results = json.loads((run_dir / "results.json").read_text())
+            self.assertEqual(len(results["regrades"]), 1)
+            entry = results["regrades"][0]
+            self.assertTrue(RUN_ID_RE.match(entry["invocation_id"]), entry["invocation_id"])
+            self.assertAlmostEqual(entry["ceiling_usd"], 100.0)
+            self.assertEqual(entry["grades_dispatched"], 2)
+            self.assertEqual(entry["grades_skipped_cost_ceiling"], 0)
+            # t4 alone: an `empty-reference` skip is not a cost-ceiling skip at all and is
+            # never counted as a budget casualty (T7R).
+            self.assertEqual(entry["grades_unfinishable"], 1)
+            self.assertEqual(entry["judge"], _REGRADE_JUDGE)
+            self.assertFalse(entry["stopped"])
+            self.assertIn(entry["basis"], rb.SPEND_BASIS_LABELS)
+            self.assertIn(rb.REGRADE_LABEL, results["labels"])
+
+    def test_spend_is_reported_per_invocation_and_never_summed(self):
+        with tempfile.TemporaryDirectory() as td:
+            store, run_id, run_dir = _write_stranded_run(td)
+            before = json.loads((run_dir / "results.json").read_text())
+            self._regrade(run_id, store, "--live", "--max-usd", "100")
+            after = json.loads((run_dir / "results.json").read_text())
+
+            # the ORIGINAL run's spend record is not inflated to absorb regrade dollars —
+            # that inflation is exactly the blur a single mixed number would be.
+            self.assertEqual(json.dumps(after["spend"]), json.dumps(before["spend"]))
+            rows = after["spend_by_invocation"]
+            self.assertEqual([r["kind"] for r in rows], ["run", "regrade"])
+            self.assertEqual(rows[0]["invocation"], run_id)
+            self.assertAlmostEqual(rows[0]["spent_usd"], before["spend"]["spent_usd"])
+            self.assertEqual(rows[0]["basis"], "actual")
+            # the stub reports no token counts, so this invocation is honestly `estimated`:
+            # two DIFFERENT bases, side by side, which is the whole point.
+            self.assertEqual(rows[1]["basis"], "estimated")
+            for row in rows:
+                self.assertIsNotNone(row["basis"], "a dollar figure with no basis")
+            for forbidden in ("total_usd", "combined_usd", "spent_total_usd"):
+                self.assertNotIn(forbidden, after)
+
+    def test_list_says_the_run_spend_cell_is_not_the_whole_bill_after_a_regrade(self):
+        with tempfile.TemporaryDirectory() as td:
+            store, run_id, run_dir = _write_stranded_run(td)
+            before_rows, _ = rb.list_runs(store)
+            self.assertEqual(before_rows[0]["regrades"], 0)
+
+            self._regrade(run_id, store, "--live", "--max-usd", "100")
+
+            rows, _ = rb.list_runs(store)
+            self.assertEqual(rows[0]["regrades"], 1)
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                rb.main(["list", "--store-dir", str(store), "--prefs-path",
+                         str(Path(td) / "no-such-prefs.json")])
+            self.assertIn("regrades: 1", out.getvalue())
+
+    def test_the_cost_ceiling_label_is_retained_while_any_cost_ceiling_skip_remains(self):
+        with tempfile.TemporaryDirectory() as td:
+            store, run_id, run_dir = _write_stranded_run(td)  # t4's CELL is skipped
+            self._regrade(run_id, store, "--live", "--max-usd", "100")
+            results = json.loads((run_dir / "results.json").read_text())
+            self.assertIn(
+                rb.COST_CEILING_LABEL, results["labels"],
+                "the partial label came off while a cost-ceiling skip remained",
+            )
+            self.assertFalse(
+                any(rb.COST_CEILING_CLEARED_NOTE in n for n in results["notes"])
+            )
+
+    def test_the_cost_ceiling_label_comes_off_only_when_nothing_is_left_skipped(self):
+        with tempfile.TemporaryDirectory() as td:
+            store, run_id, run_dir = _write_stranded_run(td, skipped_cell=False)
+            self._regrade(run_id, store, "--live", "--max-usd", "100")
+            results = json.loads((run_dir / "results.json").read_text())
+            self.assertNotIn(rb.COST_CEILING_LABEL, results["labels"])
+            self.assertTrue(any(rb.COST_CEILING_CLEARED_NOTE in n for n in results["notes"]))
+            self.assertFalse(
+                [g for g in results["grades"] if g.get("skipped") == "cost-ceiling"]
+            )
+
+    def test_a_note_names_what_this_regrade_finished(self):
+        with tempfile.TemporaryDirectory() as td:
+            store, run_id, run_dir = _write_stranded_run(td)
+            _, _, text = self._regrade(run_id, store, "--live", "--max-usd", "100")
+            results = json.loads((run_dir / "results.json").read_text())
+            invocation = results["regrades"][0]["invocation_id"]
+            self.assertTrue(
+                any(f"regrade {invocation}: finished 2 of 2" in n for n in results["notes"]),
+                results["notes"],
+            )
+            self.assertIn("completed: 2 judge grade(s) dispatched", text)
+
+    def test_a_mid_regrade_ceiling_stop_is_honest_and_resumable(self):
+        with tempfile.TemporaryDirectory() as td:
+            store, run_id, run_dir = _write_stranded_run(td, skipped_cell=False)
+            unit = rb.estimate_dispatch_usd(
+                _REGRADE_JUDGE, rb.JUDGE_GRADE_PROFILE, FIXTURE_PRICING
+            )
+            # room for exactly one of the three pending grades
+            runner = _judge_stub_runner()
+            _, _, text = self._regrade(
+                run_id, store, "--live", "--max-usd", str(unit * 1.5), runner=runner
+            )
+            self.assertEqual(len(runner.calls), 1)
+            self.assertIn("STOPPED: cost ceiling reached", text)
+            self.assertIn("resumable", text)
+
+            first = json.loads((run_dir / "results.json").read_text())
+            self.assertTrue(first["regrades"][0]["stopped"])
+            self.assertEqual(first["regrades"][0]["grades_dispatched"], 1)
+            self.assertEqual(first["regrades"][0]["grades_skipped_cost_ceiling"], 2)
+            self.assertIn(rb.COST_CEILING_LABEL, first["labels"])
+            self.assertAlmostEqual(first["regrades"][0]["spent_usd"], unit)
+
+            # …and it is genuinely resumable: a second, larger ceiling finishes the rest.
+            runner2 = _judge_stub_runner()
+            self._regrade(run_id, store, "--live", "--max-usd", "100", runner=runner2)
+            second = json.loads((run_dir / "results.json").read_text())
+            self.assertEqual(len(runner2.calls), 2)
+            self.assertEqual(len(second["regrades"]), 2)
+            self.assertEqual(
+                [r["kind"] for r in second["spend_by_invocation"]],
+                ["run", "regrade", "regrade"],
+            )
+            self.assertNotIn(rb.COST_CEILING_LABEL, second["labels"])
+            self.assertFalse(
+                [g for g in second["grades"] if g.get("skipped") == "cost-ceiling"]
+            )
+            # the grade the FIRST regrade landed is itself now finished work
+            self.assertEqual(
+                json.dumps(second["grades"][1]), json.dumps(first["grades"][1])
+            )
+
+    def test_a_second_regrade_with_nothing_to_do_changes_nothing_and_says_so(self):
+        with tempfile.TemporaryDirectory() as td:
+            store, run_id, run_dir = _write_stranded_run(td)
+            self._regrade(run_id, store, "--live", "--max-usd", "100")
+            settled = (run_dir / "results.json").read_bytes()
+
+            runner = _judge_stub_runner()
+            rc, _, text = self._regrade(
+                run_id, store, "--live", "--max-usd", "100", runner=runner
+            )
+            self.assertEqual(rc, 0)
+            self.assertEqual(runner.calls, [], "an idempotent regrade dispatched anyway")
+            self.assertIn(rb.REGRADE_NOTHING_PENDING_NOTE, text)
+            self.assertEqual(
+                (run_dir / "results.json").read_bytes(), settled,
+                "a no-op regrade rewrote the envelope",
+            )
+
+    def test_a_grading_failure_still_records_the_dollars_already_spent(self):
+        with tempfile.TemporaryDirectory() as td:
+            store, run_id, run_dir = _write_stranded_run(td)
+            calls = []
+
+            def runner(argv, cwd):
+                calls.append(argv)
+                if len(calls) > 1:
+                    raise RuntimeError("the harness vanished mid-pass")
+                return 0, _canned_result_json(None) + "\nGRADE A=correct B=partial EQUIVALENT=no"
+
+            with contextlib.redirect_stdout(io.StringIO()):
+                rb.cmd_regrade(
+                    _regrade_args(run_id, store, "--live", "--max-usd", "100"),
+                    runner=runner, adapter=_regrade_adapter(),
+                )
+            results = json.loads((run_dir / "results.json").read_text())
+            self.assertIn(rb.GRADING_FAILED_LABEL, results["labels"])
+            self.assertGreater(results["regrades"][0]["spent_usd"], 0.0)
+            self.assertIsNone(results["grades"][1]["skipped"], "the landed grade was lost")
+            self.assertEqual(results["grades"][4]["skipped"], "cost-ceiling")
+
+
+class RegradeVerdictPickupTests(unittest.TestCase):
+    """T21 item 5 — `verdict` reads the envelope, so it picks the merged grades up with no
+    code change of its own. Asserted, not asserted-about."""
+
+    def test_the_verdict_picks_up_merged_grades_with_no_code_change(self):
+        with tempfile.TemporaryDirectory() as td:
+            store, run_id, run_dir = _write_stranded_run(td)
+            before = _verdict(run_dir, pricing=FIXTURE_PRICING)
+            row_before = _rows_by(before, "t2", _REGRADE_CANDIDATE)
+            self.assertEqual(row_before["judge"]["skipped"], "cost-ceiling")
+            self.assertIsNone(row_before["judge"]["grade"])
+
+            # `--judge-seed 0` pins the candidate into slot A so the stub's
+            # `A=correct B=partial` is deterministic. Without it the slot assignment is
+            # re-randomized per grade, which is PLAN D6's bias control and is asserted
+            # directly in `test_slots_are_re_randomized_per_grade_by_default` below.
+            args = _regrade_args(run_id, store, "--live", "--max-usd", "100",
+                                 "--judge-seed", "0")
+            with contextlib.redirect_stdout(io.StringIO()):
+                rb.cmd_regrade(args, runner=_judge_stub_runner(), adapter=_regrade_adapter())
+
+            after = _verdict(run_dir, pricing=FIXTURE_PRICING)
+            row_after = _rows_by(after, "t2", _REGRADE_CANDIDATE)
+            self.assertIsNone(row_after["judge"]["skipped"])
+            self.assertEqual(row_after["judge"]["grade"], "correct")
+            # t3's empty-reference skip is still exactly that in the verdict — a design
+            # decision, never re-attributed to the budget.
+            self.assertEqual(
+                _rows_by(after, "t3", _REGRADE_CANDIDATE)["judge"]["skipped"],
+                "empty-reference",
+            )
+
+    def test_the_verdict_renders_the_per_invocation_spend_lines(self):
+        with tempfile.TemporaryDirectory() as td:
+            store, run_id, run_dir = _write_stranded_run(td)
+            plain = rb.render_verdict_markdown(_verdict(run_dir, pricing=FIXTURE_PRICING))
+            self.assertNotIn(rb.SPEND_PER_INVOCATION_NOTE, plain)
+
+            args = _regrade_args(run_id, store, "--live", "--max-usd", "100")
+            with contextlib.redirect_stdout(io.StringIO()):
+                rb.cmd_regrade(args, runner=_judge_stub_runner(), adapter=_regrade_adapter())
+
+            card = _verdict(run_dir, pricing=FIXTURE_PRICING)
+            markdown = rb.render_verdict_markdown(card)
+            self.assertIn(rb.SPEND_PER_INVOCATION_NOTE, markdown)
+            self.assertIn(f"run {run_id}:", markdown)
+            self.assertIn("regrade ", markdown)
+            self.assertIn(rb.REGRADE_LABEL, card["labels"])
+
+    def test_a_verdict_folded_in_before_a_regrade_is_stamped_stale_and_apply_refuses_it(self):
+        with tempfile.TemporaryDirectory() as td:
+            verdict = {
+                "verdict_schema_version": rb.VERDICT_SCHEMA_VERSION,
+                "goal": "both",
+                "min_tasks": rb.MIN_EVIDENCE_TASKS,
+                "below_floor": False,
+                "below_floor_label": None,
+                "rule": "synthetic rule text",
+                "capability_order": [],
+                "tier_map": {
+                    "slots": {"strong": "fake-opus-1", "mid": "fake-sonnet-1", "weak": None},
+                    "nearest_neighbors": {}, "role_gloss": {}, "notes": [],
+                },
+                "daily_driver": {"pick": "fake-haiku-1", "notes": []},
+                "three_legs": [], "disagreements": [], "labels": [], "notes": [],
+            }
+            store, run_id, run_dir = _write_stranded_run(td, verdict=verdict)
+            prefs = Path(td) / "prefs.json"
+
+            # …applicable BEFORE the regrade
+            payload, _ = rb.apply_verdict(run_dir, prefs, FIXTURE_PRICING)
+            self.assertEqual(payload["tiers"]["strong"], "fake-opus-1")
+
+            args = _regrade_args(run_id, store, "--live", "--max-usd", "100")
+            with contextlib.redirect_stdout(io.StringIO()):
+                rb.cmd_regrade(args, runner=_judge_stub_runner(), adapter=_regrade_adapter())
+
+            results = json.loads((run_dir / "results.json").read_text())
+            self.assertIs(results["verdict"]["stale_after_regrade"], True)
+            self.assertEqual(
+                results["verdict"]["labels"][0], rb.VERDICT_STALE_AFTER_REGRADE_LABEL
+            )
+            with self.assertRaises(ValueError) as ctx:
+                rb.apply_verdict(run_dir, prefs, FIXTURE_PRICING)
+            self.assertIn("regrade", str(ctx.exception))
+
+            # and one re-render clears it
+            with contextlib.redirect_stdout(io.StringIO()), \
+                    contextlib.redirect_stderr(io.StringIO()):
+                rb.cmd_verdict(rb.build_parser().parse_args([
+                    "verdict", "--run", str(run_id), "--store-dir", str(store),
+                ]))
+            refreshed = json.loads((run_dir / "results.json").read_text())
+            self.assertNotIn("stale_after_regrade", refreshed["verdict"])
+
+
+class RegradeOnARealStubbedRunTests(unittest.TestCase):
+    """End to end on a REAL stubbed run: a `run` whose ceiling bit during the grading pass,
+    finished by a `regrade`. Fixture git repo, injected runners, temp store — no spend."""
+
+    def test_a_run_stranded_mid_grading_is_finished_by_a_regrade(self):
+        with tempfile.TemporaryDirectory() as td:
+            td = Path(td)
+            repo = td / "target"
+            build_issue_fixture_repo(repo)
+            store = td / "store"
+
+            card = rb.build_plan(repo, ["haiku"], scratch_dir=td / "plan-scratch")
+            judge_id = card["judge"]
+            self.assertGreaterEqual(len(card["tasks"]), 2)
+
+            def run_runner(argv, cwd):
+                (Path(cwd) / "candidate_fix.py").write_text("# cheap candidate work\n")
+                model = argv[argv.index("--model") + 1]
+                if model == judge_id:
+                    payload = {
+                        "type": "result", "subtype": "success",
+                        "usage": {"input_tokens": 10_000_000_000, "output_tokens": 1},
+                    }
+                    return 0, json.dumps(payload) + "\nGRADE A=correct B=correct EQUIVALENT=yes"
+                return 0, _canned_result_json({"input_tokens": 10, "output_tokens": 5})
+
+            with contextlib.redirect_stdout(io.StringIO()):
+                rb.cmd_run(
+                    _run_args(repo, store, "--live", "--max-usd",
+                              str(card["totals"]["grand_total"] + 0.01)),
+                    runner=run_runner,
+                )
+
+            run_id = rb.list_runs(store)[0][0]["run_id"]
+            run_dir = store / run_id
+            before = json.loads((run_dir / "results.json").read_text())
+            stranded = [g for g in before["grades"] if g.get("skipped") == "cost-ceiling"]
+            self.assertTrue(stranded, "the fixture run did not strand a judge grade")
+            self.assertTrue(all(not c["skipped"] for c in before["cells"]))
+
+            regrade_runner = _judge_stub_runner(
+                output="GRADE A=partial B=correct EQUIVALENT=no",
+                usage={"input_tokens": 10, "output_tokens": 5},
+            )
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                rc = rb.cmd_regrade(
+                    _regrade_args(run_id, store, "--live", "--max-usd", "100"),
+                    runner=regrade_runner,
+                )
+            self.assertEqual(rc, 0)
+            self.assertEqual(len(regrade_runner.calls), len(stranded))
+
+            after = json.loads((run_dir / "results.json").read_text())
+            self.assertEqual(json.dumps(after["cells"]), json.dumps(before["cells"]))
+            self.assertFalse(
+                [g for g in after["grades"] if g.get("skipped") == "cost-ceiling"]
+            )
+            self.assertNotIn(rb.COST_CEILING_LABEL, after["labels"])
+            self.assertIn(rb.REGRADE_LABEL, after["labels"])
+            self.assertEqual(after["regrades"][0]["grades_dispatched"], len(stranded))
+            # the target repo is still read-only by construction: a regrade never touches it
+            self.assertEqual(
+                subprocess.run(
+                    ["git", "-C", str(repo), "status", "--porcelain"],
+                    capture_output=True, text=True,
+                ).stdout,
+                "",
+            )
+
+
 if __name__ == "__main__":
     unittest.main()

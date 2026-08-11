@@ -1081,6 +1081,85 @@ python3 -m unittest discover -s tests -p 'test_guardrails_layout.py' -q
 
 ## Post-completion — gaps found by real use (execute-authored, after kit sign-off)
 
+### T21 — `regrade`: finish a run's judge grades after a ceiling stop
+- status: done
+- model: opus
+- depends: T20
+
+**Added by execute.** The first completed live run (`2026-08-10-d89a`) hit its $25 ceiling
+mid-grading: all 14 cells dispatched, but 6 of 14 judge grades were skipped
+`cost-ceiling` and there is NO way to finish them — a ceiling stop during grading
+permanently strands the judge column. Ceiling stops are a designed, permanent behavior
+(D1), so resume-grading is a missing structural capability, not a one-run patch.
+
+**Files:** `bin/repo_bench.py`; `tests/test_repo_bench.py`; `skills/repo-bench/SKILL.md`.
+
+**Do:**
+1. New subcommand `regrade --run <id> [--store-dir] --live --max-usd <ceiling>
+   [--judge-seed ...]`. The spend gate is IDENTICAL to `run`'s (D1): refuse exit 2 without
+   BOTH flags, `validate_ceiling` before anything, `would_exceed_ceiling` before EVERY
+   grade dispatch. A fresh ceiling for this invocation — never a continuation of the old
+   run's ceiling arithmetic.
+2. It re-dispatches ONLY grade records whose skip reason was `cost-ceiling`. Grades that
+   completed stay byte-identical; `empty-reference` skips stay skipped (they are not budget
+   casualties and re-dispatching them buys a deanonymized grade — T7R law). Candidate cells
+   are NEVER re-dispatched — the candidates' work is done; this touches the judge leg only.
+3. All the judge disciplines hold unchanged: blind slots re-randomized per grade with the
+   audit record kept, judge==candidate refusal, unparseable → `None` + note, judge cwd
+   outside the run dir, prompts built from the stored task records (reference stripped of
+   test hunks exactly as `grade_cells` does — reuse it, do not re-derive).
+4. **Envelope honesty across invocations.** `results.json` is rewritten (still the one
+   writer) with: the new grades merged in; a `regrades` entry recording this invocation's
+   run id, ceiling, spend and basis; combined spend reported WITHOUT blurring bases
+   (per-invocation lines, not one mixed number); the `partial (cost-ceiling)` label
+   removed ONLY when no cost-ceiling skips remain anywhere, else retained; a note naming
+   what this regrade finished. A regrade that itself hits its ceiling stops cleanly,
+   labels honestly, and remains resumable.
+5. `verdict` re-rendered after a regrade must pick up the new grades with zero code
+   changes (it reads the envelope). Assert that with a test, not a claim.
+6. Tests (stub runners only, no real CLI): refusal without flags; nan/inf/negative ceiling
+   refused before any dispatch; only cost-ceiling skips re-dispatched (completed grades
+   byte-identical, empty-reference untouched, candidate cells untouched — assert all
+   three); mid-regrade ceiling stop honest and resumable; envelope merge idempotent-safe
+   (a second regrade with nothing to do changes nothing and says so); verdict picks up
+   merged grades; the leak fences: nothing a regrade writes lands anywhere
+   candidate-reachable (trivially true — no candidates are live — but assert the store
+   buffering shape is preserved).
+7. `skills/repo-bench/SKILL.md`: document `regrade` beside `run`, same plan-first framing
+   (it spends; it needs its own explicit ceiling; a stranded judge column is the signal to
+   use it).
+
+**Do NOT** re-dispatch candidate cells, touch `solved` or anything routing-grade, weaken
+any label, or let a regrade delete or reorder existing cells/grades.
+
+**Acceptance:** a ceiling-stranded judge column can be finished under a fresh explicit
+ceiling with every judge discipline intact; envelopes stay honest across invocations;
+completed work is provably untouched; suite green and only grows.
+
+**Verify:**
+```bash
+cd "$(git rev-parse --show-toplevel)"
+python3 -m unittest discover -s tests -p 'test_repo_bench.py' -q
+python3 bin/repo_bench.py regrade --help 2>&1 | grep -q -- '--max-usd'
+python3 - <<'PY'
+import importlib.util, subprocess, sys, tempfile
+from pathlib import Path
+spec = importlib.util.spec_from_file_location("repo_bench", "bin/repo_bench.py")
+rb = importlib.util.module_from_spec(spec); spec.loader.exec_module(rb)
+r = subprocess.run([sys.executable, "bin/repo_bench.py", "regrade", "--run", "x"],
+                   capture_output=True, text=True)
+assert r.returncode == 2 and "--live" in r.stderr and "--max-usd" in r.stderr, \
+    f"regrade spend gate missing: rc={r.returncode} {r.stderr[:120]}"
+print("T21 probe OK")
+PY
+python3 bin/repo_bench.py demo > /tmp/rb_t21_demo.txt
+grep -q "BELOW EVIDENCE FLOOR" /tmp/rb_t21_demo.txt
+grep -nE '"npm"|"pip"|pip install|npm ci' tests/test_repo_bench.py && exit 1 || echo "no test invokes a real installer"
+git diff --quiet bin/claude_execute.py bin/cost_report.py bin/routing_scorecard.py bin/bench_routing.py
+python3 -m unittest discover -s tests -q
+python3 -m unittest discover -s tests -p 'test_guardrails_layout.py' -q
+```
+
 ### T20 — the full-patch diagnostic: bound the false negatives without reopening the forgery
 - status: done
 - model: opus

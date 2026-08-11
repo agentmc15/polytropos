@@ -444,6 +444,10 @@ def list_runs(store_dir):
         row["spend"] = None
         row["verdict_present"] = False
         row["below_floor"] = None
+        # T21: `spend` above is the `run` INVOCATION's own record and stays that. A run that
+        # was later regraded spent more, under other ceilings, and this count is what stops
+        # the spend column from reading as the whole bill. 0 on every run never regraded.
+        row["regrades"] = 0
         results_path = entry / "results.json"
         if results_path.exists():
             try:
@@ -458,6 +462,8 @@ def list_runs(store_dir):
                 verdict = results.get("verdict")
                 row["verdict_present"] = bool(verdict)
                 row["below_floor"] = verdict.get("below_floor") if isinstance(verdict, dict) else None
+                regrades = results.get("regrades")
+                row["regrades"] = len(regrades) if isinstance(regrades, list) else 0
 
         rows.append(row)
 
@@ -3187,6 +3193,68 @@ def grade_cells(
 
 
 # ---------------------------------------------------------------------------------------------
+# T21 -- `regrade`'s vocabulary. A ceiling stop during the grading pass is a DESIGNED, permanent
+# outcome (PLAN D1), so a run whose judge column was cut mid-pass needs a way to finish it that
+# is as honest about the second invocation as the first envelope was about the first. These
+# constants are the words that carry that; the command itself lives beside `cmd_run` below.
+
+#: Rides on the envelope (and therefore on every verdict rendered from it) the moment a regrade
+#: lands. The point it makes is the one the whole spend section turns on: a run and its regrades
+#: are SEPARATE invocations under SEPARATE ceilings, so their dollars are reported per
+#: invocation, each with its own basis, and are never collapsed into one figure whose basis
+#: nobody could state.
+REGRADE_LABEL = (
+    "judge grades in this envelope come from more than one invocation — the original `run` and "
+    "one or more later `regrade`s, each under its own ceiling; dollars are reported per "
+    "invocation with each one's own basis and are never summed into a single number"
+)
+
+SPEND_PER_INVOCATION_NOTE = (
+    "spend per invocation (a `run` and its `regrade`s are separate dispatches under separate "
+    "ceilings — deliberately never summed, because the sum would have no single basis)"
+)
+
+#: A grade whose CELL was itself never dispatched. `regrade` touches the judge leg only (T21):
+#: the candidate's work is done, or in this case was never done, and re-dispatching a candidate
+#: is out of the question -- so there is no patch for a judge to grade and this grade stays
+#: skipped forever. Named rather than silently left behind, because "6 skipped, 4 finished, 2
+#: unfinishable" is a different story from "6 skipped, 4 finished, 2 you forgot".
+REGRADE_CELL_NEVER_DISPATCHED_NOTE = (
+    "left skipped: cost-ceiling — its candidate cell was never dispatched either, and "
+    "`regrade` never re-dispatches a candidate, so there is no patch for the judge to grade"
+)
+
+REGRADE_TASK_RECORD_MISSING_NOTE = (
+    "left skipped: cost-ceiling — this run's tasks/<id>.json record is absent from the store, "
+    "so the judge prompt cannot be rebuilt (a judge prompt is never reconstructed from "
+    "anything but the run's own mined record)"
+)
+
+#: The ONE condition under which `partial (cost-ceiling)` comes off (T21 item 4): not "a
+#: regrade ran", not "some grades landed" -- no cost-ceiling skip left anywhere in the
+#: envelope, cells included.
+COST_CEILING_CLEARED_NOTE = (
+    "the `partial (cost-ceiling)` label was removed: no cost-ceiling skip remains anywhere in "
+    "this envelope — neither a cell nor a judge grade"
+)
+
+REGRADE_NOTHING_PENDING_NOTE = (
+    "nothing to regrade: no judge grade in this run is skipped `cost-ceiling` with a "
+    "dispatched candidate cell behind it — results.json was left exactly as it was"
+)
+
+#: T21: a verdict card folded into the envelope BEFORE a regrade is superseded by it. The judge
+#: leg is oracle (c), and `_capability_order` breaks ties with it, so a pre-regrade card can
+#: order candidates differently from the evidence the envelope now holds. Stamped rather than
+#: deleted (the store's records are never destroyed), and `apply` refuses a stamped card
+#: outright -- the recurring defect this kit found four times is a guard that fails OPEN.
+VERDICT_STALE_AFTER_REGRADE_LABEL = (
+    "STALE VERDICT — this card was rendered before a later `regrade` added judge grades to "
+    "this run; re-run `verdict --run <id>` before quoting or applying it"
+)
+
+
+# ---------------------------------------------------------------------------------------------
 # Oracles (PLAN D5). `solved` comes from oracle (a) ALONE, forever -- an unavailable oracle
 # renders `n/a` (never a zero, never False; R6). Oracle (b) is an always-available SIMILARITY
 # signal and is never allowed to render without its own not-a-correctness label.
@@ -5054,6 +5122,13 @@ def build_verdict(run_dir, goal, pricing, benchmarks_path=None, kits_dir=None, m
         "published_source": published_source,
         "disagreements": disagreements,
         "spend": results.get("spend") or {},
+        # T21: `spend` above is the ORIGINAL `run` invocation's own record and stays that,
+        # untouched, forever. When a later `regrade` has added judge grades under its own
+        # ceiling, the envelope also carries one line per invocation -- carried through here
+        # so the card can render them beside each other WITHOUT blurring their bases into a
+        # single number. Empty on every run that was never regraded, which is every run
+        # rendered before this key existed.
+        "spend_by_invocation": list(results.get("spend_by_invocation") or []),
         "labels": labels,
         "notes": notes,
     }
@@ -5314,6 +5389,20 @@ def render_verdict_markdown(card):
     basis = spend.get("basis")
     if basis in SPEND_BASIS_LABELS:
         lines.append(f"  {SPEND_BASIS_LABELS[basis]}")
+    # T21: a regraded run spent money in more than one invocation, under more than one
+    # ceiling, on possibly more than one basis. The line above is the `run`'s; these are all
+    # of them, each with its own basis, and there is deliberately no total: a sum across two
+    # bases is a number whose basis cannot be stated, which is the one thing every dollar in
+    # this tool is required to carry.
+    for row in card.get("spend_by_invocation") or []:
+        lines.append(
+            f"  {row.get('kind') or NA} {row.get('invocation') or NA}: "
+            f"${_fmt_num(row.get('spent_usd'), '.4f')} of a "
+            f"${_fmt_num(row.get('ceiling_usd'), '.4f')} ceiling "
+            f"(basis: {row.get('basis') or NA})"
+        )
+    if card.get("spend_by_invocation"):
+        lines.append(f"  {SPEND_PER_INVOCATION_NOTE}")
     return "\n".join(lines)
 
 
@@ -6238,6 +6327,18 @@ def apply_verdict(run_dir, prefs_path, pricing):
         raise ValueError(
             "verdict is missing a valid below_floor flag — malformed card, refusing to apply"
         )
+    # T21: a card rendered BEFORE a later `regrade` is superseded by it. Judge grades are
+    # oracle (c), and `_capability_order` breaks capability ties with them, so a pre-regrade
+    # card can order candidates differently from the evidence the envelope now holds --
+    # applying it would write routing state from measurements this run has since finished.
+    # Stamped by `regrade`; cleared by one `verdict` re-render. Refuse, in the same
+    # fail-CLOSED direction as the floor gate above.
+    if verdict.get("stale_after_regrade"):
+        raise ValueError(
+            "this verdict was rendered before a later `regrade` added judge grades to this "
+            "run, so it no longer reflects the run's own evidence — re-run `verdict --run "
+            "<id>` and apply that card instead"
+        )
     _validate_applied_shapes(verdict)
     _apply_staleness_check(verdict, pricing)
 
@@ -6378,11 +6479,19 @@ def cmd_list(args):
         )
         below_floor = row.get("below_floor")
         below_floor_text = NA if below_floor is None else ("yes" if below_floor else "no")
+        # T21: the regrade count rides beside the spend cell, and ONLY when there is one --
+        # a run never regraded prints exactly the line it always did. The spend figure is the
+        # `run` invocation's; this is what says there are other invocations' dollars beside it.
+        regrade_n = row.get("regrades") or 0
+        regrade_cell = (
+            f"   regrades: {regrade_n} (spend above is the run's own — see results.json)"
+            if regrade_n else ""
+        )
         print(
             f"      spend: {_format_spend_cell(row.get('spend'))}"
             f"   verdict: {'yes' if row.get('verdict_present') else 'no'}"
             f"   below-floor: {below_floor_text}"
-            f"   applied: {'yes' if row['applied'] else 'no'}"
+            f"   applied: {'yes' if row['applied'] else 'no'}{regrade_cell}"
         )
     for note in notes:
         print(f"  note: {note}")
@@ -6981,6 +7090,381 @@ def cmd_run(args, runner=None, adapter=None, git_runner=None, test_runner=None):
     return 0
 
 
+# ---------------------------------------------------------------------------------------------
+# `regrade` (T21) -- finish a run's judge column after a ceiling stop stranded it.
+#
+# THE GAP THIS CLOSES. A ceiling stop is a designed, PERMANENT outcome (PLAN D1): the run stops
+# where it stops and the envelope says so. But a stop that lands during the POST-LOOP grading
+# pass strands the judge leg specifically -- every candidate cell dispatched, its dollars spent,
+# and oracle (c) simply absent for the tail of the matrix with no way to finish it. The first
+# completed live run lost 6 of 14 grades exactly that way.
+#
+# WHAT MAKES THIS SAFE IS THAT IT REUSES, RATHER THAN RE-DERIVES, EVERYTHING:
+#   * the spend gate is `run`'s -- `validate_ceiling` before anything (a `nan` ceiling never
+#     reaches the store, let alone a dispatch), the structural "BOTH --live and --max-usd or
+#     exit 2" refusal, and `would_exceed_ceiling` before every single grade (inside
+#     `grade_cells`, the one place that check lives for judge dispatches);
+#   * the judge disciplines are `grade_cells`'s -- blind slots re-randomized per grade with the
+#     slot map recorded either way, `judge == candidate` refused, unparseable output degraded to
+#     `None` plus a note, the reference stripped of its test hunks before it reaches a prompt,
+#     an empty-after-stripping reference skipped rather than deanonymised, and a judge cwd that
+#     is a throwaway temp dir OUTSIDE the run dir.
+# The kit's money-seam defects (a `nan` bypass; judge grades dispatched outside the ceiling)
+# were both re-derivations of a check that already existed. There are none here.
+#
+# THE CEILING IS FRESH. `--max-usd` on a regrade is THIS invocation's budget, starting from
+# $0.00 spent -- never a continuation of the stopped run's arithmetic. The old run's ceiling is
+# history: it is recorded, it is rendered, and it constrains nothing about this dispatch.
+
+
+def _pending_ceiling_grades(results, tasks_by_id=None):
+    """Which judge grades a regrade may re-dispatch -> `(pending, blocked)` (T21 item 2).
+
+    `pending` is `[(index, grade, cell)]` for every grade whose skip reason is exactly
+    `cost-ceiling` AND whose candidate cell was actually dispatched; `blocked` is
+    `[(grade, reason)]` for the cost-ceiling skips that are structurally unfinishable. The
+    index is kept so the merge can write each fresh grade back IN PLACE -- a regrade never
+    reorders, appends beside, or drops an existing record.
+
+    Deliberately NOT selected, and each for its own reason:
+      * a grade that COMPLETED -- it is finished work and stays byte-identical;
+      * a grade skipped `empty-reference` -- that is not a budget casualty (T7R): its stripped
+        reference is empty, so re-dispatching it would buy a deanonymised, meaningless grade;
+      * a grade whose CELL is skipped, or missing -- the candidate never ran, and `regrade`
+        never re-dispatches a candidate, so no patch exists to grade;
+      * a grade whose task record is gone from the store (`tasks_by_id`, when supplied) -- a
+        judge prompt is rebuilt from the run's own mined record or not at all.
+    """
+    cells_by_key = {
+        (c.get("task_id"), c.get("model")): c for c in (results.get("cells") or [])
+    }
+    pending, blocked = [], []
+    for index, grade in enumerate(results.get("grades") or []):
+        if grade.get("skipped") != SKIPPED_COST_CEILING:
+            continue
+        key = (grade.get("task_id"), grade.get("candidate_model"))
+        cell = cells_by_key.get(key)
+        if cell is None or cell.get("skipped") or cell.get("patch") is None:
+            blocked.append((grade, REGRADE_CELL_NEVER_DISPATCHED_NOTE))
+            continue
+        if tasks_by_id is not None and key[0] not in tasks_by_id:
+            blocked.append((grade, REGRADE_TASK_RECORD_MISSING_NOTE))
+            continue
+        pending.append((index, grade, cell))
+    return pending, blocked
+
+
+def _load_run_tasks(run_dir):
+    """The run's own mined task records from `tasks/*.json` -> a list (tolerant reader).
+
+    An unreadable or shapeless record is skipped rather than fatal; the grade that needed it
+    then lands in `blocked` above with `REGRADE_TASK_RECORD_MISSING_NOTE`, which is the honest
+    outcome and not a crash (PLAN D8's tolerant-store rule applied to the read side).
+    """
+    tasks_dir = Path(run_dir) / "tasks"
+    tasks = []
+    for path in sorted(tasks_dir.glob("*.json")) if tasks_dir.is_dir() else []:
+        try:
+            task = json.loads(path.read_text())
+        except (json.JSONDecodeError, UnicodeDecodeError, OSError):
+            continue
+        if isinstance(task, dict) and task.get("task_id"):
+            tasks.append(task)
+    return tasks
+
+
+def cmd_regrade(args, runner=None, adapter=None):
+    """PLAN D1's gate again, then ONLY the stranded judge grades (T21).
+
+    Order of operations is the point, and it is `cmd_run`'s: the ceiling is validated FIRST (so
+    a malformed one never reaches the store, never mind a dispatch), the structural both-flags
+    refusal comes SECOND (so `regrade --run <anything>` refuses for the RIGHT reason -- the
+    missing flags -- rather than dying on a run id it should never have looked up), and only
+    then is the store read.
+
+    `results.json` is rewritten by this module, as ever (PLAN D8 -- one writer). The rewrite is
+    a merge, not a reconstruction: fresh grades replace their skipped predecessors IN PLACE, and
+    everything else in the envelope -- every cell, every completed grade, every `empty-reference`
+    skip, the original run's own spend record -- is written back exactly as it was read.
+    """
+    store_dir = Path(args.store_dir) if args.store_dir else DEFAULT_STORE_DIR
+    adapter = adapter or CLAUDE_ADAPTER
+    claude_bin = getattr(args, "claude_bin", None) or DEFAULT_CLAUDE_BIN
+
+    # Ceiling FIRST -- `validate_ceiling`, the same one helper `run` uses, before the store is
+    # so much as opened. `--max-usd nan` parses through argparse and then defeats every
+    # `x > ceiling` comparison (IEEE-754); it must die here, not later.
+    try:
+        max_usd = validate_ceiling(args.max_usd)
+    except ValueError as e:
+        print(f"refusing to dispatch: {e}", file=sys.stderr)
+        sys.exit(2)
+
+    if not (bool(args.live) and max_usd is not None):
+        print(
+            "refusing to dispatch: regrade requires --live AND --max-usd <ceiling> — it "
+            "dispatches judge grades and spends real money, under a FRESH ceiling of its own "
+            "(the stopped run's ceiling is history, not a budget to continue)",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+
+    run_dir = store_dir / args.run
+    results_path = run_dir / "results.json"
+    if not results_path.exists():
+        raise FileNotFoundError(
+            f"no results.json for run {args.run!r} in the benchruns store at {store_dir} — "
+            f"`list` shows what is there"
+        )
+    results = json.loads(results_path.read_text())
+
+    pricing = adapter["load_pricing"]()
+    judge_model = results.get("judge")
+    if not judge_model:
+        raise ValueError(
+            f"run {args.run!r} records no judge model — there is no judge leg to finish"
+        )
+    # PLAN D6, belt and braces: enforced at plan time for `run`, re-enforced inside
+    # `oracle_judge` per grade, and re-enforced here BEFORE a cent is committed, because this
+    # invocation takes its judge from a stored envelope rather than from a fresh plan.
+    # …and the candidate set is the union of the DECLARED candidates and the models the cells
+    # actually name. `build_verdict` already treats a cell naming a model absent from
+    # `candidates` as a real candidate; a refusal that read only the declared list would fail
+    # OPEN on exactly that envelope, which is the shape of defect this kit keeps finding.
+    candidate_ids = set(results.get("candidates") or [])
+    candidate_ids.update(
+        cell.get("model") for cell in (results.get("cells") or []) if cell.get("model")
+    )
+    if judge_model in candidate_ids:
+        print(
+            f"refusing to dispatch: this run's judge {judge_model!r} is also one of its "
+            f"candidates — PLAN D6 makes a model grading its own patch a hard refusal",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+
+    tasks = _load_run_tasks(run_dir)
+    tasks_by_id = {t["task_id"]: t for t in tasks}
+    pending, blocked = _pending_ceiling_grades(results, tasks_by_id)
+
+    unit = estimate_dispatch_usd(judge_model, JUDGE_GRADE_PROFILE, pricing)
+    total_estimate = unit * len(pending)
+    print(f"regrade {args.run}: judge {judge_model}")
+    print(
+        f"  {len(pending)} judge grade(s) skipped `{SKIPPED_COST_CEILING}` can be "
+        f"re-dispatched; {len(blocked)} cannot"
+    )
+    print(
+        f"  per-grade estimate ${unit:.4f}, total ${total_estimate:.4f} "
+        f"({ESTIMATE_CAVEAT_LABEL})"
+    )
+    print(f"  this invocation's ceiling: ${max_usd:.4f} — fresh, starting from $0.0000 spent")
+    for grade, reason in blocked:
+        print(f"  {grade.get('task_id')} x {grade.get('candidate_model')}: {reason}")
+    # NOT a refusal, deliberately, and this is the one place `regrade` reads differently from
+    # `run`. `run` refuses a matrix its ceiling cannot cover, because a half-run matrix is a
+    # half-measurement nobody asked for. A regrade is RESUMABLE BY DESIGN (T21 item 4): a
+    # ceiling that finishes 4 of 6 grades is a legitimate, useful, honestly-labelled outcome,
+    # and the next regrade finishes the rest. So the shortfall is STATED, and the
+    # per-dispatch `would_exceed_ceiling` inside `grade_cells` remains the hard gate.
+    if pending and total_estimate > max_usd:
+        print(
+            f"  NOTE: this ceiling does not cover all {len(pending)} pending grade(s) — the "
+            f"pass will stop cleanly when it is reached, label the envelope "
+            f"{COST_CEILING_LABEL}, and leave the rest resumable by another regrade"
+        )
+    print("")
+
+    if not pending:
+        # T21 item 6, idempotence: nothing to do means nothing WRITTEN. Not a no-op rewrite,
+        # not a fresh `regrades` entry recording an invocation that dispatched nothing --
+        # results.json is left byte-identical, which is the only version of "changes nothing"
+        # a store whose law is "never hand-authored, never backdated" can actually prove.
+        print(REGRADE_NOTHING_PENDING_NOTE)
+        print(f"results.json: {results_path}")
+        return 0
+
+    regrade_id = _ce().generate_run_id()
+    new_grades = []
+    spent_usd = 0.0
+    stopped = False
+    grading_failure = None
+    try:
+        new_grades, spent_usd, stopped = grade_cells(
+            [cell for (_index, _grade, cell) in pending], tasks, judge_model, adapter, runner,
+            claude_bin, pricing, 0.0, max_usd,
+            slot_seed=getattr(args, "judge_seed", None), grades_out=new_grades,
+        )
+    except Exception as e:  # noqa: BLE001 -- money already spent must still be recorded
+        # Same rule `cmd_run` follows: grades produced before the raise are already in
+        # `new_grades` (that is what `grades_out` is for), so their dollars are recovered
+        # rather than lost. An envelope that under-reports spend is the same dishonesty as
+        # no envelope at all.
+        spent_usd = sum((g.get("usd") or 0.0) for g in new_grades)
+        grading_failure = f"{GRADING_FAILED_NOTE}: {type(e).__name__}: {e}"
+
+    # THE MERGE. In place, by key, index-addressed: the fresh grade replaces exactly the
+    # record it supersedes and nothing else in the list moves.
+    fresh_by_key = {
+        (g.get("task_id"), g.get("candidate_model")): g for g in new_grades
+    }
+    merged = list(results.get("grades") or [])
+    for index, old_grade, _cell in pending:
+        fresh = fresh_by_key.get((old_grade.get("task_id"), old_grade.get("candidate_model")))
+        if fresh is not None:
+            merged[index] = fresh
+    results["grades"] = merged
+
+    dispatched_n = sum(1 for g in new_grades if not g.get("skipped"))
+    ceiling_skipped_n = sum(
+        1 for g in new_grades if g.get("skipped") == SKIPPED_COST_CEILING
+    )
+    other_skips = [
+        g for g in new_grades
+        if g.get("skipped") and g.get("skipped") != SKIPPED_COST_CEILING
+    ]
+    basis = _spend_basis((), new_grades)
+    overspent = spent_usd > max_usd
+
+    notes = list(results.get("notes") or [])
+    labels = list(results.get("labels") or [])
+
+    entry_notes = [
+        f"{grade.get('task_id')} x {grade.get('candidate_model')}: {reason}"
+        for grade, reason in blocked
+    ]
+    for grade in other_skips:
+        entry_notes.append(
+            f"{grade.get('task_id')} x {grade.get('candidate_model')}: not dispatched by this "
+            f"regrade (skipped: {grade.get('skipped')}) — {grade.get('notes') or ''}".strip()
+        )
+    if grading_failure:
+        entry_notes.append(grading_failure)
+    if overspent:
+        entry_notes.append(_overspend_label(spent_usd, max_usd))
+
+    regrades = results.get("regrades")
+    if not isinstance(regrades, list):
+        regrades = []
+    regrades.append({
+        "invocation_id": regrade_id,
+        "at": datetime.now(timezone.utc).isoformat(),
+        "judge": judge_model,
+        "ceiling_usd": max_usd,
+        "spent_usd": spent_usd,
+        "basis": basis,
+        "pending_before": len(pending),
+        "grades_dispatched": dispatched_n,
+        "grades_skipped_cost_ceiling": ceiling_skipped_n,
+        "grades_unfinishable": len(blocked),
+        "stopped": bool(stopped),
+        "overspent": bool(overspent),
+        "notes": entry_notes,
+    })
+    results["regrades"] = regrades
+
+    # T21 item 4: per-invocation lines, rebuilt from scratch every time so they can never drift
+    # from the records they summarise. There is NO combined total here, on purpose -- summing
+    # an `actual` invocation and an `estimated` one produces a number with no basis, and every
+    # dollar this tool prints is required to carry one.
+    run_spend = results.get("spend") or {}
+    results["spend_by_invocation"] = [
+        {
+            "invocation": results.get("run_id"),
+            "kind": "run",
+            "ceiling_usd": run_spend.get("ceiling_usd"),
+            "spent_usd": run_spend.get("spent_usd"),
+            "basis": run_spend.get("basis"),
+        },
+        *(
+            {
+                "invocation": r.get("invocation_id"),
+                "kind": "regrade",
+                "ceiling_usd": r.get("ceiling_usd"),
+                "spent_usd": r.get("spent_usd"),
+                "basis": r.get("basis"),
+            }
+            for r in regrades
+        ),
+    ]
+
+    if REGRADE_LABEL not in labels:
+        labels.append(REGRADE_LABEL)
+    if grading_failure and GRADING_FAILED_LABEL not in labels:
+        labels.append(GRADING_FAILED_LABEL)
+    if overspent:
+        labels.append(f"regrade {regrade_id}: {_overspend_label(spent_usd, max_usd)}")
+
+    notes.append(
+        f"regrade {regrade_id}: finished {dispatched_n} of {len(pending)} judge grade(s) "
+        f"previously skipped `{SKIPPED_COST_CEILING}`, under a fresh ${max_usd:.4f} ceiling "
+        f"(recorded ${spent_usd:.4f}, basis {basis}); {ceiling_skipped_n} still skipped "
+        f"`{SKIPPED_COST_CEILING}` and resumable by another regrade; {len(blocked)} "
+        f"unfinishable (no dispatched candidate cell or no task record)"
+    )
+    notes.extend(entry_notes)
+    if SPEND_PER_INVOCATION_NOTE not in notes:
+        notes.append(SPEND_PER_INVOCATION_NOTE)
+
+    # THE LABEL COMES OFF ONLY WHEN THE CONDITION IT NAMES IS GONE -- from cells as well as
+    # grades. A regrade that finishes every stranded grade of a run whose CELLS were also cut
+    # has not made that run complete, and must not say it did.
+    ceiling_remains = any(
+        c.get("skipped") == SKIPPED_COST_CEILING for c in (results.get("cells") or [])
+    ) or any(
+        g.get("skipped") == SKIPPED_COST_CEILING for g in results["grades"]
+    )
+    if not ceiling_remains and COST_CEILING_LABEL in labels:
+        labels = [label for label in labels if label != COST_CEILING_LABEL]
+        notes.append(COST_CEILING_CLEARED_NOTE)
+
+    results["labels"] = labels
+    results["notes"] = notes
+
+    # A verdict already folded into this envelope was rendered against the OLD judge column.
+    # Stamped, never deleted -- and `apply_verdict` refuses a stamped card.
+    verdict = results.get("verdict")
+    if isinstance(verdict, dict):
+        verdict["stale_after_regrade"] = True
+        verdict_labels = list(verdict.get("labels") or [])
+        if VERDICT_STALE_AFTER_REGRADE_LABEL not in verdict_labels:
+            verdict_labels.insert(0, VERDICT_STALE_AFTER_REGRADE_LABEL)
+        verdict["labels"] = verdict_labels
+
+    results_path.write_text(json.dumps(results, indent=2) + "\n")
+
+    if stopped:
+        print(
+            f"STOPPED: cost ceiling reached — ${spent_usd:.4f} recorded against a "
+            f"${max_usd:.4f} ceiling ({SPEND_BASIS_LABELS[basis]}); {dispatched_n} judge "
+            f"grade(s) dispatched, {ceiling_skipped_n} still skipped "
+            f"({SKIPPED_COST_CEILING}). Results stay labelled {COST_CEILING_LABEL} and this "
+            f"regrade is resumable — run it again with a fresh ceiling."
+        )
+    else:
+        print(
+            f"completed: {dispatched_n} judge grade(s) dispatched, {ceiling_skipped_n} "
+            f"skipped; recorded spend ${spent_usd:.4f} of a ${max_usd:.4f} ceiling "
+            f"({SPEND_BASIS_LABELS[basis]})"
+        )
+    if overspent:
+        print(_overspend_label(spent_usd, max_usd))
+    if grading_failure:
+        print(grading_failure)
+    print(SPEND_PER_INVOCATION_NOTE)
+    for row in results["spend_by_invocation"]:
+        print(
+            f"  {row['kind']} {row['invocation']}: "
+            f"${_fmt_num(row.get('spent_usd'), '.4f')} of a "
+            f"${_fmt_num(row.get('ceiling_usd'), '.4f')} ceiling "
+            f"(basis: {row.get('basis') or NA})"
+        )
+    if isinstance(verdict, dict):
+        print(VERDICT_STALE_AFTER_REGRADE_LABEL)
+    print(f"results.json: {results_path}")
+    return 0
+
+
 def build_parser():
     ap = argparse.ArgumentParser(
         prog="repo_bench.py",
@@ -7034,6 +7518,38 @@ def build_parser():
         ),
     )
     p_run.set_defaults(func=cmd_run)
+
+    p_regrade = sub.add_parser(
+        "regrade",
+        help=(
+            "finish a run's judge grades that a cost ceiling stranded (requires --live and "
+            "--max-usd, exactly like `run`)"
+        ),
+    )
+    p_regrade.add_argument("--run", required=True, help="run id (see `list`)")
+    p_regrade.add_argument("--store-dir", default=None, help="store root (default: ./benchruns)")
+    p_regrade.add_argument("--live", action="store_true", help="required, with --max-usd, to spend")
+    p_regrade.add_argument(
+        "--max-usd", type=float, default=None,
+        help=(
+            "hard ceiling in USD for THIS invocation — a fresh budget starting from $0.00, "
+            "never a continuation of the stopped run's ceiling arithmetic"
+        ),
+    )
+    p_regrade.add_argument(
+        "--claude-bin", default=DEFAULT_CLAUDE_BIN,
+        help="harness binary to dispatch (mirrors claude_execute; point it at a stub to test)",
+    )
+    p_regrade.add_argument(
+        "--judge-seed", type=int, default=None,
+        help=(
+            "pin the blind Patch A/Patch B slot assignment for every grade in this invocation "
+            "(even keeps the candidate in slot A, odd flips it). Omitted -- the default -- "
+            "re-randomizes per grade, which is PLAN D6's bias control; pass this only when a "
+            "reproducible slot assignment is worth weakening that."
+        ),
+    )
+    p_regrade.set_defaults(func=cmd_regrade)
 
     p_verdict = sub.add_parser("verdict", help="render a run's verdict card")
     p_verdict.add_argument("--run", required=True, help="run id (see `list`)")
