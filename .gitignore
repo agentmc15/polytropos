@@ -12,6 +12,12 @@ __pycache__/
 # telemetry snapshot store (personal cost data — never committed)
 /telemetry/
 
+# repo-bench measurement store (run artifacts, sandboxes, dollar data — never committed)
+/benchruns/
+
+# conversation summaries (transcript-derived: home-dir paths, session ids — never committed)
+/conv-summaries/
+
 # generated value reports (personal dollar data, session ids, machine paths — never committed)
 /value-report*.html
 
