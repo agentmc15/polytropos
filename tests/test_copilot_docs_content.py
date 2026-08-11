@@ -340,6 +340,21 @@ class GeneratedProvenanceAndPrefsTests(unittest.TestCase):
         report = _report()
         pricing = _pricing()
         recorded_prefs = cd.reconstruct_prefs_from_snapshot(report["prefs_snapshot"])
+        # `prefs/copilot.json` is gitignored USER DATA, so a fresh clone (or a secondary
+        # worktree) legitimately has no live prefs file while the committed docs record the
+        # pins they were built with. In that configuration this freshness check has nothing
+        # real to compare against — an absent personal file is not evidence the docs are
+        # stale — so skip with a reason instead of failing every prefs-less checkout.
+        # Where a live prefs file EXISTS, the assertions below stay exactly as strict.
+        prefs_path = cd._prefs_module().DEFAULT_PREFS_PATH
+        snapshot_has_state = bool(
+            report["prefs_snapshot"].get("pins") or report["prefs_snapshot"].get("excludes")
+        )
+        if not prefs_path.exists() and snapshot_has_state:
+            self.skipTest(
+                "live prefs/copilot.json absent but the recorded snapshot carries prefs — "
+                "docs freshness is unverifiable in this checkout, not stale"
+            )
         live_prefs = _prefs(pricing)
         self.assertEqual(recorded_prefs["pins"], live_prefs.get("pins") or {})
         self.assertEqual(
