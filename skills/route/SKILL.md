@@ -59,3 +59,12 @@ Output, in order:
 3. For app-building questions, skip the dispatch offer; instead give the exact model ID string and the API params to use (effort level, whether to batch, cache breakpoints), ready to paste into their code.
 
 Keep the whole response compact — this is a decision aid, not a report.
+
+## Measured tier map (repo-bench, optional)
+
+Before recommending, check for `${CLAUDE_PLUGIN_ROOT}/prefs/repo-bench.json` (gitignored;
+written only by an explicit `repo_bench.py apply` after a measured benchmark run). If it
+exists and its `repo` matches the project being routed for, prefer its `tiers` /
+`daily_driver` model ids over the default tier picks and SAY SO, citing `source_run` and
+`applied_at`. If any id in it is missing from `data/pricing.json`, ignore the file and
+say it is stale. Absent file = no change to this skill's behavior.

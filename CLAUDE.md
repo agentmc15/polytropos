@@ -51,6 +51,14 @@ just docs**. Edit accordingly.
   fabricating an evaporated one never is. Readers degrade with a note when the store
   is absent, tests use temp `--store-dir` fixtures only, and nothing bulk-injects the
   store into a session's context.
+- **`bin/repo_bench.py` measures models on a target repo and can spend real tokens — but
+  only behind `--live` plus an explicit `--max-usd` ceiling; `plan`/`demo` and every test
+  spend nothing.** Tests stub every dispatch and `gh` runner and use fixture repos in temp
+  dirs. Target repos are read-only by construction (allowlisted git commands; sandboxes
+  are history-free tree extractions). Its store (`benchruns/`, gitignored) is written by
+  `bin/repo_bench.py` only — never hand-authored or backdated; verdicts below the evidence
+  floor are never applied, and routing changes only via the explicit `apply` step writing
+  gitignored `prefs/repo-bench.json`.
 
 ## How to run things
 
@@ -79,6 +87,8 @@ python3 bin/context_weight.py demo                # context-weight smoke: per-ca
 python3 bin/context_weight.py session             # what filled this window: latest Claude session's per-call weight, growth curve, ranked contributors (reads ~/.claude read-only; --harness codex|copilot at their honest fidelity)
 python3 bin/telemetry_snapshot.py               # capture today's telemetry snapshots (reads home dirs read-only; writes only gitignored telemetry/; lands with the telemetry-store kit)
 python3 bin/telemetry_snapshot.py --list        # what the telemetry store holds per source (tolerant of an absent store)
+python3 bin/repo_bench.py demo                  # repo-bench full-pipeline smoke: fixture repo, stub dispatch, all four oracles, below-floor verdict honesty — no network, no spend (lands with the repo-bench kit)
+python3 bin/repo_bench.py plan --repo . --models sonnet,haiku   # priced models×tasks matrix for a repo, from pricing.json — prints the ceiling and stops; only `run --live --max-usd` ever spends
 python3 bin/copilot_pricing.py knobs              # Copilot reasoning-effort facts from pricing.copilot.json (display-form ladder + interactive-picker mechanism notes; lands with the effort-dial kit)
 python3 bin/codex_pricing.py knobs                # Codex reasoning-effort ladder + modes notes from pricing.codex.json (lands with the effort-dial kit)
 python3 bin/copilot_pricing.py prefs              # active Copilot model pins/excludes + what each tier now resolves to (gitignored prefs/copilot.json + per-run flags; lands with the copilot-model-prefs kit)
