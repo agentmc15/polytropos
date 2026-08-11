@@ -1,23 +1,51 @@
 {
-  "cached_date": "2026-07-25",
+  "cached_date": "2026-08-11",
   "update_from": "https://docs.github.com/en/copilot/reference/copilot-billing/models-and-pricing",
   "model_ids_note": "PRICE re-verify 2026-07-25 against the full models-and-pricing doc (see update_from): every rate already in this file matched the doc exactly — no existing figure changed. What the re-verify ADDED: long-context step-up blocks for all three GPT-5.6 rows (Sol and Terra at >272K, Luna at >200K — a LOWER threshold than its siblings), which the 2026-07-18 partial refresh had missed entirely; plus two models the doc prices that this file did not carry, `claude-opus-5` and `gemini-3.6-flash`. ROSTER caveat, deliberately unresolved: this file's roster rule is what Copilot CLI's `/model` picker actually offers, and the picker was NOT re-checked on 2026-07-25 — only the price doc was. So those two new rows are PRICE-confirmed but NOT picker-confirmed; if `/model` does not list them, delete them here. Models GitHub prices but the picker did not list as of the 2026-07-01 check (Gemini 2.5 Pro, Gemini 3 Flash, GPT-5.4 nano, Raptor mini) stay intentionally excluded, and the doc also prices a plain `Claude Sonnet 4` that is deliberately NOT added for the same reason — picker presence unverified. Ids follow the lowercase-dot-version pattern (claude-sonnet-5, gpt-5.4-mini); the three gpt-5.6-* ids remain best-effort. If `/model` ever disagrees on ids or presence, correct HERE (only here).",
   "billing_unit": {
     "name": "AIC",
     "usd_per_credit": 0.01,
-    "note": "GitHub AI Credit. All model usage is token-metered (input, cached input, output; Anthropic models also bill cache writes) and settled in AIC. Code completions and next-edit suggestions are not billed in AIC."
+    "note": "GitHub AI Credit. All model usage is token-metered (input, cached input, output; Anthropic models and the GPT-5.6 family also bill cache writes) and settled in AIC. Code completions and next-edit suggestions are not billed in AIC."
   },
   "plans": {
-    "free": { "usd_per_month": 0, "included_aic_per_month": null, "note": "Small allowance that varies; see the plans page." },
-    "pro": { "usd_per_month": 10, "included_aic_per_month": 1500 },
-    "pro-plus": { "usd_per_month": 39, "included_aic_per_month": 7000 },
-    "max": { "usd_per_month": 200, "included_aic_per_month": 20000 },
-    "business": { "usd_per_month": null, "included_aic_per_month": null, "note": "AIC pooled at the org level; per-seat allowance not fixed here." },
-    "enterprise": { "usd_per_month": null, "included_aic_per_month": null, "note": "AIC pooled at the org level; per-seat allowance not fixed here." }
+    "free": {
+      "usd_per_month": 0,
+      "included_aic_per_month": null,
+      "note": "Small allowance that varies; see the plans page."
+    },
+    "pro": {
+      "usd_per_month": 10,
+      "included_aic_per_month": 1500
+    },
+    "pro-plus": {
+      "usd_per_month": 39,
+      "included_aic_per_month": 7000
+    },
+    "max": {
+      "usd_per_month": 200,
+      "included_aic_per_month": 20000
+    },
+    "business": {
+      "usd_per_month": null,
+      "included_aic_per_month": null,
+      "note": "AIC pooled at the org level; per-seat allowance not fixed here."
+    },
+    "enterprise": {
+      "usd_per_month": null,
+      "included_aic_per_month": null,
+      "note": "AIC pooled at the org level; per-seat allowance not fixed here."
+    }
   },
   "plans_note": "Individual paid plans = base credits matched 1:1 to the subscription price plus a flex allotment GitHub can rebalance as model economics change. Max = $200/mo = 20,000 AIC.",
   "knobs": {
-    "reasoning_efforts": ["Minimal", "Low", "Medium", "High", "Extra High", "Max"],
+    "reasoning_efforts": [
+      "Minimal",
+      "Low",
+      "Medium",
+      "High",
+      "Extra High",
+      "Max"
+    ],
     "reasoning_efforts_note": "Display-form ladder, ascending. Ground truth: the GPT-5.6 announcement (2026-07-18 capture) confirms the token ladder minimal|low|medium|high|xhigh|max ('max' is the new deepest — even more reasoning time than 'xhigh'); Copilot CLI's /model picker renders Title-Case display forms, of which 'Medium' and 'Extra High' were directly observed (2026-07-18 screenshots), mapping to medium and xhigh. The other four display renderings are Title-Case mappings of the confirmed token ladder, not yet observed in the picker — if the picker renders any differently, correct the list HERE (only here). Mechanism: reasoning effort is set INTERACTIVELY in the /model picker with the left/right arrow keys on the selected model row (picker footer: '←/→ reasoning effort'); it is a per-model property — rows showing '—' have no reasoning control (observed: Auto, Claude Sonnet 4.5, Claude Haiku 4.5, Claude Opus 4.5, Kimi K2.7 Code), while every other observed row (GPT-5.6 Sol/Terra/Luna, GPT-5.5, GPT-5.4, GPT-5.3-Codex, GPT-5.4 mini, GPT-5 mini, Gemini 3.1 Pro, Gemini 3.5 Flash, MAI-Code-1-Flash, Claude Sonnet 5/4.6, Claude Opus 4.8/4.7/4.6 incl. fast mode, Claude Fable 5) defaults to 'Medium'; GPT-5.6 Sol was observed cycled up to 'Extra High'. A headless surface is UNCONFIRMED — no copilot -p flag or settings key for reasoning effort is known to exist; do not invent one. If one ships, record it here (only here)."
   },
   "long_context_note": "GPT-5.6 long-context step-up rates on Copilot (GitHub Models and pricing doc, captured 2026-07-18), NOT modeled as long_context sub-objects on the GPT-5.6 rows in this kit — a deliberate scope fence; the pre-existing long_context sub-objects on other rows are unrelated and untouched. Single correctable point if ever modeled: GPT-5.6 Sol >272K input → $10.00/$1.00/$45.00; Terra >272K → $5.00/$0.50/$22.50; Luna >200K → $2.00/$0.20/$9.00 (input/cached-input/output per 1M tokens, USD).",
@@ -79,7 +107,12 @@
       "input_per_mtok": 5.0,
       "cached_input_per_mtok": 0.5,
       "output_per_mtok": 30.0,
-      "long_context": { "threshold_tokens": 272000, "input_per_mtok": 10.0, "cached_input_per_mtok": 1.0, "output_per_mtok": 45.0 },
+      "long_context": {
+        "threshold_tokens": 272000,
+        "input_per_mtok": 10.0,
+        "cached_input_per_mtok": 1.0,
+        "output_per_mtok": 45.0
+      },
       "notes": "OpenAI flagship (Powerful); step-up rates above 272K input tokens. Strong tier — Fable 5 is the sole frontier pick."
     },
     "gpt-5.3-codex": {
@@ -98,7 +131,12 @@
       "input_per_mtok": 2.0,
       "cached_input_per_mtok": 0.2,
       "output_per_mtok": 12.0,
-      "long_context": { "threshold_tokens": 200000, "input_per_mtok": 4.0, "cached_input_per_mtok": 0.4, "output_per_mtok": 18.0 },
+      "long_context": {
+        "threshold_tokens": 200000,
+        "input_per_mtok": 4.0,
+        "cached_input_per_mtok": 0.4,
+        "output_per_mtok": 18.0
+      },
       "notes": "Public preview; step-up rates above 200K input tokens."
     },
     "claude-opus-4.8-fast": {
@@ -119,7 +157,10 @@
       "cached_input_per_mtok": 0.2,
       "cache_write_per_mtok": 2.5,
       "output_per_mtok": 10.0,
-      "promo": { "until": "2026-08-31", "note": "Promotional pricing; the post-promo rate is not yet published — re-check update_from after this date." },
+      "promo": {
+        "until": "2026-08-31",
+        "note": "Promotional pricing; the post-promo rate is not yet published — re-check update_from after this date."
+      },
       "notes": "The default mid-tier workhorse and best value on the roster at promo pricing: day-to-day coding, tests, docs, refactors."
     },
     "claude-sonnet-4.6": {
@@ -149,7 +190,12 @@
       "input_per_mtok": 2.5,
       "cached_input_per_mtok": 0.25,
       "output_per_mtok": 15.0,
-      "long_context": { "threshold_tokens": 272000, "input_per_mtok": 5.0, "cached_input_per_mtok": 0.5, "output_per_mtok": 22.5 },
+      "long_context": {
+        "threshold_tokens": 272000,
+        "input_per_mtok": 5.0,
+        "cached_input_per_mtok": 0.5,
+        "output_per_mtok": 22.5
+      },
       "notes": "OpenAI workhorse; step-up rates above 272K input tokens."
     },
     "gemini-3.5-flash": {
@@ -215,28 +261,48 @@
       "cached_input_per_mtok": 0.5,
       "cache_write_per_mtok": 6.25,
       "output_per_mtok": 30.0,
-      "long_context": { "threshold_tokens": 272000, "input_per_mtok": 10.0, "cached_input_per_mtok": 1.0, "output_per_mtok": 45.0 },
-      "notes": "OpenAI flagship durable tier (Powerful), GA. Rates captured 2026-07-18 from the /model picker's cost panel ('High cost' — Credits Per 1M Tokens: input 500, output 3,000, cache read 50, cache write 625; converted via billing_unit.usd_per_credit) and re-confirmed 2026-07-25 against the models-and-pricing doc, which adds the >272K long-context step-up recorded above. Caveat: that doc's OpenAI table carries NO cache-write column — the 6.25 above comes from the picker's cost panel only, and is the one figure here the doc does not corroborate. Reasoning adjustable in the picker (default Medium; observed up to Extra High). Picker shows 400K context, tab-toggled 1.1M — capability facts, not prices."
+      "long_context": {
+        "threshold_tokens": 272000,
+        "input_per_mtok": 10.0,
+        "cached_input_per_mtok": 1.0,
+        "output_per_mtok": 45.0,
+        "cache_write_per_mtok": 12.5
+      },
+      "notes": "OpenAI flagship durable tier (Powerful), GA. Rates captured 2026-07-18 from the /model picker's cost panel ('High cost' — Credits Per 1M Tokens: input 500, output 3,000, cache read 50, cache write 625; converted via billing_unit.usd_per_credit) and re-confirmed 2026-07-25 against the models-and-pricing doc, which adds the >272K long-context step-up recorded above. Caveat: that doc's OpenAI table carries NO cache-write column — the 6.25 above comes from the picker's cost panel only, and is the one figure here the doc does not corroborate. Reasoning adjustable in the picker (default Medium; observed up to Extra High). Picker shows 400K context, tab-toggled 1.1M — capability facts, not prices. Long-context cache-write (12.50) added; re-captured 2026-08-11 from GitHub's Models and pricing doc."
     },
     "gpt-5.6-terra": {
       "display": "GPT-5.6 Terra",
       "vendor": "openai",
       "tier": "mid",
-      "input_per_mtok": 2.5,
-      "cached_input_per_mtok": 0.25,
-      "output_per_mtok": 15.0,
-      "long_context": { "threshold_tokens": 272000, "input_per_mtok": 5.0, "cached_input_per_mtok": 0.5, "output_per_mtok": 22.5 },
-      "notes": "Balanced everyday tier (Versatile), GA; confirmed present in /model 2026-07-18. Rates confirmed from GitHub's Models and pricing doc (captured 2026-07-18; Copilot USD is API pass-through for GPT-5.6 — 250/25/1,500 credits per 1M tokens) and re-confirmed 2026-07-25, which adds the >272K long-context step-up recorded above. Cache writes bill at 1.25x uncached input per the doc (not stored per-model here). Reasoning adjustable in the picker (default Medium); 400K context per the picker."
+      "input_per_mtok": 2.0,
+      "cached_input_per_mtok": 0.2,
+      "output_per_mtok": 12.0,
+      "long_context": {
+        "threshold_tokens": 272000,
+        "input_per_mtok": 4.0,
+        "cached_input_per_mtok": 0.4,
+        "output_per_mtok": 18.0,
+        "cache_write_per_mtok": 5.0
+      },
+      "notes": "Balanced everyday tier (Versatile), GA; confirmed present in /model 2026-07-18. Rates confirmed from GitHub's Models and pricing doc (captured 2026-07-18; Copilot USD is API pass-through for GPT-5.6 — 250/25/1,500 credits per 1M tokens) and re-confirmed 2026-07-25, which adds the >272K long-context step-up recorded above. Cache writes bill at 1.25x uncached input per the doc (not stored per-model here). Reasoning adjustable in the picker (default Medium); 400K context per the picker. REPRICED ~20% down and cache-write added; re-captured 2026-08-11 from GitHub's Models and pricing doc.",
+      "cache_write_per_mtok": 2.5
     },
     "gpt-5.6-luna": {
       "display": "GPT-5.6 Luna",
       "vendor": "openai",
       "tier": "cheap",
-      "input_per_mtok": 1.0,
-      "cached_input_per_mtok": 0.1,
-      "output_per_mtok": 6.0,
-      "long_context": { "threshold_tokens": 200000, "input_per_mtok": 2.0, "cached_input_per_mtok": 0.2, "output_per_mtok": 9.0 },
-      "notes": "Fast & affordable tier (Lightweight), GA; confirmed present in /model 2026-07-18. Rates confirmed from GitHub's Models and pricing doc (captured 2026-07-18; Copilot USD is API pass-through for GPT-5.6 — 100/10/600 credits per 1M tokens) and re-confirmed 2026-07-25, which adds the >200K long-context step-up recorded above — note the 200K threshold is LOWER than the 272K used by the other GPT-5.6 rows, so long-context rates kick in sooner here. Cache writes bill at 1.25x uncached input per the doc (not stored per-model here). Reasoning adjustable in the picker (default Medium); 328K context per the picker."
+      "input_per_mtok": 0.2,
+      "cached_input_per_mtok": 0.02,
+      "output_per_mtok": 1.2,
+      "long_context": {
+        "threshold_tokens": 200000,
+        "input_per_mtok": 0.4,
+        "cached_input_per_mtok": 0.04,
+        "output_per_mtok": 1.8,
+        "cache_write_per_mtok": 0.5
+      },
+      "notes": "Fast & affordable tier (Lightweight), GA; confirmed present in /model 2026-07-18. Rates confirmed from GitHub's Models and pricing doc (captured 2026-07-18; Copilot USD is API pass-through for GPT-5.6 — 100/10/600 credits per 1M tokens) and re-confirmed 2026-07-25, which adds the >200K long-context step-up recorded above — note the 200K threshold is LOWER than the 272K used by the other GPT-5.6 rows, so long-context rates kick in sooner here. Cache writes bill at 1.25x uncached input per the doc (not stored per-model here). Reasoning adjustable in the picker (default Medium); 328K context per the picker. REPRICED ~5x down and cache-write added; re-captured 2026-08-11 from GitHub's Models and pricing doc.",
+      "cache_write_per_mtok": 0.25
     },
     "claude-opus-5": {
       "display": "Claude Opus 5",
@@ -259,10 +325,30 @@
     }
   },
   "task_profiles": {
-    "XS": { "label": "Quick Q&A / one-liner fix", "input_tokens": 10000, "output_tokens": 1000 },
-    "S": { "label": "Single-file change / small script", "input_tokens": 40000, "output_tokens": 4000 },
-    "M": { "label": "Feature across a few files", "input_tokens": 150000, "output_tokens": 15000 },
-    "L": { "label": "Multi-file refactor / large feature", "input_tokens": 400000, "output_tokens": 40000 },
-    "XL": { "label": "Long-horizon agentic run / migration", "input_tokens": 1500000, "output_tokens": 100000 }
+    "XS": {
+      "label": "Quick Q&A / one-liner fix",
+      "input_tokens": 10000,
+      "output_tokens": 1000
+    },
+    "S": {
+      "label": "Single-file change / small script",
+      "input_tokens": 40000,
+      "output_tokens": 4000
+    },
+    "M": {
+      "label": "Feature across a few files",
+      "input_tokens": 150000,
+      "output_tokens": 15000
+    },
+    "L": {
+      "label": "Multi-file refactor / large feature",
+      "input_tokens": 400000,
+      "output_tokens": 40000
+    },
+    "XL": {
+      "label": "Long-horizon agentic run / migration",
+      "input_tokens": 1500000,
+      "output_tokens": 100000
+    }
   }
 }

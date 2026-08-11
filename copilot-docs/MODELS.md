@@ -14,7 +14,7 @@ a preference file was read from, which tiers carry a pin, which model ids are ex
 each symbolic tier (`cheap`, `mid`, `strong`, `frontier`) currently resolves to and why.
 
 <!-- BEGIN GENERATED: model-preferences -->
-Snapshot: `data/pricing.copilot.json` (cached_date 2026-07-25) — pricing sha256 `0e787ee9bdb2a76d74689ab5bbba7d8efea12054b6643c764932564f57b67bb1`, roster sha256 `774e2d66ae13ff6a869f7915c264790802b15be56bb03d9e5355aa0d58363b71`.
+Snapshot: `data/pricing.copilot.json` (cached_date 2026-08-11) — pricing sha256 `878154cfb099d2c948a0ae9acf98b216e79e90f13668c037086ab9dc2db549d8`, roster sha256 `fc3431a0951d3ef4cddc6ed7950358bc9602cea1b23393b7f10281bed22054ed`.
 
 - Prefs source: `(none — defaults)`
 
@@ -53,7 +53,7 @@ per-million-token rates, any notes the pricing data itself carries, and whether 
 eligible or excluded under active preferences.
 
 <!-- BEGIN GENERATED: model-roster -->
-Snapshot: `data/pricing.copilot.json` (cached_date 2026-07-25) — pricing sha256 `0e787ee9bdb2a76d74689ab5bbba7d8efea12054b6643c764932564f57b67bb1`, roster sha256 `774e2d66ae13ff6a869f7915c264790802b15be56bb03d9e5355aa0d58363b71`.
+Snapshot: `data/pricing.copilot.json` (cached_date 2026-08-11) — pricing sha256 `878154cfb099d2c948a0ae9acf98b216e79e90f13668c037086ab9dc2db549d8`, roster sha256 `fc3431a0951d3ef4cddc6ed7950358bc9602cea1b23393b7f10281bed22054ed`.
 
 | Model | Display | Vendor | Tier | Input $/MTok | Cached input $/MTok | Output $/MTok | Notes | Preference |
 |---|---|---|---|---|---|---|---|---|
@@ -76,9 +76,9 @@ Snapshot: `data/pricing.copilot.json` (cached_date 2026-07-25) — pricing sha25
 | `gpt-5-mini` | GPT-5 mini | openai | cheap | 0.25 | 0.025 | 2.0 | Cheapest input rate on the roster; lightweight lookups and bulk. | eligible |
 | `gpt-5.4-mini` | GPT-5.4 mini | openai | cheap | 0.75 | 0.075 | 4.5 | Lightweight OpenAI model. | eligible |
 | `mai-code-1-flash` | MAI-Code-1-Flash | microsoft | cheap | 0.75 | 0.075 | 4.5 | Microsoft lightweight coding model. | eligible |
-| `gpt-5.6-sol` | GPT-5.6 Sol | openai | strong | 5.0 | 0.5 | 30.0 | OpenAI flagship durable tier (Powerful), GA. Rates captured 2026-07-18 from the /model picker's cost panel ('High cost' — Credits Per 1M Tokens: input 500, output 3,000, cache read 50, cache write 625; converted via billing_unit.usd_per_credit) and re-confirmed 2026-07-25 against the models-and-pricing doc, which adds the >272K long-context step-up recorded above. Caveat: that doc's OpenAI table carries NO cache-write column — the 6.25 above comes from the picker's cost panel only, and is the one figure here the doc does not corroborate. Reasoning adjustable in the picker (default Medium; observed up to Extra High). Picker shows 400K context, tab-toggled 1.1M — capability facts, not prices. | eligible |
-| `gpt-5.6-terra` | GPT-5.6 Terra | openai | mid | 2.5 | 0.25 | 15.0 | Balanced everyday tier (Versatile), GA; confirmed present in /model 2026-07-18. Rates confirmed from GitHub's Models and pricing doc (captured 2026-07-18; Copilot USD is API pass-through for GPT-5.6 — 250/25/1,500 credits per 1M tokens) and re-confirmed 2026-07-25, which adds the >272K long-context step-up recorded above. Cache writes bill at 1.25x uncached input per the doc (not stored per-model here). Reasoning adjustable in the picker (default Medium); 400K context per the picker. | eligible |
-| `gpt-5.6-luna` | GPT-5.6 Luna | openai | cheap | 1.0 | 0.1 | 6.0 | Fast & affordable tier (Lightweight), GA; confirmed present in /model 2026-07-18. Rates confirmed from GitHub's Models and pricing doc (captured 2026-07-18; Copilot USD is API pass-through for GPT-5.6 — 100/10/600 credits per 1M tokens) and re-confirmed 2026-07-25, which adds the >200K long-context step-up recorded above — note the 200K threshold is LOWER than the 272K used by the other GPT-5.6 rows, so long-context rates kick in sooner here. Cache writes bill at 1.25x uncached input per the doc (not stored per-model here). Reasoning adjustable in the picker (default Medium); 328K context per the picker. | eligible |
+| `gpt-5.6-sol` | GPT-5.6 Sol | openai | strong | 5.0 | 0.5 | 30.0 | OpenAI flagship durable tier (Powerful), GA. Rates captured 2026-07-18 from the /model picker's cost panel ('High cost' — Credits Per 1M Tokens: input 500, output 3,000, cache read 50, cache write 625; converted via billing_unit.usd_per_credit) and re-confirmed 2026-07-25 against the models-and-pricing doc, which adds the >272K long-context step-up recorded above. Caveat: that doc's OpenAI table carries NO cache-write column — the 6.25 above comes from the picker's cost panel only, and is the one figure here the doc does not corroborate. Reasoning adjustable in the picker (default Medium; observed up to Extra High). Picker shows 400K context, tab-toggled 1.1M — capability facts, not prices. Long-context cache-write (12.50) added; re-captured 2026-08-11 from GitHub's Models and pricing doc. | eligible |
+| `gpt-5.6-terra` | GPT-5.6 Terra | openai | mid | 2.0 | 0.2 | 12.0 | Balanced everyday tier (Versatile), GA; confirmed present in /model 2026-07-18. Rates confirmed from GitHub's Models and pricing doc (captured 2026-07-18; Copilot USD is API pass-through for GPT-5.6 — 250/25/1,500 credits per 1M tokens) and re-confirmed 2026-07-25, which adds the >272K long-context step-up recorded above. Cache writes bill at 1.25x uncached input per the doc (not stored per-model here). Reasoning adjustable in the picker (default Medium); 400K context per the picker. REPRICED ~20% down and cache-write added; re-captured 2026-08-11 from GitHub's Models and pricing doc. | eligible |
+| `gpt-5.6-luna` | GPT-5.6 Luna | openai | cheap | 0.2 | 0.02 | 1.2 | Fast & affordable tier (Lightweight), GA; confirmed present in /model 2026-07-18. Rates confirmed from GitHub's Models and pricing doc (captured 2026-07-18; Copilot USD is API pass-through for GPT-5.6 — 100/10/600 credits per 1M tokens) and re-confirmed 2026-07-25, which adds the >200K long-context step-up recorded above — note the 200K threshold is LOWER than the 272K used by the other GPT-5.6 rows, so long-context rates kick in sooner here. Cache writes bill at 1.25x uncached input per the doc (not stored per-model here). Reasoning adjustable in the picker (default Medium); 328K context per the picker. REPRICED ~5x down and cache-write added; re-captured 2026-08-11 from GitHub's Models and pricing doc. | eligible |
 | `claude-opus-5` | Claude Opus 5 | anthropic | strong | 5.0 | 0.5 | 25.0 | Added 2026-07-25 from the models-and-pricing doc (GA, Powerful). Same published rates as Opus 4.5/4.6/4.7/4.8, so it is a strong-tier peer on price. NOT yet confirmed present in the /model picker — if the picker does not list it, remove it here (this file's roster rule is what /model actually offers). | eligible |
 | `gemini-3.6-flash` | Gemini 3.6 Flash | google | mid | 1.5 | 0.15 | 7.5 | Added 2026-07-25 from the models-and-pricing doc (GA, Versatile). Same input/cached rates as Gemini 3.5 Flash but cheaper output, so it strictly dominates 3.5 Flash on price — prefer it where both are available. NOT yet confirmed present in the /model picker; remove here if the picker does not list it. | eligible |
 <!-- END GENERATED: model-roster -->
@@ -101,7 +101,7 @@ Some models expose a configurable reasoning-effort control; others do not. The t
 read directly from the pricing data's own knob facts.
 
 <!-- BEGIN GENERATED: reasoning-knobs -->
-Snapshot: `data/pricing.copilot.json` (cached_date 2026-07-25) — pricing sha256 `0e787ee9bdb2a76d74689ab5bbba7d8efea12054b6643c764932564f57b67bb1`, roster sha256 `774e2d66ae13ff6a869f7915c264790802b15be56bb03d9e5355aa0d58363b71`.
+Snapshot: `data/pricing.copilot.json` (cached_date 2026-08-11) — pricing sha256 `878154cfb099d2c948a0ae9acf98b216e79e90f13668c037086ab9dc2db549d8`, roster sha256 `fc3431a0951d3ef4cddc6ed7950358bc9602cea1b23393b7f10281bed22054ed`.
 
 | Reasoning effort |
 |---|
@@ -132,7 +132,7 @@ output-token count. These are convenience buckets for estimation, not measured t
 particular task.
 
 <!-- BEGIN GENERATED: task-profiles -->
-Snapshot: `data/pricing.copilot.json` (cached_date 2026-07-25) — pricing sha256 `0e787ee9bdb2a76d74689ab5bbba7d8efea12054b6643c764932564f57b67bb1`, roster sha256 `774e2d66ae13ff6a869f7915c264790802b15be56bb03d9e5355aa0d58363b71`.
+Snapshot: `data/pricing.copilot.json` (cached_date 2026-08-11) — pricing sha256 `878154cfb099d2c948a0ae9acf98b216e79e90f13668c037086ab9dc2db549d8`, roster sha256 `fc3431a0951d3ef4cddc6ed7950358bc9602cea1b23393b7f10281bed22054ed`.
 
 | Profile | Label | Input tokens | Output tokens |
 |---|---|---|---|

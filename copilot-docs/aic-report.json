@@ -2,9 +2,9 @@
   "schema": "copilot-docs/aic-report/v1",
   "pricing_snapshot": {
     "path": "data/pricing.copilot.json",
-    "cached_date": "2026-07-25",
-    "pricing_sha256": "0e787ee9bdb2a76d74689ab5bbba7d8efea12054b6643c764932564f57b67bb1",
-    "roster_sha256": "774e2d66ae13ff6a869f7915c264790802b15be56bb03d9e5355aa0d58363b71"
+    "cached_date": "2026-08-11",
+    "pricing_sha256": "878154cfb099d2c948a0ae9acf98b216e79e90f13668c037086ab9dc2db549d8",
+    "roster_sha256": "fc3431a0951d3ef4cddc6ed7950358bc9602cea1b23393b7f10281bed22054ed"
   },
   "prefs_snapshot": {
     "source": null,
@@ -32,7 +32,7 @@
       "kind": "markdown",
       "title": "GitHub Copilot CLI Documentation Center",
       "authoring_mode": "estimated",
-      "sources_sha256": "6d6256283d669f7216815af8729a2ef620922b86d35bcd12baef719d39db7b55",
+      "sources_sha256": "cae87dfb0acc21a7727c86e57f86501c1bca17eb8f8f5efe02cfbd1d91f9a118",
       "measurement": {
         "bytes": 3586,
         "words": 564,
@@ -122,7 +122,7 @@
       "kind": "markdown",
       "title": "Safety and cost boundaries",
       "authoring_mode": "estimated",
-      "sources_sha256": "d2fc439cfd523d194431b8913d0b6dc47e9b7ab742042557863cac8e7ca275b5",
+      "sources_sha256": "27818b0d61a197aa82abb6366d1169da1dcfeec4a968db544288d7b9c984e7f8",
       "measurement": {
         "bytes": 4945,
         "words": 762,
@@ -167,7 +167,7 @@
       "kind": "markdown",
       "title": "Skills reference",
       "authoring_mode": "estimated",
-      "sources_sha256": "46a4ab75f076330710cf66b0a031c139734bf6012bb32ce77dc257b314acef56",
+      "sources_sha256": "896155c7e1d83b5f63c9a6411c9e2c7767ef84c803d0c639b37ca3c19d87a523",
       "measurement": {
         "bytes": 21388,
         "words": 3534,
@@ -212,7 +212,7 @@
       "kind": "markdown",
       "title": "Agents reference",
       "authoring_mode": "estimated",
-      "sources_sha256": "7e930b484c27123e8049f11cc3c1c658ddf5eab0ee9032d52a4bc1aac014f0c5",
+      "sources_sha256": "fa9afb80a6826c6493fbdcdb52a44ed313830d2f4d63a364a6e19ccd8953531b",
       "measurement": {
         "bytes": 16474,
         "words": 2659,
@@ -257,11 +257,11 @@
       "kind": "markdown",
       "title": "Models and preferences",
       "authoring_mode": "estimated",
-      "sources_sha256": "fe8a9be562732e93d0ad6fe437068e09355cb11b21c48364767fdd2c4b883996",
+      "sources_sha256": "2cf5fb9eb76f30c58766c20f94e5e2ad306860c5c2c79b8bc31fc03e80eee153",
       "measurement": {
-        "bytes": 16706,
-        "words": 2724,
-        "lexemes": 4224,
+        "bytes": 17012,
+        "words": 2781,
+        "lexemes": 4309,
         "ai_output_lexemes": 1577
       },
       "cost": {
@@ -289,7 +289,7 @@
       "authoring_mode": "estimated",
       "markdown_source": "MODELS.md",
       "measurement": {
-        "bytes": 20426
+        "bytes": 20747
       },
       "cost": {
         "usd": 0.0,
@@ -302,7 +302,7 @@
       "kind": "markdown",
       "title": "Costs and AIC accounting",
       "authoring_mode": "estimated",
-      "sources_sha256": "af37aa7c8406beef39ce2cacd9024e3ea489138e07d9f613c364f438635c4df9",
+      "sources_sha256": "057b746e6022fb9f9cb4a0f2940b9b88bbe7f36ddfb3c9beb0214672d3703035",
       "measurement": {
         "bytes": 8430,
         "words": 1350,
@@ -347,7 +347,7 @@
       "kind": "markdown",
       "title": "Practical workflows",
       "authoring_mode": "estimated",
-      "sources_sha256": "b6be08fe48cf1e8c0c6b8a8d773d5b89c586395795ed37959684199dda064e1b",
+      "sources_sha256": "737815e7e7425559fe7c0c9e19036193f898cfb2e3b1d2884cfbd3d00912439a",
       "measurement": {
         "bytes": 12380,
         "words": 1997,

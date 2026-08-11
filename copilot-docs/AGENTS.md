@@ -30,7 +30,7 @@ column shows whether the agent's configured model happens to be the same model i
 currently resolve to elsewhere in this bundle — a "no" is informational, not itself a problem.
 
 <!-- BEGIN GENERATED: agents-inventory -->
-Snapshot: `data/pricing.copilot.json` (cached_date 2026-07-25) — pricing sha256 `0e787ee9bdb2a76d74689ab5bbba7d8efea12054b6643c764932564f57b67bb1`, roster sha256 `774e2d66ae13ff6a869f7915c264790802b15be56bb03d9e5355aa0d58363b71`.
+Snapshot: `data/pricing.copilot.json` (cached_date 2026-08-11) — pricing sha256 `878154cfb099d2c948a0ae9acf98b216e79e90f13668c037086ab9dc2db549d8`, roster sha256 `fc3431a0951d3ef4cddc6ed7950358bc9602cea1b23393b7f10281bed22054ed`.
 
 | Agent | Description | Model | Tier | Excluded | Matches active |
 |---|---|---|---|---|---|
