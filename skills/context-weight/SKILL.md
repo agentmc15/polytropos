@@ -68,6 +68,18 @@ retrieval-shaped answer — get only what's relevant — exists only *prospectiv
 happens, and that's exactly what delegation is: a subagent does the wide read, off in its own
 context, and returns only the conclusion.
 
+A second prevention-shaped tool, for when the wide read's question is *repo structure*: a
+graphify knowledge graph (`/polytropos:graphify` — external, availability-gated, offline).
+`python3 bin/graph_brief.py brief --graph <dir>/graphify-out/graph.json` compresses a
+multi-megabyte graph into a ~50-line card (measured on this repo: 8.4MB → roughly 450
+tokens, a ~4,600× reduction), and targeted `graphify explain "<symbol>"` calls answer
+"what is this / who calls it" with file:line precision in hundreds of bytes — where a wide
+exploratory read sweeps tens of thousands of tokens into the window and resubmits them on
+every later call. The same honesty rule as the rest of this kit applies: the card labels
+what the graph cannot see (dynamic loaders are invisible to AST extraction — absence of an
+edge proves nothing), so it narrows where to look; it never replaces reading the code that
+actually matters.
+
 Concrete illustration from a real session: `watch` reported `peak 99% of window (993,900 of
 1,000,000 tokens)` with `avoidable (tool-ingested) mass: 74,160 est. of 993,900 (7%) — top source:
 Bash`. That 7% is the honest size of the PREVENT opportunity on that session — the slice a capped
