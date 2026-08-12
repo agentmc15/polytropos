@@ -25,3 +25,9 @@ __pycache__/
 # never committed; matches .claude/kits/<slug>/verify-pass/ for every kit, not the kit files
 # beside it)
 /.claude/kits/*/verify-pass/
+
+# local Codex-harness install artifacts (written by `harness_select install --harness codex`
+# at project scope — install DESTINATIONS, not source; the bundle source lives in codex/,
+# whose own AGENTS.md stays tracked because these are root-anchored)
+/.codex/
+/AGENTS.md
