@@ -31,3 +31,6 @@ __pycache__/
 # whose own AGENTS.md stays tracked because these are root-anchored)
 /.codex/
 /AGENTS.md
+
+# graphify knowledge-graph output (local analysis artifacts, never committed)
+/graphify-out/

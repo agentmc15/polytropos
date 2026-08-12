@@ -42,6 +42,7 @@ KIT_SENTINELS = {
     "harness-parity": "`copilot`/`codex`/`claude` CLI from any task, test, or verify command",
     "memory-skill": "gitignored USER DATA",
     "effort-dial": "NEVER invoke the real `copilot`/`codex`/`claude` CLI",
+    "graphify-skill": "never invoked by tests, verify commands, or kit execution",
     "copilot-skills-parity": "NEVER invoke the real `copilot`/`codex`/`claude`",
     "copilot-model-prefs": "NEVER invoke the real `copilot`/`codex`/`claude` CLI from any task,",
     "harness-update": "Never a write under `~/.claude` — the remedy is printed, never executed",

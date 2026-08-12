@@ -60,6 +60,7 @@ just docs**. Edit accordingly.
   floor are never applied, and routing changes only via the explicit `apply` step writing
   gitignored `prefs/repo-bench.json`.
 - **`bin/harness_update.py` check is strictly read-only; apply writes only the Copilot/Codex homes via `harness_select`'s own writers plus the repo's generated mirrors — never `~/.claude` (the remedy is printed, never executed), never pricing numbers or docs tables.** Codex prompts are plugin-generated mirrors, overwritten in place with every differing rewrite listed; AGENTS.md and skill dirs stay no-clobber. Tests use temp fixture homes only.
+- **graphify is an external, user-installed CLI (`uv tool install graphifyy`) — never vendored, never auto-installed, and never invoked by tests, verify commands, or kit execution.** `bin/graph_brief.py` only ever READS a graph.json; skill-sanctioned graphify subcommands are the offline set only (no `extract`/`label`/backends/`add`/`clone`/`watch`/`global`/platform-`install` hooks without explicit user opt-in). `/graphify-out/` stays gitignored.
 
 ## How to run things
 
@@ -96,6 +97,7 @@ python3 bin/copilot_pricing.py prefs              # active Copilot model pins/ex
 echo '{"model":{"id":"claude-fable-5","display_name":"Fable 5"},"cost":{"total_cost_usd":1.23},"context_window":{"used_percentage":42},"rate_limits":{"five_hour":{"used_percentage":12},"seven_day":{"used_percentage":34}}}' | python3 bin/statusline.py
 python3 bin/harness_update.py check           # all-harness freshness card (read-only; exit 3 on drift; lands with the harness-update kit)
 python3 bin/harness_update.py demo            # synthetic check/apply smoke — temp trees only, no real homes
+python3 bin/graph_brief.py demo                # architect-grounding brief from a graphify graph.json — synthetic smoke, no graphify binary (lands with the graphify-skill kit)
 ```
 
 ## When executing a kit task
