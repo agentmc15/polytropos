@@ -80,13 +80,15 @@ allotment GitHub can rebalance: `pro` ($10/mo → 1,500 AIC), `pro-plus` ($39/mo
 has a small variable allowance; `business` and `enterprise` pool AIC at the org level instead of a
 fixed per-seat number. (Recall 1 AIC = `usd_per_credit`, i.e. one cent.)
 
-The table below is a **snapshot of `data/pricing.copilot.json`, cached `2026-07-25`** — treat it
+The table below is a **snapshot of `data/pricing.copilot.json`, cached `2026-08-11`** — treat it
 as a labeled point-in-time reference, not a live source; the file itself is authoritative. Prices
 are USD per million tokens (MTok).
 
-**24 rows, re-verified 2026-07-25** against GitHub's models-and-pricing doc: every rate already in
-the file matched the doc exactly, and the re-verify added the three GPT-5.6 long-context step-ups
-plus two newly-priced models. **Claude Fable 5 remains the sole `frontier` tier.** Four models
+**24 rows, re-verified 2026-08-11** against GitHub's models-and-pricing doc: `gpt-5.6-luna`
+repriced ~5x down, `gpt-5.6-terra` repriced ~20% down, and cache-write rates were added across
+the GPT-5.6 family (including a long-context cache-write for `gpt-5.6-sol`); every other rate
+already in the file matched the doc exactly, and the roster is unchanged at 24 models.
+**Claude Fable 5 remains the sole `frontier` tier.** Four models
 GitHub prices but the picker did not list as of the 2026-07-01 check (Gemini 2.5 Pro, Gemini 3
 Flash, GPT-5.4 nano, Raptor mini) stay intentionally excluded, as does a plain `Claude Sonnet 4`
 the doc prices — picker presence unverified for all five.
@@ -112,16 +114,16 @@ the doc prices — picker presence unverified for all five.
 | mid | `claude-sonnet-4.5` | anthropic | $3.00 | $0.30 | $15.00 | — |
 | mid | `claude-sonnet-4.6` | anthropic | $3.00 | $0.30 | $15.00 | — |
 | mid | `gpt-5.4` | openai | $2.50 | $0.25 | $15.00 | long-ctx >272K |
-| mid | `gpt-5.6-terra` | openai | $2.50 | $0.25 | $15.00 | long-ctx >272K |
+| mid | `gpt-5.6-terra` | openai | $2.00 | $0.20 | $12.00 | long-ctx >272K |
 | mid | `claude-sonnet-5` | anthropic | $2.00 | $0.20 | $10.00 | promo→2026-08-31 |
 | mid | `gemini-3.5-flash` | google | $1.50 | $0.15 | $9.00 | — |
 | mid | `gemini-3.6-flash` | google | $1.50 | $0.15 | $7.50 | **picker-unconfirmed** |
 | mid | `kimi-k2.7-code` | moonshot | $0.95 | $0.19 | $4.00 | — |
 | cheap | `claude-haiku-4.5` | anthropic | $1.00 | $0.10 | $5.00 | — |
-| cheap | `gpt-5.6-luna` | openai | $1.00 | $0.10 | $6.00 | long-ctx >200K |
 | cheap | `gpt-5.4-mini` | openai | $0.75 | $0.075 | $4.50 | — |
 | cheap | `mai-code-1-flash` | microsoft | $0.75 | $0.075 | $4.50 | — |
 | cheap | `gpt-5-mini` | openai | $0.25 | $0.025 | $2.00 | — |
+| cheap | `gpt-5.6-luna` | openai | $0.20 | $0.02 | $1.20 | long-ctx >200K |
 
 Some rows carry caveats the table only flags: `claude-sonnet-5` is at promotional pricing until
 its `promo.until` date (the post-promo rate is unpublished); six rows carry `long_context`
@@ -132,7 +134,7 @@ cache-write column and does not corroborate it. Read the raw file for any of the
 snapshot does not update itself.
 
 **Model ids:** the roster was last verified against `/model` in Copilot CLI on **2026-07-01** —
-the 2026-07-25 refresh re-verified PRICES against the doc but did NOT re-check the picker, so the ids
+the 2026-07-25 and 2026-08-11 refreshes re-verified PRICES against the doc but did NOT re-check the picker, so the ids
 here are what the CLI actually calls each model. Treat `/model` as authoritative if a future
 release disagrees, and correct ids in `data/pricing.copilot.json` only — never anywhere else.
 

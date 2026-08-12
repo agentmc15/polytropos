@@ -59,6 +59,7 @@ just docs**. Edit accordingly.
   `bin/repo_bench.py` only — never hand-authored or backdated; verdicts below the evidence
   floor are never applied, and routing changes only via the explicit `apply` step writing
   gitignored `prefs/repo-bench.json`.
+- **`bin/harness_update.py` check is strictly read-only; apply writes only the Copilot/Codex homes via `harness_select`'s own writers plus the repo's generated mirrors — never `~/.claude` (the remedy is printed, never executed), never pricing numbers or docs tables.** Codex prompts are plugin-generated mirrors, overwritten in place with every differing rewrite listed; AGENTS.md and skill dirs stay no-clobber. Tests use temp fixture homes only.
 
 ## How to run things
 
@@ -93,6 +94,8 @@ python3 bin/copilot_pricing.py knobs              # Copilot reasoning-effort fac
 python3 bin/codex_pricing.py knobs                # Codex reasoning-effort ladder + modes notes from pricing.codex.json (lands with the effort-dial kit)
 python3 bin/copilot_pricing.py prefs              # active Copilot model pins/excludes + what each tier now resolves to (gitignored prefs/copilot.json + per-run flags; lands with the copilot-model-prefs kit)
 echo '{"model":{"id":"claude-fable-5","display_name":"Fable 5"},"cost":{"total_cost_usd":1.23},"context_window":{"used_percentage":42},"rate_limits":{"five_hour":{"used_percentage":12},"seven_day":{"used_percentage":34}}}' | python3 bin/statusline.py
+python3 bin/harness_update.py check           # all-harness freshness card (read-only; exit 3 on drift; lands with the harness-update kit)
+python3 bin/harness_update.py demo            # synthetic check/apply smoke — temp trees only, no real homes
 ```
 
 ## When executing a kit task

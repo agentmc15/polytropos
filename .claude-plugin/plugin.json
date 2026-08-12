@@ -1,6 +1,6 @@
 {
   "name": "polytropos",
   "description": "Per-task model routing and cost estimation for Claude Code: pick the right model (Fable 5 / Opus 5 / Sonnet 5 / Haiku 4.5), estimate cost before running, track historical spend, and use Fable 5 optimally.",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "author": { "name": "agentmc15" }
 }

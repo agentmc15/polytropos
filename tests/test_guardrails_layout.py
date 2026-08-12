@@ -44,6 +44,7 @@ KIT_SENTINELS = {
     "effort-dial": "NEVER invoke the real `copilot`/`codex`/`claude` CLI",
     "copilot-skills-parity": "NEVER invoke the real `copilot`/`codex`/`claude`",
     "copilot-model-prefs": "NEVER invoke the real `copilot`/`codex`/`claude` CLI from any task,",
+    "harness-update": "Never a write under `~/.claude` — the remedy is printed, never executed",
 }
 
 
