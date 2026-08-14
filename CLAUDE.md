@@ -74,6 +74,7 @@ python3 bin/routing_scorecard.py --demo --live    # live re-route signal smoke (
 python3 bin/routing_scorecard.py --demo --history # cross-kit routing-history smoke (synthetic kits, dollars labeled partial)
 python3 bin/routing_scorecard.py --demo --by-task # per-task dollars smoke (synthetic kit; shared warm agent + missing transcript honesty proofs)
 python3 bin/routing_scorecard.py --demo --history --trend # cross-repo + trend smoke (two synthetic repos, two dated snapshots, text trend table)
+python3 bin/routing_scorecard.py --demo --roles      # per-role marginal-value smoke (synthetic kits; lands with the role-roster kit)
 python3 bin/copilot_pricing.py est M claude-fable-5   # Copilot-side cost estimate (USD + AIC)
 python3 bin/copilot_ralph.py --demo               # Ralph goal-loop mock (no model, no network, no AIC)
 python3 bin/copilot_usage.py --days 30            # Copilot usage report (reads ~/.copilot read-only)

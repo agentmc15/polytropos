@@ -34,6 +34,7 @@ KIT_SENTINELS = {
     "fusion-tier1": "never the real `~/.claude`",
     "fusion-tier2": "NEVER auto-routes to frontier/Fable",
     "routing-history": "never a write under `~/.claude`",
+    "role-roster": "Extended roles are measured, never mandated",
     "per-task-dollars": "`skills/architect/SKILL.md` is NEVER edited",
     "crossrepo-trend": "never the real `~/.claude`",
     "codex-harness": "NEVER invoke the real `codex` CLI in any form",

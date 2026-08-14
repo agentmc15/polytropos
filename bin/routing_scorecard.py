@@ -180,7 +180,9 @@ _SESSION_PREFIX_RE = re.compile(r"^\s*(?:[-*]\s+)?session:")
 # other three regexes can match it (the keys are disjoint), so every prior NOTES.md consumer is
 # unaffected and TASKS.md / parse_tasks are untouched.
 BYTASK_SCHEMA_VERSION = 1
-AGENT_ROLES = ("implementer", "verifier", "escalation")
+AGENT_ROLES = ("implementer", "verifier", "escalation", "scout", "test-author",
+               "second-verifier", "red-team", "security-auditor", "docs-editor",
+               "synthesizer")
 AGENT_RE = re.compile(r"^\s*(?:[-*]\s+)?agent:\s+(\S+)\s+(.+)$")
 
 # Structural vocabulary (same species as RESULTS / REVIEWS) for the D1 role-ledger
@@ -188,6 +190,15 @@ AGENT_RE = re.compile(r"^\s*(?:[-*]\s+)?agent:\s+(\S+)\s+(.+)$")
 # quality recording. Defined here, next to AGENT_ROLES, because it governs the same
 # line family; it does NOT extend AGENT_ROLES itself (keep/skip criteria are unchanged).
 AGENT_RESULTS = ("accepted", "revised", "blocked")
+
+# --- role-roster (T2) — the ``--roles`` per-role value view (PLAN D3-D5). A schema version
+# (same species as the other four) and a structural threshold (same species as
+# LIVE_MIN_SAMPLE): ``MIN_ROLE_DISPATCHES`` is the floor below which a role's numbers are
+# labeled "insufficient sample" rather than trusted at face value — never a price, never a
+# model id. This view NEVER extends AGENT_ROLES/AGENT_RESULTS/AGENT_RE and NEVER adds a key
+# to the existing kit/history cards (PLAN D3) — it is entirely new, additive surface.
+ROLES_SCHEMA_VERSION = 1
+MIN_ROLE_DISPATCHES = 5
 
 # --- role ledger (D1) — two NEW line families, structural grammars (same species as
 # AGENT_RE et al.), disjoint by key (``reviewer:`` / ``defect:``) from all four existing
@@ -757,6 +768,116 @@ DEMO_BYTASK_VOLUMES = {
 }
 
 
+# Synthetic multi-kit fixture for ``--demo --roles`` (role-roster T2, PLAN D3/D5/D6). Two
+# kits: ``roles-r3-legacy`` (the plain trio — implementer/verifier/reviewer — with no
+# ``marginal=`` anywhere, so every dispatch reads marginal-unmeasured, never marginal=0) and
+# ``roles-r7-marginal`` (adds scout/test-author/second-verifier/red-team on top of the trio —
+# seven distinct roster roles — plus an escalation line that must NOT count toward roster
+# size, one role dispatched only twice to exercise the MIN_ROLE_DISPATCHES "insufficient
+# sample" tag, `marginal=` happy-path data on verifier, and ONE deliberately
+# out-of-vocabulary ``role=chef`` probe line that must still drop with a note — proving the
+# T1 fence holds under this new view too). All ids/values are synthetic; the only model
+# tokens are the sanctioned tier vocabulary.
+DEMO_ROLES_R3_TASKS_MD = """# TASKS — roles-r3-legacy (synthetic)
+
+## Phase 1 — legacy trio
+
+### Q1 — first task
+- status: done
+- model: sonnet
+
+### Q2 — second task
+- status: done
+- model: sonnet
+"""
+
+DEMO_ROLES_R3_NOTES_MD = """# NOTES — roles-r3-legacy (synthetic)
+
+Prose for the legacy-trio fixture: implementer, verifier, and reviewer only, no
+`marginal=` anywhere -- every dispatch here reads marginal unmeasured, never marginal=0.
+
+## Outcome ledger
+outcome: Q1 model=sonnet result=pass review=clean
+outcome: Q2 model=sonnet result=pass review=clean
+
+## Agent ledger
+agent: Q1 id=r3-impl-1 role=implementer model=sonnet
+agent: Q2 id=r3-impl-2 role=implementer model=sonnet
+agent: Q1 id=r3-verif-1 role=verifier model=sonnet findings=2 confirmed=1
+agent: Q2 id=r3-verif-2 role=verifier model=sonnet findings=1 confirmed=1
+
+## Reviewer ledger
+reviewer: P1 model=opus findings=1 confirmed=1 result=accepted
+"""
+
+DEMO_ROLES_R7_TASKS_MD = """# TASKS — roles-r7-marginal (synthetic)
+
+## Phase 1 — extended roster
+
+### W1 — first task
+- status: done
+- model: sonnet
+
+### W2 — second task
+- status: done
+- model: sonnet
+
+### W3 — third task
+- status: done
+- model: sonnet
+
+### W4 — fourth task
+- status: done
+- model: sonnet
+
+### W5 — fifth task
+- status: done
+- model: sonnet
+"""
+
+DEMO_ROLES_R7_NOTES_MD = """# NOTES — roles-r7-marginal (synthetic)
+
+Prose for the extended-roster fixture: adds scout, test-author, second-verifier, and
+red-team on top of the trio (seven distinct roster roles -- R7); an escalation line is
+present too but must NOT count toward roster size. Verifier carries `marginal=` on every
+line (the measured happy path); scout is deliberately dispatched only twice -- under
+MIN_ROLE_DISPATCHES -- to exercise the "insufficient sample" tag. One agent line uses an
+out-of-vocabulary role (`chef`) and must still drop with a note.
+
+## Outcome ledger
+outcome: W1 model=sonnet result=pass review=clean
+outcome: W2 model=sonnet result=pass review=clean
+outcome: W3 model=sonnet result=pass review=clean
+outcome: W4 model=sonnet result=pass review=clean
+outcome: W5 model=sonnet result=pass review=clean
+
+## Agent ledger
+agent: W1 id=r7-impl-1 role=implementer model=sonnet
+agent: W2 id=r7-impl-2 role=implementer model=sonnet
+agent: W1 id=r7-verif-1 role=verifier model=sonnet findings=4 confirmed=3 marginal=2
+agent: W2 id=r7-verif-2 role=verifier model=sonnet findings=3 confirmed=2 marginal=1
+agent: W3 id=r7-verif-3 role=verifier model=sonnet findings=2 confirmed=2 marginal=0
+agent: W4 id=r7-verif-4 role=verifier model=sonnet findings=5 confirmed=1 marginal=1
+agent: W5 id=r7-verif-5 role=verifier model=sonnet findings=1 confirmed=1 marginal=1
+agent: W1 id=r7-scout-1 role=scout model=haiku
+agent: W2 id=r7-scout-2 role=scout model=haiku
+agent: W1 id=r7-test-1 role=test-author model=sonnet
+agent: W2 id=r7-test-2 role=test-author model=sonnet
+agent: W3 id=r7-test-3 role=test-author model=sonnet
+agent: W4 id=r7-test-4 role=test-author model=sonnet
+agent: W5 id=r7-test-5 role=test-author model=sonnet
+agent: W1 id=r7-2verif-1 role=second-verifier model=sonnet findings=1 confirmed=0 marginal=0
+agent: W2 id=r7-2verif-2 role=second-verifier model=sonnet
+agent: W1 id=r7-red-1 role=red-team model=opus
+agent: W2 id=r7-red-2 role=red-team model=opus
+agent: W3 id=r7-esc-1 role=escalation model=opus result=accepted
+agent: W9 id=r7-bad role=chef model=sonnet
+
+## Reviewer ledger
+reviewer: P1 model=opus findings=3 confirmed=2 result=accepted
+"""
+
+
 # --------------------------------------------------------------------------- pure functions
 
 def parse_outcomes(text):
@@ -1036,6 +1157,12 @@ def session_cost_summary(session_id, projects_dir, tasks_dirs, includes,
 
 def _rate_pct(rate):
     return f"{rate * 100:.0f}%" if rate is not None else "n/a"
+
+
+def _int_or_na(value):
+    """A raw-count cell: the integer when measured, ``n/a`` (never a fabricated 0) when
+    ``None`` — the ``--roles`` card's ``marginal`` cell uses this (PLAN D4 amendment)."""
+    return str(value) if value is not None else "n/a"
 
 
 def render_markdown(card):
@@ -1635,65 +1762,77 @@ def tally_reroutes(events):
             "by_tier": by_tier}
 
 
+def _scan_kit_dir(sub):
+    """Scan ONE kit dir → ``(record_or_None, notes)`` — the shared per-kit body factored out
+    of ``scan_kits`` (which calls this once per subdirectory, in sorted order) so role-roster
+    T2's single-kit ``--roles <kit> --session ID`` mode can scan exactly one kit without
+    touching, or picking up notes from, any sibling kit dir. Pure refactor: behavior and
+    output shape are unchanged from ``scan_kits``' previous inline body.
+
+    ``record`` is ``None`` (with a one-line skip note) when there is no ``TASKS.md`` or it
+    fails ``ce.parse_tasks``. Otherwise ``NOTES.md`` is read ONCE (if present) and fed to
+    ``parse_outcomes`` + ``parse_reroutes`` + ``parse_sessions`` + ``parse_agents`` +
+    ``parse_reviewers`` + ``parse_defects``, whose own tolerance notes are carried through
+    prefixed ``<kit>: ``. A missing ``NOTES.md`` → empty outcomes/events/sessions/agents/
+    reviewers/defects plus the ``<kit>: no outcome ledger — status-only`` note. The record:
+    ``{"kit", "tasks", "outcomes", "events", "sessions", "agents", "reviewers", "defects",
+    "notes"}``.
+    """
+    name = sub.name
+    tasks_path = sub / "TASKS.md"
+    if not tasks_path.is_file():
+        return None, [f"{name}: no TASKS.md — skipped"]
+    try:
+        tasks = ce.parse_tasks(tasks_path.read_text(errors="replace"))
+    except ValueError as e:
+        return None, [f"{name}: malformed TASKS.md ({e}) — skipped"]
+    rec_notes = []
+    notes_path = sub / "NOTES.md"
+    if notes_path.is_file():
+        notes_text = notes_path.read_text(errors="replace")
+        outcomes, out_notes = parse_outcomes(notes_text)
+        events, rr_notes = parse_reroutes(notes_text)
+        sessions, sess_notes = parse_sessions(notes_text)
+        agents, agent_notes = parse_agents(notes_text)
+        reviewers, reviewer_notes = parse_reviewers(notes_text)
+        defects, defect_notes = parse_defects(notes_text)
+        for n in (list(out_notes) + list(rr_notes) + list(sess_notes)
+                  + list(agent_notes) + list(reviewer_notes) + list(defect_notes)):
+            rec_notes.append(f"{name}: {n}")
+    else:
+        outcomes, events, sessions = {}, [], []
+        agents, reviewers, defects = [], [], []
+        rec_notes.append(f"{name}: no outcome ledger — status-only")
+    record = {
+        "kit": name,
+        "tasks": tasks,
+        "outcomes": outcomes,
+        "events": events,
+        "sessions": sessions,
+        "agents": agents,
+        "reviewers": reviewers,
+        "defects": defects,
+        "notes": rec_notes,
+    }
+    return record, rec_notes
+
+
 def scan_kits(kits_dir):
     """Scan every kit under ``kits_dir`` → ``(records, notes)``, deterministic + tolerant.
 
-    Subdirectories are visited in sorted-by-name order. A subdir with no ``TASKS.md`` is
-    skipped with a note; a ``TASKS.md`` that makes ``ce.parse_tasks`` raise ``ValueError``
-    skips that kit with a note (never a crash). Otherwise ``NOTES.md`` is read ONCE (if
-    present) and fed to ``parse_outcomes`` + ``parse_reroutes`` + ``parse_sessions`` +
-    ``parse_agents`` + ``parse_reviewers`` + ``parse_defects``, whose own tolerance notes are
-    carried through prefixed ``<kit>: ``. A missing ``NOTES.md`` → empty
-    outcomes/events/sessions/agents/reviewers/defects plus the ``<kit>: no outcome ledger —
-    status-only`` note (every pre-ledger kit contributes its pins and nothing to the outcome
-    counters). Each record: ``{"kit", "tasks", "outcomes", "events", "sessions", "agents",
-    "reviewers", "defects", "notes"}``; the returned top-level ``notes`` carry every kit note
-    already prefixed with the kit name.
+    Subdirectories are visited in sorted-by-name order, each scanned by ``_scan_kit_dir``
+    (its docstring documents the per-kit tolerance rules and record shape); the returned
+    top-level ``notes`` carry every kit note already prefixed with the kit name.
     """
     kits_dir = Path(kits_dir)
     records = []
     notes = []
     for sub in sorted((p for p in kits_dir.iterdir() if p.is_dir()),
                       key=lambda p: p.name):
-        name = sub.name
-        tasks_path = sub / "TASKS.md"
-        if not tasks_path.is_file():
-            notes.append(f"{name}: no TASKS.md — skipped")
-            continue
-        try:
-            tasks = ce.parse_tasks(tasks_path.read_text(errors="replace"))
-        except ValueError as e:
-            notes.append(f"{name}: malformed TASKS.md ({e}) — skipped")
-            continue
-        rec_notes = []
-        notes_path = sub / "NOTES.md"
-        if notes_path.is_file():
-            notes_text = notes_path.read_text(errors="replace")
-            outcomes, out_notes = parse_outcomes(notes_text)
-            events, rr_notes = parse_reroutes(notes_text)
-            sessions, sess_notes = parse_sessions(notes_text)
-            agents, agent_notes = parse_agents(notes_text)
-            reviewers, reviewer_notes = parse_reviewers(notes_text)
-            defects, defect_notes = parse_defects(notes_text)
-            for n in (list(out_notes) + list(rr_notes) + list(sess_notes)
-                      + list(agent_notes) + list(reviewer_notes) + list(defect_notes)):
-                rec_notes.append(f"{name}: {n}")
-        else:
-            outcomes, events, sessions = {}, [], []
-            agents, reviewers, defects = [], [], []
-            rec_notes.append(f"{name}: no outcome ledger — status-only")
-        records.append({
-            "kit": name,
-            "tasks": tasks,
-            "outcomes": outcomes,
-            "events": events,
-            "sessions": sessions,
-            "agents": agents,
-            "reviewers": reviewers,
-            "defects": defects,
-            "notes": rec_notes,
-        })
+        record, rec_notes = _scan_kit_dir(sub)
         notes.extend(rec_notes)
+        if record is not None:
+            records.append(record)
     return records, notes
 
 
@@ -3446,14 +3585,15 @@ def run_alarm_demo(as_json, trend=True):
 def parse_agents(text):
     """Scan ``text`` for ``agent:`` ledger lines (D2 grammar) → ``(events, notes)``.
 
-    Grammar: ``agent: <task-id> id=<agent-id> role=<implementer|verifier|escalation>
-    model=<model> [findings=<n> confirmed=<n>] [result=<accepted|revised|blocked>]``. The
+    Grammar: ``agent: <task-id> id=<agent-id> role=<one of AGENT_ROLES> model=<model>
+    [findings=<n> confirmed=<n>] [marginal=<n>] [result=<accepted|revised|blocked>]``. The
     first token after ``agent:`` is the task id; the remaining ``key=value`` pairs are read
     with ``PAIR_RE``. An event ``{"task", "agent_id", "role", "model", "findings",
-    "confirmed", "result"}`` is kept only when ``id=`` is present and ``role=`` is in
-    ``AGENT_ROLES``; otherwise the whole line is skipped with an ``unrecognized agent line``
-    note (mirrors ``parse_outcomes``). ``model`` is ``pairs.get("model")`` — informational,
-    ``None`` when absent, never validated (the alias vocabulary is execute-owned).
+    "confirmed", "marginal", "result"}`` is kept only when ``id=`` is present and ``role=``
+    is in ``AGENT_ROLES``; otherwise the whole line is skipped with an ``unrecognized agent
+    line`` note (mirrors ``parse_outcomes``). ``model`` is ``pairs.get("model")`` —
+    informational, ``None`` when absent, never validated (the alias vocabulary is
+    execute-owned).
 
     D1 role-ledger extension (per-task role quality; verifier/escalation, legal-but-ignored
     for implementer per PLAN D7): ``result`` is ``pairs.get("result")``; a value outside
@@ -3463,6 +3603,14 @@ def parse_agents(text):
     to parse as a non-negative int, or ``confirmed > findings``, degrades both to ``None``
     with a note (self-contradictory evidence is dropped, never repaired). A bad quality field
     never drops the line itself — keep/skip criteria for the line are unchanged from above.
+
+    role-roster D2 extension: ``marginal=<n>`` is OPTIONAL and meaningful only alongside a
+    valid ``findings=``/``confirmed=`` pair (i.e. both already parsed to non-negative ints
+    above). ``marginal`` degrades to ``None`` WITH a note — mirroring the findings/confirmed
+    degradation code path and note style exactly — when: it is present but ``findings``/
+    ``confirmed`` did not both parse (orphan ``marginal=``); it fails to parse as an int; it
+    is negative; or it exceeds ``confirmed`` (``0 <= marginal <= confirmed``). None of these
+    ever drop the line. When absent, ``marginal`` is ``None`` (unmeasured, never zero).
 
     Unknown pairs are ignored (forward-compatible). Events are returned in FILE ORDER; a
     repeated (task-id, agent-id) pair REPLACES the earlier event in place (last wins —
@@ -3514,9 +3662,30 @@ def parse_agents(text):
                     else:
                         findings, confirmed = f_val, c_val
 
+        raw_marginal = pairs.get("marginal")
+        marginal = None
+        if raw_marginal is not None:
+            if findings is None or confirmed is None:
+                notes.append(
+                    f"agent {tid}: marginal requires findings/confirmed — ignored")
+            else:
+                try:
+                    m_val = int(raw_marginal)
+                except (TypeError, ValueError):
+                    notes.append(
+                        f"agent {tid}: non-integer marginal ({raw_marginal!r}) — ignored")
+                else:
+                    if m_val < 0 or m_val > confirmed:
+                        notes.append(
+                            f"agent {tid}: self-contradictory marginal "
+                            f"({m_val}/confirmed={confirmed}) — ignored")
+                    else:
+                        marginal = m_val
+
         event = {"task": tid, "agent_id": agent_id, "role": role,
                  "model": pairs.get("model"),
-                 "findings": findings, "confirmed": confirmed, "result": result}
+                 "findings": findings, "confirmed": confirmed,
+                 "marginal": marginal, "result": result}
         key = (tid, agent_id)
         if key in pos_by_pair:
             events[pos_by_pair[key]] = event
@@ -3867,6 +4036,13 @@ def render_by_task_lines(bt):
     the role table (implementer / verifier / escalation + total, ``*`` on tasks a shared warm
     agent also served), one bullet per cluster, the un-split orchestrator bullet, the
     unattributed bullet (only when count > 0), the coverage bullet, then the nested notes.
+
+    role-roster T2 (D3, additive-only): when a task row's ``roles`` dict carries a role
+    OUTSIDE the fixed three-column trio (any of the seven role-roster tokens), one indented
+    extras line prints under that row naming each extra role and its subtotal — in
+    ``AGENT_ROLES``' canonical order, for a deterministic golden. The three-column table's
+    header and existing cells are byte-unchanged; a row with no extra roles emits nothing
+    extra, so every pre-T2 fixture (trio-only) renders exactly as before.
     """
     out = ["", "## Per-task dollars\n"]
     if bt["coverage"] is None:
@@ -3887,6 +4063,12 @@ def render_by_task_lines(bt):
             marker = "*"
             any_shared = True
         out.append(f"| {row['id']}{marker} | {impl} | {verif} | {esc} | {total} |")
+        extra_roles = [r for r in AGENT_ROLES
+                       if r not in ("implementer", "verifier", "escalation")
+                       and r in row["roles"]]
+        if extra_roles:
+            extras = ", ".join(f"{r} {_bt_role_cell(row['roles'][r])}" for r in extra_roles)
+            out.append(f"  - extra roles: {extras}")
     if any_shared:
         out.append("")
         out.append("\\* also served by a shared warm agent — see the cluster line; the shared "
@@ -3988,6 +4170,421 @@ def run_by_task_demo(as_json):
         argv = [str(kit_dir), "--session", "per-task-demo",
                 "--projects-dir", str(tmp / "projects"),
                 "--tasks-dir", str(tasks_out), "--by-task"]
+        if as_json:
+            argv.append("--json")
+        return main(argv)
+
+
+# --------------------------------------------------------------------------- role value (T2)
+
+def kit_roster(record):
+    """Derive one kit's roster (PLAN D5): the distinct role tokens actually OBSERVED — never
+    what a ``roles:`` line merely declared. ``agent:`` role tokens (minus ``escalation``,
+    which is a valve, never a roster role — PLAN D2/T2) UNION ``{"reviewer"}`` iff any
+    ``reviewer:`` line exists UNION ``{"implementer"}`` iff any outcome line exists (deriving
+    implementer from the OUTCOME ledger, not from ``agent: role=implementer`` lines, mirrors
+    ``role_quality_stats``' "one number, one home" precedent for where implementer evidence
+    lives). Returns a ``set`` of role tokens; the caller labels it ``R<len(...)>``.
+    """
+    roster = {e["role"] for e in record.get("agents", []) if e["role"] != "escalation"}
+    if record.get("reviewers"):
+        roster.add("reviewer")
+    if record.get("outcomes"):
+        roster.add("implementer")
+    return roster
+
+
+def _role_value_bucket(events):
+    """Aggregate one role's ``events`` (``agent:`` events already filtered to one role, or a
+    kit's whole ``reviewers`` list) into a ``--roles`` value-table bucket — PLAN D2/D4.
+
+    Reused for BOTH ``agent:`` role buckets and the ``reviewer:`` family: ``.get()`` reads
+    tolerate reviewer events, which carry no ``marginal`` key at all, so every reviewer
+    bucket comes out with ``marginal_measured == 0`` automatically (the "reviewer marginal:
+    unmeasured" law falls out of this function, it is never special-cased).
+
+    Honesty (D4): ``findings``/``confirmed`` sum only over events with recorded precision
+    (``findings is not None``); ``precision`` is ``None`` (never 0) when that sum is 0.
+    ``marginal`` sums only over events with a recorded ``marginal`` (``marginal is not
+    None``); a legacy/unmeasured dispatch is counted in ``marginal_unmeasured``, never folded
+    into ``marginal=0``. [AMENDED at P1 review:] when ``marginal_measured == 0`` (zero
+    dispatches carried a measured ``marginal=``) the ``marginal`` field itself is ``None``
+    (never a fabricated 0) — the same None-not-zero treatment ``precision`` already gets;
+    when at least one dispatch was measured, ``marginal`` is the real summed count, which may
+    legitimately BE 0 (measured and confirmed zero marginal catches). ``marginal_rate`` is the
+    MEASURED-denominator rate — ``marginal`` ÷ ``marginal_measured`` (never ÷ ``dispatches``,
+    which would dilute the rate with unmeasured dispatches and understate it) — ``None``
+    (never 0) when nothing was measured. ``insufficient_sample`` tags
+    ``dispatches < MIN_ROLE_DISPATCHES``.
+    """
+    dispatches = len(events)
+    with_precision = [e for e in events if e.get("findings") is not None]
+    findings = sum(e["findings"] for e in with_precision)
+    confirmed = sum(e["confirmed"] for e in with_precision)
+    marginal_events = [e for e in events if e.get("marginal") is not None]
+    marginal = sum(e["marginal"] for e in marginal_events)
+    return {
+        "dispatches": dispatches,
+        "with_precision": len(with_precision),
+        "findings": findings,
+        "confirmed": confirmed,
+        "precision": (confirmed / findings) if findings else None,
+        "marginal": marginal if marginal_events else None,
+        "marginal_measured": len(marginal_events),
+        "marginal_unmeasured": dispatches - len(marginal_events),
+        "marginal_rate": (marginal / len(marginal_events)) if marginal_events else None,
+        "insufficient_sample": dispatches < MIN_ROLE_DISPATCHES,
+        "dollars_usd": None,
+        "cost_per_marginal_usd": None,
+    }
+
+
+def _kit_role_buckets(record):
+    """One kit's per-role value buckets (PLAN D2/D4): every ``agent:`` role token observed
+    EXCEPT ``escalation`` (excluded from the value table — it delivers fixes, not verdicts,
+    existing law from ``role_quality_stats``), plus ``reviewer`` from the ``reviewer:``
+    family when present. Returns ``{role: bucket}`` — a role with zero events is simply
+    absent (never a zero row).
+    """
+    role_events = {}
+    for e in record.get("agents", []):
+        if e["role"] == "escalation":
+            continue
+        role_events.setdefault(e["role"], []).append(e)
+    buckets = {role: _role_value_bucket(evs) for role, evs in role_events.items()}
+    reviewers = record.get("reviewers", [])
+    if reviewers:
+        buckets["reviewer"] = _role_value_bucket(reviewers)
+    return buckets
+
+
+def _merge_role_buckets(buckets_list):
+    """Sum a list of per-role buckets (one kit each) that all share the SAME role token into
+    one aggregate bucket — additive across dispatches/findings/confirmed/marginal, with
+    ``precision``/``marginal_rate`` recomputed over the MERGED sums (never averaged), and
+    ``insufficient_sample`` re-derived from the merged dispatch count. Mirrors
+    ``build_history``'s tier-aggregation pattern (sum raw counts, recompute rates).
+
+    [AMENDED at P1 review:] ``marginal`` is ``None`` (never a fabricated 0) when the merged
+    ``marginal_measured`` is 0; a per-bucket ``marginal`` of ``None`` (itself already
+    None-not-zero from ``_role_value_bucket``) contributes 0 to the sum, which is correct —
+    that bucket measured nothing, so it adds nothing to either the numerator or the measured
+    count. ``marginal_rate`` is ``marginal`` ÷ the MERGED ``marginal_measured`` (never ÷
+    ``dispatches``), so a role's rate is never diluted by kits/dispatches that never measured
+    marginal at all.
+    """
+    dispatches = sum(b["dispatches"] for b in buckets_list)
+    with_precision = sum(b["with_precision"] for b in buckets_list)
+    findings = sum(b["findings"] for b in buckets_list)
+    confirmed = sum(b["confirmed"] for b in buckets_list)
+    marginal = sum(b["marginal"] or 0 for b in buckets_list)
+    marginal_measured = sum(b["marginal_measured"] for b in buckets_list)
+    return {
+        "dispatches": dispatches,
+        "with_precision": with_precision,
+        "findings": findings,
+        "confirmed": confirmed,
+        "precision": (confirmed / findings) if findings else None,
+        "marginal": marginal if marginal_measured else None,
+        "marginal_measured": marginal_measured,
+        "marginal_unmeasured": dispatches - marginal_measured,
+        "marginal_rate": (marginal / marginal_measured) if marginal_measured else None,
+        "insufficient_sample": dispatches < MIN_ROLE_DISPATCHES,
+        "dollars_usd": None,
+        "cost_per_marginal_usd": None,
+    }
+
+
+def _role_dollars_from_by_task(bt):
+    """Per-role dollar subtotals (PLAN D2/D4), summed ONLY across ``build_by_task``'s per-TASK
+    role buckets → ``(dollars_by_role, notes)``. Clusters (shared warm agents), the
+    orchestrator, and unattributed transcripts are deliberately left OUT of this sum — they
+    are un-split by existing law (a shared agent's or the orchestrator's cost is never
+    divided across the roles/tasks it touched), so folding them in here would fabricate a
+    per-role split that ``build_by_task`` itself refuses to make. ``escalation`` is excluded
+    (existing law, same as the value table). A role whose every task-appearance is unpriced
+    (``subtotal_usd is None`` everywhere) maps to ``None`` (never a fabricated 0); a
+    partially-priced role sums what IS priced and appends one disclosure note.
+    """
+    totals = {}
+    for row in bt.get("tasks", []):
+        for role, bucket in row["roles"].items():
+            if role == "escalation":
+                continue
+            entry = totals.setdefault(role, {"sum": 0.0, "priced": 0, "total": 0})
+            entry["total"] += 1
+            if bucket["subtotal_usd"] is not None:
+                entry["sum"] += bucket["subtotal_usd"]
+                entry["priced"] += 1
+    dollars = {}
+    notes = []
+    for role in sorted(totals):
+        entry = totals[role]
+        if entry["priced"] == 0:
+            dollars[role] = None
+        else:
+            dollars[role] = entry["sum"]
+            if entry["priced"] < entry["total"]:
+                notes.append(f"role {role}: dollars partial — {entry['priced']}/"
+                             f"{entry['total']} task role-subtotal(s) priced")
+    return dollars, notes
+
+
+def build_roles_card(records, kits_dir, dollars_kit=None, dollars_by_role=None,
+                     extra_notes=()):
+    """Assemble the ``--roles`` card (role-roster T2) — a NEW, standalone view (PLAN D3):
+    never adds a key to the existing kit/history cards, never renders inside ``--history``'s
+    markdown. Top-level keys EXACTLY: ``schema_version``, ``generated_at``, ``kits_dir``,
+    ``min_dispatches``, ``dollars_kit`` (the one kit priced via ``--session``, or ``None``),
+    ``kits`` (one row per scanned kit), ``aggregate``, ``notes``.
+
+    Each ``kits`` row: ``{"kit", "roster" (sorted list), "roster_size", "roster_label"
+    ("R<n>"), "roles"}`` — ``roles`` is ``_kit_role_buckets(record)`` with ``dollars_usd``/
+    ``cost_per_marginal_usd`` filled in from ``dollars_by_role`` ONLY for the kit named by
+    ``dollars_kit`` (dollars attribute to exactly the kit whose session priced them — PLAN
+    D2 — never spread across every scanned kit). ``aggregate`` sums every kit's roster
+    (union) and every kit's role buckets (``_merge_role_buckets``, summed raw counts, rates
+    recomputed).
+
+    [AMENDED at P1 review — the prior docstring here claimed dollars "fold into aggregate the
+    same single-kit-only way", which was false: nothing actually guarded it, so a multi-kit
+    scan where only ONE kit was priced would have rendered that one kit's dollar figure as if
+    it were the aggregate's total, even though the aggregate's dispatches/marginal counts sum
+    EVERY scanned kit's dispatches for that role. Guarded now:] a role's aggregate
+    ``dollars_usd``/``cost_per_marginal_usd`` render ONLY when every kit contributing a
+    dispatch to that role's aggregate bucket is priced on the SAME basis — with the current
+    CLI that means exactly one kit total (``--roles <kit> --session`` scans a single kit), so
+    the guard is satisfied automatically today; a role whose aggregate draws from more than
+    one kit (only reachable by calling ``build_roles_card`` directly with multiple records
+    plus a ``dollars_kit``) renders aggregate dollars as ``None`` with a note
+    ("aggregate cost n/a — not all kits priced; per-kit dollars only") instead of a fabricated
+    single-kit figure masquerading as the whole — the priced kit's OWN per-kit section still
+    shows its dollars untouched. A role with zero dispatches anywhere is simply absent from
+    both ``kits[i]["roles"]`` and ``aggregate["roles"]`` (never a zero row — PLAN D4).
+    """
+    dollars_by_role = dollars_by_role or {}
+    kit_rows = []
+    agg_roster = set()
+    agg_buckets_by_role = {}
+    agg_kits_by_role = {}
+    for rec in records:
+        roster = kit_roster(rec)
+        agg_roster |= roster
+        buckets = _kit_role_buckets(rec)
+        role_rows = {}
+        for role, b in buckets.items():
+            row = dict(b)
+            if rec["kit"] == dollars_kit:
+                row["dollars_usd"] = dollars_by_role.get(role)
+                if row["dollars_usd"] is not None and row["marginal"]:
+                    row["cost_per_marginal_usd"] = row["dollars_usd"] / row["marginal"]
+            role_rows[role] = row
+            agg_buckets_by_role.setdefault(role, []).append(b)
+            agg_kits_by_role.setdefault(role, []).append(rec["kit"])
+        kit_rows.append({
+            "kit": rec["kit"],
+            "roster": sorted(roster),
+            "roster_size": len(roster),
+            "roster_label": f"R{len(roster)}",
+            "roles": role_rows,
+        })
+
+    aggregate_roles = {}
+    dollars_guard_notes = []
+    for role, bucket_list in agg_buckets_by_role.items():
+        merged = _merge_role_buckets(bucket_list)
+        role_dollars = dollars_by_role.get(role) if dollars_kit else None
+        if role_dollars is not None:
+            contributing_kits = agg_kits_by_role[role]
+            if contributing_kits == [dollars_kit]:
+                merged["dollars_usd"] = role_dollars
+                if merged["marginal"]:
+                    merged["cost_per_marginal_usd"] = role_dollars / merged["marginal"]
+            else:
+                dollars_guard_notes.append(
+                    f"role {role}: aggregate cost n/a — not all kits priced; "
+                    f"per-kit dollars only")
+        aggregate_roles[role] = merged
+
+    card = {
+        "schema_version": ROLES_SCHEMA_VERSION,
+        "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "kits_dir": str(kits_dir),
+        "min_dispatches": MIN_ROLE_DISPATCHES,
+        "dollars_kit": dollars_kit,
+        "kits": kit_rows,
+        "aggregate": {
+            "roster": sorted(agg_roster),
+            "roster_size": len(agg_roster),
+            "roster_label": f"R{len(agg_roster)}",
+            "roles": aggregate_roles,
+        },
+        "notes": list(extra_notes) + dollars_guard_notes,
+    }
+    return card
+
+
+def render_roles_markdown(card):
+    """Render the ``--roles`` card (role-roster T2) as human markdown — its OWN view (PLAN
+    D3): an H1 + legend, an ``## Aggregate role value`` table, then one ``### <kit>``
+    subsection per scanned kit with its own roster label and value table.
+
+    Honesty per D4, all visible in the render: a role with zero dispatches never renders a
+    row; precision/marginal-rate render ``n/a`` (never a fabricated 0) when unmeasured; the
+    Marginal cell itself renders ``n/a`` (never a fabricated 0) when zero dispatches carried
+    a measured ``marginal=``, and marginal rate is computed over the MEASURED-dispatch
+    denominator, not every dispatch; dispatches below ``MIN_ROLE_DISPATCHES`` are tagged
+    "insufficient sample"; escalation never appears (excluded upstream in
+    ``build_roles_card``, never reaches this renderer); a cost-per-marginal-catch line
+    renders only when BOTH dollars and marginal are measured for that role; dollars render
+    ``n/a`` everywhere when no ``--session`` priced a kit; the legend also names the
+    structurally-unmeasurable cells (phase/run-scoped roles' dollars, indirect-value roles'
+    findings) so a blank cell there reads as "by design", not "missing data".
+    """
+    agg = card["aggregate"]
+    out = ["# Per-role value — role-roster measurement (read-only)\n"]
+    agg_roster_txt = ", ".join(agg["roster"]) if agg["roster"] else "none"
+    out.append(f"**{len(card['kits'])} kit(s) scanned · aggregate roster "
+               f"{agg['roster_label']} ({agg_roster_txt})**\n")
+    out.append(
+        "Escalation is excluded from every role row here — it delivers fixes, not verdicts "
+        "(existing law) — and never counts toward roster size. A dispatch with no "
+        "`marginal=` is counted as marginal unmeasured, never folded into marginal=0; the "
+        "Marginal cell itself renders `n/a` (never a fabricated 0) when zero dispatches "
+        "carry a measured `marginal=`. Marginal rate is per MEASURED dispatch — the "
+        "unmeasured count beside it shows coverage — it is never diluted by dividing over "
+        "every dispatch. The rate is catches per measured dispatch, not a share of "
+        "dispatches — a dispatch can contribute several marginal catches, so the cell can "
+        "exceed 100%. Reviewer marginal: unmeasured (the `reviewer:` family carries no "
+        "marginal field).\n")
+    out.append(
+        "Phase/run-scoped roles (`security-auditor`, `docs-editor`, `synthesizer`) can "
+        "carry no per-task dollars under the never-split law — their dollars cells are "
+        "structurally n/a, not missing data. `scout`, `docs-editor`, and `synthesizer` "
+        "produce no adjudicable findings by design — their rows are dispatch-cost with "
+        "indirect value, judged qualitatively, never by precision or marginal rate.\n")
+    if card["dollars_kit"]:
+        out.append(f"Dollars priced for kit `{card['dollars_kit']}` only (a `--session` "
+                   f"prices one kit's transcripts — never split across kits).\n")
+    else:
+        out.append("Dollars: n/a (no `--session`)\n")
+
+    def render_role_table(roles_dict):
+        lines = []
+        if not roles_dict:
+            lines.append("no role-quality evidence recorded for this scope.\n")
+            return lines
+        lines.append("| Role | Dispatches | Findings | Confirmed | Precision | Marginal "
+                     "| Marginal unmeasured | Marginal rate | Dollars |")
+        lines.append("|---|---:|---:|---:|---:|---:|---:|---:|---:|")
+        for role in sorted(roles_dict):
+            b = roles_dict[role]
+            label = f"{role} (insufficient sample)" if b["insufficient_sample"] else role
+            lines.append(
+                f"| {label} | {b['dispatches']} | {b['findings']} | {b['confirmed']} "
+                f"| {_rate_pct(b['precision'])} | {_int_or_na(b['marginal'])} "
+                f"| {b['marginal_unmeasured']} | {_rate_pct(b['marginal_rate'])} "
+                f"| {_bt_money(b['dollars_usd'])} |")
+            if b["dollars_usd"] is not None and b["marginal"]:
+                lines.append(f"  - cost per marginal catch: "
+                             f"${b['dollars_usd'] / b['marginal']:,.2f}")
+        lines.append("")
+        return lines
+
+    out.append("## Aggregate role value\n")
+    out.extend(render_role_table(agg["roles"]))
+
+    out.append("## Per-kit\n")
+    for k in card["kits"]:
+        roster_txt = ", ".join(k["roster"]) if k["roster"] else "none"
+        out.append(f"### {k['kit']} — {k['roster_label']} ({roster_txt})\n")
+        out.extend(render_role_table(k["roles"]))
+
+    if card["notes"]:
+        out.append("Notes:")
+        for n in card["notes"]:
+            out.append(f"- {n}")
+
+    return "\n".join(out)
+
+
+def run_roles(args):
+    """The ``--roles`` flow (role-roster T2): a standalone, read-only per-role value view
+    (PLAN D3 — never rides ``--history``, never touches its card). Two shapes:
+
+    - Bare, or with ``--kits-dir``: the cross-kit aggregate + per-kit sections over every kit
+      under that dir (mirrors ``--history``'s scan) — dollars render n/a (no ``--session``
+      is accepted in this shape; ``main`` rejects one before reaching here).
+    - ``<kit> --session ID``: scoped to exactly that one kit, with per-role dollars folded in
+      via the ``--by-task`` transcript-pricing machinery (``build_by_task`` + the
+      task-dirs-discovery convention) — PLAN D2/D4.
+    """
+    kits_dir = args.kits_dir[0]
+    notes = []
+    dollars_kit = None
+    dollars_by_role = {}
+
+    if args.kit:
+        kit_dir = _resolve_kit_dir(args.kit, kits_dir)
+        if not kit_dir.is_dir():
+            sys.exit(f"kit dir not found: {kit_dir}")
+        record, scan_notes = _scan_kit_dir(kit_dir)
+        if record is None:
+            sys.exit(scan_notes[0])
+        records = [record]
+        notes.extend(scan_notes)
+    else:
+        records, scan_notes = scan_kits(kits_dir)
+        notes.extend(scan_notes)
+
+    if args.session:
+        dollars_kit = records[0]["kit"]
+        pricing = cr.load_pricing()
+        try:
+            cost, cost_notes = session_cost_summary(
+                args.session, args.projects_dir, args.tasks_dir, args.include,
+                args.no_subagents, args.vs, pricing)
+        except ValueError as e:
+            sys.exit(str(e))
+        notes.extend(cost_notes)
+        task_dirs = args.tasks_dir or sc.discover_task_dirs(args.session)
+        output_map, disc_notes = discover_agent_outputs(task_dirs)
+        notes.extend(disc_notes)
+        main_transcript = sc.find_main_transcript(args.session, args.projects_dir)
+        bt = build_by_task(records[0]["tasks"], records[0]["agents"], output_map,
+                           main_transcript, cost, pricing)
+        notes.extend(bt["notes"])
+        dollars_by_role, role_dollar_notes = _role_dollars_from_by_task(bt)
+        notes.extend(role_dollar_notes)
+
+    card = build_roles_card(records, kits_dir, dollars_kit=dollars_kit,
+                            dollars_by_role=dollars_by_role, extra_notes=notes)
+    print(json.dumps(card, indent=2) if args.json else render_roles_markdown(card))
+    return 0
+
+
+def run_roles_demo(as_json):
+    """Build the synthetic two-kit ``--roles`` fixture (role-roster T2) in ONE temp dir and
+    run the normal ``--roles`` path against it via ``main`` (the ``run_history_demo``
+    pattern). No session/transcripts are involved — dollars render ``n/a (no --session)``
+    throughout, by design: the dollars-mode is exercised directly by unit tests, not this
+    CLAUDE.md smoke. Exit 0.
+    """
+    with tempfile.TemporaryDirectory() as tmp_name:
+        tmp = Path(tmp_name)
+        kits = tmp / "kits"
+
+        r3 = kits / "roles-r3-legacy"
+        r3.mkdir(parents=True)
+        (r3 / "TASKS.md").write_text(DEMO_ROLES_R3_TASKS_MD)
+        (r3 / "NOTES.md").write_text(DEMO_ROLES_R3_NOTES_MD)
+
+        r7 = kits / "roles-r7-marginal"
+        r7.mkdir(parents=True)
+        (r7 / "TASKS.md").write_text(DEMO_ROLES_R7_TASKS_MD)
+        (r7 / "NOTES.md").write_text(DEMO_ROLES_R7_NOTES_MD)
+
+        argv = ["--roles", "--kits-dir", str(kits)]
         if as_json:
             argv.append("--json")
         return main(argv)
@@ -4324,6 +4921,12 @@ def main(argv=None):
                          "envelope: per-class (tier x failure=) ladder-walk cost vs the "
                          "best two-model cascade, priced from pricing.json — read-only, "
                          "writes nothing, changes no dispatch/pin/escalation behavior")
+    ap.add_argument("--roles", action="store_true",
+                    help="per-role value view (role-roster T2): dispatches/findings/"
+                         "confirmed/precision/marginal per role, cross-kit aggregate + "
+                         "per-kit — bare/--kits-dir for the aggregate (no dollars), or "
+                         "<kit> --session ID for one kit's dollars (--by-task machinery); "
+                         "its own card, never rides --history")
     args = ap.parse_args(argv)
 
     # ``--kits-dir`` is repeatable (action="append"); normalize to a non-empty list of raw
@@ -4346,6 +4949,24 @@ def main(argv=None):
                      "NOTES.md session: lines")
         if args.kit:
             sys.exit("--history takes no kit argument")
+
+    # --roles guardrails (role-roster T2): its own standalone view (PLAN D3 — never rides
+    # --history, never touches its card). Checked BEFORE --by-task/--envelope's own guard
+    # blocks (which don't know about --roles) so a --roles combo always exits with ITS
+    # message, not a confusing one from a mode it was never trying to invoke.
+    # ``--session`` without a kit is the one rejection: dollars attribute to exactly one
+    # kit's transcripts (the --by-task machinery), so an un-scoped session id is ambiguous
+    # over a multi-kit --kits-dir scan. A kit WITHOUT --session is fine (dollars render n/a).
+    if args.roles:
+        if args.live or args.by_task or args.envelope:
+            sys.exit("--roles takes no --live/--by-task/--envelope")
+        if args.history:
+            sys.exit("--roles and --history are mutually exclusive — --roles is its own view")
+        if args.snapshot or args.trend:
+            sys.exit("--roles takes no --snapshot/--trend — those ride --history")
+        if args.session is not None and not args.kit and not args.demo:
+            sys.exit("--roles --session requires a kit argument — dollars attribute one "
+                     "kit's session (pass the kit, or drop --session for the cross-kit view)")
 
     # --by-task guardrails: per-task dollars attribute ONE session's transcripts. Checked
     # AFTER the --history guardrails and BEFORE the --demo block, so --demo --live --by-task /
@@ -4424,6 +5045,8 @@ def main(argv=None):
             return run_live_demo(args.json)
         if args.by_task:
             return run_by_task_demo(args.json)
+        if args.roles:
+            return run_roles_demo(args.json)
         return run_demo(args.json)
 
     if args.envelope:
@@ -4434,6 +5057,9 @@ def main(argv=None):
 
     if args.history:
         return run_history(args)
+
+    if args.roles:
+        return run_roles(args)
 
     if not args.kit:
         sys.exit("kit slug required (or --demo)")

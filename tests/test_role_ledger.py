@@ -14,6 +14,17 @@ bin/routing_scorecard.py:
   quality onto the ``--history`` card's new ``roles`` key (schema v2), and
   ``render_history_markdown`` gains an ALWAYS-rendered ``## Role quality`` section.
 
+role-roster kit additions (a SEPARATE, later kit — its own tasks, sharing this file per its
+own brief: "role measurement is this file's concern"):
+
+- T1: ``AGENT_ROLES`` extends to the ten-token tuple, and ``parse_agents`` learns the
+  optional ``marginal=`` pair (meaningful only alongside ``findings=``/``confirmed=``).
+- T2: the standalone ``--roles`` per-role value view (PLAN D3-D5) -- ``kit_roster``,
+  ``_role_value_bucket``/``_kit_role_buckets``/``_merge_role_buckets``,
+  ``_role_dollars_from_by_task``, ``build_roles_card``/``render_roles_markdown``, and the
+  ``run_roles``/``run_roles_demo`` CLI flow -- plus the ADDITIVE ``--by-task`` extras line
+  (D3) for tasks carrying a non-trio role.
+
 SAFETY CONTRACT: T1/T2/T4-aggregation tests are pure-function only -- they call
 ``rs.parse_agents`` / ``rs.parse_reviewers`` / ``rs.parse_defects`` / ``rs.role_quality_stats``
 / ``rs.render_history_markdown`` directly on in-memory strings/dicts, never touching disk, the
@@ -25,11 +36,19 @@ probe) to prove the wiring against real data. All ids/values are synthetic; the 
 tokens are the sanctioned tier vocabulary (``sonnet``/``opus``/``haiku``) plus the
 ``AGENT_ROLES``/``AGENT_RESULTS`` vocabulary itself.
 
+The role-roster ``--roles`` tests below follow the SAME contract, extended the same way
+``test_crossrepo_trend.py`` extends it for its own CLI-level demo/golden tests: ``rs.main(...)``
+is called IN-PROCESS with stdout captured via ``contextlib.redirect_stdout`` (never a real
+subprocess), and every filesystem write lands in a fresh ``tempfile.TemporaryDirectory()``.
+
 bin/ is not a package; routing_scorecard.py is loaded via importlib by absolute path computed
 from this file's own location (BIN_DIR), mirroring tests/test_routing_history.py.
 """
 
+import contextlib
 import importlib.util
+import io
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -54,9 +73,14 @@ class AgentResultsVocabTests(unittest.TestCase):
     def test_agent_results_vocab_pinned(self):
         self.assertEqual(rs.AGENT_RESULTS, ("accepted", "revised", "blocked"))
 
-    def test_agent_roles_untouched(self):
-        # D1 must not extend AGENT_ROLES -- keep/skip criteria for the line are unchanged.
-        self.assertEqual(rs.AGENT_ROLES, ("implementer", "verifier", "escalation"))
+    def test_agent_roles_extended_exactly(self):
+        # Superseded by role-roster D1: extension is additive-tolerant (old ledgers parse
+        # byte-identically; out-of-vocab still drops). Was test_agent_roles_untouched,
+        # which pinned the role-ledger kit's original trio + escalation tuple.
+        self.assertEqual(rs.AGENT_ROLES, (
+            "implementer", "verifier", "escalation", "scout", "test-author",
+            "second-verifier", "red-team", "security-auditor", "docs-editor",
+            "synthesizer"))
 
 
 class OldStyleLineTests(unittest.TestCase):
@@ -265,6 +289,127 @@ class ProbeFromBriefTests(unittest.TestCase):
         self.assertIsNone(ev[3]["result"])
         self.assertEqual(len(notes), 2)
         self.assertEqual(rs.AGENT_RESULTS, ("accepted", "revised", "blocked"))
+
+
+# ---- role-roster D1: the seven new role tokens ------------------------------------------------
+
+
+class NewRoleTokensTests(unittest.TestCase):
+    def test_each_new_token_parses_and_survives(self):
+        new_tokens = ("scout", "test-author", "second-verifier", "red-team",
+                      "security-auditor", "docs-editor", "synthesizer")
+        for role in new_tokens:
+            with self.subTest(role=role):
+                text = f"agent: T1 id=a1 role={role} model=sonnet\n"
+                events, notes = rs.parse_agents(text)
+                self.assertEqual(len(events), 1)
+                self.assertEqual(events[0]["role"], role)
+                self.assertEqual(notes, [])
+
+    def test_chef_still_drops_with_note(self):
+        text = "agent: T1 id=a1 role=chef model=sonnet\n"
+        events, notes = rs.parse_agents(text)
+        self.assertEqual(events, [])
+        self.assertEqual(len(notes), 1)
+        self.assertIn("unrecognized agent line", notes[0])
+
+
+# ---- role-roster D2: marginal= -----------------------------------------------------------------
+
+
+class MarginalTests(unittest.TestCase):
+    def test_happy_path(self):
+        text = "agent: T1 id=a1 role=verifier model=sonnet findings=3 confirmed=2 marginal=1\n"
+        events, notes = rs.parse_agents(text)
+        self.assertEqual(len(events), 1)
+        ev = events[0]
+        self.assertEqual(ev["findings"], 3)
+        self.assertEqual(ev["confirmed"], 2)
+        self.assertEqual(ev["marginal"], 1)
+        self.assertEqual(notes, [])
+
+    def test_marginal_equal_to_confirmed_is_legal(self):
+        text = "agent: T1 id=a1 role=verifier model=sonnet findings=2 confirmed=2 marginal=2\n"
+        events, notes = rs.parse_agents(text)
+        ev = events[0]
+        self.assertEqual(ev["marginal"], 2)
+        self.assertEqual(notes, [])
+
+    def test_marginal_zero_is_legal(self):
+        text = "agent: T1 id=a1 role=verifier model=sonnet findings=3 confirmed=1 marginal=0\n"
+        events, notes = rs.parse_agents(text)
+        ev = events[0]
+        self.assertEqual(ev["marginal"], 0)
+        self.assertEqual(notes, [])
+
+    def test_marginal_exceeds_confirmed_degrades_with_note(self):
+        text = "agent: T1 id=a1 role=verifier model=sonnet findings=5 confirmed=2 marginal=3\n"
+        events, notes = rs.parse_agents(text)
+        self.assertEqual(len(events), 1)   # line survives
+        ev = events[0]
+        self.assertIsNone(ev["marginal"])
+        # findings/confirmed themselves are untouched by a bad marginal
+        self.assertEqual(ev["findings"], 5)
+        self.assertEqual(ev["confirmed"], 2)
+        self.assertEqual(len(notes), 1)
+        self.assertIn("T1", notes[0])
+
+    def test_negative_marginal_degrades_with_note(self):
+        text = "agent: T1 id=a1 role=verifier model=sonnet findings=3 confirmed=2 marginal=-1\n"
+        events, notes = rs.parse_agents(text)
+        self.assertEqual(len(events), 1)
+        ev = events[0]
+        self.assertIsNone(ev["marginal"])
+        self.assertEqual(len(notes), 1)
+
+    def test_non_integer_marginal_degrades_with_note(self):
+        text = "agent: T1 id=a1 role=verifier model=sonnet findings=3 confirmed=2 marginal=one\n"
+        events, notes = rs.parse_agents(text)
+        self.assertEqual(len(events), 1)
+        ev = events[0]
+        self.assertIsNone(ev["marginal"])
+        self.assertEqual(len(notes), 1)
+
+    def test_orphan_marginal_without_findings_confirmed_degrades_with_note(self):
+        text = "agent: T1 id=a1 role=verifier model=sonnet marginal=1\n"
+        events, notes = rs.parse_agents(text)
+        self.assertEqual(len(events), 1)
+        ev = events[0]
+        self.assertIsNone(ev["marginal"])
+        self.assertIsNone(ev["findings"])
+        self.assertIsNone(ev["confirmed"])
+        self.assertEqual(len(notes), 1)
+
+    def test_orphan_marginal_with_only_lone_findings_degrades_both_notes(self):
+        # findings= alone (no confirmed=) already degrades findings/confirmed to None with
+        # its own note; marginal= then finds findings/confirmed unavailable and degrades too,
+        # with its own separate note.
+        text = "agent: T1 id=a1 role=verifier model=sonnet findings=3 marginal=1\n"
+        events, notes = rs.parse_agents(text)
+        self.assertEqual(len(events), 1)
+        ev = events[0]
+        self.assertIsNone(ev["findings"])
+        self.assertIsNone(ev["confirmed"])
+        self.assertIsNone(ev["marginal"])
+        self.assertEqual(len(notes), 2)
+
+    def test_absent_marginal_is_none(self):
+        text = "agent: T1 id=a1 role=verifier model=sonnet findings=3 confirmed=1 result=accepted\n"
+        events, notes = rs.parse_agents(text)
+        ev = events[0]
+        self.assertIsNone(ev["marginal"])
+        self.assertEqual(notes, [])
+
+    def test_legacy_line_no_marginal_key_parses_with_marginal_none(self):
+        # A pre-role-roster ledger line (no marginal= token at all) parses byte-identically
+        # and the new "marginal" key on the event dict reads None -- unmeasured, never zero.
+        text = "agent: T1 id=a1 role=implementer model=sonnet\n"
+        events, notes = rs.parse_agents(text)
+        self.assertEqual(len(events), 1)
+        ev = events[0]
+        self.assertIn("marginal", ev)
+        self.assertIsNone(ev["marginal"])
+        self.assertEqual(notes, [])
 
 
 # ---- T2: parse_reviewers ---------------------------------------------------------------------
@@ -902,6 +1047,659 @@ class RenderHistoryMarkdownFalseZeroTests(unittest.TestCase):
         card = _minimal_card(roles)
         md = rs.render_history_markdown(card)
         self.assertNotIn("attributed to no tier", md)
+
+
+# ================================================================================================
+# role-roster T2 -- the standalone ``--roles`` per-role value view
+# ================================================================================================
+
+
+def _capture(argv):
+    """Run ``rs.main(argv)`` in-process, stdout captured -- never a subprocess (this file's own
+    safety contract, extended to CLI-level ``--roles`` tests exactly like
+    ``test_crossrepo_trend.py`` extends it for its own demo/golden tests)."""
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        rc = rs.main(argv)
+    return rc, buf.getvalue()
+
+
+# ---- constants ----------------------------------------------------------------------------
+
+
+class RolesConstantsTests(unittest.TestCase):
+    def test_schema_version_and_floor_pinned(self):
+        self.assertEqual(rs.ROLES_SCHEMA_VERSION, 1)
+        self.assertEqual(rs.MIN_ROLE_DISPATCHES, 5)
+
+
+# ---- kit_roster (D5) ------------------------------------------------------------------------
+
+
+class KitRosterTests(unittest.TestCase):
+    def test_escalation_never_counts_toward_roster(self):
+        record = {
+            "agents": [_agent_event("T1", "a1", "escalation", "opus", result="accepted")],
+            "reviewers": [],
+            "outcomes": {},
+        }
+        self.assertEqual(rs.kit_roster(record), set())
+
+    def test_reviewer_added_iff_reviewer_lines_present(self):
+        record = {"agents": [], "reviewers": [_reviewer_event("P1", "opus", 1, 1)],
+                  "outcomes": {}}
+        self.assertEqual(rs.kit_roster(record), {"reviewer"})
+
+    def test_implementer_derived_from_outcomes_not_agent_lines(self):
+        # implementer rides the OUTCOME ledger (mirrors role_quality_stats' "one number, one
+        # home" precedent) -- present with zero agent: role=implementer lines at all.
+        record = {"agents": [], "reviewers": [], "outcomes": {"T1": {"model": "sonnet"}}}
+        self.assertEqual(rs.kit_roster(record), {"implementer"})
+
+    def test_r3_trio_and_r7_extended_roster_sizes(self):
+        trio = {
+            "agents": [_agent_event("T1", "a1", "verifier", "sonnet")],
+            "reviewers": [_reviewer_event("P1", "opus", 1, 1)],
+            "outcomes": {"T1": {}},
+        }
+        self.assertEqual(len(rs.kit_roster(trio)), 3)
+
+        extended = {
+            "agents": [
+                _agent_event("T1", "a1", "verifier", "sonnet"),
+                _agent_event("T1", "a2", "scout", "haiku"),
+                _agent_event("T1", "a3", "test-author", "sonnet"),
+                _agent_event("T1", "a4", "second-verifier", "sonnet"),
+                _agent_event("T1", "a5", "red-team", "opus"),
+                _agent_event("T1", "a6", "escalation", "opus"),  # never counted
+            ],
+            "reviewers": [_reviewer_event("P1", "opus", 1, 1)],
+            "outcomes": {"T1": {}},
+        }
+        self.assertEqual(len(rs.kit_roster(extended)), 7)
+
+
+# ---- _role_value_bucket / _kit_role_buckets (D2/D4) ------------------------------------------
+
+
+class RoleValueBucketTests(unittest.TestCase):
+    def test_dispatches_findings_confirmed_precision(self):
+        events = [
+            _agent_event("T1", "a1", "verifier", "sonnet", findings=4, confirmed=3),
+            _agent_event("T2", "a2", "verifier", "sonnet", findings=2, confirmed=1),
+        ]
+        b = rs._role_value_bucket(events)
+        self.assertEqual(b["dispatches"], 2)
+        self.assertEqual(b["with_precision"], 2)
+        self.assertEqual(b["findings"], 6)
+        self.assertEqual(b["confirmed"], 4)
+        self.assertAlmostEqual(b["precision"], 4 / 6)
+
+    def test_precision_none_not_zero_when_unmeasured(self):
+        events = [_agent_event("T1", "a1", "scout", "haiku")]
+        b = rs._role_value_bucket(events)
+        self.assertEqual(b["dispatches"], 1)
+        self.assertEqual(b["findings"], 0)
+        self.assertIsNone(b["precision"])
+
+    def test_marginal_measured_vs_unmeasured_never_folded_to_zero(self):
+        events = [
+            dict(_agent_event("T1", "a1", "verifier", "sonnet", findings=2, confirmed=1),
+                 marginal=1),
+            _agent_event("T2", "a2", "verifier", "sonnet", findings=1, confirmed=1),  # legacy
+        ]
+        b = rs._role_value_bucket(events)
+        self.assertEqual(b["marginal"], 1)
+        self.assertEqual(b["marginal_measured"], 1)
+        self.assertEqual(b["marginal_unmeasured"], 1)
+        # measured-denominator rate (PLAN D4 amendment): marginal / marginal_measured (1/1),
+        # never marginal / dispatches (1/2) -- the unmeasured legacy dispatch must not
+        # dilute the rate.
+        self.assertAlmostEqual(b["marginal_rate"], 1 / 1)
+
+    def test_marginal_cell_is_none_when_marginal_measured_is_zero_all_unmeasured(self):
+        # PLAN D4 amendment: the Marginal cell/field itself is None (never a fabricated 0)
+        # when zero dispatches carried a measured `marginal=` -- distinct from "measured and
+        # confirmed zero" (test_marginal_rate_real_zero_when_measured_but_zero below).
+        events = [_agent_event("T1", "a1", "verifier", "sonnet", findings=2, confirmed=1),
+                  _agent_event("T2", "a2", "verifier", "sonnet", findings=1, confirmed=1)]
+        b = rs._role_value_bucket(events)
+        self.assertEqual(b["marginal_measured"], 0)
+        self.assertIsNone(b["marginal"])
+        self.assertIsNone(b["marginal_rate"])
+
+    def test_marginal_rate_partially_measured_uses_measured_denominator_not_dispatches(self):
+        # The exact boundary case named in the brief: 2 marginal over 2 measured of 6
+        # dispatches must render 100%, never 33% (2/6).
+        events = (
+            [dict(_agent_event("T1", "a1", "verifier", "sonnet", findings=3, confirmed=2),
+                  marginal=1),
+             dict(_agent_event("T2", "a2", "verifier", "sonnet", findings=3, confirmed=2),
+                  marginal=1)]
+            + [_agent_event("T3", f"a{i}", "verifier", "sonnet") for i in range(3, 7)]
+        )
+        b = rs._role_value_bucket(events)
+        self.assertEqual(b["dispatches"], 6)
+        self.assertEqual(b["marginal_measured"], 2)
+        self.assertEqual(b["marginal"], 2)
+        self.assertEqual(b["marginal_unmeasured"], 4)
+        self.assertEqual(b["marginal_rate"], 1.0)
+
+    def test_marginal_rate_none_when_nothing_measured(self):
+        events = [_agent_event("T1", "a1", "scout", "haiku")]
+        b = rs._role_value_bucket(events)
+        self.assertEqual(b["marginal_measured"], 0)
+        self.assertEqual(b["marginal_unmeasured"], 1)
+        self.assertIsNone(b["marginal_rate"])
+
+    def test_marginal_rate_real_zero_when_measured_but_zero(self):
+        events = [dict(_agent_event("T1", "a1", "second-verifier", "sonnet",
+                                    findings=1, confirmed=0), marginal=0)]
+        b = rs._role_value_bucket(events)
+        self.assertEqual(b["marginal_measured"], 1)
+        self.assertEqual(b["marginal_rate"], 0.0)
+        self.assertIsNotNone(b["marginal_rate"])
+
+    def test_insufficient_sample_threshold_exact(self):
+        four = [_agent_event("T1", f"a{i}", "scout", "haiku") for i in range(4)]
+        five = [_agent_event("T1", f"a{i}", "scout", "haiku") for i in range(5)]
+        self.assertTrue(rs._role_value_bucket(four)["insufficient_sample"])
+        self.assertFalse(rs._role_value_bucket(five)["insufficient_sample"])
+
+    def test_reviewer_events_never_carry_marginal_key_yet_bucket_still_works(self):
+        # parse_reviewers' event keys are exactly {"phase","model","findings","confirmed",
+        # "result"} -- no "marginal" key at all. _role_value_bucket must tolerate that via
+        # .get(), which is exactly how "reviewer marginal: unmeasured" falls out for free.
+        events = [_reviewer_event("P1", "opus", 3, 2)]
+        b = rs._role_value_bucket(events)
+        self.assertEqual(b["marginal_measured"], 0)
+        self.assertEqual(b["marginal_unmeasured"], 1)
+        self.assertIsNone(b["marginal_rate"])
+
+    def test_kit_role_buckets_excludes_escalation_includes_reviewer(self):
+        record = {
+            "agents": [
+                _agent_event("T1", "a1", "verifier", "sonnet", findings=1, confirmed=1),
+                _agent_event("T1", "a2", "escalation", "opus", result="accepted"),
+            ],
+            "reviewers": [_reviewer_event("P1", "opus", 2, 1)],
+        }
+        buckets = rs._kit_role_buckets(record)
+        self.assertNotIn("escalation", buckets)
+        self.assertIn("verifier", buckets)
+        self.assertIn("reviewer", buckets)
+
+    def test_role_with_zero_events_is_absent_not_zero(self):
+        record = {"agents": [], "reviewers": []}
+        self.assertEqual(rs._kit_role_buckets(record), {})
+
+
+# ---- _merge_role_buckets ---------------------------------------------------------------------
+
+
+class MergeRoleBucketsTests(unittest.TestCase):
+    def test_sums_raw_counts_and_recomputes_rates_over_the_merge(self):
+        b1 = rs._role_value_bucket(
+            [_agent_event("T1", "a1", "verifier", "sonnet", findings=4, confirmed=2)])
+        b2 = rs._role_value_bucket(
+            [_agent_event("T2", "a2", "verifier", "sonnet", findings=2, confirmed=2)])
+        merged = rs._merge_role_buckets([b1, b2])
+        self.assertEqual(merged["dispatches"], 2)
+        self.assertEqual(merged["findings"], 6)
+        self.assertEqual(merged["confirmed"], 4)
+        # recomputed over the MERGED sums (4/6), never an average of 0.5 and 1.0
+        self.assertAlmostEqual(merged["precision"], 4 / 6)
+
+    def test_marginal_none_when_merged_measured_is_zero(self):
+        # Two buckets, neither measured any marginal -- the merged field is None (never a
+        # fabricated 0), mirroring _role_value_bucket's own None-not-zero treatment.
+        b1 = rs._role_value_bucket(
+            [_agent_event("T1", "a1", "verifier", "sonnet", findings=1, confirmed=1)])
+        b2 = rs._role_value_bucket(
+            [_agent_event("T2", "a2", "verifier", "sonnet", findings=1, confirmed=1)])
+        merged = rs._merge_role_buckets([b1, b2])
+        self.assertEqual(merged["marginal_measured"], 0)
+        self.assertIsNone(merged["marginal"])
+        self.assertIsNone(merged["marginal_rate"])
+
+    def test_marginal_rate_over_merged_measured_denominator_not_dispatches(self):
+        # The brief's exact boundary: 2 marginal over 2 measured of 6 dispatches, spread
+        # across two kits' buckets, must merge to 100%, never 33% (2/6).
+        b1 = rs._role_value_bucket(
+            [dict(_agent_event("T1", "a1", "verifier", "sonnet", findings=3, confirmed=2),
+                  marginal=1),
+             _agent_event("T1", "a2", "verifier", "sonnet")])
+        b2 = rs._role_value_bucket(
+            [dict(_agent_event("T2", "a3", "verifier", "sonnet", findings=3, confirmed=2),
+                  marginal=1)]
+            + [_agent_event("T2", f"a{i}", "verifier", "sonnet") for i in range(4, 7)])
+        merged = rs._merge_role_buckets([b1, b2])
+        self.assertEqual(merged["dispatches"], 6)
+        self.assertEqual(merged["marginal_measured"], 2)
+        self.assertEqual(merged["marginal"], 2)
+        self.assertEqual(merged["marginal_unmeasured"], 4)
+        self.assertEqual(merged["marginal_rate"], 1.0)
+
+
+# ---- _role_dollars_from_by_task (D2/D4) -------------------------------------------------------
+
+
+class RoleDollarsFromByTaskTests(unittest.TestCase):
+    def test_sums_task_role_subtotals_excludes_escalation(self):
+        bt = {"tasks": [
+            {"roles": {"implementer": {"subtotal_usd": 1.0},
+                       "scout": {"subtotal_usd": 2.0},
+                       "escalation": {"subtotal_usd": 9.0}}},
+            {"roles": {"implementer": {"subtotal_usd": 1.5},
+                       "scout": {"subtotal_usd": None}}},
+        ]}
+        dollars, notes = rs._role_dollars_from_by_task(bt)
+        self.assertEqual(dollars["implementer"], 2.5)
+        self.assertEqual(dollars["scout"], 2.0)
+        self.assertNotIn("escalation", dollars)
+        self.assertEqual(len(notes), 1)
+        self.assertIn("scout", notes[0])
+        self.assertIn("1/2", notes[0])
+
+    def test_role_fully_unpriced_is_none_not_a_fabricated_zero(self):
+        bt = {"tasks": [{"roles": {"verifier": {"subtotal_usd": None}}}]}
+        dollars, notes = rs._role_dollars_from_by_task(bt)
+        self.assertIsNone(dollars["verifier"])
+        self.assertEqual(notes, [])
+
+
+# ---- build_roles_card key locks ---------------------------------------------------------------
+
+
+class BuildRolesCardKeyLockTests(unittest.TestCase):
+    def test_top_level_key_set(self):
+        record = {"kit": "kit-a", "tasks": [], "outcomes": {"T1": {}}, "events": [],
+                  "sessions": [], "agents": [_agent_event("T1", "a1", "verifier", "sonnet")],
+                  "reviewers": [], "defects": [], "notes": []}
+        card = rs.build_roles_card([record], "/tmp/kits")
+        self.assertEqual(set(card), {"schema_version", "generated_at", "kits_dir",
+                                     "min_dispatches", "dollars_kit", "kits", "aggregate",
+                                     "notes"})
+        self.assertEqual(set(card["kits"][0]),
+                         {"kit", "roster", "roster_size", "roster_label", "roles"})
+        self.assertEqual(set(card["aggregate"]),
+                         {"roster", "roster_size", "roster_label", "roles"})
+
+    def test_dollars_attribute_only_to_the_named_kit(self):
+        rec_a = {"kit": "kit-a", "outcomes": {}, "agents": [
+            _agent_event("T1", "a1", "verifier", "sonnet")], "reviewers": []}
+        rec_b = {"kit": "kit-b", "outcomes": {}, "agents": [
+            _agent_event("T1", "b1", "verifier", "sonnet")], "reviewers": []}
+        card = rs.build_roles_card(
+            [rec_a, rec_b], "/tmp/kits", dollars_kit="kit-a",
+            dollars_by_role={"verifier": 3.5})
+        self.assertEqual(card["kits"][0]["roles"]["verifier"]["dollars_usd"], 3.5)
+        self.assertIsNone(card["kits"][1]["roles"]["verifier"]["dollars_usd"])
+
+
+# ---- aggregate dollars single-basis guard (PLAN D4 amendment) ---------------------------------
+
+
+class AggregateDollarsGuardTests(unittest.TestCase):
+    def test_two_record_fold_one_priced_one_not_yields_aggregate_na_and_note(self):
+        # kit-a is the priced kit (--session scoped it); kit-b also dispatched the SAME
+        # role (verifier) but was never priced -- a multi-kit fold with any unpriced kit
+        # must never render a blended/fabricated aggregate dollar figure.
+        priced_kit = {"kit": "kit-a", "outcomes": {}, "agents": [
+            dict(_agent_event("T1", "a1", "verifier", "sonnet", findings=2, confirmed=1),
+                 marginal=1)], "reviewers": []}
+        unpriced_kit = {"kit": "kit-b", "outcomes": {}, "agents": [
+            _agent_event("T1", "b1", "verifier", "sonnet", findings=1, confirmed=1)],
+            "reviewers": []}
+        card = rs.build_roles_card(
+            [priced_kit, unpriced_kit], "/tmp/kits", dollars_kit="kit-a",
+            dollars_by_role={"verifier": 4.0})
+
+        # the priced kit's OWN per-kit section still shows its dollars, untouched.
+        self.assertEqual(card["kits"][0]["roles"]["verifier"]["dollars_usd"], 4.0)
+        self.assertEqual(card["kits"][0]["roles"]["verifier"]["cost_per_marginal_usd"], 4.0)
+        self.assertIsNone(card["kits"][1]["roles"]["verifier"]["dollars_usd"])
+
+        # the aggregate fold spans BOTH kits' dispatches but only one is priced -> n/a.
+        agg_verifier = card["aggregate"]["roles"]["verifier"]
+        self.assertIsNone(agg_verifier["dollars_usd"])
+        self.assertIsNone(agg_verifier["cost_per_marginal_usd"])
+        self.assertTrue(any(
+            "aggregate cost n/a — not all kits priced; per-kit dollars only" in n
+            for n in card["notes"]))
+
+    def test_single_kit_fold_still_prices_the_aggregate(self):
+        # No regression: when the aggregate role draws from exactly the priced kit (today's
+        # only reachable CLI shape), the aggregate keeps its dollars.
+        record = {"kit": "kit-a", "outcomes": {}, "agents": [
+            dict(_agent_event("T1", "a1", "verifier", "sonnet", findings=2, confirmed=1),
+                 marginal=1)], "reviewers": []}
+        card = rs.build_roles_card([record], "/tmp/kits", dollars_kit="kit-a",
+                                   dollars_by_role={"verifier": 4.0})
+        agg_verifier = card["aggregate"]["roles"]["verifier"]
+        self.assertEqual(agg_verifier["dollars_usd"], 4.0)
+        self.assertEqual(agg_verifier["cost_per_marginal_usd"], 4.0)
+        self.assertFalse(any("aggregate cost n/a" in n for n in card["notes"]))
+
+
+# ---- render_roles_markdown honesty proofs ------------------------------------------------------
+
+
+class RenderRolesMarkdownHonestyTests(unittest.TestCase):
+    def test_absent_role_never_renders_a_row(self):
+        record = {"kit": "kit-a", "outcomes": {}, "agents": [
+            _agent_event("T1", "a1", "verifier", "sonnet")], "reviewers": []}
+        card = rs.build_roles_card([record], "/tmp/kits")
+        md = rs.render_roles_markdown(card)
+        self.assertNotIn("| scout ", md)
+        self.assertNotIn("| red-team ", md)
+
+    def test_escalation_never_appears_and_legend_explains_it(self):
+        record = {"kit": "kit-a", "outcomes": {}, "agents": [
+            _agent_event("T1", "a1", "escalation", "opus", result="accepted")],
+            "reviewers": []}
+        card = rs.build_roles_card([record], "/tmp/kits")
+        md = rs.render_roles_markdown(card)
+        self.assertNotIn("| escalation ", md)
+        self.assertIn("Escalation is excluded from every role row", md)
+
+    def test_dollars_na_legend_when_no_session(self):
+        card = rs.build_roles_card([], "/tmp/kits")
+        md = rs.render_roles_markdown(card)
+        self.assertIn("Dollars: n/a (no `--session`)", md)
+
+    def test_dollars_priced_legend_names_the_kit(self):
+        record = {"kit": "kit-a", "outcomes": {}, "agents": [
+            _agent_event("T1", "a1", "verifier", "sonnet")], "reviewers": []}
+        card = rs.build_roles_card([record], "/tmp/kits", dollars_kit="kit-a",
+                                   dollars_by_role={"verifier": 1.0})
+        md = rs.render_roles_markdown(card)
+        self.assertIn("Dollars priced for kit `kit-a` only", md)
+
+    def test_cost_per_marginal_line_only_when_both_measured(self):
+        priced_with_marginal = {"kit": "kit-a", "outcomes": {}, "agents": [
+            dict(_agent_event("T1", "a1", "verifier", "sonnet", findings=2, confirmed=1),
+                 marginal=1)], "reviewers": []}
+        card = rs.build_roles_card([priced_with_marginal], "/tmp/kits", dollars_kit="kit-a",
+                                   dollars_by_role={"verifier": 4.0})
+        md = rs.render_roles_markdown(card)
+        self.assertIn("cost per marginal catch: $4.00", md)
+
+        priced_no_marginal = {"kit": "kit-b", "outcomes": {}, "agents": [
+            _agent_event("T1", "b1", "verifier", "sonnet", findings=2, confirmed=1)],
+            "reviewers": []}
+        card2 = rs.build_roles_card([priced_no_marginal], "/tmp/kits", dollars_kit="kit-b",
+                                    dollars_by_role={"verifier": 4.0})
+        md2 = rs.render_roles_markdown(card2)
+        self.assertNotIn("cost per marginal catch", md2)
+
+    def test_insufficient_sample_tag_at_the_floor(self):
+        four = {"kit": "kit-a", "outcomes": {}, "reviewers": [], "agents": [
+            _agent_event("T1", f"a{i}", "scout", "haiku") for i in range(4)]}
+        five = {"kit": "kit-b", "outcomes": {}, "reviewers": [], "agents": [
+            _agent_event("T1", f"a{i}", "scout", "haiku") for i in range(5)]}
+        card = rs.build_roles_card([four, five], "/tmp/kits")
+        md = rs.render_roles_markdown(card)
+        self.assertIn("scout (insufficient sample) | 4", md)
+        self.assertIn("| scout | 5", md)
+
+    def test_marginal_cell_renders_na_not_zero_when_unmeasured(self):
+        # PLAN D4 amendment: the Marginal cell renders `n/a`, never a fabricated 0, when
+        # marginal_measured == 0 for that role.
+        record = {"kit": "kit-a", "outcomes": {}, "agents": [
+            _agent_event("T1", "a1", "verifier", "sonnet", findings=2, confirmed=1)],
+            "reviewers": []}
+        card = rs.build_roles_card([record], "/tmp/kits")
+        md = rs.render_roles_markdown(card)
+        row = next(l for l in md.splitlines() if l.startswith("| verifier "))
+        cells = [c.strip() for c in row.split("|")]
+        # | verifier (insuff) | Dispatches | Findings | Confirmed | Precision | Marginal | ...
+        self.assertEqual(cells[6], "n/a")
+
+    def test_marginal_cell_renders_measured_zero_as_zero_not_na(self):
+        record = {"kit": "kit-a", "outcomes": {}, "agents": [
+            dict(_agent_event("T1", "a1", "second-verifier", "sonnet",
+                              findings=1, confirmed=0), marginal=0)],
+            "reviewers": []}
+        card = rs.build_roles_card([record], "/tmp/kits")
+        md = rs.render_roles_markdown(card)
+        row = next(l for l in md.splitlines() if l.startswith("| second-verifier "))
+        cells = [c.strip() for c in row.split("|")]
+        self.assertEqual(cells[6], "0")
+
+    def test_legend_states_marginal_rate_denominator_is_measured_dispatches(self):
+        card = rs.build_roles_card([], "/tmp/kits")
+        md = rs.render_roles_markdown(card)
+        self.assertIn("Marginal rate is per MEASURED dispatch", md)
+        self.assertIn("unmeasured count beside it shows coverage", md)
+
+    def test_legend_discloses_marginal_rate_can_exceed_100_percent(self):
+        # T2R2 closing remediation (F2): the marginal rate is catches per measured
+        # dispatch, not a share of dispatches -- a single dispatch can carry several
+        # marginal catches, so the cell can legitimately exceed 100%.
+        card = rs.build_roles_card([], "/tmp/kits")
+        md = rs.render_roles_markdown(card)
+        self.assertIn("catches per measured dispatch, not a share of dispatches", md)
+        self.assertIn("can exceed 100%", md)
+
+    def test_marginal_rate_renders_over_100_percent_when_catches_exceed_dispatches(self):
+        # A measured dispatch can carry marginal > 1 (several confirmed findings on one
+        # dispatch, each caught by no earlier layer) -- 4 marginal catches over 2
+        # measured dispatches renders 200%, not a capped 100%.
+        record = {"kit": "kit-a", "outcomes": {}, "agents": [
+            dict(_agent_event("T1", "a1", "verifier", "sonnet",
+                              findings=5, confirmed=4), marginal=2),
+            dict(_agent_event("T2", "a2", "verifier", "sonnet",
+                              findings=3, confirmed=3), marginal=2)],
+            "reviewers": []}
+        card = rs.build_roles_card([record], "/tmp/kits")
+        roles = card["kits"][0]["roles"]
+        self.assertEqual(roles["verifier"]["marginal"], 4)
+        self.assertEqual(roles["verifier"]["marginal_measured"], 2)
+        self.assertEqual(roles["verifier"]["marginal_rate"], 2.0)
+        md = rs.render_roles_markdown(card)
+        row = next(l for l in md.splitlines() if l.startswith("| verifier "))
+        cells = [c.strip() for c in row.split("|")]
+        self.assertEqual(cells[8], "200%")
+
+    def test_legend_names_phase_scoped_roles_dollars_as_structurally_na(self):
+        card = rs.build_roles_card([], "/tmp/kits")
+        md = rs.render_roles_markdown(card)
+        for role in ("security-auditor", "docs-editor", "synthesizer"):
+            self.assertIn(f"`{role}`", md)
+        self.assertIn("structurally n/a, not missing data", md)
+
+    def test_legend_names_indirect_value_roles_as_no_adjudicable_findings(self):
+        card = rs.build_roles_card([], "/tmp/kits")
+        md = rs.render_roles_markdown(card)
+        self.assertIn("no adjudicable findings by design", md)
+        self.assertIn("judged qualitatively", md)
+        for role in ("scout", "docs-editor", "synthesizer"):
+            self.assertIn(f"`{role}`", md)
+
+
+# ---- --by-task extras line (D3, additive) ------------------------------------------------------
+
+
+class ByTaskExtrasLineTests(unittest.TestCase):
+    def test_extra_roles_print_in_agent_roles_canonical_order(self):
+        text = (
+            "agent: T1 id=impl-1 role=implementer model=sonnet\n"
+            "agent: T1 id=red-1 role=red-team model=opus\n"
+            "agent: T1 id=scout-1 role=scout model=haiku\n"
+        )
+        events, notes = rs.parse_agents(text)
+        self.assertEqual(notes, [])
+        bt = rs.build_by_task([{"id": "T1"}], events, {}, None, None, rs.cr.load_pricing())
+        lines = rs.render_by_task_lines(bt)
+        idx = next(i for i, l in enumerate(lines) if l.startswith("| T1"))
+        # canonical AGENT_ROLES order: scout before red-team, regardless of ledger order
+        self.assertEqual(lines[idx + 1], "  - extra roles: scout n/a, red-team n/a")
+
+    def test_trio_only_task_prints_no_extras_line(self):
+        text = "agent: T1 id=impl-1 role=implementer model=sonnet\n"
+        events, notes = rs.parse_agents(text)
+        bt = rs.build_by_task([{"id": "T1"}], events, {}, None, None, rs.cr.load_pricing())
+        lines = rs.render_by_task_lines(bt)
+        idx = next(i for i, l in enumerate(lines) if l.startswith("| T1"))
+        self.assertFalse(lines[idx + 1].strip().startswith("- extra roles"))
+
+    def test_three_column_header_and_trio_cells_byte_unchanged(self):
+        # regression proof alongside tests/test_per_task_dollars.py's own needle set.
+        text = "agent: T1 id=impl-1 role=implementer model=sonnet\n"
+        events, notes = rs.parse_agents(text)
+        bt = rs.build_by_task([{"id": "T1"}], events, {}, None, None, rs.cr.load_pricing())
+        lines = rs.render_by_task_lines(bt)
+        self.assertIn("| Task | Implementer $ | Verifier $ | Escalation $ | Total $ |", lines)
+
+
+# ---- CLI guardrails -----------------------------------------------------------------------
+
+
+class RolesCliGuardTests(unittest.TestCase):
+    def _expect_exit(self, argv, substr):
+        with self.assertRaises(SystemExit) as cm:
+            rs.main(argv)
+        self.assertIn(substr, str(cm.exception))
+
+    def test_live_by_task_envelope_rejected(self):
+        for flag in ("--live", "--by-task", "--envelope"):
+            with self.subTest(flag=flag):
+                self._expect_exit(["--roles", flag],
+                                  "--roles takes no --live/--by-task/--envelope")
+
+    def test_history_mutually_exclusive(self):
+        self._expect_exit(["--roles", "--history"], "mutually exclusive")
+
+    def test_snapshot_trend_rejected(self):
+        for flag in ("--snapshot", "--trend"):
+            with self.subTest(flag=flag):
+                self._expect_exit(["--roles", flag],
+                                  "--roles takes no --snapshot/--trend")
+
+    def test_session_without_kit_rejected(self):
+        self._expect_exit(["--roles", "--session", "abc"],
+                          "--roles --session requires a kit argument")
+
+    def test_demo_takes_no_kit_argument(self):
+        self._expect_exit(["--demo", "--roles", "some-kit"], "--demo takes no kit argument")
+
+
+# ---- single-kit standalone (no --session) ------------------------------------------------------
+
+
+class RolesSingleKitNoSessionTests(unittest.TestCase):
+    def test_single_kit_view_works_without_session_dollars_na(self):
+        with tempfile.TemporaryDirectory() as td:
+            kit_dir = Path(td) / "solo-kit"
+            kit_dir.mkdir()
+            (kit_dir / "TASKS.md").write_text(
+                "# T\n\n### T1 — t\n- status: done\n- model: sonnet\n")
+            (kit_dir / "NOTES.md").write_text(
+                "outcome: T1 model=sonnet result=pass review=clean\n"
+                "agent: T1 id=a1 role=verifier model=sonnet findings=1 confirmed=1\n")
+            rc, out = _capture([str(kit_dir), "--roles", "--json"])
+        self.assertEqual(rc, 0)
+        card = json.loads(out)
+        self.assertIsNone(card["dollars_kit"])
+        self.assertEqual(card["kits"][0]["kit"], "solo-kit")
+        self.assertIsNone(card["kits"][0]["roles"]["verifier"]["dollars_usd"])
+
+
+# ---- single-kit + --session dollars integration (D2/D4) --------------------------------------
+
+
+class RolesSessionDollarsIntegrationTests(unittest.TestCase):
+    def test_by_task_machinery_prices_per_role_dollars(self):
+        # Reuses the existing --by-task demo fixture (DEMO_BYTASK_*) verbatim -- proves the
+        # SAME transcript-pricing machinery folds into --roles' per-role dollars column, not a
+        # re-implementation. Model ids computed from data/pricing.json at run time; only the
+        # token VOLUMES are fixture-pinned (mirrors run_by_task_demo's own sanctioned pattern).
+        pricing = rs.cr.load_pricing()
+        with tempfile.TemporaryDirectory() as tmp_name:
+            tmp = Path(tmp_name)
+            kit_dir = tmp / "per-task-demo-kit"
+            kit_dir.mkdir()
+            (kit_dir / "TASKS.md").write_text(rs.DEMO_BYTASK_TASKS_MD)
+            (kit_dir / "NOTES.md").write_text(rs.DEMO_BYTASK_NOTES_MD)
+
+            proj = tmp / "projects" / "-demo"
+            proj.mkdir(parents=True)
+            ts = "2026-07-01T12:00:00+00:00"
+            lines = []
+            for tier in ("haiku", "sonnet", "opus", "frontier"):
+                model_id = rs._first_model_of_tier(pricing, tier)
+                if model_id is None:
+                    continue
+                inp, outp = rs.DEMO_VOLUMES[tier]
+                lines.append(json.dumps({
+                    "timestamp": ts,
+                    "message": {"model": model_id, "id": f"demo-bt-main-{tier}",
+                               "usage": {"input_tokens": inp, "output_tokens": outp}}}))
+            (proj / "per-task-demo.jsonl").write_text("\n".join(lines) + "\n")
+
+            tasks_out = tmp / "tasks"
+            tasks_out.mkdir()
+            for agent_id, (tier, inp, outp) in rs.DEMO_BYTASK_VOLUMES.items():
+                model_id = rs._first_model_of_tier(pricing, tier)
+                if model_id is None:
+                    continue
+                msg = json.dumps({
+                    "timestamp": ts,
+                    "message": {"model": model_id, "id": f"demo-bt-{agent_id}",
+                               "usage": {"input_tokens": inp, "output_tokens": outp}}})
+                (tasks_out / f"{agent_id}.output").write_text(msg + "\n")
+
+            argv = [str(kit_dir), "--session", "per-task-demo",
+                    "--projects-dir", str(tmp / "projects"),
+                    "--tasks-dir", str(tasks_out), "--roles", "--json"]
+            rc, out = _capture(argv)
+
+        self.assertEqual(rc, 0)
+        card = json.loads(out)
+        self.assertEqual(card["dollars_kit"], "per-task-demo-kit")
+        roles = card["kits"][0]["roles"]
+        # implementer priced (partial -- ag-ghost has no *.output); verifier fully priced.
+        self.assertIsNotNone(roles["implementer"]["dollars_usd"])
+        self.assertGreater(roles["implementer"]["dollars_usd"], 0)
+        self.assertIsNotNone(roles["verifier"]["dollars_usd"])
+        self.assertGreater(roles["verifier"]["dollars_usd"], 0)
+        # escalation excluded from the value table entirely -- never a dollars row either.
+        self.assertNotIn("escalation", roles)
+        self.assertTrue(any("dollars partial" in n for n in card["notes"]))
+
+
+# ---- --demo --roles: the CLAUDE.md smoke, byte-pinned as this view's OWN golden --------------
+
+GOLDEN_ROLES_DEMO_MARKDOWN = "# Per-role value — role-roster measurement (read-only)\n\n**2 kit(s) scanned · aggregate roster R7 (implementer, red-team, reviewer, scout, second-verifier, test-author, verifier)**\n\nEscalation is excluded from every role row here — it delivers fixes, not verdicts (existing law) — and never counts toward roster size. A dispatch with no `marginal=` is counted as marginal unmeasured, never folded into marginal=0; the Marginal cell itself renders `n/a` (never a fabricated 0) when zero dispatches carry a measured `marginal=`. Marginal rate is per MEASURED dispatch — the unmeasured count beside it shows coverage — it is never diluted by dividing over every dispatch. The rate is catches per measured dispatch, not a share of dispatches — a dispatch can contribute several marginal catches, so the cell can exceed 100%. Reviewer marginal: unmeasured (the `reviewer:` family carries no marginal field).\n\nPhase/run-scoped roles (`security-auditor`, `docs-editor`, `synthesizer`) can carry no per-task dollars under the never-split law — their dollars cells are structurally n/a, not missing data. `scout`, `docs-editor`, and `synthesizer` produce no adjudicable findings by design — their rows are dispatch-cost with indirect value, judged qualitatively, never by precision or marginal rate.\n\nDollars: n/a (no `--session`)\n\n## Aggregate role value\n\n| Role | Dispatches | Findings | Confirmed | Precision | Marginal | Marginal unmeasured | Marginal rate | Dollars |\n|---|---:|---:|---:|---:|---:|---:|---:|---:|\n| implementer (insufficient sample) | 4 | 0 | 0 | n/a | n/a | 4 | n/a | n/a |\n| red-team (insufficient sample) | 2 | 0 | 0 | n/a | n/a | 2 | n/a | n/a |\n| reviewer (insufficient sample) | 2 | 4 | 3 | 75% | n/a | 2 | n/a | n/a |\n| scout (insufficient sample) | 2 | 0 | 0 | n/a | n/a | 2 | n/a | n/a |\n| second-verifier (insufficient sample) | 2 | 1 | 0 | 0% | 0 | 1 | 0% | n/a |\n| test-author | 5 | 0 | 0 | n/a | n/a | 5 | n/a | n/a |\n| verifier | 7 | 18 | 11 | 61% | 5 | 2 | 100% | n/a |\n\n## Per-kit\n\n### roles-r3-legacy — R3 (implementer, reviewer, verifier)\n\n| Role | Dispatches | Findings | Confirmed | Precision | Marginal | Marginal unmeasured | Marginal rate | Dollars |\n|---|---:|---:|---:|---:|---:|---:|---:|---:|\n| implementer (insufficient sample) | 2 | 0 | 0 | n/a | n/a | 2 | n/a | n/a |\n| reviewer (insufficient sample) | 1 | 1 | 1 | 100% | n/a | 1 | n/a | n/a |\n| verifier (insufficient sample) | 2 | 3 | 2 | 67% | n/a | 2 | n/a | n/a |\n\n### roles-r7-marginal — R7 (implementer, red-team, reviewer, scout, second-verifier, test-author, verifier)\n\n| Role | Dispatches | Findings | Confirmed | Precision | Marginal | Marginal unmeasured | Marginal rate | Dollars |\n|---|---:|---:|---:|---:|---:|---:|---:|---:|\n| implementer (insufficient sample) | 2 | 0 | 0 | n/a | n/a | 2 | n/a | n/a |\n| red-team (insufficient sample) | 2 | 0 | 0 | n/a | n/a | 2 | n/a | n/a |\n| reviewer (insufficient sample) | 1 | 3 | 2 | 67% | n/a | 1 | n/a | n/a |\n| scout (insufficient sample) | 2 | 0 | 0 | n/a | n/a | 2 | n/a | n/a |\n| second-verifier (insufficient sample) | 2 | 1 | 0 | 0% | 0 | 1 | 0% | n/a |\n| test-author | 5 | 0 | 0 | n/a | n/a | 5 | n/a | n/a |\n| verifier | 5 | 15 | 9 | 60% | 5 | 0 | 100% | n/a |\n\nNotes:\n- roles-r7-marginal: unrecognized agent line: 'agent: W9 id=r7-bad role=chef model=sonnet'\n"
+
+GOLDEN_ROLES_DEMO_JSON = '{"schema_version": 1, "min_dispatches": 5, "dollars_kit": null, "kits": [{"kit": "roles-r3-legacy", "roster": ["implementer", "reviewer", "verifier"], "roster_size": 3, "roster_label": "R3", "roles": {"implementer": {"dispatches": 2, "with_precision": 0, "findings": 0, "confirmed": 0, "precision": null, "marginal": null, "marginal_measured": 0, "marginal_unmeasured": 2, "marginal_rate": null, "insufficient_sample": true, "dollars_usd": null, "cost_per_marginal_usd": null}, "verifier": {"dispatches": 2, "with_precision": 2, "findings": 3, "confirmed": 2, "precision": 0.6666666666666666, "marginal": null, "marginal_measured": 0, "marginal_unmeasured": 2, "marginal_rate": null, "insufficient_sample": true, "dollars_usd": null, "cost_per_marginal_usd": null}, "reviewer": {"dispatches": 1, "with_precision": 1, "findings": 1, "confirmed": 1, "precision": 1.0, "marginal": null, "marginal_measured": 0, "marginal_unmeasured": 1, "marginal_rate": null, "insufficient_sample": true, "dollars_usd": null, "cost_per_marginal_usd": null}}}, {"kit": "roles-r7-marginal", "roster": ["implementer", "red-team", "reviewer", "scout", "second-verifier", "test-author", "verifier"], "roster_size": 7, "roster_label": "R7", "roles": {"implementer": {"dispatches": 2, "with_precision": 0, "findings": 0, "confirmed": 0, "precision": null, "marginal": null, "marginal_measured": 0, "marginal_unmeasured": 2, "marginal_rate": null, "insufficient_sample": true, "dollars_usd": null, "cost_per_marginal_usd": null}, "verifier": {"dispatches": 5, "with_precision": 5, "findings": 15, "confirmed": 9, "precision": 0.6, "marginal": 5, "marginal_measured": 5, "marginal_unmeasured": 0, "marginal_rate": 1.0, "insufficient_sample": false, "dollars_usd": null, "cost_per_marginal_usd": null}, "scout": {"dispatches": 2, "with_precision": 0, "findings": 0, "confirmed": 0, "precision": null, "marginal": null, "marginal_measured": 0, "marginal_unmeasured": 2, "marginal_rate": null, "insufficient_sample": true, "dollars_usd": null, "cost_per_marginal_usd": null}, "test-author": {"dispatches": 5, "with_precision": 0, "findings": 0, "confirmed": 0, "precision": null, "marginal": null, "marginal_measured": 0, "marginal_unmeasured": 5, "marginal_rate": null, "insufficient_sample": false, "dollars_usd": null, "cost_per_marginal_usd": null}, "second-verifier": {"dispatches": 2, "with_precision": 1, "findings": 1, "confirmed": 0, "precision": 0.0, "marginal": 0, "marginal_measured": 1, "marginal_unmeasured": 1, "marginal_rate": 0.0, "insufficient_sample": true, "dollars_usd": null, "cost_per_marginal_usd": null}, "red-team": {"dispatches": 2, "with_precision": 0, "findings": 0, "confirmed": 0, "precision": null, "marginal": null, "marginal_measured": 0, "marginal_unmeasured": 2, "marginal_rate": null, "insufficient_sample": true, "dollars_usd": null, "cost_per_marginal_usd": null}, "reviewer": {"dispatches": 1, "with_precision": 1, "findings": 3, "confirmed": 2, "precision": 0.6666666666666666, "marginal": null, "marginal_measured": 0, "marginal_unmeasured": 1, "marginal_rate": null, "insufficient_sample": true, "dollars_usd": null, "cost_per_marginal_usd": null}}}], "aggregate": {"roster": ["implementer", "red-team", "reviewer", "scout", "second-verifier", "test-author", "verifier"], "roster_size": 7, "roster_label": "R7", "roles": {"implementer": {"dispatches": 4, "with_precision": 0, "findings": 0, "confirmed": 0, "precision": null, "marginal": null, "marginal_measured": 0, "marginal_unmeasured": 4, "marginal_rate": null, "insufficient_sample": true, "dollars_usd": null, "cost_per_marginal_usd": null}, "verifier": {"dispatches": 7, "with_precision": 7, "findings": 18, "confirmed": 11, "precision": 0.6111111111111112, "marginal": 5, "marginal_measured": 5, "marginal_unmeasured": 2, "marginal_rate": 1.0, "insufficient_sample": false, "dollars_usd": null, "cost_per_marginal_usd": null}, "reviewer": {"dispatches": 2, "with_precision": 2, "findings": 4, "confirmed": 3, "precision": 0.75, "marginal": null, "marginal_measured": 0, "marginal_unmeasured": 2, "marginal_rate": null, "insufficient_sample": true, "dollars_usd": null, "cost_per_marginal_usd": null}, "scout": {"dispatches": 2, "with_precision": 0, "findings": 0, "confirmed": 0, "precision": null, "marginal": null, "marginal_measured": 0, "marginal_unmeasured": 2, "marginal_rate": null, "insufficient_sample": true, "dollars_usd": null, "cost_per_marginal_usd": null}, "test-author": {"dispatches": 5, "with_precision": 0, "findings": 0, "confirmed": 0, "precision": null, "marginal": null, "marginal_measured": 0, "marginal_unmeasured": 5, "marginal_rate": null, "insufficient_sample": false, "dollars_usd": null, "cost_per_marginal_usd": null}, "second-verifier": {"dispatches": 2, "with_precision": 1, "findings": 1, "confirmed": 0, "precision": 0.0, "marginal": 0, "marginal_measured": 1, "marginal_unmeasured": 1, "marginal_rate": 0.0, "insufficient_sample": true, "dollars_usd": null, "cost_per_marginal_usd": null}, "red-team": {"dispatches": 2, "with_precision": 0, "findings": 0, "confirmed": 0, "precision": null, "marginal": null, "marginal_measured": 0, "marginal_unmeasured": 2, "marginal_rate": null, "insufficient_sample": true, "dollars_usd": null, "cost_per_marginal_usd": null}}}, "notes": ["roles-r7-marginal: unrecognized agent line: \'agent: W9 id=r7-bad role=chef model=sonnet\'"]}'
+
+_ROLES_JSON_VOLATILE = ("generated_at", "kits_dir")
+
+
+def _roles_json_without_volatile_keys(stdout):
+    card = json.loads(stdout)
+    for key in _ROLES_JSON_VOLATILE:
+        card.pop(key, None)
+    return json.dumps(card)
+
+
+class RolesDemoGoldenTests(unittest.TestCase):
+    def test_demo_roles_markdown_byte_pinned(self):
+        rc, out = _capture(["--demo", "--roles"])
+        self.assertEqual(rc, 0)
+        self.assertEqual(out, GOLDEN_ROLES_DEMO_MARKDOWN)
+
+    def test_demo_roles_json_pinned(self):
+        rc, out = _capture(["--demo", "--roles", "--json"])
+        self.assertEqual(rc, 0)
+        self.assertEqual(_roles_json_without_volatile_keys(out), GOLDEN_ROLES_DEMO_JSON)
+
+    def test_demo_roles_exit_zero_the_claude_md_smoke(self):
+        rc, out = _capture(["--demo", "--roles"])
+        self.assertEqual(rc, 0)
+        self.assertTrue(out)
 
 
 if __name__ == "__main__":
