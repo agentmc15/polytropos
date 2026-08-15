@@ -28,6 +28,14 @@ A Claude Code plugin that picks the right model per task, estimates the cost bef
 
 **Evidence-loop measurement surfaces:** [docs/EVIDENCE-LOOP.md](docs/EVIDENCE-LOOP.md) — auditing whether guardrails survive compaction (residency), when recurring lessons can become skills (promotion), and whether the escalation ladder outperforms simpler cascades (envelope).
 
+**Repo-bench — measure models on a repo's own real work:** [skills/repo-bench/SKILL.md](skills/repo-bench/SKILL.md) — mine a target repo's issue-fix history into benchmark tasks, run candidate models in history-free sandboxes, grade through four oracle classes (tests, structural, blind LLM judge, cost/latency) on a leak-proof substrate, and get an interval-honest verdict you can opt into applying to routing (`bin/repo_bench.py`; `plan`/`demo` spend nothing — only `run --live --max-usd` ever spends).
+
+**All-harness freshness — the update skill:** [skills/update/SKILL.md](skills/update/SKILL.md) — one read-only card (`bin/harness_update.py check`, exit 3 on drift) covering the Claude plugin cache, Copilot and Codex bundle drift, pricing-file ages, generated mirrors, and docs snapshot labels; `apply` refreshes exactly what each harness's own writer sanctions and never touches `~/.claude` (the remedy is printed, never executed).
+
+**Graph grounding — repo analysis via graphify:** [skills/graphify/SKILL.md](skills/graphify/SKILL.md) — build a local knowledge graph of a repo with the external, user-installed graphify CLI (offline subcommand set only) and read it through `bin/graph_brief.py`: an architect-grounding card that compresses a multi-megabyte graph to one honest screen, with its blind spots (dynamic loaders invisible to AST extraction) labeled rather than hidden.
+
+**The role-roster experiment — do more agents pay?:** [docs/ROLE-EXPERIMENT.md](docs/ROLE-EXPERIMENT.md) — grow a kit's execution roster from the trio to up to ten roles (`roles:` line in PLAN.md; scout, test-author, second-verifier, red-team, security-auditor, docs-editor, synthesizer), with every extra role's marginal catches measured against its cost by `bin/routing_scorecard.py --roles`. Extended roles are measured, never mandated — absent line means the trio, unchanged.
+
 ## Why
 
 Model lineup and API pricing (per million tokens, cached 2026-07-24):
@@ -104,6 +112,13 @@ The kit's agents pin their own models in frontmatter, so the model mix enforces 
 | `bin/routing_scorecard.py` (script) | Turns an executed kit's outcomes into a routing-quality scorecard: verify passed first-try vs retry vs escalated vs blocked, the model mix, the share of cheap-model work that survived review unchanged, and — with `--session` — dollars vs an all-Fable counterfactual (via `session_cost`). Read-only; `--json` for machine output; `--demo` runs on a built-in synthetic kit. |
 | `/polytropos:fable-check <task>` | Is this task worth 2× Opus pricing on Fable 5, and if so how to run it well (effort, spec-up-front, refusal fallbacks). |
 | `/polytropos:setup` | Installs the statusline (model · session cost · context % · rate-limit burn) into `~/.claude/settings.json`, with confirmation. |
+| `/polytropos:journal` | The daily work journal: collect yesterday's activity across all three harnesses (read-only), summarize via a routed cheap model, plan today from due cards. |
+| `/polytropos:memory` | Durable facts across sessions with pull-only, relevance-gated, budget-capped recall — never bulk-injected into context. |
+| `/polytropos:bench-routing` | External benchmark rankings joined against this repo's own measured outcomes; `compare` answers "should role X move up a model?" — and measured outcomes beat benchmark priors. |
+| `/polytropos:context-weight` | What fills your context window and what to do about it: per-call weight curves, ranked contributors, sidechain split, and a live watch with checkpoint-before-compact guidance. |
+| `/polytropos:repo-bench` | Benchmark models against a target repo's own issue-fix history — sandboxed, leak-proofed, four oracle classes, spend only behind `--live --max-usd`, verdicts below the evidence floor never applied. |
+| `/polytropos:update` | One freshness card across all three harness installs and every data surface; `apply` refreshes what each harness's own writer sanctions and never writes `~/.claude`. |
+| `/polytropos:graphify` | Local knowledge graph of a repo via the external graphify CLI (offline set only, availability-gated), read through the `graph_brief` architect-grounding card. |
 
 ## Key constraint to know
 

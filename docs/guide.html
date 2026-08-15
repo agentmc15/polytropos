@@ -165,6 +165,24 @@
 <h3><code>/polytropos:setup</code></h3>
 <p>Installs the statusline into <code>~/.claude/settings.json</code> with confirmation. <code>bin/statusline.py</code> prints one line: model name <strong>color-coded by price tier</strong> (<span class="tier-fable">red = Fable</span>, <span class="tier-opus">amber = Opus</span>, <span class="tier-sonnet">green = Sonnet</span>, <span class="tier-haiku">cyan = Haiku</span>), effort, estimated session cost, context %, and &mdash; on subscription sessions &mdash; 5h/7d rate-limit burn. The command written into settings must be a <strong>literal absolute path</strong> (<code>${CLAUDE_PLUGIN_ROOT}</code> doesn't exist outside plugin context). Costs shown are client-side estimates, not bills.</p>
 
+<h3><code>/polytropos:memory</code></h3>
+<p>Durable facts across sessions, engineered against the failure mode of memory systems: context bloat. <code>bin/memory_store.py</code> keeps one fact per file under the gitignored <code>memory/</code> store; <code>bin/memory_recall.py</code> is <strong>pull-only, relevance-gated, and budget-capped</strong> &mdash; a session asks for what's relevant and gets a few facts at most, never a bulk injection of the store. <code>review</code> reports staleness so wrong facts get deleted instead of accumulating.</p>
+
+<h3><code>/polytropos:bench-routing</code></h3>
+<p>Wraps <code>bin/bench_routing.py</code> over a screenshot-transcribed snapshot of an external general-capability benchmark (<code>data/benchmarks.aa.json</code> &mdash; a prior, not this repo's pricing, never a bill). <strong><code>compare</code> is the one to reach for</strong>: it joins the benchmark's implied pick against this repo's own measured first-try rates and says plainly when the ledger contradicts an upgrade. Roles the ledger doesn't evidence get <code>no_role_evidence</code>, never a borrowed number.</p>
+
+<h3><code>/polytropos:context-weight</code></h3>
+<p>What fills your context window, measured. <code>session</code> renders per-call weight curves and ranked contributors (with the sidechain-vs-main split that shows delegation paying); <code>watch</code> is the live Claude-only check whose recommendation flips to &ldquo;checkpoint decisions to disk, then compact&rdquo; past ~60% of the window. Each harness reports at its own honest fidelity; estimates are labeled <code>est.</code> and never priced.</p>
+
+<h3><code>/polytropos:repo-bench</code></h3>
+<p>Measures models on a <strong>target repo's own real work</strong>. <code>plan</code> mines issue-fix history into a priced models&times;tasks matrix, then stops &mdash; it spends nothing. Only <code>run --live --max-usd N</code> dispatches: history-free sandboxes, reference patches kept out of every candidate surface, four oracle classes on a substrate where <code>solved</code> is unforgeable. Verdicts are interval-honest, below-evidence-floor verdicts are never applied, and routing changes only via the explicit <code>apply</code> step.</p>
+
+<h3><code>/polytropos:update</code></h3>
+<p>The all-harness freshness custodian. <code>bin/harness_update.py check</code> renders one read-only card &mdash; Claude plugin cache, Copilot bundle drift, Codex install state, pricing ages, mirrors, docs labels &mdash; exit 3 on drift, absence never failure. <code>apply</code> refreshes only what each harness's own writer sanctions; the Claude side is <strong>print-only</strong> (the remedy is shown, never executed &mdash; repo code never writes <code>~/.claude</code>).</p>
+
+<h3><code>/polytropos:graphify</code></h3>
+<p>Repo analysis through a local knowledge graph. The external, user-installed graphify CLI (availability-gated, offline subcommand set only) turns a codebase into <code>graph.json</code> in seconds of pure AST parsing; <code>bin/graph_brief.py</code> compresses it to a one-screen architect-grounding card whose blind spots are labeled &mdash; dynamic loaders are invisible to AST extraction, and absence of an edge is never evidence of absence of a dependency.</p>
+
 <h3>Companion scripts (the aesop bridge)</h3>
 <ul>
   <li><code>bin/sync_pricing_refs.py</code> &mdash; writes byte-identical mirrors of <code>pricing.json</code> into <code>skills/{route,fable-check}/references/</code> so those skills stay self-contained when vendored into another repo by aesop. Rerun it whenever <code>pricing.json</code> changes (a test fails on drift).</li>
