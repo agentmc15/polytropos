@@ -184,8 +184,10 @@ AI usage across **Claude Code, Copilot CLI, and Codex CLI** — plus git activit
 transcript text). `bin/journal_summarize.py` then writes three summaries — `narrative.md`,
 `technical.md`, `next-day.md` — under the gitignored `journal/<date>/`; its `claude -p` runner is
 injectable and `--dry-run` prints the prompts and spawns nothing. `bin/journal_schedule.py` installs
-a macOS launchd job for a nightly run. Codex activity is counted but never priced (no Codex prices
-exist in `data/` by design). `allowed-tools: Bash, Read, Write`.
+a macOS launchd job for a nightly run. Codex activity is counted, and may additionally carry a
+clearly-labeled API-equivalent relative-burn proxy priced from `data/pricing.codex.json` at run
+time — never presented as a bill (`billed_usd` stays null and proxy dollars never enter the
+digest's priced totals). `allowed-tools: Bash, Read, Write`.
 
 ### `/polytropos:setup`
 Installs the statusline into `~/.claude/settings.json` with confirmation. `bin/statusline.py`
@@ -194,6 +196,67 @@ Sonnet, cyan = Haiku), effort, estimated session cost, context %, and — on sub
 5h/7d rate-limit burn. The command written into settings must be a **literal absolute path**
 (`${CLAUDE_PLUGIN_ROOT}` doesn't exist outside plugin context). Costs shown are client-side
 estimates, not bills.
+
+### `/polytropos:memory`
+Durable facts across sessions, engineered against the failure mode of memory systems: context
+bloat. `bin/memory_store.py` keeps one fact per file under the gitignored `memory/` store;
+`bin/memory_recall.py` is **pull-only, relevance-gated, and budget-capped** — a session asks for
+what's relevant to the task at hand and gets a few facts at most, never a bulk injection of the
+store. `review` reports staleness so wrong facts get deleted instead of accumulating. Every test
+runs against temp `--memory-dir` fixtures with an explicit `--now`; zero `Path.home()` in the
+memory code. `allowed-tools: Bash, Read, Write`.
+
+### `/polytropos:bench-routing`
+Wraps `bin/bench_routing.py` over a screenshot-transcribed snapshot of an external
+general-capability benchmark (`data/benchmarks.aa.json` — a prior, not this repo's pricing, and
+never a bill). `rank` gives index/value/frontier tables; `roles` recommends per-harness role
+models with availability derived from the three pricing files at run time; **`compare` is the one
+to reach for** — it joins the benchmark's implied pick against this repo's own measured first-try
+rates and says plainly when the ledger CONTRADICTS an upgrade ("opus already clears ~100% vs
+sonnet ~97%" reads as `not_supported`, not "worth considering"). Roles the ledger doesn't
+evidence get `no_role_evidence`, never a borrowed number.
+
+### `/polytropos:context-weight`
+What fills your context window, measured. `bin/context_weight.py session` renders per-call weight
+curves and ranked contributors (with the sidechain-vs-main split that shows delegation paying);
+`overview` compares sessions; `audit` sizes resident config surfaces against a budget; `watch` is
+the live Claude-only check whose recommendation line flips to "checkpoint decisions to disk, then
+compact" past ~60% of the window. Each harness reports at its own honest fidelity — Copilot never
+gets a fabricated growth curve, Codex never gets invented content attribution. Estimates are
+labeled `est.` and never priced.
+
+### `/polytropos:repo-bench`
+Measures models on a **target repo's own real work** instead of a generic benchmark. `plan` mines
+the repo's issue-fix history into candidate tasks and prints a priced models×tasks matrix — then
+stops (it spends nothing). Only `run --live --max-usd N` dispatches candidates: history-free
+sandbox trees (no answer key to find), reference patches and fix-tests kept out of every candidate
+surface, grading on a whitelist-constructed substrate where `solved` comes from the tests oracle
+alone, plus structural, blind-judge, and cost/latency oracles. Verdicts are interval-honest
+(`solved lies in [lower, upper]` under a cost ceiling), below-evidence-floor verdicts are never
+applied, and routing changes only via the explicit `apply` step writing gitignored
+`prefs/repo-bench.json`. `demo` runs the full pipeline on a fixture repo with stub dispatch.
+
+### `/polytropos:update`
+The all-harness freshness custodian. `bin/harness_update.py check` renders one read-only card —
+Claude plugin cache (via `bin/plugin_staleness.py`), Copilot bundle drift (per-file comparator),
+Codex install state (via `harness_select`'s doctor), pricing-file ages, generated mirrors, and
+docs snapshot labels — exit 0 fresh, exit 3 on drift, absence is never failure. `apply` refreshes
+only what each harness's own writer sanctions: Copilot files overwrite in place (stated), Codex
+prompts are plugin-owned mirrors (every differing rewrite listed) while `AGENTS.md`/skills stay
+no-clobber, repo mirrors regenerate — and the Claude side is **print-only**: the
+`claude plugin update` remedy is shown, never executed, because repo code never writes
+`~/.claude`. `demo` exercises both paths on synthetic temp trees.
+
+### `/polytropos:graphify`
+Repo analysis through a local knowledge graph. The external, user-installed graphify CLI
+(availability-gated; the skill prescribes its offline subcommand set only — the LLM extractor,
+network fetchers, and home-writing surfaces need explicit opt-in) turns a codebase into
+`graphify-out/graph.json` in seconds of pure AST parsing. `bin/graph_brief.py brief` compresses
+that multi-megabyte graph into a one-screen architect-grounding card — hubs with and without test
+fixtures, confidence mix, and a low-cross-file-visibility warning that names what AST extraction
+cannot see (dynamic loaders; absence of an edge is never evidence of absence of a dependency).
+The architect skill checks for a graph before dispatching wide exploratory reads; the
+context-weight skill names it as a PREVENT-lever technique.
 
 ### Companion scripts (the aesop bridge)
 - `bin/sync_pricing_refs.py` — writes byte-identical mirrors of `pricing.json` into
