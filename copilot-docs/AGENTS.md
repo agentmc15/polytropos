@@ -30,11 +30,11 @@ column shows whether the agent's configured model happens to be the same model i
 currently resolve to elsewhere in this bundle — a "no" is informational, not itself a problem.
 
 <!-- BEGIN GENERATED: agents-inventory -->
-Snapshot: `data/pricing.copilot.json` (cached_date 2026-08-11) — pricing sha256 `878154cfb099d2c948a0ae9acf98b216e79e90f13668c037086ab9dc2db549d8`, roster sha256 `fc3431a0951d3ef4cddc6ed7950358bc9602cea1b23393b7f10281bed22054ed`.
+Snapshot: `data/pricing.copilot.json` (cached_date 2026-08-11) — pricing sha256 `9e0e15fd48511d16244cdaa116c1046bd711b5064bb9d887a1a0a8c78e212714`, roster sha256 `be6e99e454d8f2562b944ffc1665c8a473b6f561448535dab66c933a6afccbe1`.
 
 | Agent | Description | Model | Tier | Excluded | Matches active |
 |---|---|---|---|---|---|
-| `architect` | Do the expensive planning once on the frontier model — deep-plan a complex task and write an execution kit (PLAN.md + TASKS.md with model-pinned, self-contained briefs) under tasks/kits/`<slug>`/ for the execute driver to dispatch on cheaper models. Use when the user says "architect this", "plan this big task", or asks for an execution kit. | `claude-fable-5` | frontier | yes | no |
+| `architect` | Do the expensive planning once on the frontier model — deep-plan a complex task and write an execution kit (PLAN.md + TASKS.md with model-pinned, self-contained briefs) under tasks/kits/`<slug>`/ for the execute driver to dispatch on cheaper models. Use when the user says "architect this", "plan this big task", or asks for an execution kit. | `claude-fable-5` | frontier | no | yes |
 | `bench-routing` | Decide whether a new or higher model should replace what a role currently runs on — a benchmark-informed routing recommendation. Use when the user asks "should we upgrade X to Y for this role" or wants a benchmark-backed routing check. | `claude-sonnet-5` | mid | no | yes |
 | `context-weight` | Reach for this when context is huge, cache reads are high, someone's asking should I compact, or you want to know what filled the window — a read-only, isolated report on session-average weight and the prevent/prune/measure levers. | `claude-haiku-4.5` | cheap | no | yes |
 | `effort` | Control the reasoning-effort dial for Copilot models — Copilot's per-model "Reasoning" setting, covering which models have it, how to set it, and when to turn it up or down. Use when the user asks to raise/lower reasoning effort, run at extra-high, or make a model think harder or cheaper. | `claude-sonnet-5` | mid | no | yes |

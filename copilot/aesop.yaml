@@ -36,7 +36,7 @@ primitives:
           Before any expensive run, use the `route` agent to pick the model tier and estimate cost in AIC.
           Beyond routing, six ported agents complete the optimizer surface: the usage agent (historical Copilot spend from local logs, read-only), the context-weight agent (measures what filled the context window), the bench-routing agent (checks a benchmark-informed routing recommendation against measured outcomes), the journal agent (the daily work journal), the frontier-check agent (is a task worth the frontier tier), and the escalate agent (verify-gated dispatch that climbs the tiers only on failure).
           The effort agent controls the reasoning-effort dial: Copilot's "Reasoning" setting is adjusted interactively in the /model picker with the left/right arrow keys (a per-model property — rows showing a dash have no dial; no headless flag is confirmed), and the level names are derived at run time from the pricing data's knobs, never from memory.
-          Every optimizer capability is also invocable as a skill — type /route, /usage, /context-weight, /bench-routing, /journal, /frontier-check, /escalate, /effort, /architect, /execute, or /budget in the prompt (or let Copilot auto-load one when the request matches its description); the same-named custom agents remain the persona surface for isolated --agent runs, and /skills reload picks up newly installed skills in-session.
+          Every optimizer capability is also invocable as a skill — type /route, /usage, /context-weight, /bench-routing, /journal, /frontier-check, /escalate, /effort, /architect, /execute, /budget, or /goliath in the prompt (or let Copilot auto-load one when the request matches its description); the same-named custom agents remain the persona surface for isolated --agent runs, and /skills reload picks up newly installed skills in-session.
   agents:
     - route
     - architect
@@ -63,5 +63,6 @@ primitives:
     - architect
     - execute
     - budget
+    - goliath
 state:
   dir: tasks/

@@ -30,7 +30,7 @@ The table below is generated directly from the skill files on disk at build time
 hand-typed, so it can never drift from what is actually installed.
 
 <!-- BEGIN GENERATED: skills-inventory -->
-Snapshot: `data/pricing.copilot.json` (cached_date 2026-08-11) — pricing sha256 `878154cfb099d2c948a0ae9acf98b216e79e90f13668c037086ab9dc2db549d8`, roster sha256 `fc3431a0951d3ef4cddc6ed7950358bc9602cea1b23393b7f10281bed22054ed`.
+Snapshot: `data/pricing.copilot.json` (cached_date 2026-08-11) — pricing sha256 `9e0e15fd48511d16244cdaa116c1046bd711b5064bb9d887a1a0a8c78e212714`, roster sha256 `be6e99e454d8f2562b944ffc1665c8a473b6f561448535dab66c933a6afccbe1`.
 
 | Skill | Description | Source |
 |---|---|---|
@@ -42,6 +42,7 @@ Snapshot: `data/pricing.copilot.json` (cached_date 2026-08-11) — pricing sha25
 | `escalate` | Run one task on the cheapest sufficient model behind a machine-checkable success check, escalating to a stronger tier — frontier last — only if the check fails. Use for "try it cheap first, fall back to the top model if it doesn't work". | `copilot/.github/skills/escalate/SKILL.md` |
 | `execute` | Run an execution kit under tasks/kits/`<slug>`/ — drive bin/copilot_execute.py task by task, verify each result, and climb the pricing tiers only on failure. Use when the user says to execute, continue, or resume a kit or plan. | `copilot/.github/skills/execute/SKILL.md` |
 | `frontier-check` | Decide whether a task is worth the harness's frontier-tier model versus a strong or mid model, and how to run it optimally — effort, task spec, refusal fallbacks. Use when the user asks "is the top model worth it here" or how to get the most out of it. | `copilot/.github/skills/frontier-check/SKILL.md` |
+| `goliath` | Run Copilot CLI work through the Goliath five-role pipeline, with the architect as planner and explicit model fallbacks for implementation, test authoring, verification, review, and red-team checks. | `copilot/.github/skills/goliath/SKILL.md` |
 | `journal` | Generate the daily work journal — collect today's AI usage across Claude Code, Copilot CLI, and Codex CLI plus git activity into a digest, then write the narrative, technical, and next-day-plan summaries. Use when the user asks for their work journal, daily summary, "what did I do today", or to plan tomorrow. | `copilot/.github/skills/journal/SKILL.md` |
 | `lessons-loop` | Capture a durable lesson every time the human corrects the agent — or a task escalates models — so the same mistake doesn't recur. Use immediately after any user correction and after any model escalation. Also use at session start to load relevant past lessons. | `copilot/.github/skills/lessons-loop/SKILL.md` |
 | `route` | Pick the right Copilot model for a task and estimate its cost in AI Credits before running it. Use when the user asks which model to use, what a task will cost, whether a cheaper model would do, or how much of their plan allowance a job will burn. | `copilot/.github/skills/route/SKILL.md` |
@@ -238,6 +239,25 @@ tier would have handled just as well.
 
 **Same-named agent.** Yes — an isolated `frontier-check` agent makes the same judgment; see
 `AGENTS.md`.
+
+## goliath
+
+**When to use it.** You want a Copilot CLI-only workflow that separates architecture,
+implementation, verification, review, and red-team work and uses explicit per-role model
+fallbacks.
+
+**How to request it.** Ask to use Goliath or type `/goliath` in a prompt.
+
+**What it does.** It always runs the architect first as planner, followed by five execution
+roles: implementer, test-author, verifier, reviewer/orchestrator, and red-team. It resolves each
+role's requested model against the live Copilot picker and the pricing roster, falls back in the
+declared order when needed, and stops instead of silently substituting a different role when no
+candidate is available.
+
+**Safety and cost notes.** It requires fresh-context verification, keeps review read-only, and
+never invokes the real Copilot CLI from tests or verify commands.
+
+**Same-named agent.** No — Goliath is currently a Copilot skill only.
 
 ## journal
 

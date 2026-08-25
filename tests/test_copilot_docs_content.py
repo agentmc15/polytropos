@@ -61,7 +61,7 @@ AIC_REPORT_PAIR = ("AIC-REPORT.md", "aic-report.html")
 
 EXPECTED_SKILLS = {
     "architect", "bench-routing", "budget", "context-weight", "effort", "escalate", "execute",
-    "frontier-check", "journal", "lessons-loop", "route", "usage",
+    "frontier-check", "goliath", "journal", "lessons-loop", "route", "usage",
 }
 EXPECTED_AGENTS = {
     "architect", "bench-routing", "context-weight", "effort", "escalate", "frontier-check",

@@ -3,20 +3,14 @@
   "pricing_snapshot": {
     "path": "data/pricing.copilot.json",
     "cached_date": "2026-08-11",
-    "pricing_sha256": "878154cfb099d2c948a0ae9acf98b216e79e90f13668c037086ab9dc2db549d8",
-    "roster_sha256": "fc3431a0951d3ef4cddc6ed7950358bc9602cea1b23393b7f10281bed22054ed"
+    "pricing_sha256": "9e0e15fd48511d16244cdaa116c1046bd711b5064bb9d887a1a0a8c78e212714",
+    "roster_sha256": "be6e99e454d8f2562b944ffc1665c8a473b6f561448535dab66c933a6afccbe1"
   },
   "prefs_snapshot": {
-    "source": "prefs/copilot.json",
-    "pins": {
-      "frontier": "gpt-5.6-sol"
-    },
-    "excludes": [
-      "claude-fable-5"
-    ],
-    "notes": [
-      "pin frontier=gpt-5.6-sol is a cross-tier override (model's own tier: strong)"
-    ],
+    "source": null,
+    "pins": {},
+    "excludes": [],
+    "notes": [],
     "resolved": {
       "mid": "claude-sonnet-5",
       "strong": "claude-opus-4.8"
@@ -28,12 +22,8 @@
   },
   "inputs": {
     "prefs": {
-      "pins": {
-        "frontier": "gpt-5.6-sol"
-      },
-      "excludes": [
-        "claude-fable-5"
-      ]
+      "pins": {},
+      "excludes": []
     }
   },
   "documents": [
@@ -42,7 +32,7 @@
       "kind": "markdown",
       "title": "GitHub Copilot CLI Documentation Center",
       "authoring_mode": "estimated",
-      "sources_sha256": "87e8e7b4d48ba8c8630989fc2f80a9d1ef1428ed37ea8b7f93e725d017526267",
+      "sources_sha256": "7c48c5e9774fa4d49e1b99554833847c0e0613cba4d34ee93d1f3c00ef53141a",
       "measurement": {
         "bytes": 3586,
         "words": 564,
@@ -87,7 +77,7 @@
       "kind": "markdown",
       "title": "Installing the Copilot CLI bundle",
       "authoring_mode": "estimated",
-      "sources_sha256": "ad4503c56e6dce0048d1141b6042c665956e4463ef44c8e9deb21d900f124621",
+      "sources_sha256": "225b4c2bcd0d6585082f913685f154ff8e9b95d6ddae87e9a1848ae151317152",
       "measurement": {
         "bytes": 3516,
         "words": 551,
@@ -132,7 +122,7 @@
       "kind": "markdown",
       "title": "Safety and cost boundaries",
       "authoring_mode": "estimated",
-      "sources_sha256": "933d4a55e47eb4c3d517953a36f56ae37a575a7485593933793a31944f50d4a8",
+      "sources_sha256": "b3fa668ad5f6686d8cd7a0fdf77054e4accc07c70878bd779cd564858eaf8d4f",
       "measurement": {
         "bytes": 4945,
         "words": 762,
@@ -177,12 +167,12 @@
       "kind": "markdown",
       "title": "Skills reference",
       "authoring_mode": "estimated",
-      "sources_sha256": "bdabe1a59cf5512227dac46424cc1c23b885dd89b59c063592a2e43420c08bab",
+      "sources_sha256": "38c03b8631748bce9dae9abda69dea4c3a89b95c7cb5f710ea046741ef38ccc5",
       "measurement": {
-        "bytes": 21388,
-        "words": 3534,
-        "lexemes": 4974,
-        "ai_output_lexemes": 3947
+        "bytes": 22563,
+        "words": 3712,
+        "lexemes": 5235,
+        "ai_output_lexemes": 4150
       },
       "cost": {
         "model_id": "claude-opus-4.8",
@@ -196,8 +186,8 @@
         "cache_hit_assumed": 0.8,
         "rates_used": "base",
         "warnings": [],
-        "usd": 0.308675,
-        "aic": 30.867499999999996,
+        "usd": 0.31375,
+        "aic": 31.374999999999996,
         "uncertainty": "Prospective estimate: assumes the manifest's declared input-token convention and treats this document's own measured lexeme count as a stand-in for model output tokens \u2014 not a historical usage measurement."
       },
       "resolved_model_id": "claude-opus-4.8"
@@ -209,7 +199,7 @@
       "authoring_mode": "estimated",
       "markdown_source": "SKILLS.md",
       "measurement": {
-        "bytes": 25352
+        "bytes": 26703
       },
       "cost": {
         "usd": 0.0,
@@ -222,7 +212,7 @@
       "kind": "markdown",
       "title": "Agents reference",
       "authoring_mode": "estimated",
-      "sources_sha256": "d63e0eb84e8b01322f1e96b11e1f98e855b78884d7bd15d61dd24c6d028acdd7",
+      "sources_sha256": "e21272fd7f9e1e2df238d6441df09ca40fa653810fb3034eb2f92bd4e5056347",
       "measurement": {
         "bytes": 16474,
         "words": 2659,
@@ -267,11 +257,11 @@
       "kind": "markdown",
       "title": "Models and preferences",
       "authoring_mode": "estimated",
-      "sources_sha256": "2cf5fb9eb76f30c58766c20f94e5e2ad306860c5c2c79b8bc31fc03e80eee153",
+      "sources_sha256": "ec814115ccb407ae62a9c8be71d07a68d1c25d2b5673b568492af6d8bc3b0858",
       "measurement": {
-        "bytes": 17160,
-        "words": 2805,
-        "lexemes": 4371,
+        "bytes": 17512,
+        "words": 2863,
+        "lexemes": 4444,
         "ai_output_lexemes": 1577
       },
       "cost": {
@@ -299,7 +289,7 @@
       "authoring_mode": "estimated",
       "markdown_source": "MODELS.md",
       "measurement": {
-        "bytes": 21075
+        "bytes": 21411
       },
       "cost": {
         "usd": 0.0,
@@ -312,7 +302,7 @@
       "kind": "markdown",
       "title": "Costs and AIC accounting",
       "authoring_mode": "estimated",
-      "sources_sha256": "2eb6ee86c0d0dbf8f26d704cb79d3c26272b18db0e10bf36b4284a9a5810f570",
+      "sources_sha256": "2fe6d90013f3ce2f6faed89588586f1a7d52bf58c16a4c00ba5a18e9cc514894",
       "measurement": {
         "bytes": 8430,
         "words": 1350,
@@ -357,7 +347,7 @@
       "kind": "markdown",
       "title": "Practical workflows",
       "authoring_mode": "estimated",
-      "sources_sha256": "4cf7bb0c2079975bba0fae19ff80527ae4fef528e8b2a056040530110aa40591",
+      "sources_sha256": "3e071a432f7fae11b7372c107a9cda4938f34d59383757e7a93e5a257878462b",
       "measurement": {
         "bytes": 12380,
         "words": 1997,
@@ -436,7 +426,7 @@
     }
   ],
   "totals": {
-    "usd": 1.30569,
-    "aic": 130.569
+    "usd": 1.310765,
+    "aic": 131.0765
   }
 }
