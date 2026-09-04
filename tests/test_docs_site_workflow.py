@@ -355,5 +355,46 @@ class WorkflowIndentationTests(unittest.TestCase):
         )
 
 
+
+class ConfigurePagesEnablementTests(unittest.TestCase):
+    """The workflow provisions its own Pages site rather than requiring a manual click.
+
+    `actions/deploy-pages` publishes INTO an already-configured Pages site; it cannot
+    create one, because enabling Pages is a repository setting. `configure-pages` with
+    `enablement: true` does that on the first run, which is what makes this repo (and any
+    fork of it) publish without someone first reading the README. Dropping the step or the
+    input reintroduces a manual setup requirement silently -- the deploy job would simply
+    start failing on a fresh repo, with nothing in the diff explaining why.
+    """
+
+    def setUp(self):
+        self.text = WORKFLOW.read_text(encoding="utf-8")
+        # Comment lines are stripped before asserting on the YAML: the header explains
+        # what `enablement: true` does, so a whole-file regex would still pass with the
+        # real input deleted. Caught by probing this guard against a mutated copy.
+        self.yaml = "\n".join(
+            line for line in self.text.splitlines() if not line.lstrip().startswith("#")
+        )
+
+    def test_configure_pages_action_present(self):
+        self.assertIn("actions/configure-pages@v5", self.yaml)
+
+    def test_enablement_is_true(self):
+        self.assertRegex(self.yaml, r"enablement:\s*true")
+
+    def test_configure_pages_runs_before_the_artifact_upload(self):
+        cfg = self.yaml.index("actions/configure-pages")
+        upload = self.yaml.index("actions/upload-pages-artifact")
+        self.assertLess(cfg, upload)
+
+    def test_header_still_documents_the_manual_fallback(self):
+        # Self-enablement can be blocked by org policy, so the manual route must stay
+        # written down -- an undocumented fallback is the same as no fallback.
+        header = "\n".join(
+            line for line in self.text.splitlines() if line.startswith("#")
+        )
+        self.assertRegex(header, r"(?i)settings")
+        self.assertRegex(header, r"(?i)fallback|by hand|manual")
+
 if __name__ == "__main__":
     unittest.main()

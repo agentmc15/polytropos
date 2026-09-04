@@ -1,8 +1,11 @@
 # docs-site: build + deploy the public MkDocs Material manual to GitHub Pages.
 #
-# (1) The site publishes at https://agentmc15.github.io/polytropos/ once the user sets
-#     repo Settings -> Pages -> Source to "GitHub Actions" (manual, one-time step; this
-#     workflow cannot do it for you).
+# (1) The site publishes at https://agentmc15.github.io/polytropos/. The Configure Pages
+#     step below passes enablement: true, so the first run turns Pages on and sets its
+#     source to "GitHub Actions" by itself — no manual setup, and a fork gets a working
+#     site without reading this file. If that step fails (org policy can forbid a workflow
+#     from changing repo settings), do it by hand once: repo Settings -> Pages -> Source
+#     -> "GitHub Actions". That is the only manual fallback.
 # (2) This workflow is the ONLY place besides docs-src/requirements.txt that knows about
 #     the mkdocs toolchain — bin/ and tests/ stay stdlib-only (CLAUDE.md invariant).
 name: docs-site
@@ -28,6 +31,14 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      # enablement: true creates/configures the Pages site on first run. deploy-pages
+      # only publishes INTO an already-configured site; enabling it is a repo setting,
+      # which is why this step exists rather than a line in the README.
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+        with:
+          enablement: true
 
       - name: Set up Python
         uses: actions/setup-python@v5
