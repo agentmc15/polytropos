@@ -1,0 +1,4 @@
+interface:
+  display_name: "Private Memory"
+  short_description: "Recall relevant local context with bounded scope"
+  default_prompt: "Use $memory to recall relevant local context for this repository task."

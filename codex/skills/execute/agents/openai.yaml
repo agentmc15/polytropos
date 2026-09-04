@@ -1,0 +1,4 @@
+interface:
+  display_name: "Execute Kit"
+  short_description: "Run a prepared execution kit task by task"
+  default_prompt: "Use $execute to continue the prepared execution kit at tasks/kits/my-change."

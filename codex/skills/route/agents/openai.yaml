@@ -1,0 +1,4 @@
+interface:
+  display_name: "Model Route"
+  short_description: "Choose a model tier and estimate relative burn"
+  default_prompt: "Use $route to choose a model tier for this feature and estimate its relative burn."

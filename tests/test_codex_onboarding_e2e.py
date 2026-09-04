@@ -2,6 +2,7 @@ import importlib.util
 import json
 import re
 import shutil
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -19,6 +20,9 @@ def _load(name):
 
 selector = _load("harness_select")
 syncer = _load("sync_codex_surfaces")
+sys.path.insert(0, str(ROOT / "bin"))
+import codex_legacy_migration as migration
+updater = _load("harness_update")
 
 
 def _relocated(root):
@@ -51,6 +55,51 @@ def _files(root):
 
 
 class CodexOnboardingE2ETests(unittest.TestCase):
+    def test_relocated_native_to_legacy_retirement_update_and_restore(self):
+        with tempfile.TemporaryDirectory() as tmp_s:
+            base = Path(tmp_s)
+            repo, home, backup = _relocated(base / "repo"), base / "home", base / "backup"
+
+            native = selector.plan_codex_setup(repo, home)
+            self.assertEqual(native["package_readiness"]["state"], "ready")
+            self.assertEqual(native["activation"]["state"], "unknown")
+            selector.apply_codex_plan(native)
+            self.assertFalse(any((home / "prompts").rglob("*") if (home / "prompts").exists() else ()))
+            self.assertFalse(any((home / "skills").rglob("*") if (home / "skills").exists() else ()))
+
+            legacy = selector.plan_codex_setup(
+                repo, home, components=("prompts", "skills"), legacy_copy=True
+            )
+            selector.apply_codex_plan(legacy)
+            route_prompt = home / "prompts" / "route.md"
+            original_prompt = route_prompt.read_bytes()
+            route_prompt.write_bytes(original_prompt + b"user edit\n")
+            conflict = selector.plan_codex_setup(
+                repo, home, components=("prompts",), legacy_copy=True, refresh_managed=True
+            )
+            self.assertEqual(
+                next(action["state"] for action in conflict["actions"] if Path(action["destination"]).resolve() == route_prompt.resolve()),
+                "conflict",
+            )
+            route_prompt.write_bytes(original_prompt)
+
+            retirement = migration.plan_retirement(
+                repo, home, backup, ("prompts", "skills"), native_skills_confirmed=True
+            )
+            self.assertFalse(retirement["blocked"])
+            migration.apply_retirement(retirement)
+            self.assertFalse(any((home / "prompts").rglob("*") if (home / "prompts").exists() else ()))
+            self.assertFalse(any((home / "skills").rglob("*") if (home / "skills").exists() else ()))
+
+            update = updater.apply_codex_target(repo, home)
+            self.assertEqual(update["action"], "updated")
+            self.assertFalse(any((home / "prompts").rglob("*") if (home / "prompts").exists() else ()))
+            self.assertFalse(any((home / "skills").rglob("*") if (home / "skills").exists() else ()))
+
+            migration.restore_legacy(repo, home, backup)
+            self.assertEqual(route_prompt.read_bytes(), original_prompt)
+            self.assertEqual(len(list((home / "skills").glob("*/SKILL.md"))), 12)
+
     def test_fresh_relocated_clone_validates_and_plans_deterministically(self):
         with tempfile.TemporaryDirectory() as tmp_s:
             base = Path(tmp_s)

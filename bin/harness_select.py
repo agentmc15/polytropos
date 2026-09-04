@@ -28,31 +28,18 @@ on a name collision the home-dir agent wins. Installing this bundle into a Copil
 therefore makes it the one true `route` agent everywhere that home is active, silently
 shadowing any same-named agent a project might keep in its own `.github/agents/`.
 
-What `install --harness codex` does: it copies every `*.md` file under `codex/prompts/`
-into `<codex-home>/prompts/<same filename>`, resolving `{{POLYTROPOS_ROOT}}` to this
-repo's absolute path exactly as the Copilot install does. It then handles `codex/AGENTS.md`
-→ `<codex-home>/AGENTS.md` under a NO-CLOBBER rule: write it if absent; if it already exists
-byte-identical to the resolved text, leave it and report `up to date`; if it exists but
-DIFFERS, never overwrite it — skip it and print a manual-merge warning. Rationale:
-`~/.codex/AGENTS.md` is a single shared file that may hold the user's own global Codex
-instructions, so overwriting is destructive — unlike Copilot's per-file namespaced
-`agents/` directory. The installer NEVER touches `config.toml` (a live user file whose TOML
-merging is invasive). `~/.codex` is only ever written at the user's explicit request via
-this installer; every test and verify command passes a temp `--codex-home`, never the real
-`~/.codex`.
+What `install --harness codex` does by default: it validates and prepares the checked-in plugin
+metadata and may install the selected optional agent roles. It does not call `codex`, register
+or enable a plugin, refresh the host cache, or copy skills, prompts, or global guidance.
+Use `codex plugin marketplace add <repo-root>` and `codex plugin add
+polytropos@polytropos-local` for the host-side installation. The plan reports package readiness
+separately from runtime activation, which remains unknown without host evidence.
 
-The prompts cover the terminal `codex` CLI (which reads `<codex-home>/prompts/`). The
-ChatGPT Codex desktop app uses a DIFFERENT surface — Agent Skills under
-`<codex-home>/skills/<name>/` (its `/`-palette "Skills" section) — and does not read prompts
-at all. So the codex install ALSO materializes every skill directory under `codex/skills/`
-into `<codex-home>/skills/<name>/`, with the same placeholder resolution, under a per-skill
-NO-CLOBBER rule (the AGENTS.md rule at directory granularity, matching Codex's own
-skill-installer abort-if-exists safety): destination skill dir absent → install; present and
-every file byte-identical → up-to-date; present but any file differs → skip-differs (never
-overwrite a user's same-named personal skill; re-installing our own after a repo-side change
-also reports skip-differs — remove the stale `<codex-home>/skills/<name>/` to refresh it). A
-missing or empty `codex/skills/` dir is tolerated — prompts remain the required core, exactly
-as the Copilot install tolerates a missing skills dir.
+`--legacy-copy` is the explicit compatibility path for copying skills, prompts, or guidance into
+an explicitly supplied Codex home. It is ownership-aware and preserves differing user files.
+The legacy `install_codex()` helper retains that behavior for callers; new normal installs and
+updates use the native planner. Tests and verification always pass temporary homes, never a real
+Codex home.
 
 Nothing here writes outside an explicitly-passed home directory, and `detect()` does not
 read or write anything under `~` — it only consults PATH via `shutil.which`.
@@ -187,7 +174,9 @@ def install_codex(home, repo_root=None, dry_run=False):
     `str(repo_root)` before being written to its destination (parent dirs are created as
     needed) — the exact Copilot mechanism.
 
-    AGENTS.md no-clobber rule: `~/.codex/AGENTS.md` is a single shared file that may hold the
+    All destinations are no-clobber. Prompt destinations now use the same absent/matching/differing
+    classification as guidance: matching files remain untouched and differing files are skipped.
+    `~/.codex/AGENTS.md` is a single shared file that may hold the
     user's own global Codex instructions, so — unlike Copilot's per-file namespaced `agents/`
     directory — overwriting it is destructive. Destination absent → write the resolved text;
     destination present and byte-identical to the resolved text → do NOT write, report
@@ -237,13 +226,17 @@ def install_codex(home, repo_root=None, dry_run=False):
     results = []
     for src in prompt_files:
         dest = dest_dir / src.name
-        results.append((dest, "install"))
-        if dry_run:
+        text = src.read_text().replace(PLACEHOLDER, str(repo_root))
+        if dest.exists():
+            if dest.is_file() and dest.read_text() == text:
+                results.append((dest, "up-to-date"))
+            else:
+                results.append((dest, "skip-differs"))
             continue
-        text = src.read_text()
-        text = text.replace(PLACEHOLDER, str(repo_root))
-        dest_dir.mkdir(parents=True, exist_ok=True)
-        dest.write_text(text)
+        results.append((dest, "install"))
+        if not dry_run:
+            dest_dir.mkdir(parents=True, exist_ok=True)
+            dest.write_text(text)
 
     if bundle_agents_md.is_file():
         agents_dest = home / "AGENTS.md"
@@ -372,6 +365,15 @@ def parse_codex_components(raw):
     if unknown:
         raise ValueError(f"unknown component(s): {', '.join(unknown)}")
     return tuple(value for value in CODEX_COMPONENTS if value in values)
+
+
+def parse_retirement_components(raw):
+    values = tuple(value.strip() for value in (raw or "prompts").split(","))
+    if not values or any(not value for value in values) or len(set(values)) != len(values):
+        raise ValueError("--components must contain unique prompts and optionally skills")
+    if set(values) - {"prompts", "skills"}:
+        raise ValueError("retirement supports only prompts and skills")
+    return tuple(value for value in ("prompts", "skills") if value in values)
 
 
 def _load_ownership(codex_home):
@@ -506,16 +508,22 @@ def plan_codex_setup(
         if isinstance(entry, dict) and isinstance(entry.get("destination"), str)
     }
     actions = []
+    package_valid, package_reason = _validate_plugin_metadata(root)
 
     if "plugin" in components:
-        valid, reason = _validate_plugin_metadata(root)
         actions.append(
             {
                 "component": "plugin",
                 "source": str(root / ".agents" / "plugins" / "marketplace.json"),
                 "destination": "Codex /plugins",
-                "state": "up-to-date" if valid else "conflict",
-                "reason": reason if valid else f"plugin metadata invalid: {reason}",
+                # Preserve the installer action-state contract.  Package readiness below is
+                # the diagnostic truth; this state does not assert host installation.
+                "state": "up-to-date" if package_valid else "conflict",
+                "reason": (
+                    package_reason
+                    if package_valid
+                    else f"plugin metadata invalid: {package_reason}"
+                ),
                 "source_digest": None,
                 "destination_digest": None,
             }
@@ -600,6 +608,15 @@ def plan_codex_setup(
         "codex_home": str(home),
         "agent_scope": agent_scope,
         "components": list(components),
+        "legacy_copy": bool(legacy_copy),
+        "package_readiness": {
+            "state": "ready" if package_valid else "invalid",
+            "reason": package_reason,
+        },
+        "activation": {
+            "state": "unknown",
+            "reason": "installation, enablement, and loaded skills require host runtime evidence",
+        },
         "actions": actions,
     }
 
@@ -654,27 +671,46 @@ def apply_codex_plan(plan, fail_after=None):
             if fail_after is not None and index >= fail_after:
                 raise RuntimeError("simulated setup write failure")
 
-        records = []
+        # Merge selected actions into the prior manifest. Component-scoped native setup must
+        # not discard ownership for legacy components (or later migration metadata) that the
+        # current plan did not select.
+        prior_ownership = _load_ownership(plan["codex_home"])
+        manifest = dict(prior_ownership) if isinstance(prior_ownership, dict) else {}
+        manifest.pop("invalid", None)
+        records_by_destination = {
+            record.get("destination"): dict(record)
+            for record in manifest.get("files", [])
+            if isinstance(record, dict) and isinstance(record.get("destination"), str)
+        }
         for action in plan["actions"]:
             if action["component"] == "plugin" or action["state"] in {"conflict", "unmanaged", "skip"}:
                 continue
             destination = Path(action["destination"])
             if not destination.is_file():
                 continue
-            records.append(
-                {
-                    "component": action["component"],
-                    "destination": action["_ownership_key"],
-                    "bundle_version": plan["bundle_version"],
-                    "source_hash": action["source_digest"],
-                    "installed_hash": _sha256_bytes(destination.read_bytes()),
-                }
-            )
-        manifest = {
+            records_by_destination[action["_ownership_key"]] = {
+                "component": action["component"],
+                "destination": action["_ownership_key"],
+                "bundle_version": plan["bundle_version"],
+                "source_hash": action["source_digest"],
+                "installed_hash": _sha256_bytes(destination.read_bytes()),
+            }
+        manifest.update({
             "version": OWNERSHIP_VERSION,
             "bundle_version": plan["bundle_version"],
-            "files": sorted(records, key=lambda record: record["destination"]),
-        }
+            "files": sorted(records_by_destination.values(), key=lambda record: record["destination"]),
+        })
+        if plan.get("legacy_copy") and isinstance(manifest.get("retired"), list):
+            recreated = {
+                action.get("_ownership_key") for action in plan["actions"]
+                if action["component"] in {"skills", "prompts"}
+                and action["state"] not in {"conflict", "unmanaged", "skip"}
+            }
+            manifest["retired"] = [
+                record for record in manifest["retired"]
+                if record.get("destination") not in recreated
+            ]
+        records = manifest["files"]
         if records:
             manifest_bytes = (json.dumps(manifest, indent=2, sort_keys=True) + "\n").encode("utf-8")
             if prior_manifest != manifest_bytes:
@@ -704,6 +740,11 @@ def doctor_codex(repo_root, codex_home):
     )
     ownership = _load_ownership(codex_home)
     checks = _public_plan(plan)
+    optional_components = {"skills", "prompts", "guidance"}
+    for action in checks["actions"]:
+        if action["component"] in optional_components and action["state"] == "install":
+            action["state"] = "absent"
+            action["reason"] = "optional legacy copy is absent"
     destination_agents = Path(repo_root).resolve() / ".codex" / "agents"
     canonical = {path.name for path in (Path(repo_root) / "codex" / "agents").glob("*.toml")}
     if destination_agents.is_dir():
@@ -727,6 +768,52 @@ def doctor_codex(repo_root, codex_home):
     checks["ownership_manifest"] = (
         "invalid" if ownership.get("invalid") else "present" if ownership.get("files") else "absent"
     )
+    home = Path(codex_home).resolve()
+    legacy_surfaces = {}
+    for component, relative in (
+        ("skills", Path("skills")),
+        ("prompts", Path("prompts")),
+        ("guidance", Path("AGENTS.md")),
+    ):
+        component_actions = [
+            action for action in checks["actions"] if action["component"] == component
+        ]
+        present = [action for action in component_actions if action["state"] != "absent"]
+        legacy_surfaces[component] = {
+            "state": "present" if present else "absent",
+            "optional": True,
+            "path": str(home / relative),
+            "counts": {
+                state: sum(action["state"] == state for action in component_actions)
+                for state in sorted({action["state"] for action in component_actions})
+            },
+        }
+    checks["legacy_surfaces"] = legacy_surfaces
+
+    canonical_names = {
+        path.name for path in (Path(repo_root) / "codex" / "skills").iterdir() if path.is_dir()
+    } if (Path(repo_root) / "codex" / "skills").is_dir() else set()
+    duplicate_surfaces = {}
+    for action in checks["actions"]:
+        if action["state"] == "absent" or action["component"] not in {"skills", "prompts"}:
+            continue
+        destination = Path(action["destination"])
+        if action["component"] == "skills":
+            try:
+                name = destination.relative_to(home / "skills").parts[0]
+            except (ValueError, IndexError):
+                continue
+        else:
+            name = destination.stem
+        if name not in canonical_names:
+            continue
+        duplicate_surfaces.setdefault(name, {"plugin-package"}).add(
+            f"legacy-{action['component'][:-1]}-copy"
+        )
+    checks["potential_duplicate_names"] = [
+        {"name": name, "surfaces": sorted(surfaces)}
+        for name, surfaces in sorted(duplicate_surfaces.items())
+    ]
     checks["session_note"] = "Restart Codex or start a new session after enabling the plugin or changing agents."
     return checks
 
@@ -736,12 +823,29 @@ def render_codex_plan(plan, as_json=False):
     if as_json:
         return json.dumps(public, indent=2, sort_keys=True)
     lines = []
+    readiness = public.get("package_readiness", {})
+    activation = public.get("activation", {})
+    lines.append(
+        f"package readiness: {readiness.get('state', 'unknown')}"
+        f" ({readiness.get('reason', 'no evidence')})"
+    )
+    lines.append(
+        f"runtime activation: {activation.get('state', 'unknown')}"
+        f" ({activation.get('reason', 'no runtime evidence')})"
+    )
     for action in public["actions"]:
+        label = "plugin package metadata" if action["component"] == "plugin" else action["component"]
         lines.append(
-            f"{action['component']}: {action['state']} — {action['destination']} ({action['reason']})"
+            f"{label}: {action['state']} — {action['destination']} ({action['reason']})"
         )
     if "plugin" in public["components"]:
-        lines.append("next: restart Codex, open /plugins, then install and enable Polytropos")
+        lines.append("next: open /plugins, install and enable Polytropos, then start a new session")
+    for duplicate in public.get("potential_duplicate_names", []):
+        lines.append(
+            f"potential duplicate: {duplicate['name']} — {', '.join(duplicate['surfaces'])}"
+        )
+    for name, surface in sorted(public.get("legacy_surfaces", {}).items()):
+        lines.append(f"optional legacy {name}: {surface['state']} — {surface['path']}")
     return "\n".join(lines)
 
 
@@ -786,45 +890,29 @@ def cmd_install(args):
         return
 
     if args.harness == "codex":
-        modern = any(codex_only_values)
         home = Path(args.codex_home) if args.codex_home else (Path.home() / ".codex")
-        if modern:
+        try:
             if args.refresh_managed and args.codex_home is None:
                 raise SystemExit("--refresh-managed requires an explicit --codex-home")
-            try:
-                components = parse_codex_components(args.components)
-                plan = plan_codex_setup(
-                    Path(args.repo_root) if args.repo_root else REPO_ROOT,
-                    home,
-                    components=components,
-                    agent_scope=args.agent_scope or "project",
-                    legacy_copy=args.legacy_copy,
-                    refresh_managed=args.refresh_managed,
-                )
-            except ValueError as exc:
-                raise SystemExit(str(exc)) from exc
-            print(render_codex_plan(plan, as_json=args.json))
-            if args.dry_run:
-                return
-            if any(action["state"] == "conflict" for action in plan["actions"]):
-                raise SystemExit(2)
-            apply_codex_plan(plan)
+            if args.legacy_copy and args.components is None:
+                raise SystemExit("--legacy-copy requires explicit --components")
+            components = parse_codex_components(args.components)
+            plan = plan_codex_setup(
+                Path(args.repo_root) if args.repo_root else REPO_ROOT,
+                home,
+                components=components,
+                agent_scope=args.agent_scope or "project",
+                legacy_copy=args.legacy_copy,
+                refresh_managed=args.refresh_managed,
+            )
+        except ValueError as exc:
+            raise SystemExit(str(exc)) from exc
+        print(render_codex_plan(plan, as_json=args.json))
+        if args.dry_run:
             return
-
-        try:
-            results = install_codex(home, dry_run=args.dry_run)
-        except FileNotFoundError as e:
-            print(str(e), file=sys.stderr)
-            sys.exit(2)
-
-        for dest, action in results:
-            if action == "up-to-date":
-                verb = "up to date"
-            elif action == "skip-differs":
-                verb = "skipped (exists, differs)"
-            else:  # "install"
-                verb = "would install" if args.dry_run else "installed"
-            print(f"{verb} {dest}")
+        if any(action["state"] in {"conflict", "unmanaged"} for action in plan["actions"]):
+            raise SystemExit(2)
+        apply_codex_plan(plan)
         return
 
     home = Path(args.copilot_home) if args.copilot_home else (Path.home() / ".copilot")
@@ -854,6 +942,30 @@ def cmd_doctor(args):
     print(render_codex_plan(report))
     print(f"ownership: {report['ownership_manifest']}")
     print(report["session_note"])
+
+
+def cmd_retire_legacy(args):
+    import codex_legacy_migration as migration
+    try:
+        components = parse_retirement_components(args.components)
+        plan = migration.plan_retirement(
+            args.repo_root, args.codex_home, args.backup_root, components,
+            native_skills_confirmed=args.native_skills_confirmed,
+        )
+        print(json.dumps(plan, indent=2, sort_keys=True) if args.json else migration.render_plan(plan))
+        if args.apply:
+            migration.apply_retirement(plan)
+    except (OSError, ValueError) as exc:
+        raise SystemExit(str(exc)) from exc
+
+
+def cmd_restore_legacy(args):
+    import codex_legacy_migration as migration
+    try:
+        result = migration.restore_legacy(args.repo_root, args.codex_home, args.backup_root)
+        print(json.dumps(result, indent=2, sort_keys=True) if args.json else f"restored {len(result['files'])} legacy files")
+    except (OSError, ValueError) as exc:
+        raise SystemExit(str(exc)) from exc
 
 
 def build_parser():
@@ -917,6 +1029,23 @@ def build_parser():
     p_doctor.add_argument("--codex-home", default=None)
     p_doctor.add_argument("--json", action="store_true")
     p_doctor.set_defaults(func=cmd_doctor)
+
+    for command, function, help_text in (
+        ("retire-legacy", cmd_retire_legacy, "preview or apply reversible Codex legacy retirement"),
+        ("restore-legacy", cmd_restore_legacy, "restore a retired Codex legacy batch"),
+    ):
+        parser = sub.add_parser(command, help=help_text)
+        parser.add_argument("--harness", choices=["codex"], required=True)
+        parser.add_argument("--repo-root", required=True)
+        parser.add_argument("--codex-home", required=True)
+        parser.add_argument("--backup-root", required=True)
+        parser.add_argument("--json", action="store_true")
+        if command == "retire-legacy":
+            parser.add_argument("--components", default="prompts")
+            parser.add_argument("--native-skills-confirmed", action="store_true",
+                                help="record operator evidence that native replacement skills work")
+            parser.add_argument("--apply", action="store_true")
+        parser.set_defaults(func=function)
 
     return ap
 

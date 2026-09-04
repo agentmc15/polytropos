@@ -1,0 +1,4 @@
+interface:
+  display_name: "Daily Work Journal"
+  short_description: "Summarize today's work and plan tomorrow"
+  default_prompt: "Use $journal to prepare today's work journal and a plan for tomorrow."

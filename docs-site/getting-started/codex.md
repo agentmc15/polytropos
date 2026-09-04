@@ -1,84 +1,47 @@
 # Getting started on OpenAI Codex CLI
 
-Codex loads polytropos as a **repo-local plugin**: it reads the skills out of the checkout
-you have open, rather than from a copied install. There is nothing to materialize for the
-core roster, which makes this the shortest install of the three — and the one where the
-checkout is not optional.
+Polytropos ships native Codex skills in a plugin package. Package preparation validates the local
+bundle; it does not show that Codex has installed, enabled, or loaded the package.
 
-## Prerequisites
-
-- Codex desktop, CLI, or the IDE integration.
-- `git` and `python3` 3.8 or newer. Nothing to `pip install`.
-- A clone of the repository, opened in Codex — see
-  [Getting started](index.md#start-with-a-checkout).
+Use a current Codex client, Git, and Python 3.11 or newer. For the setup commands below,
+`python3` must select that interpreter.
 
 ## Install
 
-1. Open this repository in Codex and restart Codex so it discovers the repo marketplace at
-   `.agents/plugins/marketplace.json`.
-2. Open `/plugins`, find **Polytropos Local**, and install and enable **Polytropos**.
-3. Open `/skills` and confirm the skills appear.
+From a checkout, register the marketplace and install the package with the current Codex CLI:
 
-Agents are a separate, optional surface — installing the plugin does not install them.
-Preview first; the preview is byte-read-only:
+```bash
+codex plugin marketplace add /path/to/polytropos
+codex plugin add polytropos@polytropos-local
+codex plugin list --marketplace polytropos-local --json
+```
+
+The plugin is registered as a cached package, so installation does not promise that it rereads a
+live checkout. Start a new session after installation. In CLI and supported IDE clients, use
+`/skills` or `$route`; a Desktop skill selector is available only in versions that expose it.
+
+Preview optional agent-role setup separately. It does not call Codex or register the plugin:
 
 ```bash
 python3 bin/harness_select.py install --harness codex --repo-root . --codex-home <codex-home> --components plugin,agents --agent-scope project --dry-run
-python3 bin/harness_select.py install --harness codex --repo-root . --codex-home <codex-home> --components plugin,agents --agent-scope project
+python3 bin/harness_select.py doctor --harness codex --repo-root . --codex-home <codex-home>
 ```
 
-Project-scoped agents land in this checkout's `.codex/agents/`; `--agent-scope user` puts
-them under the Codex home you supply instead. Start a new task after changing agents.
-
-If a skill does not show up, `$doctor` diagnoses the install read-only before you change
-anything — it prints one line per component with its state and the reason, and never
-repairs. See [doctor](../skills/codex/doctor.md).
-
-## Where you stand matters
-
-Codex reads the plugin from the checkout, so the *skills* always know where the repository
-is: each one derives `POLYTROPOS_ROOT` from its own file location, or — for a copied
-install — from the value the installer resolved, and refuses to run against a guessed path
-or an unresolved placeholder.
-
-**Your shell gets none of that.** Enabling the plugin does not put `bin/` on your `PATH`.
-The bare form used throughout this manual —
-
-```bash
-python3 bin/codex_pricing.py models --profile <PROFILE>
-```
-
-— **assumes your working directory is a polytropos checkout.** From another directory,
-either `cd` there or spell the path out:
-`python3 /path/to/polytropos/bin/codex_pricing.py models --profile <PROFILE>`. You will
-also see Codex skill text and the `doctor` example write commands with an explicit
-`"$POLYTROPOS_ROOT/bin/…"` prefix; that is the same idea from the model's side, where the
-working directory is whatever project it is helping with.
+The report distinguishes a ready package from runtime activation, which remains `unknown` without
+host evidence. See the [Codex harness deep dive](../deep-dives/codex-harness.md) for agents,
+legacy migration, and the manual smoke checklist.
 
 ## Your first invocation
 
-Note the sigil: `$route` is the canonical form, **not** a bare `/route`.
+Use the native skill sigil:
 
 ```
 $route add input validation to the signup handler
 ```
 
-You can also just describe what you want and let Codex match your request against the skill
-descriptions.
+Do not rely on a bare `/route` alias. Codex may also select a skill from its description.
+`codex/prompts/` is a deprecated compatibility namespace.
 
-Success looks like a tier recommendation with a live estimate, framed the way you actually
-pay: under a ChatGPT plan the lead figure is a burn index, because plan runs are
-usage-limited rather than token-billed, and any dollar figure shown is a labeled
-API-equivalent proxy — never a bill. Under an API key, the token-metered dollars are real
-and authoritative. This roster deliberately shows no model ids: they are best-effort for a
-preview generation, so the skill re-derives them from data instead of naming one from
-memory.
-
-## Next
-
-- [Codex CLI skills](../skills/codex/index.md) — the full roster, the `$name` invocation
-  form, and the optional agent surface.
-- [Billing modes](../concepts/billing-modes.md) — burn versus dollars, and why the
-  distinction is not cosmetic.
-- [Deep dive: Codex harness](../deep-dives/codex-harness.md) — what loads where, the full
-  install and refresh command set, and the ownership rules that keep your edits.
+Pricing and effort choices come from `data/pricing.codex.json` at runtime. Plan runs are
+usage-limited; any dollar figure there is an API-equivalent burn proxy. API-key runs are
+token-metered dollars.

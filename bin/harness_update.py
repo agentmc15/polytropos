@@ -40,17 +40,12 @@ functions, and the PLAN.md D7 docs-snapshot-label check), the aggregate verdict 
 card, and the `demo` subcommand -- a synthetic, self-cleaning smoke that touches no real repo and
 no real home.
 
-T6 (this revision) adds `apply`, which is delegation plus reporting and contains ZERO file-write
-logic of its own (PLAN.md D3/D4): the Copilot home is refreshed by `harness_select.install_copilot`
-(overwrite-in-place, inherited and stated in the report), the Codex home by the LEGACY
-`harness_select.install_codex` -- whose two channels differ and are reported separately:
-`<home>/prompts/*.md` are plugin-generated deprecated mirrors that it OVERWRITES in place
-(every destination that actually differed is pre-scanned, listed, and labeled -- never silent,
-never called "preserved"), while `<home>/AGENTS.md` and `<home>/skills/<name>/` are user-editable
-and no-clobber (`skip-differs` listed, never forced, never deleted). Project-scope agent TOMLs and
-the modern `plugin` component `check` reports on are outside apply's reach; the report names that
-coverage limit and prints the `harness_select install --harness codex` remedy instead of claiming
-completion over drift it cannot touch. Generated mirrors are refreshed by `sync_pricing_refs.sync` and
+`apply` delegates every write to an existing writer. Copilot uses
+`harness_select.install_copilot`; Codex uses one ownership-aware native setup plan for preview
+and application. Codex update prepares package metadata and agents, refreshes unchanged managed
+legacy copies, preserves conflicts, and never creates absent legacy skills, prompts, or guidance.
+Package preparation cannot install/enable the host plugin or refresh its cached package.
+Generated mirrors are refreshed by `sync_pricing_refs.sync` and
 `sync_codex_surfaces.sync(root, "build")`. The Claude target of `apply` is print-only forever: it
 emits `plugin_staleness.build_remedy(...)`'s string (which already ends "(restart to apply)") and
 reports `{"action": "remedy-printed"}`. An absent Copilot or Codex home is "not installed" --
@@ -280,7 +275,8 @@ def build_codex_section(repo_root, codex_home):
     Drift mapping: any `install`, `managed-update`, or `conflict` action counts as drift.
     `unmanaged` (doctor's "managed copy is stale, no refresh requested" / "non-canonical file
     preserved for manual review" state) is reported plainly as a warning but never counted as
-    drift -- nothing is broken, only worth a human's attention."""
+    drift -- nothing is broken, only worth a human's attention. When no drift exists, runtime
+    activation remains `unknown`; package metadata and file freshness cannot prove enablement."""
     if codex_home is None:
         return dict(_CODEX_NOT_INSTALLED)
 
@@ -299,12 +295,16 @@ def build_codex_section(repo_root, codex_home):
     drift = any(counts.get(state, 0) for state in _CODEX_DRIFT_STATES)
 
     return {
-        "status": "drift" if drift else "up-to-date",
+        "status": "drift" if drift else report.get("activation", {}).get("state", "unknown"),
         "drift": drift,
         "counts": counts,
         "ownership_manifest": report.get("ownership_manifest"),
         "session_note": report.get("session_note"),
         "actions": report.get("actions", []),
+        "package_readiness": report.get("package_readiness"),
+        "activation": report.get("activation"),
+        "legacy_surfaces": report.get("legacy_surfaces", {}),
+        "potential_duplicate_names": report.get("potential_duplicate_names", []),
     }
 
 
@@ -520,8 +520,18 @@ def _render_codex_section(section):
     if section["status"] == "not installed":
         lines.append("not installed -- no codex home directory found")
         return "\n".join(lines)
+    readiness = section.get("package_readiness") or {}
+    activation = section.get("activation") or {}
+    lines.append(
+        f"package readiness: {readiness.get('state', 'unknown')}"
+        f" ({readiness.get('reason', 'no evidence')})"
+    )
+    lines.append(
+        f"runtime activation: {activation.get('state', 'unknown')}"
+        f" ({activation.get('reason', 'no runtime evidence')})"
+    )
     counts = section.get("counts", {})
-    order = ("install", "up-to-date", "managed-update", "unmanaged", "conflict")
+    order = ("install", "up-to-date", "absent", "managed-update", "unmanaged", "conflict")
     lines.append("  ".join(f"{state}: {counts.get(state, 0)}" for state in order))
     if counts.get("unmanaged"):
         lines.append(
@@ -531,6 +541,12 @@ def _render_codex_section(section):
     lines.append(f"ownership manifest: {section.get('ownership_manifest')}")
     if section.get("session_note"):
         lines.append(f"note: {section['session_note']}")
+    for duplicate in section.get("potential_duplicate_names", []):
+        lines.append(
+            f"potential duplicate: {duplicate['name']} — {', '.join(duplicate['surfaces'])}"
+        )
+    for name, surface in sorted(section.get("legacy_surfaces", {}).items()):
+        lines.append(f"optional legacy {name}: {surface['state']} — {surface['path']}")
     return "\n".join(lines)
 
 
@@ -620,42 +636,17 @@ _COPILOT_OVERWRITE_NOTE = (
     "(the bundle's own files are replaced; files the bundle does not know about are untouched)"
 )
 
-# PLAN.md D3(b) as CORRECTED at the P2 review. `install_codex` is NOT no-clobber wholesale: its
-# prompts loop appends every source as `(dest, "install")` and calls `dest.write_text(...)`
-# unconditionally, with no comparison -- a differing `<home>/prompts/<name>.md` is replaced, not
-# preserved. Only `AGENTS.md` and `skills/<name>/` compare first and yield `skip-differs`. So this
-# engine reports the codex home as TWO channels with different contracts, and never lets the
-# no-clobber wording cover the overwrite one.
-_CODEX_PROMPTS_OVERWRITE_NOTE = (
-    "prompts overwrite in place -- inherited, documented install_codex behavior: "
-    "<home>/prompts/*.md are plugin-generated deprecated mirrors, rewritten unconditionally "
-    "(every differing destination is listed below, never silently replaced)"
-)
-_CODEX_PROMPT_OVERWRITE_LABEL = (
-    "rewritten -- differing generated mirror replaced (prompts are plugin-owned)"
-)
-_CODEX_PROMPT_OVERWRITE_LABEL_DRY = (
-    "would be rewritten -- differing generated mirror replaced (prompts are plugin-owned)"
-)
-_CODEX_NO_CLOBBER_NOTE = (
-    "AGENTS.md and skills/<name>/ are user-editable and no-clobber -- a differing destination is "
-    "reported skip-differs and never overwritten"
-)
+# Codex updates preserve every unknown or edited destination.
 _CODEX_SKIP_DIFFERS_NOTE = (
     "preserved -- user file differs; resolve via harness_select install --harness codex if intended"
 )
 
-# What apply's codex writer does NOT reach. `check`'s codex section runs `doctor_codex`, which
-# covers the modern component set; the LEGACY `install_codex` this engine delegates to writes only
-# the three channels above. Stating this is the difference between "apply complete" and a claim
-# apply cannot support.
-_CODEX_COVERS = ("prompts", "AGENTS.md", "skills/<name>/")
-_CODEX_NOT_COVERED = ("agents (project-scope <repo>/.codex/agents/*.toml)", "plugin (modern component)")
+# Package preparation is local; runtime installation, enablement, and cache refresh remain host work.
+_CODEX_COVERS = ("plugin package preparation", "agents", "existing managed legacy copies")
+_CODEX_NOT_COVERED = ("host plugin installation/enablement", "host cached package refresh")
 _CODEX_COVERAGE_NOTE = (
-    "coverage limit -- apply refreshes the legacy channels only (prompts, AGENTS.md, "
-    "skills/<name>/). Project-scope agent TOMLs and the modern plugin component that check's "
-    "doctor_codex reports on are OUTSIDE apply's reach; refresh those yourself with: "
-    "python3 bin/harness_select.py install --harness codex   (printed, never executed)"
+    "coverage limit -- repository package preparation cannot install or enable the plugin, "
+    "or refresh the host's cached package; complete those host actions in Codex /plugins"
 )
 
 _CLAUDE_CONDITIONAL_FRAMING = (
@@ -739,63 +730,12 @@ def apply_copilot_target(repo_root, copilot_home, dry_run=False):
     }
 
 
-def _codex_prompt_overwrites(harness_select_mod, repo_root, codex_home):
-    """Read-only pre-scan of the prompts channel: which EXISTING `<codex_home>/prompts/*.md`
-    destinations differ from what `install_codex` is about to write over them.
-
-    This must run BEFORE `install_codex`, because that writer destroys the evidence -- its prompts
-    loop reports every source as `"install"` whether the destination was absent, identical, or
-    materially different, so its return value alone cannot tell a real overwrite from a no-op.
-
-    Placeholder resolution is `_bundle_resolved_bytes` -- the SAME helper the T2 copilot
-    comparator uses, because `install_copilot` and `install_codex` share the identical mechanism
-    (`text.replace(PLACEHOLDER, str(repo_root))` on the UNRESOLVED repo root). No second
-    substitution implementation exists in this file. Writes nothing; never raises on an unreadable
-    destination (an unreadable file is reported as differing, the conservative answer)."""
-    bundle_prompts = Path(repo_root) / "codex" / "prompts"
-    if not bundle_prompts.is_dir():
-        return []
-    overwritten = []
-    for src in sorted(bundle_prompts.glob("*.md")):
-        dest = Path(codex_home) / "prompts" / src.name
-        if not dest.is_file():
-            continue  # absent destination is a fresh install, not an overwrite
-        try:
-            current = dest.read_bytes()
-        except OSError:
-            current = None
-        if current != _bundle_resolved_bytes(harness_select_mod, src, repo_root):
-            overwritten.append(str(dest))
-    return overwritten
-
-
 def apply_codex_target(repo_root, codex_home, dry_run=False):
-    """The Codex target: one delegated call to the LEGACY `harness_select.install_codex` (PLAN.md
-    D3 -- the modern `--components` / `--refresh-managed` setup surface stays
-    `harness_select.py`'s own CLI). It has a real parameter-level `dry_run` and returns
-    `(destination, action)` tuples with `action` in {"install", "up-to-date", "skip-differs"}.
+    """Refresh Codex through the ownership-aware native planner.
 
-    `install_codex`'s two channels have DIFFERENT contracts, and this report states both rather
-    than flattening them (PLAN.md D3(b) as corrected at the P2 review):
-
-    - `<home>/prompts/*.md` OVERWRITE IN PLACE. The writer's prompts loop compares nothing: it
-      reports every source as `"install"` and calls `write_text` unconditionally. These files are
-      plugin-generated deprecated mirrors, so that behavior stays -- but it is never reported as
-      preservation. `_codex_prompt_overwrites` pre-scans which existing destinations actually
-      differ, and every one of them is listed and labeled in the report.
-    - `<home>/AGENTS.md` and `<home>/skills/<name>/` are user-editable and NO-CLOBBER: a differing
-      destination yields `skip-differs`, is never overwritten, and is listed with
-      `_CODEX_SKIP_DIFFERS_NOTE`. That "preserved" wording is emitted ONLY when something actually
-      was preserved.
-
-    Coverage limit (`_CODEX_COVERAGE_NOTE`, reported in both the human card and JSON): project-
-    scope agent TOMLs and the modern `plugin` component that `check`'s `doctor_codex` reports on
-    are outside this writer's reach entirely, so a clean apply here does not mean a clean codex
-    check. The modern remedy is printed, never executed.
-
-    Nothing here forces or deletes anything. Absent home -> "not installed", matching the
-    pre-check `check`'s codex section already makes (NOTES.md's T3 entry: nothing in this engine
-    plans or performs an install against a home that is not there)."""
+    Missing optional legacy destinations become `skip`, so update never recreates skills,
+    prompts, or global guidance. Existing unchanged managed copies may refresh; unknown or
+    edited destinations are preserved. The same plan drives dry-run and application."""
     base = {
         "target": "codex",
         "covers": list(_CODEX_COVERS),
@@ -815,29 +755,47 @@ def apply_codex_target(repo_root, codex_home, dry_run=False):
         )
 
     harness_select_mod = _load_sibling("harness_select")
-    # Pre-scan first -- install_codex overwrites the evidence.
-    prompts_overwritten = _codex_prompt_overwrites(harness_select_mod, repo_root, codex_home)
-    results = harness_select_mod.install_codex(codex_home, repo_root=repo_root, dry_run=dry_run)
+    plan = harness_select_mod.plan_codex_setup(
+        repo_root, codex_home,
+        components=harness_select_mod.CODEX_COMPONENTS,
+        agent_scope="project", legacy_copy=True, refresh_managed=True,
+    )
+    optional = {"skills", "prompts", "guidance"}
+    for item in plan["actions"]:
+        if item["component"] in optional and item["state"] == "install":
+            item["state"] = "skip"
+            item["reason"] = "optional legacy destination is absent; update does not create it"
+        elif item["state"] in {"conflict", "unmanaged"}:
+            item["state"] = "skip"
+            item["reason"] += "; preserved by update"
 
+    writable = [item for item in plan["actions"] if item["state"] in {"install", "managed-update"}]
+    if not dry_run:
+        harness_select_mod.apply_codex_plan(plan)
+
+    public = harness_select_mod._public_plan(plan)
     counts = {}
     files = []
     skip_differs = []
-    for dest, action in results:
-        counts[action] = counts.get(action, 0) + 1
-        files.append({"path": str(dest), "action": action})
-        if action == "skip-differs":
-            skip_differs.append(str(dest))
+    for item in public["actions"]:
+        state = item["state"]
+        counts[state] = counts.get(state, 0) + 1
+        files.append({"path": item["destination"], "action": state, "reason": item["reason"]})
+        if state == "skip":
+            skip_differs.append(item["destination"])
 
     entry = dict(
         base,
-        action="would-install" if dry_run else "installed",
-        wrote=not dry_run,
-        note=_CODEX_PROMPTS_OVERWRITE_NOTE,
-        no_clobber_note=_CODEX_NO_CLOBBER_NOTE,
+        action="would-update" if dry_run else "updated",
+        wrote=bool(writable) and not dry_run,
+        note="native package and owned destinations planned through ownership-aware setup",
+        no_clobber_note="unknown and edited destinations are preserved; absent legacy copies stay absent",
         counts=counts,
         files=files,
         skip_differs=skip_differs,
-        prompts_overwritten=prompts_overwritten,
+        prompts_overwritten=[],
+        package_readiness=public["package_readiness"],
+        activation=public["activation"],
     )
     # "preserved" is a claim about a real event -- it appears only when one happened.
     if skip_differs:
@@ -962,17 +920,12 @@ def _render_apply_codex(entry):
         return "\n".join(lines)
 
     counts = entry.get("counts", {})
-    order = ("install", "up-to-date", "skip-differs")
+    order = ("install", "managed-update", "up-to-date", "skip")
     lines.append("  ".join(f"{state}: {counts.get(state, 0)}" for state in order))
 
-    # Channel 1 -- prompts: overwrite in place, every real overwrite named.
+    # Deprecated prompts are never overwritten by normal update.
     lines.append(f"note: {entry['note']}")
-    overwritten = entry.get("prompts_overwritten", [])
-    label = _CODEX_PROMPT_OVERWRITE_LABEL if entry["wrote"] else _CODEX_PROMPT_OVERWRITE_LABEL_DRY
-    lines.append(f"prompts differing before this run: {len(overwritten)}")
-    for path in overwritten:
-        lines.append(f"  {path}")
-        lines.append(f"    {label}")
+    lines.append("prompts overwritten: 0")
 
     # Channel 2 -- AGENTS.md + skills: no-clobber. The "preserved" wording appears only when
     # something actually was preserved.
@@ -1287,8 +1240,7 @@ def build_parser():
     apply_parser = subparsers.add_parser(
         "apply",
         help=(
-            "refresh the writable targets only -- Copilot home, Codex home (prompts overwrite in place; "
-            "AGENTS.md/skills no-clobber), repo "
+            "refresh the writable targets only -- Copilot home, Codex native/owned surfaces, repo "
             "generated mirrors. The Claude remedy is printed, never executed."
         ),
     )

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Architect"
+  short_description: "Plan a complex change as an execution kit"
+  default_prompt: "Use $architect to plan this migration as a task-by-task execution kit."

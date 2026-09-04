@@ -1,0 +1,4 @@
+interface:
+  display_name: "Frontier Check"
+  short_description: "Decide whether a task warrants the frontier tier"
+  default_prompt: "Use $frontier-check to decide whether this refactor warrants the frontier tier."

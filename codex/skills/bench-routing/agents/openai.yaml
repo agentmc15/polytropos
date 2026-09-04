@@ -1,0 +1,4 @@
+interface:
+  display_name: "Benchmark Routing"
+  short_description: "Compare benchmark evidence for Codex role routing"
+  default_prompt: "Use $bench-routing to compare benchmark candidates for our implementer role."

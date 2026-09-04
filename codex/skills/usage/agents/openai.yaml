@@ -1,0 +1,4 @@
+interface:
+  display_name: "Codex Usage"
+  short_description: "Report historical Codex usage from local logs"
+  default_prompt: "Use $usage to summarize my recent Codex activity from local session logs."

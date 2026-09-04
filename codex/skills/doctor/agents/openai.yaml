@@ -1,0 +1,4 @@
+interface:
+  display_name: "Codex Setup Doctor"
+  short_description: "Diagnose Polytropos setup without changing it"
+  default_prompt: "Use $doctor to diagnose why my Polytropos Codex setup is stale without changing anything."

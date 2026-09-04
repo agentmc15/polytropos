@@ -73,7 +73,8 @@ class CoreSkillTests(unittest.TestCase):
                 ROOT, Path("/tmp/codex-core-skills-home"), ("skills",), "user"
             )
             self.assertEqual(
-                {source.parent.name for _, source, _ in inventory}, set(skills)
+                {source.relative_to(ROOT / "codex" / "skills").parts[0]
+                 for _, source, _ in inventory}, set(skills)
             )
 
     def test_new_skills_use_portable_unpinned_root_contract(self):

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Reasoning Effort"
+  short_description: "Choose an appropriate reasoning-effort level"
+  default_prompt: "Use $effort to choose the right reasoning-effort level for this debugging task."

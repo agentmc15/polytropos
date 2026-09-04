@@ -1,0 +1,4 @@
+interface:
+  display_name: "Escalating Dispatch"
+  short_description: "Run a verified task from the cheapest viable tier"
+  default_prompt: "Use $escalate to run this task with its test command and escalate only on failure."

@@ -712,8 +712,9 @@ class CodexSectionFreshTests(unittest.TestCase):
             section = result["codex"]
             self.assertEqual(section["status"], "drift")
             self.assertTrue(section["drift"])
-            # 4 canonical agents + skills + prompts + guidance, all destinations absent.
-            self.assertEqual(section["counts"].get("install", 0), 7)
+            # Agents are actionable; absent optional legacy copies are informational.
+            self.assertEqual(section["counts"].get("install", 0), 4)
+            self.assertEqual(section["counts"].get("absent", 0), 3)
             self.assertEqual(section["ownership_manifest"], "absent")
             self.assertEqual(result["exit"], 3)
 
@@ -729,7 +730,8 @@ class CodexSectionFullyInstalledTests(unittest.TestCase):
 
             result = hu.run_check(repo, manifest, codex_home=codex_home, today=date(2020, 1, 10))
             section = result["codex"]
-            self.assertEqual(section["status"], "up-to-date")
+            self.assertEqual(section["status"], "unknown")
+            self.assertEqual(section["activation"]["state"], "unknown")
             self.assertFalse(section["drift"])
             self.assertEqual(section["counts"].get("install", 0), 0)
             self.assertEqual(section["counts"].get("conflict", 0), 0)
@@ -778,7 +780,7 @@ class CodexSectionUnmanagedWarningTests(unittest.TestCase):
             self.assertEqual(section["counts"].get("conflict", 0), 0)
             self.assertEqual(section["counts"].get("managed-update", 0), 0)
             self.assertFalse(section["drift"])
-            self.assertEqual(section["status"], "up-to-date")
+            self.assertEqual(section["status"], "unknown")
             self.assertEqual(result["exit"], 0)
             # The warning must still be visible in the human card, never hidden.
             card = hu.render_card(result)
@@ -1027,8 +1029,10 @@ class ApplyRoundTripTests(unittest.TestCase):
 
             before = hu.run_check(root, manifest, copilot_home=copilot_home, codex_home=codex_home)
             self.assertEqual(before["exit"], 3)
-            for name in ("claude", "copilot", "codex", "data"):
+            for name in ("claude", "copilot", "data"):
                 self.assertTrue(before[name]["drift"], f"{name} should start drifted")
+            self.assertFalse(before["codex"]["drift"])
+            self.assertEqual(before["codex"]["status"], "unknown")
 
             code, out = _run_main(
                 [
@@ -1132,7 +1136,7 @@ class ApplyJsonEnvelopeTests(unittest.TestCase):
             self.assertEqual(parsed["results"]["claude"]["action"], "remedy-printed")
             self.assertFalse(parsed["results"]["claude"]["wrote"])
             self.assertEqual(parsed["results"]["copilot"]["action"], "installed")
-            self.assertEqual(parsed["results"]["codex"]["action"], "installed")
+            self.assertEqual(parsed["results"]["codex"]["action"], "updated")
             self.assertEqual(parsed["results"]["mirrors"]["action"], "rewritten")
         finally:
             shutil.rmtree(root, ignore_errors=True)
@@ -1171,9 +1175,9 @@ class ApplyCodexPromptsOverwriteTests(unittest.TestCase):
             self.assertEqual(code, 0)
             parsed = json.loads(out)
             entry = parsed["results"]["codex"]
-            self.assertEqual(entry["prompts_overwritten"], [str(target)])
-            # The overwrite genuinely happened -- this is reporting the truth, not preventing it.
-            self.assertEqual(target.read_text(), expected)
+            self.assertEqual(entry["prompts_overwritten"], [])
+            self.assertIn(str(target), entry["skip_differs"])
+            self.assertEqual(target.read_text(), "# my hand-edited prompt, materially different\n")
 
             _code, human = _run_main(
                 [
@@ -1184,9 +1188,9 @@ class ApplyCodexPromptsOverwriteTests(unittest.TestCase):
                     "--only", "codex",
                 ]
             )
-            # Second run: the destination now matches, so nothing is listed as overwritten.
-            self.assertIn("prompts differing before this run: 0", human)
-            self.assertIn("prompts overwrite in place", human)
+            # Repeated update continues to preserve the edited destination.
+            self.assertIn("prompts overwritten: 0", human)
+            self.assertIn("absent legacy copies stay absent", human)
 
             target.write_text("# edited again\n")
             _code, human = _run_main(
@@ -1198,11 +1202,9 @@ class ApplyCodexPromptsOverwriteTests(unittest.TestCase):
                     "--only", "codex",
                 ]
             )
-            self.assertIn("prompts differing before this run: 1", human)
+            self.assertIn("prompts overwritten: 0", human)
             self.assertIn(str(target), human)
-            self.assertIn(
-                "rewritten -- differing generated mirror replaced (prompts are plugin-owned)", human
-            )
+            self.assertIn("preserved -- user file differs", human)
         finally:
             shutil.rmtree(root, ignore_errors=True)
 
@@ -1225,17 +1227,14 @@ class ApplyCodexPromptsOverwriteTests(unittest.TestCase):
             )
             self.assertEqual(code, 0)
             self.assertIn(str(target), out)
-            self.assertIn(
-                "would be rewritten -- differing generated mirror replaced "
-                "(prompts are plugin-owned)",
-                out,
-            )
+            self.assertIn("preserved -- user file differs", out)
             self.assertEqual(target.read_text(), user_text)  # dry-run wrote nothing
 
             result = hu.run_apply(
                 root, copilot_home=copilot_home, codex_home=codex_home, only=["codex"], dry_run=True
             )
-            self.assertEqual(result["results"]["codex"]["prompts_overwritten"], [str(target)])
+            self.assertEqual(result["results"]["codex"]["prompts_overwritten"], [])
+            self.assertIn(str(target), result["results"]["codex"]["skip_differs"])
             self.assertEqual(target.read_text(), user_text)
         finally:
             shutil.rmtree(root, ignore_errors=True)
@@ -1256,12 +1255,16 @@ class ApplyCodexPromptsOverwriteTests(unittest.TestCase):
                 ]
             )
             self.assertEqual(code, 0)
-            self.assertNotIn("preserved", out.lower())
+            self.assertIn("preserved", out.lower())
+            self.assertEqual(
+                sorted((codex_home / "prompts").glob("*.md"))[0].read_text(),
+                "# differing prompt\n",
+            )
 
             result = hu.run_apply(root, copilot_home=copilot_home, codex_home=codex_home)
             entry = result["results"]["codex"]
-            self.assertEqual(entry["skip_differs"], [])
-            self.assertIsNone(entry.get("preserved_note"))
+            self.assertTrue(entry["skip_differs"])
+            self.assertEqual(entry.get("preserved_note"), hu._CODEX_SKIP_DIFFERS_NOTE)
         finally:
             shutil.rmtree(root, ignore_errors=True)
 
@@ -1290,9 +1293,7 @@ class ApplyCodexCoverageLimitTests(unittest.TestCase):
             )
             self.assertEqual(code, 0)
             self.assertIn("coverage limit", out)
-            self.assertIn("OUTSIDE apply's reach", out)
-            self.assertIn("python3 bin/harness_select.py install --harness codex", out)
-            self.assertIn("(printed, never executed)", out)
+            self.assertIn("host's cached package", out)
             # The verdict must not claim bare completion over drift apply cannot touch.
             self.assertNotIn("verdict: apply complete\n", out)
             self.assertIn(
@@ -1301,11 +1302,10 @@ class ApplyCodexCoverageLimitTests(unittest.TestCase):
                 out,
             )
 
-            # ...and the drift is genuinely still there: apply reported honestly, not optimistically.
+            # Native update owns project agents and repairs the missing managed destination.
             after = hu.run_check(root, manifest, copilot_home=copilot_home, codex_home=codex_home)
-            self.assertTrue(after["codex"]["drift"])
-            self.assertGreaterEqual(after["codex"]["counts"].get("install", 0), 1)
-            self.assertFalse(project_agents[0].exists())
+            self.assertFalse(after["codex"]["drift"])
+            self.assertTrue(project_agents[0].exists())
         finally:
             shutil.rmtree(root, ignore_errors=True)
 
@@ -1314,12 +1314,15 @@ class ApplyCodexCoverageLimitTests(unittest.TestCase):
         try:
             result = hu.run_apply(root, copilot_home=copilot_home, codex_home=codex_home, only=["codex"])
             entry = result["results"]["codex"]
-            self.assertEqual(entry["covers"], ["prompts", "AGENTS.md", "skills/<name>/"])
+            self.assertEqual(
+                entry["covers"],
+                ["plugin package preparation", "agents", "existing managed legacy copies"],
+            )
             self.assertEqual(
                 entry["not_covered"],
-                ["agents (project-scope <repo>/.codex/agents/*.toml)", "plugin (modern component)"],
+                ["host plugin installation/enablement", "host cached package refresh"],
             )
-            self.assertIn("harness_select.py install --harness codex", entry["coverage_limit"])
+            self.assertIn("cannot install or enable", entry["coverage_limit"])
         finally:
             shutil.rmtree(root, ignore_errors=True)
 
@@ -1355,7 +1358,7 @@ class ApplyCodexNoClobberTests(unittest.TestCase):
 
             result = hu.run_apply(root, copilot_home=copilot_home, codex_home=codex_home, only=["codex"])
             entry = result["results"]["codex"]
-            self.assertEqual(entry["counts"].get("skip-differs"), 1)
+            self.assertEqual(entry["counts"].get("skip"), 1)
             self.assertEqual(entry["skip_differs"], [str(user_file)])
             # The "preserved" claim is emitted precisely because something was preserved.
             self.assertEqual(entry["preserved_note"], hu._CODEX_SKIP_DIFFERS_NOTE)
@@ -1396,7 +1399,8 @@ class ApplyDryRunTests(unittest.TestCase):
             still = hu.run_check(root, manifest, copilot_home=copilot_home, codex_home=codex_home)
             self.assertEqual(still["exit"], 3)
             self.assertTrue(still["copilot"]["drift"])
-            self.assertTrue(still["codex"]["drift"])
+            self.assertFalse(still["codex"]["drift"])
+            self.assertEqual(still["codex"]["status"], "unknown")
             self.assertTrue(still["data"]["drift"])
         finally:
             shutil.rmtree(root, ignore_errors=True)
@@ -1428,7 +1432,8 @@ class ApplyOnlyMirrorsTests(unittest.TestCase):
             after = hu.run_check(root, manifest, copilot_home=copilot_home, codex_home=codex_home)
             self.assertFalse(after["data"]["drift"])  # mirrors repaired
             self.assertTrue(after["copilot"]["drift"])  # home deliberately left alone
-            self.assertTrue(after["codex"]["drift"])
+            self.assertFalse(after["codex"]["drift"])
+            self.assertEqual(after["codex"]["status"], "unknown")
         finally:
             shutil.rmtree(root, ignore_errors=True)
 
@@ -1583,10 +1588,6 @@ class ApplyNeverNamesTheClaudeHomeTests(unittest.TestCase):
                 hu._CLAUDE_CONDITIONAL_FRAMING,
                 hu._CLAUDE_PRINT_ONLY_NOTE,
                 hu._COPILOT_OVERWRITE_NOTE,
-                hu._CODEX_PROMPTS_OVERWRITE_NOTE,
-                hu._CODEX_PROMPT_OVERWRITE_LABEL,
-                hu._CODEX_PROMPT_OVERWRITE_LABEL_DRY,
-                hu._CODEX_NO_CLOBBER_NOTE,
                 hu._CODEX_SKIP_DIFFERS_NOTE,
                 hu._CODEX_COVERAGE_NOTE,
                 hu._NOT_INSTALLED_NOTE,
@@ -1622,23 +1623,6 @@ class ApplyNeverNamesTheClaudeHomeTests(unittest.TestCase):
                     called.add(func.id)
         self.assertTrue(called, "expected to parse at least one call out of apply's code")
         self.assertEqual(called & forbidden, set(), f"apply must not call these itself: {called & forbidden}")
-
-    def test_the_prompt_pre_scan_reuses_the_single_placeholder_substitution_helper(self):
-        # One substitution implementation serves both the T2 copilot comparator and T6's prompts
-        # pre-scan, because install_copilot and install_codex share the identical mechanism.
-        # Again asserted over parsed CALL nodes: the docstring quotes install_codex's own
-        # `text.replace(...)` line to explain which mechanism is being mirrored.
-        called = set()
-        for node in ast.walk(ast.parse(inspect.getsource(hu._codex_prompt_overwrites))):
-            if isinstance(node, ast.Call):
-                func = node.func
-                if isinstance(func, ast.Attribute):
-                    called.add(func.attr)
-                elif isinstance(func, ast.Name):
-                    called.add(func.id)
-        self.assertIn("_bundle_resolved_bytes", called)
-        self.assertNotIn("replace", called, "the pre-scan must not re-implement the substitution")
-
 
 # ---- read-only proof ----------------------------------------------------------------------------
 

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Context Weight"
+  short_description: "Measure context pressure and fidelity risk"
+  default_prompt: "Use $context-weight to analyze this session's context pressure and compaction options."
