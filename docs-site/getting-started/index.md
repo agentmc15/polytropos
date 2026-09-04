@@ -22,11 +22,9 @@ python3 -m unittest discover -s tests
 
 You need `git`, `python3` 3.8 or newer, and at least one of the three CLIs. There is
 nothing to `pip install` and nothing to compile — the Python here is stdlib-only, so this
-step just proves your checkout runs. Expect a handful of pre-existing **errors**, all of
-them confined to `LedgerJoinTests` — date-dependent test fixtures that drift with the
-calendar and have nothing to do with the docs or any harness install — and no failures
-anywhere else. A **failure**, or an error outside that one class, means your checkout is
-not clean; re-clone and try again before going further.
+step just proves your checkout runs. It should end in `OK`, with a couple of skips that
+depend on local state. Any failure or error means your checkout is not clean; re-clone
+and try again before going further.
 
 One placement rule: keep the checkout **outside any cloud-synced folder** — not under a
 Dropbox, Drive, or OneDrive tree. The gitignored personal stores this repo writes would

@@ -17,14 +17,12 @@ skill files** and a drift test that fails the suite when the site is stale.
 "Done" is checkable:
 
 - `python3 -m unittest discover -s tests -v` is green (baseline before this kit:
-  2639 tests, OK). **Executor amendment (P4 review, carry-forward 8):** this criterion as
-  written is now unmeetable regardless of the kit's work. The live baseline is **2953 tests
-  with exactly 10 errors**, all `LedgerJoinTests` in `tests/test_copilot_usage.py` (6) and
-  `tests/test_codex_usage.py` (4) — pre-existing calendar rot, not this kit's doing: those
-  fixtures hardcode `WHEN = datetime(2026, 7, 26)` and query a 30-day window, so they began
-  failing when the clock passed ~2026-08-25. "Green" for this kit means **zero failures and
-  no 11th error** — including two new files, `tests/test_docs_build.py` and
-  `tests/test_docs_site.py`.
+  2639 tests, OK). **Executor amendment, superseded:** during the run this criterion was unmeetable —
+  the suite carried 10 pre-existing errors from calendar rot in `LedgerJoinTests`
+  fixtures (a pinned 2026-07-26 date read back through a 30-day window), so "green"
+  was redefined as zero failures and no 11th error. **That rot has since been fixed**
+  by making those fixtures relative to now, and the suite is genuinely green again:
+  2987 tests, OK. The original criterion stands as written.
 - `python3 bin/docs_build.py check` exits 0 against the committed tree, and exits
   non-zero when any SKILL.md, `docs/*.md`, or fragment is edited without a rebuild
   (provable on a temp copy — see GUARDRAILS.md for the safe recipe).
