@@ -41,6 +41,28 @@ dispatches the Claude CLI to write the documents itself — a cross-harness spen
 never trigger. The two-pass flow above (collect, then print-and-write-yourself) is the only
 sanctioned path here.
 
+## Next-day runbook
+
+```bash
+python3 {{POLYTROPOS_ROOT}}/bin/journal_plan.py build
+```
+
+writes a dated, checkable next-day plan at `journal/plan/<date>.md` — one card per planned
+task, drawn from open kit tasks, WIP repos, the inbox, and `journal/plan/seed.md`, each with a
+What/How, an ideal-harness line, and ready-to-paste commands for Claude Code, Copilot CLI, and
+Codex CLI, priced from the pricing data files (Codex figures there are API-equivalent proxies,
+never a bill). Enrich the What/How bodies in-session (the summaries precedent — this session is
+already paid for):
+
+```bash
+python3 {{POLYTROPOS_ROOT}}/bin/journal_plan.py prompt
+```
+
+follow the printed prompt exactly (rewrite ONLY the What/How bodies; keep every other line
+byte-identical), then save the revised document back over the same path. Track cards with
+`check`, `done <id>`, and `defer <id> --to <date>`. Advisory only — the runbook prepares and
+tracks; it never schedules or executes anything.
+
 ## Privacy
 
 The digest is metadata-only — project and repo names, commit subjects, kit task titles, and any

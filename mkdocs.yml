@@ -1,0 +1,137 @@
+site_name: polytropos
+site_description: A Claude Code plugin that picks the right model per task, estimates the cost before you run it, and keeps the frontier model reserved for work that actually needs it.
+site_url: https://agentmc15.github.io/polytropos/
+repo_url: https://github.com/agentmc15/polytropos
+
+docs_dir: docs-site
+site_dir: site-build
+
+theme:
+  name: material
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.sections
+    - navigation.top
+    - content.code.copy
+
+markdown_extensions:
+  - admonition
+  - toc:
+      permalink: true
+  - pymdownx.superfences
+  - pymdownx.details
+
+# --strict only promotes WARNING-level findings, and mkdocs logs unresolved
+# heading anchors at INFO by default -- so a broken #anchor silently shipped.
+# Raising it to warning makes --strict genuinely validate anchors, not just
+# link targets. bin/docs_build.py normalizes GitHub-style doubled hyphens when
+# rewriting anchors onto site pages; this catches anything it cannot.
+validation:
+  links:
+    anchors: warn
+
+nav:
+  - Home: index.md
+  - Getting started:
+    - getting-started/index.md
+    - Claude Code: getting-started/claude.md
+    - GitHub Copilot CLI: getting-started/copilot.md
+    - OpenAI Codex CLI: getting-started/codex.md
+  - Concepts:
+    - concepts/index.md
+    - Two billing modes: concepts/billing-modes.md
+    - The one constraint: concepts/the-one-constraint.md
+    - Architect, execute, measure: concepts/architect-execute-measure.md
+    - Effort and context: concepts/effort-and-context.md
+  - Workflows:
+    - workflows/index.md
+    - Route one task: workflows/first-route.md
+    - Run a kit: workflows/run-a-kit.md
+    - Measure the savings: workflows/measure-the-savings.md
+  - Skills:
+    - skills/index.md
+    - Claude Code:
+      - skills/claude/index.md
+      - architect: skills/claude/architect.md
+      - bench-routing: skills/claude/bench-routing.md
+      - context-weight: skills/claude/context-weight.md
+      - cost-report: skills/claude/cost-report.md
+      - escalate: skills/claude/escalate.md
+      - execute: skills/claude/execute.md
+      - fable-check: skills/claude/fable-check.md
+      - graphify: skills/claude/graphify.md
+      - journal: skills/claude/journal.md
+      - memory: skills/claude/memory.md
+      - repo-bench: skills/claude/repo-bench.md
+      - route: skills/claude/route.md
+      - setup: skills/claude/setup.md
+      - update: skills/claude/update.md
+    - GitHub Copilot CLI:
+      - skills/copilot/index.md
+      - architect: skills/copilot/architect.md
+      - bench-routing: skills/copilot/bench-routing.md
+      - budget: skills/copilot/budget.md
+      - context-weight: skills/copilot/context-weight.md
+      - effort: skills/copilot/effort.md
+      - escalate: skills/copilot/escalate.md
+      - execute: skills/copilot/execute.md
+      - frontier-check: skills/copilot/frontier-check.md
+      - goliath: skills/copilot/goliath.md
+      - journal: skills/copilot/journal.md
+      - lessons-loop: skills/copilot/lessons-loop.md
+      - route: skills/copilot/route.md
+      - usage: skills/copilot/usage.md
+    - OpenAI Codex CLI:
+      - skills/codex/index.md
+      - architect: skills/codex/architect.md
+      - bench-routing: skills/codex/bench-routing.md
+      - context-weight: skills/codex/context-weight.md
+      - doctor: skills/codex/doctor.md
+      - effort: skills/codex/effort.md
+      - escalate: skills/codex/escalate.md
+      - execute: skills/codex/execute.md
+      - frontier-check: skills/codex/frontier-check.md
+      - journal: skills/codex/journal.md
+      - memory: skills/codex/memory.md
+      - route: skills/codex/route.md
+      - usage: skills/codex/usage.md
+  - Deep dives:
+    - deep-dives/index.md
+    - Aesop compile round-trip: deep-dives/aesop-compile-proposal.md
+    - Aesop integration: deep-dives/aesop-integration.md
+    - Codex harness: deep-dives/codex-harness.md
+    - Context weight: deep-dives/context-weight.md
+    - Copilot cost visibility: deep-dives/copilot-costviz.md
+    - Copilot harness: deep-dives/copilot-harness.md
+    - Copilot CLI parity: deep-dives/copilot-parity.md
+    - Copilot model prefs: deep-dives/copilot-pins.md
+    - Copilot workflow layer: deep-dives/copilot-workflow.md
+    - Daily work journal: deep-dives/daily-journal.md
+    - Effort dial: deep-dives/effort-dial.md
+    - Evidence loop: deep-dives/evidence-loop.md
+    - Fusion tier 1: deep-dives/fusion-tier1.md
+    - Fusion tier 2: deep-dives/fusion-tier2.md
+    - Graph engineering: deep-dives/graph-engineering.md
+    - Guide & cookbook: deep-dives/guide.md
+    - How it works: deep-dives/how-it-works.md
+    - Memory skill: deep-dives/memory-skill.md
+    - Next-day runbook: deep-dives/next-day-runbook.md
+    - Per-task dollars: deep-dives/per-task-dollars.md
+    - Privacy: deep-dives/privacy.md
+    - Role experiment: deep-dives/role-experiment.md
+    - Routing history: deep-dives/routing-history.md
+    - Routing trends: deep-dives/routing-trends.md

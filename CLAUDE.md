@@ -61,6 +61,7 @@ just docs**. Edit accordingly.
   gitignored `prefs/repo-bench.json`.
 - **`bin/harness_update.py` check is strictly read-only; apply writes only the Copilot/Codex homes via `harness_select`'s own writers plus the repo's generated mirrors — never `~/.claude` (the remedy is printed, never executed), never pricing numbers or docs tables.** Codex prompts are plugin-generated mirrors, overwritten in place with every differing rewrite listed; AGENTS.md and skill dirs stay no-clobber. Tests use temp fixture homes only.
 - **graphify is an external, user-installed CLI (`uv tool install graphifyy`) — never vendored, never auto-installed, and never invoked by tests, verify commands, or kit execution.** `bin/graph_brief.py` only ever READS a graph.json; skill-sanctioned graphify subcommands are the offline set only (no `extract`/`label`/backends/`add`/`clone`/`watch`/`global`/platform-`install` hooks without explicit user opt-in). `/graphify-out/` stays gitignored.
+- **The public docs site builds from committed content only, and its generated pages are never hand-edited.** `mkdocs.yml` + `docs-site/` are the one surface with a non-stdlib toolchain (mkdocs-material, pinned in `docs-src/requirements.txt`, installed only in CI or a throwaway venv — `bin/` and `tests/` stay stdlib-only). Pages under `docs-site/skills/` and `docs-site/deep-dives/` are written only by `bin/docs_build.py`: edit the source (a SKILL.md, `docs/*.md`, `docs-src/fragments/`) and run `python3 bin/docs_build.py build`; `tests/test_docs_site.py` fails on drift, and no SKILL.md ever points into `docs-site/` (site content is human-facing, never model-loaded). The generator and site never read home dirs or gitignored stores. (Lands with the docs-site kit.)
 
 ## How to run things
 
@@ -99,6 +100,7 @@ echo '{"model":{"id":"claude-fable-5","display_name":"Fable 5"},"cost":{"total_c
 python3 bin/harness_update.py check           # all-harness freshness card (read-only; exit 3 on drift; lands with the harness-update kit)
 python3 bin/harness_update.py demo            # synthetic check/apply smoke — temp trees only, no real homes
 python3 bin/graph_brief.py demo                # architect-grounding brief from a graphify graph.json — synthetic smoke, no graphify binary (lands with the graphify-skill kit)
+python3 bin/docs_build.py check                # docs-site generated-page freshness (stdlib, offline; exit 1 on drift; lands with the docs-site kit)
 ```
 
 ## When executing a kit task

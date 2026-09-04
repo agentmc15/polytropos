@@ -34,3 +34,6 @@ __pycache__/
 
 # graphify knowledge-graph output (local analysis artifacts, never committed)
 /graphify-out/
+
+# mkdocs build output (docs-site kit) — built in CI, never committed
+/site-build/

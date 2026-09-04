@@ -1,0 +1,71 @@
+# docs-site: build + deploy the public MkDocs Material manual to GitHub Pages.
+#
+# (1) The site publishes at https://agentmc15.github.io/polytropos/. The Configure Pages
+#     step below passes enablement: true, so the first run turns Pages on and sets its
+#     source to "GitHub Actions" by itself — no manual setup, and a fork gets a working
+#     site without reading this file. If that step fails (org policy can forbid a workflow
+#     from changing repo settings), do it by hand once: repo Settings -> Pages -> Source
+#     -> "GitHub Actions". That is the only manual fallback.
+# (2) This workflow is the ONLY place besides docs-src/requirements.txt that knows about
+#     the mkdocs toolchain — bin/ and tests/ stay stdlib-only (CLAUDE.md invariant).
+name: docs-site
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # enablement: true creates/configures the Pages site on first run. deploy-pages
+      # only publishes INTO an already-configured site; enabling it is a repo setting,
+      # which is why this step exists rather than a line in the README.
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+        with:
+          enablement: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install site toolchain
+        run: pip install -r docs-src/requirements.txt
+
+      - name: Run docs drift gate
+        run: python3 -m unittest discover -s tests -p 'test_docs_*.py' -v
+
+      - name: Build site
+        run: mkdocs build --strict
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site-build
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

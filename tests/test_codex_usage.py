@@ -665,7 +665,14 @@ def _kit_notes(run_id, task_ids):
 
 
 class LedgerJoinTests(unittest.TestCase):
-    WHEN = datetime(2026, 7, 26, 10, 0, 0, tzinfo=timezone.utc)
+    # Relative to now, not an absolute date: these fixtures are read back through a
+    # 30-day usage window, so a pinned past date silently falls out of range and the
+    # whole class errors on empty results. That is what happened here -- the original
+    # 2026-07-26 pin began failing when the clock passed ~2026-08-25. Two days ago at a
+    # fixed hour keeps it comfortably in-window and stable within a run.
+    WHEN = (datetime.now(timezone.utc) - timedelta(days=2)).replace(
+        hour=10, minute=0, second=0, microsecond=0
+    )
 
     def _make_home(self, td):
         home = Path(td) / "codex-home"

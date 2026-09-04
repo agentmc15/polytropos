@@ -6,6 +6,8 @@ pushed to GitHub, so a fresh clone is complete and current — there's no extern
 restore. The only things that don't transfer between machines are a few **absolute paths**; you
 re-run the installers rather than copying `~/.claude` or `~/.copilot` over.
 
+Prefer reading in a browser? The full manual lives at <https://agentmc15.github.io/polytropos/>, built from this repo by `.github/workflows/docs-site.yml`. Local preview: `python3 -m venv /tmp/ptdocs && /tmp/ptdocs/bin/pip install -r docs-src/requirements.txt && /tmp/ptdocs/bin/mkdocs serve` — the venv is throwaway, never a repo dependency.
+
 ## Prerequisites
 
 | Need | For |

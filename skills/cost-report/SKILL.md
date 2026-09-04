@@ -18,6 +18,8 @@ Flags:
 - `--days N` — lookback window (default 30)
 - `--mode api|subscription` — framing (default: `billing_mode` from `${CLAUDE_PLUGIN_ROOT}/data/pricing.json`)
 - `--top N` — how many top sessions to list (default 10)
+- `--json` — print the report payload as JSON instead of markdown
+- `--projects-dir DIR` — point the walk at a non-default transcript directory (the only way to run this against anything but the live `~/.claude/projects`)
 
 The script walks `~/.claude/projects/**/*.jsonl`, extracts per-message model + usage (input/output/cache tokens), dedupes by message id, and prices everything from `data/pricing.json` (Sonnet 5 intro pricing applied by date).
 
@@ -33,3 +35,9 @@ The script emits markdown. Summarize it for the user rather than dumping raw out
 4. One actionable recommendation, e.g. a default-model or effort-level change, based on what the data shows.
 
 If the script errors on unexpected transcript formats, show the error and the file it choked on — don't silently skip everything.
+
+Two no-data outcomes are distinct, not both "broken": a **missing** projects directory exits
+with `No transcript directory at <path>` and renders nothing; a **present-but-empty** directory
+still renders the full report with a `no transcripts in window: <dir>` label — a zero-row report
+is honest output, not a failure. Don't tell the user the tool is broken on either outcome, and
+don't present the empty case's zeros as measured spend.

@@ -1,0 +1,2 @@
+# Site toolchain only — bin/ and tests/ stay stdlib-only (CLAUDE.md invariant).
+mkdocs-material>=9.5,<10

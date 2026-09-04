@@ -6,6 +6,8 @@
 
 A Claude Code plugin that picks the right model per task, estimates the cost before you run it, and keeps Fable 5 reserved for work that actually needs it.
 
+**The manual — full documentation site:** <https://agentmc15.github.io/polytropos/> — every skill on every harness (Claude Code, Copilot CLI, Codex CLI), getting-started guides, workflows, and deep dives. Generated from the skill files themselves and rebuilt on every push to `main` (drift-gated by `tests/test_docs_site.py`).
+
 **In-depth architecture guide:** [docs/HOW-IT-WORKS.md](docs/HOW-IT-WORKS.md) (Markdown) · [docs/how-it-works.html](docs/how-it-works.html) (styled HTML — open in a browser).
 
 **Complete guide & cookbook:** [docs/GUIDE.md](docs/GUIDE.md) · [docs/guide.html](docs/guide.html) — every skill documented, the iterative workflows, how aesop fits, and 10 worked examples (tasks, greenfield, brownfield, backlog, security).
