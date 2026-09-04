@@ -592,24 +592,49 @@ class CodexMemoryKeepRegressionTests(unittest.TestCase):
 
 # ---------------------------------------------------------------------------
 # Group 10: whole-of-T11 regression -- of the 12 `## codex` AUDIT entries, 11
-# were `keep` (verified byte-unchanged) and exactly one (`bench-routing`) was
-# `enrich`. Diffed against the committed HEAD, since this kit's own tree is
-# still uncommitted mid-execution: any file under codex/skills/ other than
-# bench-routing/SKILL.md showing a diff here is a real finding, not a false
-# positive, because nothing else in `## codex` AUDIT authorized a change.
+# were `keep` and exactly one (`bench-routing`) was `enrich`.
+#
+# This originally asserted `git diff --name-only -- codex/skills/` against HEAD,
+# which was only ever true while the kit's own tree was uncommitted: once the
+# work is committed the diff is empty and the test fails forever. That was a
+# task-time verification baked into the permanent suite -- a category error,
+# since "which files one task touched" is not a property of the repository.
+#
+# Replaced with the durable form of the same intent: the enrich's distinctive
+# claim belongs to bench-routing's card and to no other Codex card. That fires
+# if the enrich is ever copied into a sibling card, or lands in the wrong file,
+# and it keeps working after any number of commits.
 # ---------------------------------------------------------------------------
 
 
-@unittest.skipUnless(
-    _git("rev-parse", "--is-inside-work-tree").returncode == 0,
-    "not inside a git work tree",
-)
-class CodexSkillsElevenKeepsByteUnchangedTests(unittest.TestCase):
-    def test_only_bench_routing_skill_md_differs_from_head(self):
-        result = _git("diff", "--name-only", "--", "codex/skills/")
-        self.assertEqual(result.returncode, 0, result.stderr)
-        changed = [line for line in result.stdout.splitlines() if line.strip()]
-        self.assertEqual(changed, ["codex/skills/bench-routing/SKILL.md"])
+class CodexEnrichIsConfinedToBenchRoutingTests(unittest.TestCase):
+    # A phrase distinctive to T11's enrich, not the bare flag name: `--harness`
+    # legitimately appears in other Codex cards (e.g. `constraints --harness codex`),
+    # so keying on it would false-positive on correct content.
+    _CLAIM = "flag of its own"
+
+    def test_enrich_claim_present_in_bench_routing(self):
+        body = _skill("bench-routing", harness="codex")["body"]
+        self.assertIn(
+            self._CLAIM,
+            body,
+            "codex/bench-routing lost its T11 enrich: the card must still state "
+            "that `compare` has no `--harness` flag of its own.",
+        )
+
+    def test_no_other_codex_card_carries_the_enrich_claim(self):
+        offenders = []
+        for record in docs_build.skill_inventory(repo_root=REPO_ROOT):
+            if record["harness"] != "codex" or record["name"] == "bench-routing":
+                continue
+            if self._CLAIM in record["body"]:
+                offenders.append(record["name"])
+        self.assertEqual(
+            offenders,
+            [],
+            "the T11 enrich language is confined to codex/bench-routing; these "
+            f"cards also carry it: {offenders}",
+        )
 
 
 # ---------------------------------------------------------------------------
