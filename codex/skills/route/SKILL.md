@@ -82,7 +82,7 @@ fits, drawn from Codex CLI's real control surfaces:
 
 | goal | how |
 | --- | --- |
-| one-shot dispatch | `codex exec "<task>" --model <model-id>` (add `--full-auto` when it must edit files) |
+| one-shot dispatch | `codex exec "<task>" --model <model-id>` (add `--sandbox workspace-write` when it must edit files) |
 | interactive switch | `/model` picker in the Codex TUI |
 | session start | `codex --model <model-id>` |
 | persistent default | `model = "<model-id>"` in `~/.codex/config.toml` (or `$CODEX_HOME/config.toml`) |

@@ -156,6 +156,13 @@ class ShapeTests(unittest.TestCase):
             self.assertEqual(sig["harnesses"][harness]["command_template"], template)
             self.assertIn("{model}", template)
 
+    def test_codex_command_uses_supported_workspace_sandbox(self):
+        sig = ja.build_harness_signal({}, CLAUDE_PRICING, COPILOT_PRICING, CODEX_PRICING)
+        self.assertEqual(
+            sig["harnesses"]["codex_cli"]["command_template"],
+            'codex exec --model {model} --sandbox workspace-write "<task>"',
+        )
+
 
 # ---- 2. estimate math reuse ----------------------------------------------------------------
 

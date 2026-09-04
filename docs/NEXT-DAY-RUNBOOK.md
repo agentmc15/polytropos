@@ -74,7 +74,7 @@ Advisory only — nothing here auto-executes; every command below is ready-to-pa
 - ideal: claude_code — kit tasks run via /polytropos:execute in Claude Code
 - claude_code (<model-id>, est M ~$<x>): `claude -p --model <model-id> "Wire the widget"`
 - copilot_cli (<model-id>, est M ~$<x> / ~<y> AIC): `copilot --model <model-id> -p "Wire the widget"`
-- codex_cli (<model-id>, est M ~$<x> API-equivalent — not a bill): `codex exec --model <model-id> --full-auto "Wire the widget"`
+- codex_cli (<model-id>, est M ~$<x> API-equivalent — not a bill): `codex exec --model <model-id> --sandbox workspace-write "Wire the widget"`
 ```
 
 (Real files carry actual pricing-file model ids and run-time cost estimates in place of the

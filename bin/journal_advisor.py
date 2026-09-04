@@ -75,7 +75,7 @@ ADVISORY_NOTE = (
 COMMAND_TEMPLATES = {
     "claude_code": 'claude -p --model {model} "<task>"',
     "copilot_cli": 'copilot --model {model} -p "<task>"',
-    "codex_cli": 'codex exec --model {model} --full-auto "<task>"',
+    "codex_cli": 'codex exec --model {model} --sandbox workspace-write "<task>"',
 }
 
 # Per-harness structural billing strings (label semantics — no numbers).

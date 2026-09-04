@@ -335,7 +335,8 @@ class BuildDispatchTests(unittest.TestCase):
         self.assertIsInstance(argv, list)
         self.assertEqual(
             argv,
-            [STUB_BIN, "exec", "--model", "fake-cheap", "--full-auto", "fake prompt text"],
+            [STUB_BIN, "exec", "--model", "fake-cheap", "--sandbox", "workspace-write",
+             "fake prompt text"],
         )
 
     def test_tier_word_pinned_resolves_through_skip_up_before_dispatch(self):
@@ -347,7 +348,33 @@ class BuildDispatchTests(unittest.TestCase):
     def test_no_model_field_omits_model_pair(self):
         argv = ce.build_dispatch(STUB_BIN, None, "fake prompt text")
         self.assertNotIn("--model", argv)
-        self.assertEqual(argv, [STUB_BIN, "exec", "--full-auto", "fake prompt text"])
+        self.assertEqual(
+            argv, [STUB_BIN, "exec", "--sandbox", "workspace-write", "fake prompt text"]
+        )
+
+    def test_default_does_not_change_approval_mode_or_bypass_sandbox(self):
+        argv = ce.build_dispatch(STUB_BIN, "fake-cheap", "fake prompt text")
+        for flag in ("--full-auto", "--approve-for-me",
+                     "--dangerously-bypass-approvals-and-sandbox"):
+            self.assertNotIn(flag, argv)
+
+    def test_explicit_sandbox_override_is_not_duplicated(self):
+        for override in (("--sandbox", "read-only"), ("--sandbox=read-only",),
+                         ("-s", "read-only"), ("-s=read-only",), ("-sread-only",)):
+            with self.subTest(override=override):
+                argv = ce.build_dispatch(
+                    STUB_BIN, None, "fake prompt text", extra_args=override
+                )
+                self.assertEqual(argv, [STUB_BIN, "exec", *override, "fake prompt text"])
+
+    def test_extra_args_iterable_retains_options_and_prompt(self):
+        argv = ce.build_dispatch(
+            STUB_BIN, None, "fake prompt text",
+            extra_args=iter(("--sandbox=read-only", "--json")),
+        )
+        self.assertEqual(
+            argv, [STUB_BIN, "exec", "--sandbox=read-only", "--json", "fake prompt text"]
+        )
 
     def test_effort_given_adds_reasoning_effort_flag(self):
         efforts = PRICING_FIXTURE["knobs"]["reasoning_efforts"]
@@ -638,8 +665,25 @@ class EndToEndRunHappyPathTests(unittest.TestCase):
 
             log_text = log_path.read_text()
             self.assertIn("exec", log_text)
-            self.assertIn("--full-auto", log_text)
+            self.assertIn("--sandbox\nworkspace-write\n", log_text)
+            self.assertNotIn("--full-auto", log_text)
             self.assertEqual(_dispatched_models(log_text), ["fake-cheap"])
+
+    def test_review_with_stub_uses_supported_sandbox_without_mutating_kit(self):
+        with tempfile.TemporaryDirectory() as tmp_s:
+            tmp = Path(tmp_s)
+            kit_dir = _write_kit(tmp, SINGLE_TASK_TASKS_TEXT)
+            before = (kit_dir / "TASKS.md").read_bytes()
+            log_path = tmp / "stub.log"
+            stub_path = _write_stub(tmp, log_path)
+            with contextlib.redirect_stdout(io.StringIO()):
+                ce.main(["review", "--kit", str(kit_dir), "--phase", "1",
+                         "--codex-bin", str(stub_path)])
+            log_text = log_path.read_text()
+            self.assertIn("--sandbox\nworkspace-write\n", log_text)
+            self.assertNotIn("--full-auto", log_text)
+            self.assertEqual((kit_dir / "TASKS.md").read_bytes(), before)
+            self.assertFalse((kit_dir / "NOTES.md").exists())
 
 
 class EndToEndEscalationTests(unittest.TestCase):

@@ -98,7 +98,7 @@ def make_signal(*, claude_cheap=None, claude_mid=None,
                 "est": est_block(copilot_cheap, copilot_mid),
             },
             "codex_cli": {
-                "command_template": 'codex exec --model {model} --full-auto "<task>"',
+                "command_template": 'codex exec --model {model} --sandbox workspace-write "<task>"',
                 "est": est_block(codex_cheap, codex_mid),
             },
         },

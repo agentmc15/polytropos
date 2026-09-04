@@ -40,7 +40,7 @@ Recommend, then give the one action:
 
 | Goal | Mechanism |
 |---|---|
-| one-shot dispatch | `codex exec "<task>" --model <model-id>` (`--full-auto` if it must edit files) |
+| one-shot dispatch | `codex exec "<task>" --model <model-id>` (`--sandbox workspace-write` if it must edit files) |
 | interactive switch | `/model` picker in the Codex TUI |
 | persistent default | `model = "<model-id>"` in `~/.codex/config.toml` |
 | reasoning effort | `-c model_reasoning_effort=<level>` |
@@ -165,7 +165,7 @@ inventing a flag.
 
 | goal | how |
 | --- | --- |
-| one-shot dispatch | `codex exec "<task>" --model <model-id>` (add `--full-auto` when it must edit files) |
+| one-shot dispatch | `codex exec "<task>" --model <model-id>` (add `--sandbox workspace-write` when it must edit files) |
 | interactive switch | `/model` picker in the Codex TUI |
 | persistent default | `model = "<model-id>"` in `~/.codex/config.toml` |
 | reasoning effort | `-c model_reasoning_effort=<level>` (levels from the data's `knobs.reasoning_efforts`) |

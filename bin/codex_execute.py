@@ -21,13 +21,14 @@ development or verification.
     temporary stub executable via `--codex-bin` — never the real binary.
   * `build_dispatch` returns an argv LIST; dispatch never uses `shell=True`.
 
-Dispatch anatomy (best-effort, NOT live-verified — the copilot_execute `--model` precedence
-precedent): the `codex exec` flag surface below (`--model`, `--full-auto`, `-c
-model_reasoning_effort=...`) is pinned at MEDIUM confidence from Codex CLI docs and asserted as
-a kit contract. Verifying it live would spend the user's quota (forbidden), so this driver
-asserts it; the injectable-runner design means a flag correction is a one-constant change. If
-`.claude/kits/codex-harness/RESEARCH.md` or repo reality contradicts a pinned flag, STOP and
-report — do not guess a replacement.
+Dispatch anatomy: `codex exec --model ... --sandbox workspace-write -c
+model_reasoning_effort=...`. OpenAI's CLI 0.147.0 changelog replaced the removed
+`--full-auto` flag with `--sandbox workspace-write`:
+https://learn.chatgpt.com/docs/changelog
+This selects the workspace sandbox without enabling automatic approval review or bypassing
+permissions. An explicit --sandbox/-s option in extra_args replaces the default. Argument
+contracts are tested with injected runners/stubs, never a live model dispatch. If current CLI
+documentation contradicts this contract, report the mismatch rather than guessing a flag.
 
 Tier resolution & escalation (D4, the SHARED skip-up rule — sibling implementation
 `codex_pricing.resolve_tier`): a task's `model` field may be a model id from
@@ -338,23 +339,30 @@ def load_preamble(role, repo_root=None):
 def build_dispatch(codex_bin, model_id, prompt, effort=None, extra_args=()):
     """Build the `codex exec` dispatch argv LIST (never a joined string; never shell=True).
 
-    [codex_bin, "exec"] + (["--model", model_id] if model_id else []) + ["--full-auto"]
+    [codex_bin, "exec"] + (["--model", model_id] if model_id else [])
+        + (["--sandbox", "workspace-write"] unless extra_args already selects a sandbox)
         + (["-c", "model_reasoning_effort=" + effort] if effort else [])
         + list(extra_args) + [prompt]
 
-    `--full-auto` is the non-interactive permission grant (Copilot's `--allow-all-tools`
-    analogue). A model_id of None omits `--model` so the user's configured Codex default
-    applies. `--effort`/`--extra-arg` feed the reasoning-effort override and future surfaces
-    (`--sandbox`, `--skip-git-repo-check`, ...) — NO fast/ultra flag is invented. Flags are
-    best-effort, NOT live-verified (see the module docstring) — do NOT re-run the CLI.
+    The workspace sandbox is not an unrestricted permission grant. Approval policy remains
+    with the CLI configuration; --approve-for-me is not enabled implicitly. A model_id of
+    None omits --model so the user's configured Codex default applies. --effort/--extra-arg
+    supply reasoning effort and explicit CLI options. Do not probe the CLI from this builder.
     """
+    extra_args = list(extra_args)
     argv = [codex_bin, "exec"]
     if model_id:
         argv += ["--model", model_id]
-    argv += ["--full-auto"]
+    # The short form also accepts an attached value: -sread-only or -s=read-only.
+    has_sandbox = any(
+        arg == "--sandbox" or arg.startswith("--sandbox=") or arg.startswith("-s")
+        for arg in extra_args
+    )
+    if not has_sandbox:
+        argv += ["--sandbox", "workspace-write"]
     if effort:
         argv += ["-c", "model_reasoning_effort=" + effort]
-    argv += list(extra_args)
+    argv += extra_args
     argv += [prompt]
     return argv
 

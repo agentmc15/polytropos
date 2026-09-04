@@ -53,7 +53,7 @@ so asking for `strong` resolves UPWARD to the frontier model — the same skip-u
 
 ## Step 2 — Dispatch
 
-`codex exec "<self-contained brief>" --model <model-id>` (add `--full-auto` when it must edit
+`codex exec "<self-contained brief>" --model <model-id>` (add `--sandbox workspace-write` when it must edit
 files). The dispatched run sees nothing of this session, so the brief must carry the task, the
 needed context, and the verify command with an instruction to run it and report the output.
 
