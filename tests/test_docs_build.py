@@ -997,5 +997,45 @@ class RenderDeepDiveIndexTests(unittest.TestCase):
         self.assertEqual(first, second)
 
 
+
+class AnchorNormalizationTests(unittest.TestCase):
+    """Anchors authored for GitHub must be re-slugged when they land on a site page.
+
+    `docs/*.md` are read on GitHub AND mirrored to the site, and the two sluggers
+    disagree: GitHub keeps the doubled hyphen left behind when it strips an em dash
+    between two spaces; Python-Markdown's `toc` collapses any separator run to one.
+    The source anchor cannot satisfy both, so the generator normalizes on the way to
+    the site and leaves the GitHub form alone in the source and in blob URLs.
+    """
+
+    def test_doubled_hyphen_collapsed_on_a_page_map_hit(self):
+        out = db.rewrite_links(
+            "[x](EVIDENCE-LOOP.md#rule-2-a--b)",
+            "docs",
+            db.GITHUB_BLOB_BASE,
+            {"docs/EVIDENCE-LOOP.md": "deep-dives/evidence-loop.md"},
+        )
+        self.assertIn("deep-dives/evidence-loop.md#rule-2-a-b", out)
+        self.assertNotIn("--", out)
+
+    def test_doubled_hyphen_collapsed_on_a_pure_anchor(self):
+        out = db.rewrite_links(
+            "[x](#6-the-scorecard--proving-it)", "docs", db.GITHUB_BLOB_BASE, {}
+        )
+        self.assertIn("(#6-the-scorecard-proving-it)", out)
+
+    def test_blob_urls_keep_the_github_form(self):
+        # A blob URL still points at GitHub, where the authored anchor is correct.
+        out = db.rewrite_links(
+            "[x](OTHER.md#a--b)", "docs", db.GITHUB_BLOB_BASE, {}
+        )
+        self.assertIn("#a--b", out)
+
+    def test_single_hyphens_untouched(self):
+        out = db.rewrite_links(
+            "[x](#already-fine)", "docs", db.GITHUB_BLOB_BASE, {}
+        )
+        self.assertIn("(#already-fine)", out)
+
 if __name__ == "__main__":
     unittest.main()

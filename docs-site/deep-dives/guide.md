@@ -27,7 +27,7 @@ burndown, and security.
 3. [The one hard constraint](#3-the-one-hard-constraint)
 4. [What each skill does](#4-what-each-skill-does)
 5. [The iterative workflows](#5-the-iterative-workflows)
-6. [The routing scorecard — proving the cheap models held](#6-the-routing-scorecard--proving-the-cheap-models-held)
+6. [The routing scorecard — proving the cheap models held](#6-the-routing-scorecard-proving-the-cheap-models-held)
 7. [What aesop is, and how it fits](#7-what-aesop-is-and-how-it-fits)
 8. [The 11 examples](#8-the-11-examples)
 

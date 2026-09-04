@@ -221,8 +221,10 @@ python3 bin/memory_recall.py --demo
 - **Hooks / auto-injection.** Recall is pull-only in v1 — no session-start bulk load, no
   per-turn hook, no settings.json wiring. The default posture is "ask when it helps," not
   "always inject."
-- **Cross-harness parity.** No Copilot or Codex port of the memory capability exists yet. A
-  future kit could mirror it, the way `harness-parity` followed `codex-harness`.
+- **Cross-harness parity.** Codex has a deliberately recall-only port (`codex/skills/memory/`,
+  which documents `review` while the Claude skill also documents add/update/remove/list); no
+  Copilot port exists yet. A future kit could mirror it there, the way `harness-parity`
+  followed `codex-harness`.
 - **Model-assisted re-ranking.** The ranking script never calls a model — determinism and
   zero-cost recall are the point. The skill layers judgment on top of the script's output; it
   does not ask a model to re-score the candidates.

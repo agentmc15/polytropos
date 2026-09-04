@@ -76,7 +76,7 @@ No driver hardcodes a model id, a tier, or a price; every one is resolved from i
 
 **Knowledge-graph layer.** The kit records the decision to omit a knowledge graph but does **not** carry its rationale. Inventing one here would be the worst kind of fabrication — it would read as settled history and every later reader would inherit it as fact. An honest gap beats a confident fiction. If a knowledge-graph implementation emerges, it should do its own analysis rather than adopt a retroactive justification.
 
-**Auto-application of promoted lessons.** The evidence-loop kit (`.claude/kits/evidence-loop/`) introduces a promotion tool that clusters recurring defects and lessons across kits, but stops at a human gate: it never edits GUARDRAILS.md, skills, agent files, or anything tracked. The architecture explicitly requires a future kit for auto-application. See [docs/EVIDENCE-LOOP.md](evidence-loop.md#rule-2-taskslessonsmd-is-live-routing-input--promotion-is-read-only) for the read-only contract and why it matters.
+**Auto-application of promoted lessons.** The evidence-loop kit (`.claude/kits/evidence-loop/`) introduces a promotion tool that clusters recurring defects and lessons across kits, but stops at a human gate: it never edits GUARDRAILS.md, skills, agent files, or anything tracked. The architecture explicitly requires a future kit for auto-application. See [docs/EVIDENCE-LOOP.md](evidence-loop.md#rule-2-taskslessonsmd-is-live-routing-input-promotion-is-read-only) for the read-only contract and why it matters.
 
 ## What Actually Landed
 

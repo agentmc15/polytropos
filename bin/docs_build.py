@@ -194,7 +194,9 @@ def _rewrite_target(target, source_dir, blob_base, page_map):
     if target.startswith("http://") or target.startswith("https://") or target.startswith("mailto:"):
         return target
     if target.startswith("#"):
-        return target
+        # A pure anchor always resolves against the page being rendered, which is
+        # the site page -- so it needs the site slugger's form, same as a page_map hit.
+        return _normalize_anchor(target)
     if "#" in target:
         path_part, frag = target.split("#", 1)
         frag = "#" + frag
@@ -206,8 +208,28 @@ def _rewrite_target(target, source_dir, blob_base, page_map):
     if resolved is None:
         return target
     if resolved in page_map:
-        return page_map[resolved] + frag
+        return page_map[resolved] + _normalize_anchor(frag)
     return blob_base + resolved + frag
+
+
+def _normalize_anchor(frag):
+    """Collapse runs of hyphens in an anchor so it matches a site-rendered id.
+
+    Anchors authored in `docs/*.md` are written for GitHub's slugger, which
+    keeps the doubled hyphen left behind when it strips punctuation between two
+    spaces (an em dash in a heading becomes `--`). The site renders headings
+    with Python-Markdown's `toc` slugify, which collapses any run of separator
+    characters to a single hyphen, so the GitHub form never resolves there.
+
+    Collapsing is safe by construction rather than by judgement: the target
+    slugifier can never emit two adjacent hyphens, so a run in a target anchor
+    is always wrong for the rendered page. Anchors are only normalized on links
+    that resolve to a site page (`page_map` hits) -- a blob URL still points at
+    GitHub, where the authored form is the correct one.
+    """
+    if not frag:
+        return frag
+    return "#" + re.sub(r"-{2,}", "-", frag[1:])
 
 
 _LINK_RE = re.compile(r"\[([^\]]*)\]\(([^)]*)\)")

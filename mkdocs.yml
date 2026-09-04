@@ -35,6 +35,15 @@ markdown_extensions:
   - pymdownx.superfences
   - pymdownx.details
 
+# --strict only promotes WARNING-level findings, and mkdocs logs unresolved
+# heading anchors at INFO by default -- so a broken #anchor silently shipped.
+# Raising it to warning makes --strict genuinely validate anchors, not just
+# link targets. bin/docs_build.py normalizes GitHub-style doubled hyphens when
+# rewriting anchors onto site pages; this catches anything it cannot.
+validation:
+  links:
+    anchors: warn
+
 nav:
   - Home: index.md
   - Getting started:
