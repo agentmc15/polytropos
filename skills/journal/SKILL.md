@@ -79,18 +79,10 @@ skips escalation).
 ## Inbox & schedule
 
 Drop meeting notes or email to-dos into `journal/inbox.md` as plain lines; the next collection
-folds them into the digest so they resurface as next-day to-dos. To run the collector and
-summarizer automatically every night, install the schedule:
-
-```bash
-python3 "$ROOT/bin/journal_schedule.py" install
-```
-
-This writes a launchd plist (default 22:00) and prints the `launchctl bootstrap` command needed
-to activate it — the installer never runs `launchctl` itself, so loading the schedule is the
-user's own later, manual step. Use `uninstall` to remove the plist, `status` to check whether
-it is loaded, and `run` (with `--collect-only` or `--dry-run`) for a manual one-shot in between
-scheduled runs.
+folds them into the digest so they resurface as next-day to-dos. Read
+`references/scheduling.md` when the user wants the journal to run unattended: the launchd
+install/uninstall/status/run surface and the manual `launchctl` step it never performs for
+them.
 
 ## Next-day runbook
 
@@ -134,21 +126,11 @@ user tabled it).
 
 ## External tools (Teams / Outlook / Copilot Studio)
 
-The journal has no Graph/OAuth/MCP connectors and never will by default — instead it generates
-an offline **ask-the-tools** pack you run yourself, in your own Microsoft tools, two passes:
-
-```bash
-python3 "$ROOT/bin/journal_askpack.py" --date <date> --print
-```
-
-This writes `journal/<date>/ask-the-tools.md` with one ready-to-paste prompt per tool
-(Copilot Studio, Teams, Outlook) and also prints them to stdout. Run each printed prompt
-inside that tool's own AI, then paste the bullet results it gives you back into
-`journal/inbox.md`. Re-run the collector and redo the summaries so the enriched inbox flows
-into the digest. This is offline text generation only: the journal never adds network,
-OAuth, Graph, or MCP calls to fetch this content — you carry it over by hand. Each prompt
-asks for at most 15 subject-level bullets per tool (titles, people, decisions, action
-items — no message bodies).
+The journal has no Graph/OAuth/MCP connectors and never will by default: it never adds network,
+OAuth, Graph, or MCP calls to fetch this content — any Teams/Outlook/Copilot Studio context
+comes in only as offline text you carry over by hand. Read `references/ask-the-tools.md` when
+the user wants that context folded into the journal: the offline ask-the-tools prompt pack and
+the manual paste-back loop.
 
 ## Privacy
 

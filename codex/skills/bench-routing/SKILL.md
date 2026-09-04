@@ -25,5 +25,8 @@ python3 "$POLYTROPOS_ROOT/bin/bench_routing.py" demo
 The Intelligence Index is a general-capability composite transcribed from a benchmark screenshot,
 not measured Codex task performance. Benchmark workload cost estimates are not this repository's
 pricing, a bill, or routing certainty. Preserve every transcription/coverage limitation and use
-the repo's measured comparison surface when evidence exists. Recommend a role assignment as a
-prior to verify, not a guaranteed winner.
+the repo's measured comparison surface when evidence exists. `compare` joins the benchmark prior
+against this repo's measured kit ledger, but that ledger is Claude-harness implementer evidence
+with no per-role outcome data for Codex, so the benchmark's recommendation stands unchallenged
+here — `compare` has no `--harness` flag of its own, and implying one exists is a fabrication.
+Recommend a role assignment as a prior to verify, not a guaranteed winner.
