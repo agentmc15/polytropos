@@ -747,7 +747,7 @@ class DeepDivePageMapRealTreeTests(unittest.TestCase):
     def test_every_real_docs_md_source_is_mapped_with_lowercased_slug(self):
         page_map = db.deep_dive_page_map(REPO_ROOT)
         md_sources = sorted((REPO_ROOT / "docs").glob("*.md"))
-        self.assertEqual(len(md_sources), 24)
+        self.assertEqual(len(md_sources), 25)
         for path in md_sources:
             key = f"docs/{path.name}"
             expected_value = f"deep-dives/{path.stem.lower()}.md"
@@ -769,13 +769,13 @@ class DeepDivePageMapRealTreeTests(unittest.TestCase):
         for value in page_map.values():
             self.assertTrue(value.endswith(".md"), f"non-.md page_map value: {value!r}")
 
-    def test_page_map_has_exactly_26_entries(self):
-        """24 docs/*.md sources + 2 .html companions = 26 keys; the .html
-        files themselves never get an extra mirror page (25 pages: 24
+    def test_page_map_has_exactly_27_entries(self):
+        """25 docs/*.md sources + 2 .html companions = 27 keys; the .html
+        files themselves never get an extra mirror page (26 pages: 25
         mirrors + 1 index, per the brief's 'Currently 24 sources -> 25
         pages')."""
         page_map = db.deep_dive_page_map(REPO_ROOT)
-        self.assertEqual(len(page_map), 26)
+        self.assertEqual(len(page_map), 27)
 
 
 class DeepDivesNeverMirrorHtmlFilesLiveTreeTests(unittest.TestCase):
@@ -939,21 +939,21 @@ class DeepDiveGlobDerivationExtraFileTests(unittest.TestCase):
     """Brief: 'DERIVE the set from a docs/ glob, never a hardcoded list, so a
     future doc auto-joins'. Proves it on a temp COPY of the real repo's
     skills/copilot/codex/docs directories plus one extra docs/NEW-THING.md --
-    expected_pages() must grow by exactly one mirror page (25 -> 26 deep-dive
-    pages; 68 -> 69 total), never touching the real tracked docs/ dir."""
+    expected_pages() must grow by exactly one mirror page (26 -> 27 deep-dive
+    pages; 69 -> 70 total), never touching the real tracked docs/ dir."""
 
-    def test_extra_doc_file_yields_a_26th_mirror_page(self):
+    def test_extra_doc_file_yields_a_27th_mirror_page(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = _copy_real_dirs(tmp, ("skills", "copilot", "codex", "docs"))
             baseline = db.expected_pages(root)
-            self.assertEqual(len(baseline), 68)
+            self.assertEqual(len(baseline), 69)
 
             (root / "docs" / "NEW-THING.md").write_text(
                 "# New Thing\n\nA brand-new doc.\n", encoding="utf-8"
             )
 
             grown = db.expected_pages(root)
-            self.assertEqual(len(grown), 69)
+            self.assertEqual(len(grown), 70)
             self.assertIn("docs-site/deep-dives/new-thing.md", grown)
 
 

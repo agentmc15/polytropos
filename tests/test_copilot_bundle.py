@@ -1,20 +1,21 @@
-"""Stdlib unittest suite enforcing copilot/aesop.yaml <-> copilot/.github/ consistency.
+"""Stdlib unittest suite enforcing copilot/aesop.toml <-> copilot/.github/ consistency.
 
 Per PLAN.md D2, this test IS the enforcement mechanism standing in for `aesop compile`, which
-this repo never runs (no node toolchain in scope). It parses copilot/aesop.yaml as plain text
-with a small line-oriented helper -- stdlib has no YAML parser, and none is added here -- and
-cross-checks it against the hand-authored bundle under copilot/.github/ and the pricing data at
-data/pricing.copilot.json. This test reads files only: no writes, no network.
+this repo never runs (no node toolchain in scope). It loads copilot/aesop.toml with stdlib
+tomllib (Python 3.11+; see SETUP.md) and cross-checks it against the hand-authored bundle
+under copilot/.github/ and the pricing data at data/pricing.copilot.json. This test reads
+files only: no writes, no network.
 """
 
 import json
 import re
+import tomllib
 import unittest
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 COPILOT_DIR = REPO_ROOT / "copilot"
-AESOP_YAML = COPILOT_DIR / "aesop.yaml"
+AESOP_TOML = COPILOT_DIR / "aesop.toml"
 GITHUB_DIR = COPILOT_DIR / ".github"
 AGENTS_DIR = GITHUB_DIR / "agents"
 SKILLS_DIR = GITHUB_DIR / "skills"
@@ -30,35 +31,10 @@ DOCTRINE_SENTENCE = (
 )
 
 
-def _extract_yaml_list_block(yaml_text, key):
-    """Return the `- <item>` values in the indented block that follows a `<key>:` line.
-
-    Line-oriented, indentation-based text parsing only (no YAML parser). Blank lines inside
-    the block are skipped; the block ends at the first non-blank line whose indentation is not
-    greater than the `key:` line's own indentation.
-    """
-    lines = yaml_text.splitlines()
-    key_line_re = re.compile(r"^(\s*)" + re.escape(key) + r":\s*$")
-    items = []
-    in_block = False
-    key_indent = None
-    for line in lines:
-        if not in_block:
-            m = key_line_re.match(line)
-            if m:
-                in_block = True
-                key_indent = len(m.group(1))
-            continue
-        if not line.strip():
-            continue
-        indent = len(line) - len(line.lstrip(" "))
-        if indent <= key_indent:
-            break
-        item_m = re.match(r"^-\s+(\S+)\s*$", line.strip())
-        if not item_m:
-            break
-        items.append(item_m.group(1))
-    return items
+def _manifest():
+    """Load copilot/aesop.toml with stdlib tomllib."""
+    with AESOP_TOML.open("rb") as f:
+        return tomllib.load(f)
 
 
 def _iter_bundle_files():
@@ -83,27 +59,32 @@ def _frontmatter(text):
 
 
 class ManifestSanityTests(unittest.TestCase):
-    """Case 1: copilot/aesop.yaml exists, is version 1, and harnesses is exactly [copilot]."""
+    """Case 1: copilot/aesop.toml exists, is version 1, and harnesses is exactly [copilot]."""
 
     def test_manifest_exists(self):
-        self.assertTrue(AESOP_YAML.is_file(), f"missing manifest: {AESOP_YAML}")
+        self.assertTrue(AESOP_TOML.is_file(), f"missing manifest: {AESOP_TOML}")
 
     def test_version_is_1(self):
-        text = AESOP_YAML.read_text()
-        self.assertRegex(text, r"(?m)^version:\s*1\s*$")
+        manifest = _manifest()
+        self.assertEqual(manifest["version"], 1)
 
     def test_harnesses_block_is_exactly_copilot(self):
-        text = AESOP_YAML.read_text()
-        harnesses = _extract_yaml_list_block(text, "harnesses")
-        self.assertEqual(harnesses, ["copilot"])
+        manifest = _manifest()
+        self.assertEqual(manifest["harnesses"], ["copilot"])
+
+    def test_no_yaml_manifest_remains(self):
+        self.assertFalse(
+            (COPILOT_DIR / "aesop.yaml").exists(),
+            "copilot/aesop.yaml should no longer exist -- converted to copilot/aesop.toml",
+        )
 
 
 class ManifestAgentsMatchBundleTests(unittest.TestCase):
     """Case 2: manifest agent names == *.agent.md stems in copilot/.github/agents/."""
 
     def test_manifest_agent_set_equals_bundle_agent_files(self):
-        text = AESOP_YAML.read_text()
-        manifest_agents = set(_extract_yaml_list_block(text, "agents"))
+        manifest = _manifest()
+        manifest_agents = set(manifest["primitives"]["agents"])
         self.assertTrue(manifest_agents, "manifest agents: block parsed as empty")
 
         bundle_stems = {p.name[: -len(".agent.md")] for p in _iter_agent_files()}
@@ -115,8 +96,14 @@ class DoctrineSentenceSyncTests(unittest.TestCase):
     """Case 3: the doctrine sentence appears verbatim in both the manifest and instructions."""
 
     def test_doctrine_sentence_in_manifest(self):
-        text = AESOP_YAML.read_text()
+        text = AESOP_TOML.read_text()
         self.assertIn(DOCTRINE_SENTENCE, text)
+
+        manifest = _manifest()
+        self.assertIn(
+            DOCTRINE_SENTENCE,
+            manifest["primitives"]["instructions"]["blocks"][0]["content"],
+        )
 
     def test_doctrine_sentence_in_copilot_instructions(self):
         text = INSTRUCTIONS_MD.read_text()
@@ -309,8 +296,8 @@ class ManifestSkillsMatchBundleTests(unittest.TestCase):
     each containing a SKILL.md."""
 
     def test_manifest_skills_set_equals_bundle_skill_dirs(self):
-        text = AESOP_YAML.read_text()
-        manifest_skills = set(_extract_yaml_list_block(text, "skills"))
+        manifest = _manifest()
+        manifest_skills = set(manifest["primitives"]["skills"])
         self.assertTrue(manifest_skills, "manifest skills: block parsed as empty")
 
         bundle_skill_dirs = {p.name for p in SKILLS_DIR.iterdir() if p.is_dir()} if SKILLS_DIR.is_dir() else set()
@@ -318,8 +305,8 @@ class ManifestSkillsMatchBundleTests(unittest.TestCase):
         self.assertEqual(manifest_skills, bundle_skill_dirs)
 
     def test_each_bundle_skill_dir_has_a_skill_md(self):
-        text = AESOP_YAML.read_text()
-        manifest_skills = set(_extract_yaml_list_block(text, "skills"))
+        manifest = _manifest()
+        manifest_skills = set(manifest["primitives"]["skills"])
         self.assertTrue(manifest_skills, "manifest skills: block parsed as empty")
 
         for name in manifest_skills:

@@ -13,8 +13,9 @@ This repo now has two independent surfaces:
 
 - **Repo root** — the Claude Code plugin (`.claude-plugin/`, `skills/`, `bin/`), live-installed
   via the local marketplace. Unchanged by this work.
-- **`copilot/`** — the Copilot harness bundle: `aesop.yaml` (the manifest, source of truth for
-  what the bundle contains) plus a `.github/` tree of native Copilot config files. Both are
+- **`copilot/`** — the Copilot harness bundle: `aesop.toml` (the manifest, source of truth for
+  what the bundle contains, in the TOML dialect of aesop's v1 schema) plus a `.github/` tree of
+  native Copilot config files. Both are
   hand-authored in the formats aesop's (`github:agentmc15/aesop`) Copilot emitter produces as of
   commit `5506617` — `aesop compile` is never run in this repo; `tests/test_copilot_bundle.py`
   enforces that the manifest and the bundle stay consistent by hand.

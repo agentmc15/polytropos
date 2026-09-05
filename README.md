@@ -12,7 +12,9 @@ A Claude Code plugin that picks the right model per task, estimates the cost bef
 
 **Complete guide & cookbook:** [docs/GUIDE.md](docs/GUIDE.md) · [docs/guide.html](docs/guide.html) — every skill documented, the iterative workflows, how aesop fits, and 10 worked examples (tasks, greenfield, brownfield, backlog, security).
 
-**Aesop integration:** [docs/AESOP-INTEGRATION.md](docs/AESOP-INTEGRATION.md) — consume `route`/`fable-check` from [aesop](https://github.com/agentmc15/aesop) registries, and feed aesop's budget dials with numbers computed from `data/pricing.json` (`bin/aesop_bridge.py`).
+**AI primitives — aesop, folded in:** [docs/PRIMITIVES.md](docs/PRIMITIVES.md) — the nine converged primitives (instructions, skills, subagents, commands, MCP, hooks, permissions, loops, state) and the six-harness support matrix, carried over from [aesop](https://github.com/agentmc15/aesop) and now living here as data plus a read-only validator: `primitives/*.json` + `bin/primitives.py` (`model` / `matrix` / `check` / `plan`). **aesop itself was archived on 2026-09-05** — its compiler and emitters stayed behind; what it got right came here. The matrix is generated into the doc and drift-tested, so the published table cannot diverge from the data.
+
+**Aesop integration (historical):** [docs/AESOP-INTEGRATION.md](docs/AESOP-INTEGRATION.md) — registry consumption of `route`/`fable-check` and the `bin/aesop_bridge.py` dial bridge, still accurate for anyone running an aesop checkout.
 
 **GitHub Copilot harness:** [docs/COPILOT-HARNESS.md](docs/COPILOT-HARNESS.md) — the same routing workflow for GitHub Copilot CLI: AI-Credit pricing data in `data/pricing.copilot.json`, a cross-vendor `route` agent in `copilot/`, installed via `bin/harness_select.py`.
 

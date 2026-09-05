@@ -5,6 +5,8 @@
 !!! note
     Mirrored from `docs/AESOP-COMPILE-PROPOSAL.md` — edit the source, then run `python3 bin/docs_build.py build`.
 
+> **Status (2026-09-04): superseded by the aesop-fold kit.** The direction changed from "make the Copilot bundle an `aesop compile` target" to "fold aesop's primitive model into polytropos": the manifest is now `copilot/aesop.toml` (TOML dialect of the same v1 schema), validated offline by `python3 bin/primitives.py check`, and `aesop compile` is not planned to run here. The specification below is kept as history; see `docs/PRIMITIVES.md` and `.claude/kits/aesop-fold/PLAN.md` (Evaluation) for the standing decision.
+
 This document specifies the aesop-side work needed to make this repo's Copilot bundle a real
 `aesop compile` target and to reconcile the one deliberate emitter divergence recorded in the
 copilot-harness kit. It is written to be the **input to a future `/polytropos:architect`

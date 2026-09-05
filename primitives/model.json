@@ -1,0 +1,145 @@
+{
+  "schema": "polytropos-primitives/v1",
+  "source": {
+    "aesop_commit": "9c4108ee8ca32fe7f7420a94b15b072c92a6ccf8",
+    "aesop_docs": ["docs/04-primitives.md", "src/types.ts"],
+    "note": "Transcribed from aesop; aesop's src/types.ts and schema are LOCKED upstream — this file mirrors, never extends, their vocabulary."
+  },
+  "primitives": [
+    {
+      "id": "instructions",
+      "order": 1,
+      "title": "Instructions",
+      "manifest_key": "primitives.instructions",
+      "authored_as": "inline",
+      "semantics": "Ordered instruction blocks (global, project, or path-scoped) render into every selected harness's native instruction file plus the portable AGENTS.md. Global blocks are durable personal preferences; project blocks are repo truth — never mixed. Each emitted file stays under roughly 250 lines so it survives context compaction.",
+      "fields": [
+        {"name": "template", "type": "string", "required": false, "note": "default builtin:AGENTS.template"},
+        {"name": "blocks", "type": "array", "required": false, "note": "items are {scope, content}; scope pattern is global | project | path:<glob>"},
+        {"name": "global", "type": "array", "required": false, "note": "durable personal preferences, plain strings"}
+      ]
+    },
+    {
+      "id": "skill",
+      "order": 2,
+      "title": "Skills",
+      "manifest_key": "primitives.skills",
+      "authored_as": "referenced",
+      "semantics": "Canonical form is a converged SKILL.md folder (frontmatter name + description, then body, plus optional scripts/, references/, assets/). Progressive disclosure is the point: the description is always in context, the body loads on trigger, bundled files load on demand. The description is the API — a tight, boring description beats a clever one.",
+      "fields": [
+        {"name": "name", "type": "string", "required": true},
+        {"name": "description", "type": "string", "required": true, "note": "frontmatter; the description is the API"},
+        {"name": "body", "type": "string", "required": true},
+        {"name": "scripts", "type": "directory", "required": false},
+        {"name": "references", "type": "directory", "required": false},
+        {"name": "assets", "type": "directory", "required": false}
+      ]
+    },
+    {
+      "id": "agent",
+      "order": 3,
+      "title": "Subagents",
+      "manifest_key": "primitives.agents",
+      "authored_as": "referenced",
+      "semantics": "One YAML role file naming the job, the narrowest tool set, a model tier or pin, an effort level, and a prompt body. One job per agent; read-only by default, the main agent does the edits. Maker versus checker is the highest-value split — the reviewer is pinned to a stronger model at higher effort than the maker.",
+      "fields": [
+        {"name": "name", "type": "string", "required": true},
+        {"name": "description", "type": "string", "required": true},
+        {"name": "tools", "type": "array", "required": false, "note": "default [\"read\"]; narrowest set the job needs"},
+        {"name": "model", "type": "enum", "required": false, "enum": ["strong", "mid", "cheap"], "note": "default mid"},
+        {"name": "effort", "type": "enum", "required": false, "enum": ["xhigh", "high", "medium", "fast"], "note": "default medium"},
+        {"name": "edits", "type": "boolean", "required": false, "note": "default false — read-only unless set"},
+        {"name": "prompt", "type": "string", "required": true, "note": "the agent's body"}
+      ]
+    },
+    {
+      "id": "command",
+      "order": 4,
+      "title": "Commands / prompts",
+      "manifest_key": "primitives.commands",
+      "authored_as": "referenced",
+      "semantics": "A prompt file plus an optional args schema, for inner-loop workflows a human triggers repeatedly — distinct from skills, which the agent pulls in on its own.",
+      "fields": [
+        {"name": "prompt", "type": "string", "required": true, "note": "the file body"},
+        {"name": "args", "type": "object", "required": false, "note": "optional schema"}
+      ]
+    },
+    {
+      "id": "mcp",
+      "order": 5,
+      "title": "MCP servers",
+      "manifest_key": "primitives.mcp",
+      "authored_as": "inline",
+      "semantics": "One canonical server spec (name, transport, command or url, env-var names only, scopes, trust tier) emits to every harness's own MCP config location. The trust field feeds the permissions primitive: an irreversible-trust server is automatically human-gated. Default posture is zero MCP servers until a workflow needs one.",
+      "fields": [
+        {"name": "name", "type": "string", "required": true},
+        {"name": "transport", "type": "enum", "required": true, "enum": ["stdio", "http"]},
+        {"name": "command", "type": "string", "required": false, "note": "for stdio transport"},
+        {"name": "url", "type": "string", "required": false, "note": "for http transport"},
+        {"name": "env", "type": "array", "required": false, "note": "env var NAMES only — values never enter the manifest or emitted files"},
+        {"name": "scopes", "type": "array", "required": false},
+        {"name": "trust", "type": "enum", "required": false, "enum": ["read", "write", "irreversible"], "note": "default read"}
+      ]
+    },
+    {
+      "id": "hook",
+      "order": 6,
+      "title": "Hooks",
+      "manifest_key": "primitives.hooks",
+      "authored_as": "referenced",
+      "semantics": "An event, a matcher, and a shell action that carry hard policy — rules that must hold even when the model doesn't comply, such as format-on-write or a dangerous-command block. On harnesses without native hooks, the emitter falls back to a git pre-commit wrapper and says so.",
+      "fields": [
+        {"name": "name", "type": "string", "required": true},
+        {"name": "description", "type": "string", "required": true},
+        {"name": "event", "type": "enum", "required": true, "enum": ["pre-tool", "post-tool", "stop", "session-start"]},
+        {"name": "matcher", "type": "string", "required": true},
+        {"name": "action", "type": "string", "required": false},
+        {"name": "deny_patterns", "type": "array", "required": false}
+      ]
+    },
+    {
+      "id": "permissions",
+      "order": 7,
+      "title": "Permissions",
+      "manifest_key": "primitives.permissions",
+      "authored_as": "inline",
+      "semantics": "Three tiers mapped per harness: read (free), mutate (allowlist/policy-checked), and irreversible (human approval — deploys, pushes to default branch, data deletion, spending). The unattended block names the only sanctioned skip-permissions context, the devcontainer recipe.",
+      "fields": [
+        {"name": "mutate_allow", "type": "array", "required": false},
+        {"name": "irreversible", "type": "array", "required": false},
+        {"name": "unattended", "type": "enum", "required": false, "enum": ["devcontainer", "none"], "note": "default none"}
+      ]
+    },
+    {
+      "id": "loop",
+      "order": 8,
+      "title": "Loops & goals",
+      "manifest_key": "primitives.loops",
+      "authored_as": "inline",
+      "semantics": "A goal recipe: a measurable goal, a verify command as the mechanical stopping condition, and three required hard stops (iteration ceiling, no-progress detector, budget ceiling) — the schema rejects a recipe without them, never defaulted in silently. Compiles to native /goal, the portable Ralph runner, orchestration, or scheduled automations depending on the harness.",
+      "fields": [
+        {"name": "name", "type": "string", "required": true, "note": "path-safe identifier — becomes a filename under .aesop/goals/"},
+        {"name": "goal", "type": "string", "required": true, "note": "the measurable end state"},
+        {"name": "verify", "type": "string", "required": true, "note": "the measurable stopping condition"},
+        {"name": "plan_gate", "type": "boolean", "required": false, "note": "default true"},
+        {"name": "autonomy", "type": "enum", "required": false, "enum": ["high", "plan-gated", "supervised"]},
+        {"name": "stops.max_iterations", "type": "integer", "required": true},
+        {"name": "stops.no_progress_after", "type": "integer", "required": true},
+        {"name": "stops.budget_usd", "type": "number", "required": true, "note": "all three stops required — never defaulted in silently"}
+      ]
+    },
+    {
+      "id": "state",
+      "order": 9,
+      "title": "State & memory",
+      "manifest_key": "state",
+      "authored_as": "inline",
+      "semantics": "Pure convention, identical everywhere: tasks/todo.md (current plan, checkboxes) and tasks/lessons.md (mistake-to-rule log, read at session start), optionally tasks/notes/. Durable state lives on disk, not in context — the agent forgets between runs, the repo doesn't.",
+      "fields": [
+        {"name": "dir", "type": "string", "required": false, "note": "default tasks/"},
+        {"name": "todo.md", "type": "conventional-file", "required": false, "note": "current plan, checkboxes"},
+        {"name": "lessons.md", "type": "conventional-file", "required": false, "note": "mistake-to-rule log, read at session start"}
+      ]
+    }
+  ]
+}

@@ -1,0 +1,35 @@
+version = 1
+harnesses = ["claude-code"]
+registries = ["builtin"]
+
+[project]
+name = "minimal-app"
+stack = ["typescript", "node20"]
+review_bandwidth = 2
+
+[project.commands]
+test = "npm test"
+build = "npm run build"
+lint = "npm run lint"
+
+[pathway]
+profile = "balanced"
+
+[primitives]
+skills = ["verify-loop"]
+agents = ["explorer", "verify-app"]
+commands = ["commit-pr"]
+hooks = []
+mcp = []
+loops = []
+
+[primitives.instructions]
+template = "builtin:AGENTS.template"
+
+[primitives.permissions]
+mutate_allow = ["git commit *"]
+irreversible = ["git push origin main"]
+unattended = "none"
+
+[state]
+dir = "tasks/"

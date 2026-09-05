@@ -5,6 +5,8 @@
 !!! note
     Mirrored from `docs/AESOP-INTEGRATION.md` — edit the source, then run `python3 bin/docs_build.py build`.
 
+> **Status (2026-09-04): partially superseded by the aesop-fold kit.** Registry consumption of `route`/`fable-check` and `bin/aesop_bridge.py` remain accurate for anyone running aesop, and the "Kits in aesop-managed projects" rules still apply to a root `aesop.yaml`. This repo's own Copilot manifest is now `copilot/aesop.toml`, and the primitive model lives in `docs/PRIMITIVES.md`; the aesop-side follow-ups below are deprioritized — see `.claude/kits/aesop-fold/PLAN.md` (Evaluation).
+
 How to consume this plugin from [aesop](https://github.com/agentmc15/aesop) — the user's
 harness-portable "environment compiler" — and a proposal for the aesop-side follow-ups that
 would make the fit tighter. This is both a user guide (sections 1–4) and a proposal document

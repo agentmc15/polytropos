@@ -1,0 +1,148 @@
+# AI primitives — the model behind every harness bundle
+
+## What this is
+
+aesop (github:agentmc15/aesop) set out to build an "environment compiler" for six coding
+harnesses, but the durable idea inside it — the one this repo was originally meant to
+build toward — is a nine-primitive model for AI-agent configuration: instructions, skills,
+subagents, commands, MCP servers, hooks, permissions, loops/goals, and state, plus one
+manifest schema describing them and a harness-by-harness matrix of what each harness
+supports natively and what needs a portable fallback. This page folds that model into
+polytropos as data, transcribed from aesop commit `9c4108ee8ca32fe7f7420a94b15b072c92a6ccf8`
+(its `docs/04-primitives.md` and `docs/03-harness-matrix.md`).
+
+It lives here as three plain files under `primitives/`: `model.json` (the nine primitives),
+`harness-matrix.json` (the six-harness support table), and `aesop.schema.v1.json` — aesop's
+LOCKED v1 manifest schema, vendored verbatim so its enums and patterns stay authoritative
+rather than retyped. A read-only engine, `bin/primitives.py`, reads all three plus a
+manifest and answers two questions: is this manifest valid, and what would a given harness
+get from it.
+
+What it is not: there is no compiler and there are no emitters. aesop's own machinery for
+turning a manifest into native harness files and keeping them in sync never made the trip.
+This repo hand-authors its Copilot and Codex bundles directly and enforces manifest-to-bundle
+consistency by unittest instead — a pattern already proven here before this model arrived —
+so a manifest is checked, never compiled.
+
+## The nine primitives
+
+| id | what it is | where it is authored |
+|---|---|---|
+| `instructions` | Ordered instruction blocks (global, project, or path-scoped) that render into a harness's native instruction file plus the portable AGENTS.md. | `primitives.instructions` — inline |
+| `skill` | A converged SKILL.md folder: the frontmatter description stays in context, the body loads on trigger, bundled files load on demand. | `primitives.skills` — referenced |
+| `agent` | One role file naming a job, a narrowest tool set, a model tier, an effort level, and a prompt body. | `primitives.agents` — referenced |
+| `command` | A prompt file for an inner-loop workflow a human triggers by name, distinct from a skill the agent pulls in on its own. | `primitives.commands` — referenced |
+| `mcp` | One server spec — transport, command or URL, env-var names only, a trust tier — emitted to each harness's own MCP config location. | `primitives.mcp` — inline |
+| `hook` | An event, a matcher, and a shell action carrying hard policy that must hold even when the model doesn't comply. | `primitives.hooks` — referenced |
+| `permissions` | Three tiers — read, mutate, irreversible — mapped per harness, plus the one sanctioned unattended context. | `primitives.permissions` — inline |
+| `loop` | A goal recipe: a measurable goal, a verify command, and three required hard stops that are never defaulted in silently. | `primitives.loops` — inline |
+| `state` | The `tasks/todo.md` and `tasks/lessons.md` convention, identical on every harness. | `state` — inline |
+
+## Harness matrix
+
+The table below is generated, not hand-typed — it is the literal output of
+`python3 bin/primitives.py matrix --markdown`, and a test compares it byte-for-byte against
+that function so it can never silently drift from `primitives/harness-matrix.json`.
+
+<!-- primitives:matrix:begin -->
+| Primitive | claude-code | codex | copilot | cursor | antigravity | vscode |
+| --- | --- | --- | --- | --- | --- | --- |
+| instructions | native | native | native | native | native | fallback |
+| skill | native | native | native | fallback | native | fallback |
+| agent | native | native | native | fallback | fallback | fallback |
+| command | native | native | native | fallback | fallback | fallback |
+| mcp | native | native | native | native | fallback | native |
+| hook | native | fallback | fallback | fallback | fallback | fallback |
+| permissions | native | native | fallback | fallback | fallback | fallback |
+| loop | native | native | fallback | fallback | native | fallback |
+| state | native | native | native | native | native | native |
+
+Goal modes: claude-code=native · codex=native · copilot=ralph · cursor=ralph · antigravity=scheduled · vscode=ralph
+<!-- primitives:matrix:end -->
+
+Native means the primitive maps onto a first-class feature of that harness; fallback means a
+portable stand-in — a role prompt, a rules file, a pre-commit wrapper — would carry the same
+intent where no native feature exists. The cursor column is pinned cell-for-cell to aesop's
+Cursor emitter research, not to anything built here: it is the input a future Cursor-support
+kit would port, not a live install path.
+
+## The manifest (TOML)
+
+The v1 schema's authoring form here is TOML, read by stdlib `tomllib`, rather than aesop's
+own YAML. TOML enforces a table-ordering rule the schema itself doesn't need to state: every
+bare root key (`version`, `harnesses`, `registries`) must precede the first `[table]` header,
+and every plain array under `[primitives]` (`agents`, `skills`, `commands`, `hooks`) must
+precede any `[primitives.*]` section such as `[[primitives.instructions.blocks]]` — once a
+later header opens, the earlier table can't be reopened. `copilot/aesop.toml`, this repo's
+one manifest, follows the rule (arrays elided for length):
+
+```toml
+version = 1
+harnesses = ["copilot"]
+registries = ["builtin"]
+
+[project]
+name = "polytropos-copilot"
+stack = ["python3-stdlib"]
+invariants = [ "...", ]
+
+[project.commands]
+test = "python3 -m unittest discover -s tests"
+
+[pathway]
+profile = "token-lean"
+
+[primitives]
+agents = ["route", "architect", "implementer", "..."]
+skills = ["lessons-loop", "route", "usage", "..."]
+
+[[primitives.instructions.blocks]]
+scope = "project"
+content = """
+## polytropos (Copilot harness)
+...
+"""
+```
+
+Nothing in this repo writes a manifest — there is no TOML serializer, and `bin/primitives.py`
+has no command that edits one; `tomllib` only reads. Comments survive intact because every
+manifest here is hand-authored, never round-tripped through a compiler.
+
+## Commands
+
+`python3 bin/primitives.py model | matrix [--harness ID] [--markdown] | check MANIFEST [--json] | plan MANIFEST [--harness ID] [--json]`
+
+Exit codes: `0` the command succeeded; `1` a usage error, or the manifest file is missing or
+fails to parse as TOML; `2` `check` or `plan` found validation findings, or an unknown
+`--harness` id was given.
+
+`check` enforces seven finding codes, each independent of the others:
+
+- `schema` — the manifest's required keys, enums, and patterns conform to the vendored v1 schema.
+- `stops` — a loop declares all three hard stops (`max_iterations`, `no_progress_after`, `budget_usd`); none is ever defaulted in silently.
+- `verify-loop` — the project's test command isn't still the TODO placeholder, and a loop's verify command isn't empty.
+- `judge-family` — a judge model's family differs from the primary model's family, so the maker never grades its own work.
+- `env-value` — MCP server `env` entries are bare variable names, never the values themselves.
+- `unsafe-name` — project and primitive names are path-safe: no `.`, `..`, path separators, or NUL bytes.
+- `secret` — the raw manifest text carries none of four known committed-credential shapes.
+
+## Pathways, briefly
+
+aesop's `profile.ts` and its `profiles/*.yaml` gave every project a fixed cost/accuracy dial
+— named calibrations, each hardcoding its own hard-stop numbers up front. polytropos keeps
+the dial's shape (an effort level plus the same three required hard stops) but replaces the
+fixed calibrations with routing measured from this repo's own outcome ledger — see
+[Routing history](ROUTING-HISTORY.md) for the cross-kit track record and
+[Role experiment](ROLE-EXPERIMENT.md) for whether adding a review role earns its keep. A
+calibration fixed in a YAML file can't learn from a kit that just ran; a ledger can.
+
+## Relationship to aesop
+
+This kit folded the nine-primitive model, the six-harness matrix, the vendored v1 schema,
+manifest validation, and per-harness capability planning into polytropos as data plus a
+read-only engine. It deferred the six emitters and the registry's content seeds (hook specs,
+an instruction template) for a later, selective port, and dropped the machinery with no
+consumer here — fences, the lockfile, `sync`, doctor's dynamic checks,
+`init`/`detect`/`interview`, federation and the registry, `bundle`, MCP server mode, eject,
+and the CLI shell. The full capability-by-capability record, independently re-verified
+against the aesop source, is `.claude/kits/aesop-fold/EVALUATION.md`.
