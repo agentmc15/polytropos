@@ -92,10 +92,12 @@ polytropos/
     └── agents/                     per-kit model-pinned implementer/verifier/reviewer trio
 ```
 
-Three families of `bin/` script, plus plumbing: the **routing/cost core**
+Four families of `bin/` script, plus plumbing: the **routing/cost core**
 (`routing_scorecard.py`, `session_cost.py`, `cost_report.py`, `statusline.py`,
-`agent_tracker.py`), the **Copilot harness** (`copilot_*`), and the **daily journal**
-(`journal_*`) — the two extensions get their own sections (§7). Subsections below cover the
+`agent_tracker.py`), the **Copilot harness** (`copilot_*`), the **daily journal**
+(`journal_*`), and the **primitive model** (`primitives.py` — a read-only validator over
+`primitives/*.json`, folded from aesop; see [PRIMITIVES.md](PRIMITIVES.md)) — the extensions get
+their own sections (§7). Subsections below cover the
 Claude-side pieces in dependency order.
 
 ### 4.1 `data/pricing.json`

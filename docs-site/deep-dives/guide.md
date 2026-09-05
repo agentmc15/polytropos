@@ -359,6 +359,13 @@ passes, zero escalations, and zero execution work on Fable**. This guide is one 
 
 ## 7. What aesop is, and how it fits
 
+> **Status (2026-09-05): aesop is archived, and its durable core now lives in this repo.** The
+> nine-primitive model and the six-harness support matrix were folded into `primitives/*.json` +
+> `bin/primitives.py` and documented in [PRIMITIVES.md](primitives.md). What did *not* come across:
+> the compiler and its emitters — `init`, `compile`, `sync`, `doctor`, federation, `bundle`,
+> `eject`. The section below describes aesop as it stood and remains accurate for anyone running an
+> aesop checkout; the per-capability fold/defer/drop record is `.claude/kits/aesop-fold/EVALUATION.md`.
+
 **Aesop** (`github:agentmc15/aesop`) is an *environment compiler* for AI coding agents. One
 manifest — `aesop.yaml` — is compiled into native configuration (instruction files, skills,
 subagents, commands, MCP servers, hooks, permissions, loops, goals) for **any harness**: Claude
