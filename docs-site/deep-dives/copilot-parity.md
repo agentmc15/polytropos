@@ -9,7 +9,7 @@ This doc maps every user-invocable Claude Code plugin experience
 (`/polytropos:<name>`) to its GitHub Copilot CLI twin, and records exactly how
 Copilot's two capability surfaces — skills and agents — relate. Sourced from a 2026-07-18
 capture of GitHub's official Copilot CLI docs (agent skills, custom agents, `/skills`);
-see `copilot/aesop.yaml`'s Ground truth notes for the underlying research.
+see `copilot/aesop.toml`'s Ground truth notes for the underlying research.
 
 ## 1. Two surfaces, one capability
 
@@ -81,5 +81,5 @@ In a live Copilot CLI session:
 No price, AI Credit value, or model id is hardcoded in this doc or in any skill/agent
 body. Every number is derived at run time from `data/pricing.copilot.json` via
 `bin/copilot_pricing.py` (`models`, `est`, `runway`, `knobs`) — the AIC unit itself is
-data (`billing_unit.usd_per_credit`). See `CLAUDE.md` and `copilot/aesop.yaml`'s
+data (`billing_unit.usd_per_credit`). See `CLAUDE.md` and `copilot/aesop.toml`'s
 instructions block for the standing pricing invariant.

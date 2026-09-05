@@ -86,7 +86,7 @@ polytropos/
 │   ├── journal_sources.py          per-tool read-only ingestion adapters
 │   ├── journal_summarize.py        routed-model narrative/technical/next-day writer
 │   └── journal_schedule.py         macOS launchd nightly scheduler
-├── copilot/                        the Copilot CLI harness bundle (aesop.yaml + .github/)
+├── copilot/                        the Copilot CLI harness bundle (aesop.toml + .github/)
 └── .claude/
     ├── kits/<slug>/                PLAN.md + TASKS.md + NOTES.md — one execution kit
     └── agents/                     per-kit model-pinned implementer/verifier/reviewer trio

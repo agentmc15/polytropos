@@ -17,7 +17,7 @@
     ],
     "bundle": [
       "copilot/.github/copilot-instructions.md",
-      "copilot/aesop.yaml"
+      "copilot/aesop.toml"
     ],
     "existing-guides": [
       "README.md",
