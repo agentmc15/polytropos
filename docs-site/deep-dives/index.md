@@ -24,6 +24,7 @@
 | [Memory skill](memory-skill.md) |
 | [Next-day runbook](next-day-runbook.md) |
 | [Per-task dollars — attributing delegated cost by task and role](per-task-dollars.md) |
+| [AI primitives — the model behind every harness bundle](primitives.md) |
 | [Privacy — what stays local, what is committed, and the before-going-public checklist](privacy.md) |
 | [The role experiment — does adding roles pay?](role-experiment.md) |
 | [Routing history — the cross-kit per-tier track record](routing-history.md) |

@@ -293,7 +293,7 @@ class RealTreeIdempotenceTests(unittest.TestCase):
     copied in, proving the brief's 'build twice -> unchanged N' claim against
     the FULL real roster -- never writing to a tracked file. T5 pinned this at
     43 (39 skill pages + 3 harness indexes + 1 parity page); T6 extends the set
-    with 25 deep-dive pages (24 docs/*.md mirrors + 1 index), for 68 total --
+    with 26 deep-dive pages (25 docs/*.md mirrors + 1 index), for 69 total --
     this test derives the count dynamically so it stays meaningful if that
     changes again."""
 
@@ -301,7 +301,7 @@ class RealTreeIdempotenceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = _copy_real_dirs(tmp, ("skills", "copilot", "codex", "docs"))
             expected_count = len(db.expected_pages(root))
-            self.assertEqual(expected_count, 68, "T6's pinned page-set size (68 total)")
+            self.assertEqual(expected_count, 69, "T6's pinned page-set size (69 total)")
 
             code1, out1, err1 = _run_main(["build", "--repo-root", str(root)])
             self.assertEqual(code1, 0, f"stderr={err1!r}")

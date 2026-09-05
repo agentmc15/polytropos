@@ -101,6 +101,7 @@ python3 bin/harness_update.py check           # all-harness freshness card (read
 python3 bin/harness_update.py demo            # synthetic check/apply smoke — temp trees only, no real homes
 python3 bin/graph_brief.py demo                # architect-grounding brief from a graphify graph.json — synthetic smoke, no graphify binary (lands with the graphify-skill kit)
 python3 bin/docs_build.py check                # docs-site generated-page freshness (stdlib, offline; exit 1 on drift; lands with the docs-site kit)
+python3 bin/primitives.py check copilot/aesop.toml   # AI-primitive manifest validation (offline, read-only; exit 2 on findings; lands with the aesop-fold kit)
 ```
 
 ## When executing a kit task

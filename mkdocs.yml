@@ -111,6 +111,7 @@ nav:
       - usage: skills/codex/usage.md
   - Deep dives:
     - deep-dives/index.md
+    - AI primitives: deep-dives/primitives.md
     - Aesop compile round-trip: deep-dives/aesop-compile-proposal.md
     - Aesop integration: deep-dives/aesop-integration.md
     - Codex harness: deep-dives/codex-harness.md
