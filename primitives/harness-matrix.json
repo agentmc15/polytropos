@@ -1,0 +1,97 @@
+{
+  "schema": "polytropos-harness-matrix/v1",
+  "source": {
+    "aesop_commit": "9c4108ee8ca32fe7f7420a94b15b072c92a6ccf8",
+    "aesop_docs": ["docs/03-harness-matrix.md", "src/emitters/*.ts"],
+    "verified": "aesop's own pin: June–July 2026"
+  },
+  "support_values": ["native", "fallback"],
+  "goal_modes": ["native", "ralph", "scheduled"],
+  "primitives": ["instructions", "skill", "agent", "command", "mcp", "hook", "permissions", "loop", "state"],
+  "harnesses": {
+    "claude-code": {
+      "goal_mode": "native",
+      "cells": {
+        "instructions": {"support": "native", "target": ["CLAUDE.md", "AGENTS.md"], "notes": "CLAUDE.md importing AGENTS.md"},
+        "skill": {"support": "native", "target": [".claude/skills/<name>/**"], "notes": "converged SKILL.md folder, implicit trigger by description"},
+        "agent": {"support": "native", "target": [".claude/agents/<name>.md"], "notes": "YAML frontmatter: name, description, tools, model"},
+        "command": {"support": "native", "target": [".claude/commands/<name>.md"], "notes": "slash command ($ARGUMENTS)"},
+        "mcp": {"support": "native", "target": [".mcp.json"], "notes": "mcpServers key"},
+        "hook": {"support": "native", "target": [".claude/settings.json"], "notes": "PreToolUse/PostToolUse/Stop/SessionStart hooks"},
+        "permissions": {"support": "native", "target": [".claude/settings.json"], "notes": "permissions.allow/ask"},
+        "loop": {"support": "native", "target": [".aesop/goals/<name>.md", ".aesop/goals/<name>.ralph.json", ".claude/commands/goal-<name>.md"], "notes": "native /goal since Claude Code 2.1.139"},
+        "state": {"support": "native", "target": ["tasks/todo.md", "tasks/lessons.md"], "notes": "tasks/ convention"}
+      }
+    },
+    "codex": {
+      "goal_mode": "native",
+      "cells": {
+        "instructions": {"support": "native", "target": [".codex/config.toml", "AGENTS.md"], "notes": "AGENTS.md is the native standard; config.toml carries the pathway comment"},
+        "skill": {"support": "native", "target": [".codex/skills/<name>/**"], "notes": "same converged SKILL.md format"},
+        "agent": {"support": "native", "target": [".codex/agents/<name>.toml"], "notes": "TOML role file"},
+        "command": {"support": "native", "target": [".codex/prompts/<name>.md"], "notes": "prompt file"},
+        "mcp": {"support": "native", "target": [".codex/config.toml"], "notes": "[mcp_servers.<name>] table"},
+        "hook": {"support": "fallback", "target": [], "notes": "no native hook events — git pre-commit wrapper emitted in Phase 6"},
+        "permissions": {"support": "native", "target": [".codex/config.toml"], "notes": "approval_policy / sandbox_mode"},
+        "loop": {"support": "native", "target": [".aesop/goals/<name>.md", ".aesop/goals/<name>.ralph.json", ".codex/prompts/goal-<name>.md"], "notes": "native /goal — first harness to ship it"},
+        "state": {"support": "native", "target": ["tasks/todo.md", "tasks/lessons.md"], "notes": "tasks/ convention"}
+      }
+    },
+    "copilot": {
+      "goal_mode": "ralph",
+      "cells": {
+        "instructions": {"support": "native", "target": [".github/copilot-instructions.md", ".github/instructions/<glob>.instructions.md", "AGENTS.md"], "notes": "copilot-instructions.md + applyTo path-scoped instructions files (native path-scoping)"},
+        "skill": {"support": "native", "target": [".github/skills/<name>/**"], "notes": "awesome-copilot skills category"},
+        "agent": {"support": "native", "target": [".github/agents/<name>.agent.md"], "notes": "awesome-copilot agents category, MCP-integrated"},
+        "command": {"support": "native", "target": [".github/prompts/<name>.prompt.md"], "notes": "prompt file"},
+        "mcp": {"support": "native", "target": [".vscode/mcp.json"], "notes": "servers key"},
+        "hook": {"support": "fallback", "target": [], "notes": "Copilot hook format not pinned in the matrix yet — git pre-commit wrapper lands in Phase 6"},
+        "permissions": {"support": "fallback", "target": [], "notes": "tool allowlisting is per-user/org Copilot policy, not a repo file — not emitted"},
+        "loop": {"support": "fallback", "target": [".aesop/goals/<name>.md", ".aesop/goals/<name>.ralph.json"], "notes": "no first-party /goal — use the portable Ralph runner: `aesop goal run <name>` (.aesop/goals/)"},
+        "state": {"support": "native", "target": ["tasks/todo.md", "tasks/lessons.md"], "notes": "tasks/ convention"}
+      }
+    },
+    "cursor": {
+      "goal_mode": "ralph",
+      "cells": {
+        "instructions": {"support": "native", "target": [".cursor/rules/00-aesop.mdc", ".cursor/rules/scoped-<glob>.mdc", "AGENTS.md"], "notes": "always-on rule pointing at AGENTS.md + scoped globs rules"},
+        "skill": {"support": "fallback", "target": [".cursor/rules/skill-<name>.mdc"], "notes": "no native skills — emitted as agent-requested rules (.mdc with description trigger)"},
+        "agent": {"support": "fallback", "target": [".aesop/roles/<name>.md"], "notes": "no first-class subagents — role prompts in .aesop/roles/ (one session per role)"},
+        "command": {"support": "fallback", "target": [".aesop/prompts/<name>.md"], "notes": "no native prompt registry — portable prompts in .aesop/prompts/"},
+        "mcp": {"support": "native", "target": [".cursor/mcp.json"], "notes": "mcpServers key"},
+        "hook": {"support": "fallback", "target": [], "notes": "no native hooks — git pre-commit wrapper lands in Phase 6"},
+        "permissions": {"support": "fallback", "target": [], "notes": "allowlist lives in app settings, not a repo file — not emitted"},
+        "loop": {"support": "fallback", "target": [".aesop/goals/<name>.md", ".aesop/goals/<name>.ralph.json"], "notes": "no first-party /goal — use the portable Ralph runner: `aesop goal run <name>` (.aesop/goals/)"},
+        "state": {"support": "native", "target": ["tasks/todo.md", "tasks/lessons.md"], "notes": "tasks/ convention"}
+      }
+    },
+    "antigravity": {
+      "goal_mode": "scheduled",
+      "cells": {
+        "instructions": {"support": "native", "target": ["GUARDRAILS.md", "AGENTS.md"], "notes": "reads AGENTS.md natively (wins precedence over GEMINI.md); GUARDRAILS.md carries safety + permission prose"},
+        "skill": {"support": "native", "target": [".agents/skills/<name>/**"], "notes": "workspace .agents/skills/<name>/SKILL.md, converged folder format"},
+        "agent": {"support": "fallback", "target": [".aesop/roles/<name>.md"], "notes": "no first-class subagents — role prompts in .aesop/roles/ (Manager surface runs them)"},
+        "command": {"support": "fallback", "target": [".aesop/prompts/<name>.md"], "notes": "no native prompt registry — portable prompts in .aesop/prompts/"},
+        "mcp": {"support": "fallback", "target": [], "notes": "MCP is configured in app settings, not a repo file — not emitted"},
+        "hook": {"support": "fallback", "target": [], "notes": "no native hooks — git pre-commit wrapper lands in Phase 6"},
+        "permissions": {"support": "fallback", "target": ["GUARDRAILS.md"], "notes": "encoded as binding prose in GUARDRAILS.md, not enforced config"},
+        "loop": {"support": "native", "target": [".aesop/goals/<name>.md", ".aesop/goals/<name>.ralph.json"], "notes": "Manager surface + scheduled tasks"},
+        "state": {"support": "native", "target": ["tasks/todo.md", "tasks/lessons.md"], "notes": "tasks/ convention"}
+      }
+    },
+    "vscode": {
+      "goal_mode": "ralph",
+      "cells": {
+        "instructions": {"support": "fallback", "target": [".vscode/settings.json", "AGENTS.md"], "notes": "via Copilot files — enable the 'copilot' harness; this emitter wires useInstructionFiles"},
+        "skill": {"support": "fallback", "target": [], "notes": "via the 'copilot' harness (.github/skills/)"},
+        "agent": {"support": "fallback", "target": [], "notes": "via the 'copilot' harness (.github/agents/)"},
+        "command": {"support": "fallback", "target": [], "notes": "via the 'copilot' harness (.github/prompts/)"},
+        "mcp": {"support": "native", "target": [".vscode/mcp.json"], "notes": "servers key"},
+        "hook": {"support": "fallback", "target": [], "notes": "no native hooks — git pre-commit wrapper lands in Phase 6"},
+        "permissions": {"support": "fallback", "target": [], "notes": "Copilot policy is per-user/org — not emitted"},
+        "loop": {"support": "fallback", "target": [".aesop/goals/<name>.md", ".aesop/goals/<name>.ralph.json"], "notes": "no first-party /goal — use the portable Ralph runner: `aesop goal run <name>` (.aesop/goals/)"},
+        "state": {"support": "native", "target": ["tasks/todo.md", "tasks/lessons.md"], "notes": "tasks/ convention"}
+      }
+    }
+  }
+}

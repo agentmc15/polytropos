@@ -1,0 +1,33 @@
+version = 1
+harnesses = ["codex"]
+registries = ["builtin"]
+
+[project]
+name = "lean-tool"
+stack = ["go"]
+review_bandwidth = 1
+
+[project.commands]
+test = "go test ./..."
+build = "go build ./..."
+
+[pathway]
+profile = "token-lean"
+
+[primitives]
+skills = ["verify-loop"]
+agents = ["explorer", "verify-app", "critic"]
+commands = ["commit-pr"]
+hooks = []
+mcp = []
+loops = []
+
+[primitives.instructions]
+template = "builtin:AGENTS.template"
+
+[primitives.permissions]
+mutate_allow = ["git commit *"]
+unattended = "none"
+
+[state]
+dir = "tasks/"

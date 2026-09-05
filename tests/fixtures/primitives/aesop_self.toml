@@ -1,0 +1,76 @@
+# TOML translation (T4 test fixture) of aesop's own aesop.yaml, for validate() golden coverage.
+version = 1
+harnesses = ["claude-code", "codex", "copilot", "cursor", "antigravity", "vscode"]
+registries = ["builtin"]
+
+[project]
+name = "aesop"
+stack = ["typescript", "node20"]
+invariants = [
+  "Emitters are pure functions (manifest, primitives, profile) -> files; all I/O lives in the CLI shell -- no filesystem, network, or clock inside emit().",
+  "src/types.ts and schemas/aesop.schema.json are LOCKED. Changing them is a breaking change: flag it and stop for approval.",
+  "docs/03-harness-matrix.md is updated BEFORE the emitter it describes (doc first, then code); capabilities() must match it cell-for-cell.",
+  "Emitted files reference secret NAMES only, never values.",
+  "Each roadmap phase lands with tests encoding its Goal line verbatim.",
+  "Goal recipes without all three hard stops must fail validation -- never default them in silently.",
+  "No new runtime dependencies unless the phase plan justifies them (currently yaml and ajv only).",
+  "Git commits carry no AI co-author trailers or generated-with footers.",
+]
+review_bandwidth = 2
+
+[project.commands]
+build = "npm run build"
+test = "npm test"
+lint = "npm run lint"
+
+[project.models.primary]
+family = "claude"
+tier = "strong"
+
+[project.models.judge]
+family = "openai"
+tier = "strong"
+
+[pathway]
+profile = "balanced"
+
+[primitives]
+skills = ["spec-first", "verify-loop", "lessons-loop"]
+agents = ["explorer", "verify-app", "spec-reviewer"]
+commands = ["commit-pr", "fix-ci", "add-learning"]
+hooks = ["block-dangerous-commands"]
+mcp = []
+
+[primitives.instructions]
+template = "builtin:AGENTS.template"
+
+[[primitives.instructions.blocks]]
+scope = "project"
+content = """
+## Working in this repo
+- The build is phase-gated (`docs/08-roadmap.md`): one reviewable change per phase,
+  gated by its Goal line. Check the roadmap for current status, then read only the
+  `docs/` chapter your change actually touches. `PLAN.md` is the original build plan --
+  historical reference, not session-start reading.
+- The golden fixtures under `fixtures/compile/*/expected/` are the compiler's contract --
+  regenerate them deliberately, never by reflex, and read the diff.
+"""
+
+[primitives.permissions]
+mutate_allow = ["npm *", "git commit *", "git push origin HEAD"]
+irreversible = ["git push origin main", "npm publish"]
+unattended = "none"
+
+[[primitives.loops]]
+name = "green-tests"
+goal = "the full test suite passes"
+verify = "npm test"
+plan_gate = true
+
+[primitives.loops.stops]
+max_iterations = 40
+no_progress_after = 3
+budget_usd = 25
+
+[state]
+dir = "tasks/"

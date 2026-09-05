@@ -1,0 +1,80 @@
+version = 1
+harnesses = ["claude-code", "codex", "copilot", "cursor", "antigravity", "vscode"]
+registries = ["builtin"]
+
+[project]
+name = "acme-api"
+stack = ["typescript", "node20", "postgres"]
+invariants = [
+  "Correlate accounts by persistent user ID, never email.",
+  "All money math in integer cents.",
+]
+review_bandwidth = 3
+
+[project.commands]
+test = "pnpm test"
+build = "pnpm build"
+lint = "pnpm lint"
+
+[project.monorepo]
+packages = ["packages/*"]
+
+[project.models.primary]
+family = "claude"
+tier = "strong"
+
+[project.models.judge]
+family = "openai"
+tier = "strong"
+
+[pathway]
+profile = "accuracy-max"
+
+[primitives]
+skills = ["spec-first", "verify-loop", "lessons-loop"]
+agents = ["explorer", "verify-app", "critic", "security-reviewer"]
+commands = ["commit-pr", "fix-ci", "add-learning"]
+hooks = ["block-dangerous-commands"]
+
+[primitives.instructions]
+template = "builtin:AGENTS.template"
+
+[[primitives.instructions.blocks]]
+scope = "project"
+content = """
+## Domain rules
+- API handlers never touch the DB directly; go through repositories.
+"""
+
+[[primitives.instructions.blocks]]
+scope = "path:packages/web/**"
+content = """
+React function components only; no class components.
+"""
+
+[[primitives.mcp]]
+name = "github"
+transport = "stdio"
+command = "npx -y @modelcontextprotocol/server-github"
+env = ["GITHUB_TOKEN"]
+scopes = ["repo:read"]
+trust = "write"
+
+[primitives.permissions]
+mutate_allow = ["pnpm *", "git commit *", "git push origin HEAD"]
+irreversible = ["git push origin main", "db:migrate up"]
+unattended = "none"
+
+[[primitives.loops]]
+name = "green-tests"
+goal = "all workspace tests pass"
+verify = "pnpm test"
+plan_gate = true
+
+[primitives.loops.stops]
+max_iterations = 40
+no_progress_after = 3
+budget_usd = 25
+
+[state]
+dir = "tasks/"

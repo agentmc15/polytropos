@@ -1,0 +1,182 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aesop.dev/schemas/aesop.schema.json",
+  "title": "Aesop manifest (aesop.yaml)",
+  "description": "Single source of truth for an agentic environment. v1 — LOCKED at Phase 1 (2026-06-10). Changes from here are breaking changes: flag and stop for approval.",
+  "type": "object",
+  "required": ["version", "project", "harnesses", "pathway", "primitives"],
+  "additionalProperties": false,
+  "properties": {
+    "version": { "const": 1 },
+    "project": {
+      "type": "object",
+      "required": ["name", "commands"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string" },
+        "stack": { "type": "array", "items": { "type": "string" } },
+        "commands": {
+          "type": "object",
+          "required": ["test"],
+          "properties": {
+            "build": { "type": "string" },
+            "test": { "type": "string", "description": "The verify loop. Load-bearing: doctor runs it." },
+            "lint": { "type": "string" }
+          },
+          "additionalProperties": { "type": "string" }
+        },
+        "monorepo": {
+          "type": "object",
+          "properties": { "packages": { "type": "array", "items": { "type": "string" } } }
+        },
+        "invariants": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Domain rules an agent would otherwise guess wrong. Interviewed, never overwritten by sync."
+        },
+        "models": {
+          "type": "object",
+          "properties": {
+            "primary": { "$ref": "#/$defs/modelRef" },
+            "judge": { "$ref": "#/$defs/modelRef", "description": "MUST be a different family than primary (enforced in code)." }
+          }
+        },
+        "review_bandwidth": {
+          "type": "integer", "minimum": 1, "default": 2,
+          "description": "Max parallel agents a human will actually review. Caps orchestration max_parallel."
+        }
+      }
+    },
+    "harnesses": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "enum": ["claude-code", "codex", "copilot", "cursor", "antigravity", "vscode"] }
+    },
+    "pathway": {
+      "type": "object",
+      "required": ["profile"],
+      "properties": {
+        "profile": { "type": "string", "description": "accuracy-max | balanced | token-lean | custom profile name" },
+        "overrides": { "type": "object", "description": "Sparse per-knob overrides. Cannot disable stops or safety rules." }
+      }
+    },
+    "registries": {
+      "type": "array",
+      "items": { "type": "string", "pattern": "^(builtin|github:[\\w.-]+/[\\w.-]+|path:.+|https?://.+)$" },
+      "default": ["builtin"]
+    },
+    "primitives": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "instructions": {
+          "type": "object",
+          "properties": {
+            "template": { "type": "string", "default": "builtin:AGENTS.template" },
+            "blocks": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["scope", "content"],
+                "properties": {
+                  "scope": { "type": "string", "pattern": "^(global|project|path:.+)$" },
+                  "content": { "type": "string" }
+                }
+              }
+            },
+            "global": { "type": "array", "items": { "type": "string" } }
+          }
+        },
+        "skills": { "type": "array", "items": { "$ref": "#/$defs/primitiveRef" } },
+        "agents": { "type": "array", "items": { "$ref": "#/$defs/agentRef" } },
+        "commands": { "type": "array", "items": { "$ref": "#/$defs/primitiveRef" } },
+        "mcp": { "type": "array", "items": { "$ref": "#/$defs/mcpServer" } },
+        "hooks": { "type": "array", "items": { "$ref": "#/$defs/primitiveRef" } },
+        "permissions": {
+          "type": "object",
+          "properties": {
+            "mutate_allow": { "type": "array", "items": { "type": "string" } },
+            "irreversible": { "type": "array", "items": { "type": "string" } },
+            "unattended": { "enum": ["devcontainer", "none"], "default": "none" }
+          }
+        },
+        "loops": { "type": "array", "items": { "$ref": "#/$defs/goalRecipe" } }
+      }
+    },
+    "state": {
+      "type": "object",
+      "properties": { "dir": { "type": "string", "default": "tasks/" } }
+    }
+  },
+  "$defs": {
+    "modelRef": {
+      "type": "object",
+      "required": ["family"],
+      "properties": {
+        "family": { "type": "string" },
+        "tier": { "enum": ["strong", "mid", "cheap"] },
+        "pin": { "type": "string" }
+      }
+    },
+    "primitiveRef": {
+      "oneOf": [
+        { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*(@[a-z0-9][a-z0-9._-]*)?$", "description": "name or name@registry — a path-safe identifier, never a path" },
+        {
+          "type": "object",
+          "required": ["name"],
+          "properties": { "name": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" }, "from": { "type": "string" } }
+        }
+      ]
+    },
+    "agentRef": {
+      "oneOf": [
+        { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*(@[a-z0-9][a-z0-9._-]*)?$" },
+        {
+          "type": "object",
+          "required": ["name"],
+          "properties": {
+            "name": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
+            "from": { "type": "string" },
+            "model": { "enum": ["strong", "mid", "cheap"] },
+            "effort": { "enum": ["xhigh", "high", "medium", "fast"] },
+            "tools": { "type": "array", "items": { "type": "string" } }
+          }
+        }
+      ]
+    },
+    "mcpServer": {
+      "type": "object",
+      "required": ["name", "transport"],
+      "properties": {
+        "name": { "type": "string" },
+        "transport": { "enum": ["stdio", "http"] },
+        "command": { "type": "string" },
+        "url": { "type": "string" },
+        "env": { "type": "array", "items": { "type": "string" }, "description": "Env var NAMES only. Values never enter the manifest or emitted files." },
+        "scopes": { "type": "array", "items": { "type": "string" } },
+        "trust": { "enum": ["read", "write", "irreversible"], "default": "read" }
+      }
+    },
+    "goalRecipe": {
+      "type": "object",
+      "required": ["name", "goal", "verify", "stops"],
+      "properties": {
+        "name": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$", "description": "path-safe identifier — becomes a filename under .aesop/goals/" },
+        "goal": { "type": "string", "description": "The measurable end state." },
+        "verify": { "type": "string", "description": "Shell command whose exit code proves the goal. Required — no verify, no recipe." },
+        "plan_gate": { "type": "boolean", "default": true },
+        "autonomy": { "enum": ["high", "plan-gated", "supervised"], "description": "Scale with verifiability (Karpathy's law)." },
+        "stops": {
+          "type": "object",
+          "required": ["max_iterations", "no_progress_after", "budget_usd"],
+          "properties": {
+            "max_iterations": { "type": "integer", "minimum": 1 },
+            "no_progress_after": { "type": "integer", "minimum": 1 },
+            "budget_usd": { "type": "number", "exclusiveMinimum": 0 }
+          },
+          "description": "All three hard stops are required. A loop that doesn't stop is the most common production failure."
+        }
+      }
+    }
+  }
+}
