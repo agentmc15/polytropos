@@ -13,7 +13,7 @@ Prefer reading in a browser? The full manual lives at <https://agentmc15.github.
 | Need | For |
 |---|---|
 | `git` | cloning both repos |
-| `python3` (3.8+) | polytropos — **stdlib-only**, nothing to `pip install` |
+| `python3` (3.11+) | polytropos — **stdlib-only**, nothing to `pip install`; 3.11 is the floor because the stdlib TOML parser (`tomllib`) arrived there |
 | `node` 20+ and `npm` | aesop (TypeScript) |
 | Claude Code CLI *(optional)* | to install/use the plugin |
 | GitHub Copilot CLI *(optional)* | to use the Copilot harness |
