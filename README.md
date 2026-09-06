@@ -20,7 +20,7 @@ A Claude Code plugin that picks the right model per task, estimates the cost bef
 
 **Copilot documentation center:** [copilot-docs/README.md](copilot-docs/README.md) ([HTML](copilot-docs/index.html)) — installation, skills, agents, models, workflows, and per-document AIC estimates.
 
-**OpenAI Codex harness:** [docs/CODEX-HARNESS.md](docs/CODEX-HARNESS.md) — native `$skill` workflows packaged as a Codex plugin, with routing data in `data/pricing.codex.json`, optional agent roles, reversible legacy-copy retirement, a kit-dispatch driver (`bin/codex_execute.py`), and a read-only usage report (`bin/codex_usage.py`).
+**OpenAI Codex harness:** [docs/CODEX-HARNESS.md](docs/CODEX-HARNESS.md) — native `$skill` workflows packaged as a Codex plugin, with routing data in `data/pricing.codex.json`, central application policy that keeps Astra as orchestrator and reserved recovery while Luna, Terra, and Sol implement, reversible legacy-copy retirement, a kit-dispatch driver (`bin/codex_execute.py`), and a read-only usage report (`bin/codex_usage.py`).
 
 **Copilot workflow (Phase 2):** [docs/COPILOT-WORKFLOW.md](docs/COPILOT-WORKFLOW.md) — architect → execute → verify → escalate for Copilot CLI (`bin/copilot_execute.py` + workflow agents in `copilot/`), a budget-capped Ralph goal loop (`bin/copilot_ralph.py`), and the vendored `lessons-loop` skill.
 

@@ -19,11 +19,11 @@ relative-burn proxy, plus a burn index (this estimate divided by the cheapest sa
 estimate on the roster, computed here from the data — never a hardcoded divisor id). A
 dollar figure must never be presented as a subscription bill.
 
-Cache-write exclusion: `cache_write_multiplier` (the 1.25x write rate in the data) is never
-included in an estimate here. Cache writes are a small fraction of an agentic loop's
-traffic, and this keeps the formula at parity with the sibling Claude- and Copilot-side
-estimators. The write multiplier still lives in the data for `codex_usage.py`, which prices
-OBSERVED usage (including any real cache writes it finds) rather than estimating one.
+Observed-token costing supports explicit cached-input and cache-write rates, including
+per-request long-context thresholds. A threshold is used only when the caller supplies the
+size of the individual request; aggregate profile/session totals never imply long context.
+Legacy pricing fixtures without explicit cached/write rates continue to use the top-level
+multipliers.
 
 Tier skip-up rule (PLAN.md D4, shared verbatim with `codex_execute.py`'s escalation
 ladder): resolving a tier word to a model takes the first model in pricing-file order
@@ -43,6 +43,7 @@ Usage:
 
 import argparse
 import json
+import math
 import sys
 from pathlib import Path
 
@@ -102,7 +103,70 @@ def resolve_model(pricing, model_or_tier):
     )
 
 
-def est_cost(pricing, profile, model_or_tier, cache_hit=0.8):
+def _rates_for_request(pricing, model_id, request_input_tokens=None):
+    """Return rates for one request and an explicit threshold decision label."""
+    model = pricing["models"][model_id]
+    rates = model
+    rates_used = "default"
+    assumption = "default-rates-no-request-size"
+    long_context = model.get("long_context")
+    if request_input_tokens is not None:
+        if not isinstance(request_input_tokens, int) or isinstance(request_input_tokens, bool):
+            raise ValueError("request_input_tokens must be an integer when supplied")
+        if request_input_tokens < 0:
+            raise ValueError("request_input_tokens cannot be negative")
+        assumption = "explicit-request-size"
+        if long_context and request_input_tokens > long_context["threshold_input_tokens"]:
+            rates = long_context
+            rates_used = "long_context"
+    cached = rates.get("cached_input_per_mtok")
+    if cached is None and "cached_input_per_mtok" not in rates:
+        cached = rates["input_per_mtok"] * pricing["cache_read_multiplier"]
+    write = rates.get("cache_write_per_mtok")
+    if "cache_write_per_mtok" not in rates:
+        multiplier = pricing.get("cache_write_multiplier")
+        write = rates["input_per_mtok"] * multiplier if multiplier is not None else None
+    return {
+        "input_per_mtok": rates["input_per_mtok"],
+        "cached_input_per_mtok": cached,
+        "cache_write_per_mtok": write,
+        "output_per_mtok": rates["output_per_mtok"],
+        "rates_used": rates_used,
+        "threshold_assumption": assumption,
+    }
+
+
+def cost_tokens(pricing, model_or_tier, input_tokens, output_tokens,
+                cached_input_tokens=0, cache_write_tokens=0,
+                request_input_tokens=None):
+    """Price observed token categories using one request's explicit threshold size.
+
+    ``request_input_tokens=None`` intentionally selects default rates even when the summed
+    observed tokens exceed a threshold: a session/task aggregate is not one API request.
+    """
+    model_id = resolve_model(pricing, model_or_tier)
+    counts = (input_tokens, output_tokens, cached_input_tokens, cache_write_tokens)
+    if any(
+        not isinstance(n, (int, float)) or isinstance(n, bool)
+        or not math.isfinite(n) or n < 0
+        for n in counts
+    ):
+        raise ValueError("token counts must be finite nonnegative numbers")
+    rates = _rates_for_request(pricing, model_id, request_input_tokens)
+    if cached_input_tokens and rates["cached_input_per_mtok"] is None:
+        raise ValueError(f"cached-input pricing is unavailable for {model_id}")
+    if cache_write_tokens and rates["cache_write_per_mtok"] is None:
+        raise ValueError(f"cache-write pricing is unavailable for {model_id}")
+    usd_api = (
+        input_tokens * rates["input_per_mtok"]
+        + cached_input_tokens * (rates["cached_input_per_mtok"] or 0)
+        + cache_write_tokens * (rates["cache_write_per_mtok"] or 0)
+        + output_tokens * rates["output_per_mtok"]
+    ) / 1e6
+    return {"model_id": model_id, "usd_api": usd_api, **rates}
+
+
+def est_cost(pricing, profile, model_or_tier, cache_hit=0.8, request_input_tokens=None):
     """Estimate the dual-framed cost of one task under `profile` on `model_or_tier`.
 
     `usd_api = input_tokens * ((1 - cache_hit) * input_per_mtok + cache_hit *
@@ -127,29 +191,33 @@ def est_cost(pricing, profile, model_or_tier, cache_hit=0.8):
     model_id = resolve_model(pricing, model_or_tier)
     models = pricing["models"]
     p = profiles[profile]
-    cache_read_multiplier = pricing["cache_read_multiplier"]
-
     def usd_api_for(mid):
-        m = models[mid]
-        return (
-            p["input_tokens"]
-            * (
-                (1 - cache_hit) * m["input_per_mtok"]
-                + cache_hit * m["input_per_mtok"] * cache_read_multiplier
-            )
-            / 1e6
-            + p["output_tokens"] / 1e6 * m["output_per_mtok"]
-        )
+        return cost_tokens(
+            pricing, mid,
+            p["input_tokens"] * (1 - cache_hit), p["output_tokens"],
+            cached_input_tokens=p["input_tokens"] * cache_hit,
+            request_input_tokens=request_input_tokens,
+        )["usd_api"]
 
     usd_api = usd_api_for(model_id)
 
-    cheapest_model_id = min(models, key=usd_api_for)
+    policy = pricing.get("orchestration_policy", {})
+    comparison_tiers = policy.get("worker_tiers", TIER_ORDER)
+    comparison_models = [
+        mid for mid, info in models.items()
+        if info.get("available", True) is not False and info.get("tier") in comparison_tiers
+    ]
+    if model_id not in comparison_models:
+        comparison_models.append(model_id)
+    cheapest_model_id = min(comparison_models, key=usd_api_for)
     cheapest_usd_api = usd_api_for(cheapest_model_id)
     burn_index = usd_api / cheapest_usd_api
 
     return {
         "model_id": model_id,
         "usd_api": usd_api,
+        "rates_used": _rates_for_request(pricing, model_id, request_input_tokens)["rates_used"],
+        "threshold_assumption": _rates_for_request(pricing, model_id, request_input_tokens)["threshold_assumption"],
         "subscription": {
             "billed_usd": None,
             "api_equivalent_usd": usd_api,
@@ -164,7 +232,6 @@ def models_table(pricing, profile=None, cache_hit=0.8):
     `cached_input_per_mtok` (COMPUTED: `input_per_mtok * cache_read_multiplier`), and —
     when `profile` is given — `est_usd_api`/`burn_index` via `est_cost`.
     """
-    cache_read_multiplier = pricing["cache_read_multiplier"]
     rows = []
     for model_id, info in pricing["models"].items():
         row = {
@@ -173,7 +240,8 @@ def models_table(pricing, profile=None, cache_hit=0.8):
             "vendor": info["vendor"],
             "tier": info["tier"],
             "input_per_mtok": info["input_per_mtok"],
-            "cached_input_per_mtok": info["input_per_mtok"] * cache_read_multiplier,
+            "cached_input_per_mtok": _rates_for_request(pricing, model_id)["cached_input_per_mtok"],
+            "cache_write_per_mtok": _rates_for_request(pricing, model_id)["cache_write_per_mtok"],
             "output_per_mtok": info["output_per_mtok"],
         }
         if profile is not None:
@@ -238,7 +306,10 @@ def cmd_models(args, pricing):
 
 def cmd_est(args, pricing):
     try:
-        result = est_cost(pricing, args.profile, args.model_or_tier, cache_hit=args.cache_hit)
+        result = est_cost(
+            pricing, args.profile, args.model_or_tier, cache_hit=args.cache_hit,
+            request_input_tokens=args.request_input_tokens,
+        )
     except KeyError as e:
         print(str(e), file=sys.stderr)
         sys.exit(2)
@@ -250,6 +321,8 @@ def cmd_est(args, pricing):
             "cache_hit": args.cache_hit,
             "model_id": result["model_id"],
             "usd_api": round(result["usd_api"], 4),
+            "rates_used": result["rates_used"],
+            "threshold_assumption": result["threshold_assumption"],
             "subscription": {
                 "billed_usd": sub["billed_usd"],
                 "api_equivalent_usd": round(sub["api_equivalent_usd"], 4),
@@ -267,6 +340,7 @@ def cmd_est(args, pricing):
         f"cache_hit={args.cache_hit}"
     )
     print(f"  api:          ${result['usd_api']:.4f} (token-metered API billing)")
+    print(f"  rates:        {result['rates_used']} ({result['threshold_assumption']})")
     print(
         "  subscription: not token-billed (usage-limited) — API-equivalent "
         f"${sub['api_equivalent_usd']:.4f} is a relative-burn proxy, not a bill; "
@@ -354,6 +428,10 @@ def build_parser():
     p_est.add_argument("profile", help="task profile key, e.g. XS, S, M, L, XL")
     p_est.add_argument("model_or_tier", help="model id or tier word from pricing.codex.json")
     p_est.add_argument("--cache-hit", type=float, default=0.8)
+    p_est.add_argument(
+        "--request-input-tokens", type=int,
+        help="input tokens in one request; enables threshold-tier selection",
+    )
     p_est.add_argument("--json", action="store_true", help="machine-readable output")
     p_est.set_defaults(func=cmd_est)
 

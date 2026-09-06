@@ -477,6 +477,31 @@ class LiveDataStructureTests(unittest.TestCase):
         pricing = cp.load_pricing()
         self.assertEqual(set(pricing["task_profiles"]), {"XS", "S", "M", "L", "XL"})
 
+    def test_user_supplied_gpt56_rates_are_recorded_for_existing_copilot_rows(self):
+        pricing = cp.load_pricing()
+        expected = {
+            "gpt-5.6-sol": ((4.0, 0.4, 5.0, 20.0), (8.0, 0.8, 10.0, 30.0), 272000),
+            "gpt-5.6-terra": ((2.0, 0.2, 2.5, 12.0), (4.0, 0.4, 5.0, 18.0), 272000),
+            "gpt-5.6-luna": ((0.2, 0.02, 0.25, 1.2), (0.4, 0.04, 0.5, 1.8), 200000),
+        }
+        for model_id, (base_expected, long_expected, threshold) in expected.items():
+            model = pricing["models"][model_id]
+            base = tuple(model[k] for k in (
+                "input_per_mtok", "cached_input_per_mtok",
+                "cache_write_per_mtok", "output_per_mtok",
+            ))
+            long_context = model["long_context"]
+            long_rates = tuple(long_context[k] for k in (
+                "input_per_mtok", "cached_input_per_mtok",
+                "cache_write_per_mtok", "output_per_mtok",
+            ))
+            self.assertEqual(base, base_expected, model_id)
+            self.assertEqual(long_rates, long_expected, model_id)
+            self.assertEqual(long_context["threshold_tokens"], threshold, model_id)
+
+        self.assertIn("user-supplied", pricing["pricing_refresh_note"])
+        self.assertIn("not an independent validation", pricing["pricing_refresh_note"])
+
 
 class CliSmokeTests(unittest.TestCase):
     def test_models_json_against_real_pricing_parses(self):

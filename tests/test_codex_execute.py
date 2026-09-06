@@ -67,6 +67,17 @@ STUB_BIN = "stub-cli"
 # the effort vocabulary is read from the pricing dict at run time.
 PRICING_FIXTURE = {
     "knobs": {"reasoning_efforts": ["low", "medium", "high"]},
+    "orchestration_policy": {
+        "orchestrator_model": "fake-frontier",
+        "orchestrator_tier": "frontier",
+        "worker_tiers": ["cheap", "mid", "strong"],
+        "default_worker_tier": "strong",
+        "maximum_worker_tier": "strong",
+        "verification_tier": "strong",
+        "recovery_evidence_kinds": [
+            "verify_failure", "integration_conflict", "lower_tier_correction_failed"
+        ],
+    },
     "models": {
         "fake-cheap": {"tier": "cheap", "input_per_mtok": 1.0, "output_per_mtok": 2.0},
         "fake-strong-a": {"tier": "strong", "input_per_mtok": 8.0, "output_per_mtok": 16.0},
@@ -290,41 +301,41 @@ class TierResolutionAndEscalationLadderTests(unittest.TestCase):
     def test_populated_tiers_resolve_directly(self):
         self.assertEqual(ce.resolve_tier(PRICING_FIXTURE, "cheap"), "fake-cheap")
         self.assertEqual(ce.resolve_tier(PRICING_FIXTURE, "strong"), "fake-strong-a")
-        self.assertEqual(ce.resolve_tier(PRICING_FIXTURE, "frontier"), "fake-frontier")
+        self.assertEqual(ce.resolve_tier(PRICING_FIXTURE, "frontier"), "fake-strong-a")
 
     def test_unknown_tier_word_raises_keyerror_listing_vocabulary(self):
         with self.assertRaises(KeyError) as ctx:
             ce.resolve_tier(PRICING_FIXTURE, "nonsense-tier")
         msg = str(ctx.exception)
-        for tier in ce.TIER_ORDER:
-            self.assertIn(tier, msg)
+        self.assertIn("unknown planned Codex model or tier", msg)
 
     def test_resolve_model_passthrough_none_and_unknown(self):
-        self.assertEqual(ce.resolve_model(PRICING_FIXTURE, "fake-frontier"), "fake-frontier")
-        self.assertIsNone(ce.resolve_model(PRICING_FIXTURE, None))
+        with self.assertRaises(KeyError):
+            ce.resolve_model(PRICING_FIXTURE, "fake-frontier")
+        self.assertEqual(ce.resolve_model(PRICING_FIXTURE, None), "fake-strong-a")
         with self.assertRaises(KeyError) as ctx:
             ce.resolve_model(PRICING_FIXTURE, "not-a-model-or-tier")
         msg = str(ctx.exception)
-        for mid in PRICING_FIXTURE["models"]:
-            self.assertIn(mid, msg)
+        self.assertIn("unknown planned Codex model or tier", msg)
 
     def test_escalation_ladder_from_cheap_skips_empty_mid(self):
         ladder = ce.escalation_ladder(PRICING_FIXTURE, "fake-cheap")
-        self.assertEqual(ladder, ["fake-strong-a", "fake-frontier"])
+        self.assertEqual(ladder, ["fake-strong-a"])
 
     def test_escalation_ladder_first_in_file_order_within_tier(self):
         ladder = ce.escalation_ladder(PRICING_FIXTURE, "fake-cheap")
         self.assertEqual(ladder[0], "fake-strong-a")
         self.assertNotIn("fake-strong-b", ladder)
 
-    def test_escalation_ladder_from_frontier_is_empty(self):
-        self.assertEqual(ce.escalation_ladder(PRICING_FIXTURE, "fake-frontier"), [])
+    def test_escalation_ladder_from_frontier_is_rejected(self):
+        with self.assertRaises(KeyError):
+            ce.escalation_ladder(PRICING_FIXTURE, "fake-frontier")
 
-    def test_unknown_or_none_model_id_defaults_to_mid_start(self):
-        unknown = ce.escalation_ladder(PRICING_FIXTURE, "not-a-fixture-id")
+    def test_unknown_is_rejected_and_none_uses_default_worker(self):
+        with self.assertRaises(KeyError):
+            ce.escalation_ladder(PRICING_FIXTURE, "not-a-fixture-id")
         none_start = ce.escalation_ladder(PRICING_FIXTURE, None)
-        self.assertEqual(unknown, none_start)
-        self.assertEqual(none_start, ["fake-strong-a", "fake-frontier"])
+        self.assertEqual(none_start, [])
 
 
 # ---- 3. build_dispatch anatomy -------------------------------------------------------------------
@@ -335,7 +346,7 @@ class BuildDispatchTests(unittest.TestCase):
         self.assertIsInstance(argv, list)
         self.assertEqual(
             argv,
-            [STUB_BIN, "exec", "--model", "fake-cheap", "--sandbox", "workspace-write",
+            [STUB_BIN, "exec", "--json", "--model", "fake-cheap", "--sandbox", "workspace-write",
              "fake prompt text"],
         )
 
@@ -349,7 +360,7 @@ class BuildDispatchTests(unittest.TestCase):
         argv = ce.build_dispatch(STUB_BIN, None, "fake prompt text")
         self.assertNotIn("--model", argv)
         self.assertEqual(
-            argv, [STUB_BIN, "exec", "--sandbox", "workspace-write", "fake prompt text"]
+            argv, [STUB_BIN, "exec", "--json", "--sandbox", "workspace-write", "fake prompt text"]
         )
 
     def test_default_does_not_change_approval_mode_or_bypass_sandbox(self):
@@ -365,7 +376,7 @@ class BuildDispatchTests(unittest.TestCase):
                 argv = ce.build_dispatch(
                     STUB_BIN, None, "fake prompt text", extra_args=override
                 )
-                self.assertEqual(argv, [STUB_BIN, "exec", *override, "fake prompt text"])
+                self.assertEqual(argv, [STUB_BIN, "exec", "--json", *override, "fake prompt text"])
 
     def test_extra_args_iterable_retains_options_and_prompt(self):
         argv = ce.build_dispatch(
@@ -566,7 +577,8 @@ class RunTaskTests(unittest.TestCase):
         result = ce.run_task(task, PRICING_FIXTURE, runner, verify_runner, codex_bin=STUB_BIN)
 
         self.assertEqual(result["status"], "blocked")
-        self.assertEqual(result["escalations"], ["fake-strong-a", "fake-frontier"])
+        self.assertEqual(result["escalations"], ["fake-strong-a"])
+        self.assertIsNotNone(result["recovery"])
         self.assertEqual(runner.call_count, 3)  # initial dispatch + one per ladder rung
 
     def test_max_escalations_truncates_ladder(self):
@@ -673,17 +685,24 @@ class EndToEndRunHappyPathTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp_s:
             tmp = Path(tmp_s)
             kit_dir = _write_kit(tmp, SINGLE_TASK_TASKS_TEXT)
+            (kit_dir / "TASKS.md").write_text(
+                (kit_dir / "TASKS.md").read_text().replace("- status: pending", "- status: done")
+            )
             before = (kit_dir / "TASKS.md").read_bytes()
             log_path = tmp / "stub.log"
             stub_path = _write_stub(tmp, log_path)
-            with contextlib.redirect_stdout(io.StringIO()):
-                ce.main(["review", "--kit", str(kit_dir), "--phase", "1",
-                         "--codex-bin", str(stub_path)])
+            with mock.patch.object(ce, "review_evidence_fingerprint", return_value="fixture-fp"):
+                with contextlib.redirect_stdout(io.StringIO()):
+                    ce.main(["review", "--kit", str(kit_dir), "--phase", "1",
+                             "--codex-bin", str(stub_path)])
             log_text = log_path.read_text()
-            self.assertIn("--sandbox\nworkspace-write\n", log_text)
+            self.assertIn("--sandbox\nread-only\n", log_text)
             self.assertNotIn("--full-auto", log_text)
             self.assertEqual((kit_dir / "TASKS.md").read_bytes(), before)
-            self.assertFalse((kit_dir / "NOTES.md").exists())
+            notes = (kit_dir / "NOTES.md").read_text()
+            self.assertIn("dispatched_role=verifier", notes)
+            self.assertIn("actual_model=unknown", notes)
+            self.assertIn("evidence-fingerprint: fixture-fp", notes)
 
 
 class EndToEndEscalationTests(unittest.TestCase):

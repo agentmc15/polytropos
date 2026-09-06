@@ -69,7 +69,13 @@ codex plugin marketplace add "$PWD"
 codex plugin add polytropos@polytropos-local
 codex plugin list --marketplace polytropos-local --json
 
-# Preview optional project-agent installation before writing anything:
+# Preview the managed Codex application policy before writing anything. It configures
+# Astra as the parent orchestrator, Terra as the default worker, and Sol review roles;
+# the execution driver keeps Astra reserved for evidence-gated recovery.
+python3 bin/codex_app_policy.py plan --repo-root . --codex-home <codex-home> --backup-root <backup-root> --runtime-models <runtime-model-snapshot.json>
+# See docs/CODEX-HARNESS.md "Application configuration" for snapshot and apply steps.
+
+# Preview plugin and project-agent installation, then diagnose the combined setup:
 python3 bin/harness_select.py install --harness codex --repo-root . --codex-home <codex-home> --components plugin,agents --agent-scope project --dry-run
 python3 bin/harness_select.py doctor --harness codex --repo-root . --codex-home <codex-home>
 

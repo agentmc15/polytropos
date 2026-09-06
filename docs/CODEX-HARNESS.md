@@ -1,17 +1,10 @@
 # The Codex harness
 
-Polytropos packages twelve native Codex skills for routing, usage and context analysis, and
-verified execution workflows. It also ships four optional agent roles. Skills, plugin installation,
-and agent roles are separate surfaces: installing the plugin does not install the agents.
+Polytropos uses central policy for Codex execution. Astra owns planning, dependency coordination, bounded recovery, and final acceptance. Luna handles cheap mechanical work, Terra routine work, and Sol hard, security, integration, and independent-verification work. The policy derives model identity, availability, effort support, and pricing from `data/pricing.codex.json` at runtime.
 
-Use Python 3.11 or newer for setup and verification, so the standard-library TOML parser is
-available. The examples assume `python3` selects that interpreter.
+Use Python 3.11 or newer. The examples assume `python3` selects that interpreter.
 
 ## Install a registered plugin
-
-The setup planner validates package files and can install optional agent roles. It cannot register
-or enable the plugin, prove activation, or refresh Codex's cached package. Use the host CLI for a
-fresh plugin installation:
 
 ```bash
 codex plugin marketplace add /path/to/polytropos
@@ -19,20 +12,9 @@ codex plugin add polytropos@polytropos-local
 codex plugin list --marketplace polytropos-local --json
 ```
 
-These commands describe the current supported Codex CLI interface. They are a manual live step,
-not part of the automated test suite. The installed plugin is a registered cached package; do not
-assume it reads a changed live checkout. Restart or begin a new session after installation.
-
-In clients that expose `/plugins`, that command opens plugin management.
-In Codex CLI and supported IDE clients, open `/skills` or invoke a workflow with `$route`.
-Codex Desktop may offer a skill selector in versions that support it. Do not expect a custom bare
-`/route` alias. Skill descriptions can also let Codex select a workflow implicitly.
+The installed plugin is cached. Start a new task after installation. In clients that expose `/plugins`, that command opens plugin management. In Codex CLI and supported IDE clients, open `/skills` or invoke `$route`; do not rely on a bare `/route` alias.
 
 ## Package preparation and optional agents
-
-The following is safe to preview and uses only the roots supplied on its command line. It reports
-package **readiness** from the local manifest and marketplace, while runtime **activation** stays
-`unknown` until the host provides evidence. It does not install or enable the plugin.
 
 ```bash
 python3 bin/harness_select.py install --harness codex --repo-root . --codex-home <codex-home> --components plugin,agents --agent-scope project --dry-run
@@ -40,105 +22,70 @@ python3 bin/harness_select.py install --harness codex --repo-root . --codex-home
 python3 bin/harness_select.py doctor --harness codex --repo-root . --codex-home <codex-home>
 ```
 
-Project roles are written to `.codex/agents/`; `--agent-scope user` instead uses the explicit
-Codex home. They are optional delegated-work roles, separate from selecting a skill. The shipped
-roles are `kit-implementer`, `kit-verifier`, `phase-reviewer`, and `repo-explorer`.
+installing the plugin does not install the agents. Project roles are written to `.codex/agents/`; `--agent-scope user` uses the supplied Codex home. The roles are `kit-implementer`, `kit-verifier`, `phase-reviewer`, and `repo-explorer`.
 
-| Component | Canonical source | Purpose |
-|---|---|---|
-| Plugin skills | `codex/skills/*/SKILL.md` | `/skills`, `$name`, and description matching |
-| Agent roles | `codex/agents/*.toml` | Optional delegated implementation and review |
-| Prompt mirrors | `codex/prompts/*.md` | deprecated compatibility mirrors |
-| Plugin metadata | `.codex-plugin/plugin.json` | Package content, not installation evidence |
+The planner reports package **readiness** while runtime activation remains observed or `unknown`; the plugin is a cached package. `.agents/skills` and `.codex/skills` are compatibility discovery locations, not a second workflow source.
 
-`.agents/skills` is a documented standalone local-skill discovery location. `.codex/skills` is
-observed compatibility behavior. This package does not install both trees or use either as a
-second default skill source; `codex/skills` remains the canonical package content.
+## Policy-routed execution
 
-## Skills
+Start with a policy preview, then use the driver for every dispatch. A real run spends plan usage or API funds; a dry run does neither.
 
-| Skill | Purpose |
-|---|---|
-| `$architect` | Plan a complex change as `tasks/kits/<slug>` |
-| `$bench-routing` | Compare benchmark priors with dispatchable role recommendations |
-| `$context-weight` | Analyze context growth and resident-surface weight |
-| `$doctor` | Diagnose package, agents, copies, ownership, and stale paths read-only |
-| `$effort` | Choose runtime-derived reasoning effort for one run |
-| `$escalate` | Try the cheapest sufficient tier behind a verification gate |
-| `$execute` | Run an architected kit through verification and review |
-| `$frontier-check` | Decide whether the frontier tier is justified |
-| `$journal` | Build the cross-harness daily work journal |
-| `$memory` | Recall a bounded, relevance-gated set of private facts |
-| `$route` | Pick the cheapest sufficient Codex tier with honest billing framing |
-| `$usage` | Analyze local Codex usage read-only |
+```bash
+python3 bin/codex_execute.py status --kit tasks/kits/<slug> --json
+python3 bin/codex_execute.py run --kit tasks/kits/<slug> --task <id> --dry-run
+python3 bin/codex_execute.py run --kit tasks/kits/<slug> --task <id>
+python3 bin/codex_execute.py review --kit tasks/kits/<slug> --phase <N>
+python3 bin/codex_execute.py accept --kit tasks/kits/<slug> --phase <N>
+```
 
-Use `$architect` before `$execute`; `$route` and `$effort` have distinct jobs. Pricing, model
-availability, and effort levels are derived at runtime from `data/pricing.codex.json`. Under a
-ChatGPT plan, dollar figures are API-equivalent burn proxies, not bills.
+The driver instantiates no warm pool. Its recovery path requires driver-recorded lower-tier attempts plus a nonzero verification result, unresolved named integration conflict, or failed lower-tier correction. It records planned intent, dispatched assignment, and observed runtime use separately; observed model or role remains `unknown` without independent telemetry. Direct host tools and user-selected models outside this driver are outside the policy boundary.
 
-## Legacy copied surfaces
+Legacy kits need no rewrite: an unpinned task is assigned the configured default worker, and a legacy frontier pin maps to the maximum worker at dispatch. For an explicit preview:
 
-Copying skills, prompts, or global guidance is opt-in compatibility behavior. It never overwrites
-an unproven user edit:
+```bash
+python3 bin/codex_execute.py prepare --role implementer
+python3 bin/codex_execute.py prepare --role implementer --model frontier
+```
+
+For callers migrating from the earlier driver, `status --json` now returns an object whose
+`tasks` key contains the task list alongside orchestration and acceptance state. Phase review
+and acceptance require a Git workspace and a fingerprint of the current plan, phase, attempts,
+commit, and working tree. Existing free-form review notes are not accepted as evidence; run a
+fresh Sol review before requesting Astra acceptance.
+
+## Application configuration
+
+Application policy changes require explicit repository, Codex-home, backup, and runtime-model snapshot roots. `plan` and `status` are read-only; `apply` refuses missing required models and backs up only managed changes.
+
+```bash
+python3 bin/codex_app_policy.py plan --repo-root . --codex-home <codex-home> --backup-root <new-empty-dir> --runtime-models <model-list.json>
+python3 bin/codex_app_policy.py status --repo-root . --codex-home <codex-home> --backup-root <new-empty-dir> --runtime-models <model-list.json> --json
+python3 bin/codex_app_policy.py apply --repo-root . --codex-home <codex-home> --backup-root <new-empty-dir> --runtime-models <model-list.json>
+```
+
+For an existing application configuration, use the same three commands: `plan` shows surgical top-level and agent-default changes, `status` reports ownership conflicts, and `apply` preserves unrelated TOML while materializing managed roles. Never overwrite an unmanaged or edited role file. The configuration prevents accidental parent-model inheritance within its scope; it cannot globally sandbox arbitrary app actions.
+
+## Skills and legacy copies
+
+`$architect` plans kits, `$bench-routing` reads benchmark priors, `$context-weight` measures context, `$doctor` diagnoses setup, `$effort` selects effort, `$escalate` explains recovery, `$execute` dispatches kits, `$frontier-check` checks reserved orchestration, `$journal` prepares the work journal, `$memory` recalls bounded context, `$route` estimates assignments, and `$usage` reports local use. Under a ChatGPT plan, dollars are API-equivalent burn proxies; API-key runs are token-metered.
+
+When usage logs expose nested cache-write counts, `$usage` retains the inclusive raw input total and prices the read, write, and uncached portions separately. Missing write counts are not inferred; observed writes without a configured rate are reported unpriced.
+
+`codex/prompts/` contains deprecated compatibility mirrors. Refresh them only through the ownership-aware legacy path:
 
 ```bash
 python3 bin/harness_select.py install --harness codex --repo-root . --codex-home <codex-home> --components skills,prompts,guidance --legacy-copy --dry-run
-python3 bin/harness_select.py install --harness codex --repo-root . --codex-home <codex-home> --components skills,prompts,guidance --legacy-copy
-```
-
-`codex/prompts/` contains deprecated compatibility mirrors; native `$route`, not a bare `/route`, is canonical. The
-ownership-aware updater refreshes unchanged managed copies and preserves conflicts. Default
-installation prepares native package metadata and agents. Updates may also refresh existing owned
-legacy copies, but do not recreate absent or retired copies.
-
-For a previously managed legacy copy that is still unchanged, preview and then refresh it with
-`--refresh-managed`; a differing file remains a conflict:
-
-```bash
 python3 bin/harness_select.py install --harness codex --repo-root . --codex-home <codex-home> --components prompts --legacy-copy --refresh-managed --dry-run
-```
-
-Retirement is preview-only by default. It accepts prompts and optionally skills, requires explicit
-operator evidence that the native replacement works before mutation, backs up proven copies outside
-the supplied discovery roots, and leaves edited or unknown files untouched:
-
-```bash
 python3 bin/harness_select.py retire-legacy --harness codex --repo-root . --codex-home <codex-home> --backup-root <backup-root> --components prompts,skills
-python3 bin/harness_select.py retire-legacy --harness codex --repo-root . --codex-home <codex-home> --backup-root <backup-root> --components prompts,skills --native-skills-confirmed --apply
 python3 bin/harness_select.py restore-legacy --harness codex --repo-root . --codex-home <codex-home> --backup-root <backup-root>
 ```
 
-Restore requires the same repository, Codex-home, and backup roots. It refuses an occupied or
-edited destination and tampered backups. A conflict blocks a retirement batch before any copy is
-removed.
-
 ## Manual live smoke checklist
 
-Automated verification uses temporary roots and cannot prove a client UI. After a separately
-authorized live rollout, record:
+After separately authorized rollout, record the client version, installed plugin, `$route` availability in `/skills`, loaded package path, runtime-model snapshot, and absence of duplicate legacy skills or prompts. Automated tests cannot prove client UI activation.
 
-1. Codex client and version.
-2. The registered and enabled `polytropos@polytropos-local` plugin and its marketplace.
-3. A `$route` selection in `/skills`, or the desktop selector when that version offers one.
-4. The loaded package source path reported by the client.
-5. The absence of duplicate same-named legacy skills or prompts.
-
-This checklist has not been performed by automated verification.
+Retirement requires `--native-skills-confirmed`; edited files remain a conflict. This smoke checklist has not been performed by automated verification.
 
 ## Good next Codex additions
 
-- A Codex adapter for the existing repo-bench engine, with the same explicit spend ceiling.
-- An optional trusted verify hook, opt-in because it changes runtime behavior.
-- Automation templates for recurring doctor, journal, or telemetry checks.
-- Plugin icons and richer presentation assets.
-- Better context-fidelity analysis if Codex logs expose provenance.
-
-Codex's built-in `/statusline` covers the interactive status surface and does not need to be ported.
-
-## Official references
-
-- [Build plugins](https://learn.chatgpt.com/docs/build-plugins)
-- [Build skills](https://learn.chatgpt.com/docs/build-skills)
-- [Custom agents](https://learn.chatgpt.com/docs/agent-configuration/subagents)
-- [AGENTS.md](https://learn.chatgpt.com/docs/agent-configuration/agents-md)
-- [Custom prompts (deprecated)](https://learn.chatgpt.com/docs/custom-prompts)
+Future work may add a repo-bench adapter, an opt-in verify hook, Automation templates, Plugin icons, and context-fidelity reporting. Codex's built-in `/statusline` does not need to be ported.

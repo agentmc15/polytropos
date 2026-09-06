@@ -1,54 +1,32 @@
 ### What it does
 
-Controls how hard one Codex run thinks, independent of which model it runs on — the
-level vocabulary lives only in the pricing data, and this skill is careful to
-distinguish real rungs on that ladder from `ultra`/`fast`, which are separate modes
-whose CLI surfaces aren't published yet.
+Chooses a supported reasoning-effort level from current Codex pricing and capability data. Effort changes how a selected model works; it does not replace the central worker assignment or turn Astra into an ordinary implementer.
 
 ### When to reach for it
 
-- A run got a wrong answer or missed a constraint, and the fix might be more thinking
-  time rather than a bigger model.
-- Bulk, extraction, or latency-sensitive work where shallow thinking is actually the
-  point.
-- Before assuming `ultra` or `fast` mode has a flag you can pass today — it may not.
-- **Not** for picking which model to use — that's [route](route.md) or
-  [escalate](escalate.md); this only tunes the model you're already on.
+- Use it when a task has concrete evidence that the current reasoning level is insufficient.
+- Use it to inspect which levels the policy-selected model actually supports.
+- **Not** for expressing a vague request to use the best model or bypassing recovery gates.
 
 ### Worked example
 
 ```bash
 python3 bin/codex_pricing.py knobs
+python3 bin/codex_execute.py run --kit tasks/kits/<slug> --task <id> --effort <level>
 ```
 
-Relay exactly what it prints — the ladder in ascending order plus its notes, never
-enumerated from memory. Apply it one-shot with `-c model_reasoning_effort=<level>` on
-`codex exec`, or on a kit task with `codex_execute.py run --kit <dir> --task <id>
---effort <level>` (the driver validates the level against the data and rejects an
-unknown word). Omit the override for routine work; step up exactly one level only on
-concrete failure evidence, and re-run.
+The driver validates the level for every possible worker rung before dispatch, so escalation cannot fail halfway through because a later model rejects the chosen effort.
 
 ### Failure modes & fallbacks
 
-- **`ultra` or `fast` mode looks like a flag away.** Its CLI surface is unpublished as
-  of the data's `cached_date` — point at release notes rather than inventing one.
-- **Starting at the deepest level "just in case."** Step up one level at a time, only
-  on a run that actually got it wrong.
-- **The wrong lever gets pulled.** Effort fixes a thinking-time gap; a tier jump
-  ([route](route.md), [escalate](escalate.md)) fixes a capability gap — try the
-  cheaper move first.
+If a level is unavailable, omit the override or choose a supported level reported by current data. Increase one rung only after useful failure evidence. Never smuggle model or profile changes through extra command arguments; the driver rejects configuration overrides that could weaken policy.
 
 ### Cost & safety
 
-Under a ChatGPT sign-in, deeper effort draws down usage limits faster — any dollar
-figure shown is a labeled API-equivalent proxy, never a bill. Under `OPENAI_API_KEY`
-auth, the token-metered dollars are real. Either way, deeper effort means more
-reasoning tokens and faster burn; ask which billing mode applies before recommending a
-level if it's unclear.
+Listing knobs is read-only. A kit run may consume subscription usage or API tokens, so preview its assignment first and keep dollar figures labeled as API-equivalent proxies unless the run is API-metered. Availability and levels are resolved at runtime rather than copied into prose.
 
 ### Related
 
-- [route](route.md) — which model to use; this dial only tunes the one you picked.
-- [escalate](escalate.md) — a capability gap calls for a tier jump, not deeper effort.
-- [Deep dive: effort dial](../../deep-dives/effort-dial.md) — the fuller design
-  behind the ladder and the modes-vs-rungs distinction.
+- [route](route.md) selects and estimates the worker.
+- [execute](execute.md) validates and records the dispatched effort.
+- [escalate](escalate.md) handles evidence-based worker escalation.

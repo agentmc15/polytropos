@@ -201,9 +201,10 @@ class PortedPromptContractTests(unittest.TestCase):
         self.assertIn("bin/codex_pricing.py", text)
         self.assertIn("frontier", text)
 
-    def test_escalate_dispatches_and_points_at_driver(self):
+    def test_escalate_uses_central_driver_and_rejects_freehand_dispatch(self):
         text = self._text("escalate")
-        self.assertIn("codex exec", text)
+        self.assertIn("central driver", text)
+        self.assertNotIn("codex exec", text)
         self.assertIn("bin/codex_execute.py", text)
 
 
@@ -293,9 +294,10 @@ class PortedSkillContractTests(unittest.TestCase):
         self.assertIn("bin/codex_pricing.py", text)
         self.assertIn("frontier", text)
 
-    def test_escalate_dispatches_and_points_at_driver(self):
+    def test_escalate_uses_central_driver_and_rejects_freehand_dispatch(self):
         text = self._text("escalate")
-        self.assertIn("codex exec", text)
+        self.assertIn("central driver", text)
+        self.assertNotIn("codex exec", text)
         self.assertIn("bin/codex_execute.py", text)
 
 
@@ -314,10 +316,12 @@ class WorkflowSkillContractTests(unittest.TestCase):
         # Shared kit contract: exact status vocabulary must survive verbatim.
         self.assertIn("pending | in-progress | done | blocked", text)
 
-    def test_route_estimates_and_dispatches(self):
+    def test_route_estimates_and_prepares_central_assignment(self):
         text = self._text("route")
         self.assertIn("bin/codex_pricing.py", text)
-        self.assertIn("codex exec", text)
+        self.assertIn("codex_execute.py", text)
+        self.assertIn("prepare --role implementer", text)
+        self.assertNotIn("codex exec", text)
 
 
 class EffortSkillContractTests(unittest.TestCase):

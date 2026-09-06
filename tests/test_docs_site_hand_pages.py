@@ -173,7 +173,12 @@ class ArchitectAsymmetryTests(unittest.TestCase):
             "Codex) no longer holds",
         )
         self.assertIn("never invoke the real", norm.lower())
-        self.assertIn("codex exec --model", norm)
+        self.assertIn("central policy resolves workers at dispatch time", norm.lower())
+        self.assertIn(
+            "codex exec --model", norm,
+            "codex architect card no longer identifies the later worker dispatch "
+            "boundary while keeping planning itself unpinned",
+        )
 
     def test_billing_modes_page_states_both_halves_of_the_asymmetry(self):
         page = (CONCEPTS / "billing-modes.md").read_text(encoding="utf-8")

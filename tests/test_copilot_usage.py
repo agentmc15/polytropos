@@ -352,6 +352,10 @@ class ApiCallIdDedupeTests(unittest.TestCase):
 
 
 class PriceTokensMathTests(unittest.TestCase):
+    def test_usage_report_documents_request_size_limit_for_long_context(self):
+        self.assertIn("one request", cu.LONG_CONTEXT_LIMITATION)
+        self.assertIn("default rates", cu.LONG_CONTEXT_LIMITATION)
+
     def test_cache_write_priced_when_rate_present(self):
         # fake-strong: input=5.0, cached=0.5, cache_write=6.0, output=25.0 per MTok.
         u = {

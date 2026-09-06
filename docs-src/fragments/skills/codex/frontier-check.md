@@ -1,60 +1,32 @@
 ### What it does
 
-Decides whether a task actually justifies the frontier tier on this roster, and if
-so, how to run it well — never by naming a specific model id, because ids here are
-best-effort for a preview generation and corrections land only in the pricing data's
-own note.
+Explains whether work belongs to ordinary Luna, Terra, or Sol implementation, Astra orchestration, or the narrow Astra recovery path. It preserves Astra for planning, coordination, integration decisions, final acceptance, and corrections backed by machine-visible failure evidence.
 
 ### When to reach for it
 
-- Long-horizon autonomous work expected to finish without correction.
-- A concrete failure by the mid tier on this exact task — the strongest signal
-  available, since this roster ships no populated `strong` tier to try first.
-- The deepest reasoning or multi-source synthesis, not routine lookup.
-- **Not** for routine coding, well-known solutions, or low-latency work — the cheap
-  tier is the speed lane; frontier burns usage limits fastest of anything on the
-  roster.
+- Use it when deciding whether a hard task needs Sol or only Astra's coordination.
+- Use it when reviewing whether recorded evidence actually opens the recovery gate.
+- **Not** for promoting an ordinary task because someone asked for the most capable model.
 
 ### Worked example
 
 ```bash
-python3 bin/codex_pricing.py models --json
-python3 bin/codex_pricing.py est <PROFILE> frontier
-python3 bin/codex_pricing.py est <PROFILE> mid
+python3 bin/codex_execute.py prepare --role implementer --model strong --json
+python3 bin/codex_execute.py status --kit tasks/kits/<slug> --json
 ```
 
-`est` accepts a tier word directly, so the frontier candidate never has to be
-hardcoded — run it once for frontier and once for mid to build today's actual ratio.
-Recommend, then give the one action:
-
-| Goal | Mechanism |
-|---|---|
-| one-shot dispatch | `codex exec "<task>" --model <model-id>` (`--sandbox workspace-write` if it must edit files) |
-| interactive switch | `/model` picker in the Codex TUI |
-| persistent default | `model = "<model-id>"` in `~/.codex/config.toml` |
-| reasoning effort | `-c model_reasoning_effort=<level>` |
+The preview should resolve an ordinary hard implementation to the strongest eligible worker. Status shows Astra as reserved until the driver records accepted recovery evidence.
 
 ### Failure modes & fallbacks
 
-- **The frontier model refuses.** Vendor safety classifiers can decline cyber/bio-
-  adjacent requests — check its `notes` field, then fall back to the mid tier instead
-  and say why.
-- **`/model` doesn't list a frontier candidate.** The plan doesn't have it yet
-  (limited preview) — route among what's actually listed and say so plainly.
-- **A model id gets quoted from memory.** Don't — this file must never contain a real
-  model id; derive it fresh from the engine's output every time.
+Planned or dispatched identity does not prove actual runtime use. If attestation is missing, preserve `unknown`; if it contradicts policy, block the result. Missing Astra also fails closed. Legacy frontier task pins migrate to the strongest worker without rewriting the original kit.
 
 ### Cost & safety
 
-Under a ChatGPT plan, lead with the burn index, not dollars — any dollar figure shown
-is a labeled API-equivalent proxy, never a bill; under `OPENAI_API_KEY` auth the
-token-metered dollars are real and authoritative. `fast` mode exists but its CLI
-surface is unpublished — point at release notes rather than inventing a flag.
+These previews do not dispatch. Use runtime pricing data for burn and API-equivalent estimates, and keep request-size assumptions explicit for long-context rates. Astra recovery is not a general escalation rung and cannot be unlocked by preferences or routine review failure.
 
 ### Related
 
-- [route](route.md) — which model overall, before frontier becomes the question.
-- [escalate](escalate.md) — the verify-gated ladder for one task, frontier as its
-  last rung.
-- [architect](architect.md) — for multi-task frontier-class work, so the spend
-  concentrates in planning.
+- [route](route.md) previews ordinary worker routing.
+- [escalate](escalate.md) defines qualifying recovery evidence.
+- [execute](execute.md) records and verifies the actual attempt.

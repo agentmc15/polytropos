@@ -1,75 +1,32 @@
 ---
 name: architect
-description: Do the expensive planning once — deep-plan a complex task and write an execution kit (PLAN.md + TASKS.md with model-pinned, self-contained briefs) under tasks/kits/<slug>/ for the execute driver to dispatch on cheaper models. Use for "architect this", "plan this big task", or to produce a Codex execution kit.
+description: Plan complex Codex work as a policy-routed execution kit.
 metadata:
-  short-description: Plan a complex task once, emit an execution kit
+  short-description: Plan a policy-routed execution kit
 ---
 
-# Architect — plan once, emit a kit
+# Architect a Codex execution kit
 
 ## Resolve the plugin root before running commands
 
-Set `POLYTROPOS_ROOT` from this file's real location: in plugin mode, this file is
-`<root>/codex/skills/architect/SKILL.md`, so ascend to `<root>`; in a managed copied install,
-use the installer-resolved `POLYTROPOS_ROOT="{{POLYTROPOS_ROOT}}"`. Reject a literal placeholder.
-Before shelling out, verify `$POLYTROPOS_ROOT/data/pricing.codex.json` and every referenced
-`$POLYTROPOS_ROOT/bin/` engine exist. If proof fails, stop and direct the user to
-`python3 bin/harness_select.py doctor --harness codex`; never run a guessed or stale path.
+Resolve `POLYTROPOS_ROOT` from this skill's location. In a managed copy use `POLYTROPOS_ROOT="{{POLYTROPOS_ROOT}}"`. Reject a literal placeholder. Confirm pricing data, `bin/codex_pricing.py`, `bin/codex_policy.py`, and `bin/codex_execute.py` exist. Otherwise run `python3 bin/harness_select.py doctor --harness codex` rather than guessing a path. Never invoke the real Codex CLI from a kit verify command.
 
-You do the expensive meta-work once. Given a complex task, you produce a durable execution
-kit that a cheaper model can carry out task-by-task at near-frontier quality. You plan and
-write the kit; you do not implement it.
+Plan only. Write `PLAN.md` and `TASKS.md` beneath `tasks/kits/<slug>/`; do not dispatch implementation. Every task is self-contained, has a machine-checkable verify command, and uses exactly `pending | in-progress | done | blocked`.
 
-## What you produce
+This skill carries no `model:` pin: the desktop app supplies its own model, which application policy configures as Astra for orchestration. The model remains app-controlled while the kit is written.
 
-A kit at `tasks/kits/<slug>/` with two files (a third, `NOTES.md`, is owned by the execute
-driver — do not create it):
+Use worker intent in each task's `model` field: `cheap` for mechanical work, `mid` for routine work, and `strong` for hard implementation, security, integration, or independent verification. Do not pin the reserved orchestration tier or an orchestration model. Central policy resolves workers at dispatch time, migrates an unpinned legacy task to the configured default worker, and maps a legacy reserved-tier pin to the maximum worker. Availability, model identities, effort support, and cost facts come only from data and policy.
 
-- **`PLAN.md`** — the goal and a concrete definition of "done"; constraints and an explicit
-  out-of-scope fence; architecture decisions with rationale; risks and tripwires.
-- **`TASKS.md`** — ordered work under `## Phase N — <name>` headings. Each task is a
-  `### <ID> — <title>` block (the spaced em dash — the driver parses it) carrying fields
-  `id`, `title`, `status`, `model`, and `depends:`/`independent:` marking, plus a
-  SELF-CONTAINED brief, concrete acceptance criteria, and a runnable verify command.
+Plan Astra as coordinator: it owns decomposition, dependencies, recovery decisions, and final acceptance. It is not an ordinary worker and the CLI has no warm pool. A recovery target is created only after recorded worker attempts and a machine-checkable failure; vague dissatisfaction never unlocks it. After correction, schedule remaining work back to workers.
 
-## Status vocabulary (verbatim, shared kit contract)
+Use Luna for cheap mechanical work, Terra for routine implementation, and Sol for hard, security, integration, or independent verification work. Keep final acceptance separate from independent verification. Record a per-request size assumption for long-context work; do not use aggregate session tokens as a request-size estimate.
 
-Every task's `status` is exactly one of `pending | in-progress | done | blocked`. New tasks
-start `pending`.
+Preview assignments before handoff:
 
-## Pin every task's model — id or tier word, from data, never memory
+```bash
+python3 "$POLYTROPOS_ROOT/bin/codex_execute.py" status --kit tasks/kits/<slug> --json
+python3 "$POLYTROPOS_ROOT/bin/codex_execute.py" run --kit tasks/kits/<slug> --task <id> --dry-run
+```
 
-The `model` field accepts either a model id from
-`$POLYTROPOS_ROOT/data/pricing.codex.json` or a tier word
-(`cheap|mid|strong|frontier`) resolved at dispatch time — model ids are unconfirmed for a
-preview generation, so a tier word survives an id correction that lands only in the pricing
-file. Derive every number by shelling to the engine, never from memory:
-
-- `python3 "$POLYTROPOS_ROOT/bin/codex_pricing.py" models` — the roster with tiers.
-- `python3 "$POLYTROPOS_ROOT/bin/codex_pricing.py" est <PROFILE> <MODEL_OR_TIER>`.
-
-Pin by tier: **cheap** — trivial/mechanical; **mid** — the default coding/tests/docs lane;
-**strong** — multi-file features, hard debugging, review, architecture; **frontier** —
-reserve for work a strong-tier model would genuinely fail, and say why. A tier may be
-unpopulated on a given roster; resolution then skips upward to the next populated tier — rely
-on that rule rather than hardcoding an id.
-
-## Verify commands
-
-Runnable from the repo root; must prove acceptance mechanically; must never invoke the real
-`codex` CLI — dispatch is the execute driver's job, and a live dispatch spends real usage
-limits or API dollars.
-
-## Dispatch, model selection, and the placeholder
-
-This skill carries no `model:` pin — the desktop app supplies its own model. When
-`bin/codex_execute.py` dispatches a kit task non-interactively, it has already resolved that
-task's `model` field and passed it as `codex exec --model <id>` — the model that runs a
-dispatched task was chosen by the kit, not by this skill re-routing. The root proof above applies
-before every driver or pricing command.
-
-## Output shape
-
-Write the kit files to disk under `tasks/kits/<slug>/`, then report the slug, the
-phase/task breakdown, and each task's model pin with a one-line rationale. Keep the plan
-tight — every decision earns its place or is cut.
+Planned, dispatched, and observed model-role facts are different records. An unobserved runtime identity remains `unknown`.
+Later, `bin/codex_execute.py` resolves each worker task and passes the selected id as `codex exec --model <id>`; that execution step is separate from planning.

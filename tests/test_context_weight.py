@@ -972,7 +972,9 @@ class CodexCardTests(unittest.TestCase):
         parsed = cw.cx.parse_rollout(lines)
         zeroed = dict(parsed["tokens"])
         zeroed["output"] = 0
-        expected_carry = cw.cx.price_tokens(zeroed, model, pricing)
+        expected_carry = cw.cx.price_tokens(
+            zeroed, model, pricing, input_includes_cache=False
+        )
 
         self.assertIsNotNone(card["carry_cost"])
         self.assertAlmostEqual(card["carry_cost"]["carry_usd"], expected_carry, places=9)

@@ -554,9 +554,11 @@ def collect_codex(ctx):
             "by_model": proxy_by_model,
             "approx_attribution": approx_any,
             "disclaimer": cxu.PROXY_DISCLAIMER,
+            "long_context_limitation": cxu.LONG_CONTEXT_LIMITATION,
             "pricing_cached_date": pricing["cached_date"],
         }
         report["notes"].append(cxu.PROXY_DISCLAIMER)
+        report["notes"].append(cxu.LONG_CONTEXT_LIMITATION)
 
     # Notes ladder (PLAN.md D3), decided AFTER rollout processing -- exactly one path:
     if pricing is None:

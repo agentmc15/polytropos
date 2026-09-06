@@ -1,14 +1,10 @@
 # Getting started on OpenAI Codex CLI
 
-Polytropos ships native Codex skills in a plugin package. Package preparation validates the local
-bundle; it does not show that Codex has installed, enabled, or loaded the package.
+Polytropos routes Codex execution through central policy. Astra plans, coordinates, recovers from recorded failures, and accepts phases; Luna, Terra, and Sol perform worker roles appropriate to the task. Model availability and prices are read from policy data at runtime.
 
-Use a current Codex client, Git, and Python 3.11 or newer. For the setup commands below,
-`python3` must select that interpreter.
+Use a current Codex client, Git, and Python 3.11 or newer.
 
 ## Install
-
-From a checkout, register the marketplace and install the package with the current Codex CLI:
 
 ```bash
 codex plugin marketplace add /path/to/polytropos
@@ -16,32 +12,28 @@ codex plugin add polytropos@polytropos-local
 codex plugin list --marketplace polytropos-local --json
 ```
 
-The plugin is registered as a cached package, so installation does not promise that it rereads a
-live checkout. Start a new session after installation. In CLI and supported IDE clients, use
-`/skills` or `$route`; a Desktop skill selector is available only in versions that expose it.
-
-Preview optional agent-role setup separately. It does not call Codex or register the plugin:
+Start a new task after installation. Use `/skills` or `$route`; a Desktop skill selector is available only when that client exposes one. Preview optional agent setup without changing it:
 
 ```bash
 python3 bin/harness_select.py install --harness codex --repo-root . --codex-home <codex-home> --components plugin,agents --agent-scope project --dry-run
 python3 bin/harness_select.py doctor --harness codex --repo-root . --codex-home <codex-home>
 ```
 
-The report distinguishes a ready package from runtime activation, which remains `unknown` without
-host evidence. See the [Codex harness deep dive](../deep-dives/codex-harness.md) for agents,
-legacy migration, and the manual smoke checklist.
+## First routed kit
 
-## Your first invocation
+Use `$architect` for multi-task work. Then inspect the policy's assignment before authorizing a real dispatch:
 
-Use the native skill sigil:
-
-```
-$route add input validation to the signup handler
+```bash
+python3 bin/codex_execute.py status --kit tasks/kits/<slug> --json
+python3 bin/codex_execute.py run --kit tasks/kits/<slug> --task <id> --dry-run
 ```
 
-Do not rely on a bare `/route` alias. Codex may also select a skill from its description.
-`codex/prompts/` is a deprecated compatibility namespace.
+Run implementation, independent review, and Astra acceptance through the driver. Do not write a private dispatch loop. Planned pins, dispatched assignments, and observed runtime model use are separate; absent observation is `unknown`. Recovery is reserved for driver-recorded machine failure and does not create a warm pool.
 
-Pricing and effort choices come from `data/pricing.codex.json` at runtime. Plan runs are
-usage-limited; any dollar figure there is an API-equivalent burn proxy. API-key runs are
-token-metered dollars.
+For an existing application configuration, preview the exact changes first:
+
+```bash
+python3 bin/codex_app_policy.py plan --repo-root . --codex-home <codex-home> --backup-root <new-empty-dir> --runtime-models <model-list.json>
+```
+
+Use `apply` only after reviewing the plan. It needs the same explicit roots and availability snapshot, preserves unrelated settings, and refuses unmanaged agent-role files.

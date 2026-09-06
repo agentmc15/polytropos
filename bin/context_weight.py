@@ -1473,8 +1473,14 @@ def build_codex_session_card(session_id, rollout_path, lines, pricing, top=20):
     if model_key is not None and parsed["tokens"] is not None:
         zeroed = dict(parsed["tokens"])
         zeroed["output"] = 0
+        cache_categories = zeroed.get("cache_read", 0) + zeroed.get("cache_write", 0)
+        # Current Codex totals report inclusive input. Historical/synthetic carry records can
+        # contain cache-only tokens with input=0; those categories are already disjoint.
+        input_includes_cache = cache_categories <= zeroed.get("input", 0)
         carry_cost = {
-            "carry_usd": cx.price_tokens(zeroed, model_key, pricing),
+            "carry_usd": cx.price_tokens(
+                zeroed, model_key, pricing, input_includes_cache=input_includes_cache
+            ),
             "model": model_key,
             "display": pricing["models"][model_key]["display"],
             "approx": approx,

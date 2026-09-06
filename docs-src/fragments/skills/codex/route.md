@@ -1,62 +1,33 @@
 ### What it does
 
-Model ids on this roster are best-effort for a preview generation, so this skill
-never shows one — recommendations here are tier words plus a live estimate, priced
-fresh from data each time, in whichever framing matches how you pay: burn under a
-ChatGPT plan, real dollars under an API key.
+Classifies work, estimates it from current Codex pricing data, and previews the central policy assignment. Ordinary implementation resolves among Luna, Terra, and Sol; Astra remains the orchestrator and reserved recovery target.
 
 ### When to reach for it
 
-- Before running anything non-trivial, to see a cost or burn estimate and a tier
-  recommendation first.
-- Deciding whether a cheaper tier or a faster mode would do just as well.
-- Writing code that dispatches a Codex model and needs the right tier plus the
-  actual invocation surface.
-- **Not** a spend report — that's [usage](usage.md); this only estimates what a task
-  is about to cost or burn, before it runs.
+- Use it before a multi-file change, long agent loop, migration, or other expensive run.
+- Use it to compare worker tiers and make a per-request long-context assumption explicit.
+- **Not** for manufacturing recovery evidence or overriding the selected model in extra CLI arguments.
 
 ### Worked example
 
 ```bash
-python3 bin/codex_pricing.py est <PROFILE> <MODEL_OR_TIER>
-python3 bin/codex_pricing.py models --profile <PROFILE>
+python3 bin/codex_pricing.py models
+python3 bin/codex_pricing.py est <profile> <worker-tier>
+python3 bin/codex_execute.py prepare --role implementer --model <worker-tier> --json
 ```
 
-Map the task to a size, run two or three candidates in the chosen tier plus one lane
-cheaper as a sanity check, then give a single action:
-
-| Goal | Mechanism |
-|---|---|
-| one-shot dispatch | `codex exec "<task>" --model <model-id>` |
-| interactive switch | `/model` picker in the Codex TUI |
-| session start | `codex --model <model-id>` |
-| persistent default | `model = "<model-id>"` in `~/.codex/config.toml` |
-| named profile | `[profiles.<name>]` in `config.toml`, via `codex --profile <name>` |
-| reasoning effort | `-c model_reasoning_effort=<level>` |
+Choose `cheap` for mechanical work, `mid` for routine implementation and debugging, and `strong` for hard, security-sensitive, integration, or independent-verification work.
 
 ### Failure modes & fallbacks
 
-- **This roster's `strong` tier is unpopulated.** Asking for `strong` resolves
-  upward to frontier — there's no intermediate rung to try first.
-- **`/model` doesn't list a frontier candidate.** The plan doesn't have it yet
-  (limited preview) — route among what's actually listed.
-- **A model id gets named from memory.** Don't — show no id on the page and
-  re-derive fresh each time.
+An unpinned legacy task safely maps to the configured default worker. A legacy frontier pin maps to the strongest worker without mutating the kit. If Astra is missing, central policy fails clearly even for worker previews, preserving the orchestration invariant. Direct host actions outside the supported bridge cannot be attested by the driver.
 
 ### Cost & safety
 
-Under a ChatGPT sign-in, lead with the burn index — any dollar figure is a labeled
-API-equivalent proxy, never a bill. Under `OPENAI_API_KEY` auth, the token-metered
-dollars are real and authoritative. Speed facts (the cheap tier's low latency, a
-frontier model's noted fast-inference availability) come from the data's own notes,
-never invented; `fast` mode exists but its CLI surface is unpublished, so point at
-release notes instead of guessing a flag.
+Pricing and prepare commands are read-only. Under a subscription, lead with burn index and label dollars as API-equivalent proxies; show real dollars only for API-metered runs. Availability, effort levels, limits, and model identifiers come from the pricing source at runtime.
 
 ### Related
 
-- [effort](effort.md) — tunes how hard the picked model thinks, once you've chosen
-  it.
-- [escalate](escalate.md) — the verify-gated ladder for when the picked tier isn't
-  enough.
-- [frontier-check](frontier-check.md) — the deeper go/no-go once frontier becomes
-  the question.
+- [architect](architect.md) turns routing choices into a durable kit.
+- [execute](execute.md) dispatches through the same policy.
+- [usage](usage.md) reports historical observed activity.

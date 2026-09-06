@@ -30,7 +30,7 @@ class CoreSkillTests(unittest.TestCase):
         self.assertIn("tasks/kits/<slug>", text)
         self.assertIn("pending | in-progress | done | blocked", text)
         self.assertIn("spends subscription usage", text)
-        self.assertIn("verify command independently", text)
+        self.assertIn("Rerun verification independently", text)
         self.assertNotIn(".Codex/kits", text)
         self.assertNotIn(".claude/kits", text)
 
@@ -38,7 +38,7 @@ class CoreSkillTests(unittest.TestCase):
         text = (ROOT / "codex" / "skills" / "execute" / "SKILL.md").read_text()
         for name in ("kit-implementer", "kit-verifier", "phase-reviewer"):
             self.assertIn(name, text)
-        self.assertIn("Plugin install does not install those agents", text.replace("\n", " "))
+        self.assertIn("plugin installation does not install them", text)
         self.assertIn("headless driver remains", text)
 
     def test_doctor_commands_parse_and_require_authority_for_writes(self):
@@ -81,7 +81,7 @@ class CoreSkillTests(unittest.TestCase):
         for stem in ("execute", "doctor"):
             text = (ROOT / "codex" / "skills" / stem / "SKILL.md").read_text()
             self.assertIn('POLYTROPOS_ROOT="{{POLYTROPOS_ROOT}}"', text)
-            self.assertIn("harness_select.py doctor --harness codex", text)
+            self.assertIn("doctor --harness codex", text)
             frontmatter = text.split("---", 2)[1]
             self.assertNotIn("model:", frontmatter)
             self.assertNotIn("/Users/", text)

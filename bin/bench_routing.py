@@ -122,6 +122,7 @@ def _load(name):
 
 
 rs = _load("routing_scorecard")   # scan_kits, build_history, LIVE_TIER_ORDER, LIVE_MIN_SAMPLE
+codex_policy = _load("codex_policy")
 
 
 # ---------------------------------------------------------------------------------------------
@@ -455,7 +456,24 @@ def build_roles_card(benchmarks, pricing_bundle, harnesses, floors):
         role_rows = []
         for role, default_floor, cost_sensitive in ROLE_POLICY:
             floor = floors.get(role, default_floor)
-            rec = recommend_role(avail, role, floor, cost_sensitive)
+            role_avail = avail
+            if harness == "codex" and pricing_bundle[harness].get("orchestration_policy"):
+                policy_role = {
+                    "architect/planner": "orchestrator",
+                    "orchestrator": "orchestrator",
+                    "reviewer": "verifier",
+                    "verifier": "verifier",
+                    "implementer": "implementer",
+                    "mechanical sweep": "implementer",
+                }[role]
+                eligible = codex_policy.eligible_models(pricing_bundle[harness], policy_role)
+                if role == "mechanical sweep":
+                    cheap = pricing_bundle[harness]["orchestration_policy"]["worker_tiers"][0]
+                    eligible = [mid for mid in eligible
+                                if pricing_bundle[harness]["models"][mid].get("tier") == cheap]
+                normalized_eligible = {normalize_id(mid) for mid in eligible}
+                role_avail = [e for e in avail if normalize_id(e["model"]) in normalized_eligible]
+            rec = recommend_role(role_avail, role, floor, cost_sensitive)
             role_rows.append({
                 "role": role, "floor": floor, "cost_sensitive": cost_sensitive,
                 "picked": rec["picked"], "clears_floor": rec["clears_floor"],

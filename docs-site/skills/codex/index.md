@@ -4,17 +4,17 @@
 
 | Skill | Description | Page |
 | --- | --- | --- |
-| architect | Do the expensive planning once — deep-plan a complex task and write an execution kit (PLAN.md + TASKS.md with model-pinned, self-contained briefs) under tasks/kits/&lt;slug&gt;/ for the execute driver to dispatch on cheaper models. Use for "architect this", "plan this big task", or to produce a Codex execution kit. | [architect](architect.md) |
-| bench-routing | Compare benchmark priors with Codex-dispatchable roles while preserving benchmark uncertainty. Use to rank candidates, inspect Codex role recommendations, or run the synthetic routing demo. | [bench-routing](bench-routing.md) |
+| architect | Plan complex Codex work as a policy-routed execution kit. | [architect](architect.md) |
+| bench-routing | Compare benchmark priors with central Codex worker-role assignments. | [bench-routing](bench-routing.md) |
 | context-weight | Analyze how Codex context grows, what resident instructions cost, and where fidelity stops. Use for context-window pressure, growth curves, loaded-surface audits, or compaction questions. | [context-weight](context-weight.md) |
-| doctor | Diagnose Polytropos Codex plugin, agent, skill, prompt, and managed-install state without changing it. Use for setup, upgrades, stale paths, missing skills, or install conflicts. | [doctor](doctor.md) |
-| effort | Control the GPT-5.6 reasoning-effort dial per run — pick the right level, apply it, and step it up only on failure evidence. Use when the user asks to raise/lower reasoning effort, run at the deepest level, or make a run think harder or cheaper. | [effort](effort.md) |
-| escalate | Run one task on the cheapest sufficient GPT-5.6 tier behind a machine-checkable success check, escalating up the tiers — frontier last — only if the check fails. Use for "try it cheap first, fall back to the top model if it doesn't work" or an auto-escalating, verify-gated dispatch. | [escalate](escalate.md) |
-| execute | Execute a prepared Codex kit task-by-task with dependency checks, independent verification, and phase review. Use after architect creates tasks/kits/&lt;slug&gt;, or when asked to run or continue a kit. | [execute](execute.md) |
-| frontier-check | Decide whether a task is worth the frontier-tier model in the GPT-5.6 family versus a mid or cheap candidate, and how to run it optimally — reasoning effort, task spec, refusal fallbacks. Use when the user asks "is the top model worth it here" or how to get the most out of it. | [frontier-check](frontier-check.md) |
+| doctor | Diagnose Codex plugin, policy, app configuration, agents, skills, and managed-install state without changing it. | [doctor](doctor.md) |
+| effort | Choose a data-derived reasoning effort for a policy-routed Codex run. | [effort](effort.md) |
+| escalate | Run verification-gated Codex recovery through the central execution driver. | [escalate](escalate.md) |
+| execute | Run a prepared Codex kit through central policy, worker verification, and Astra acceptance. | [execute](execute.md) |
+| frontier-check | Decide whether a task needs Astra orchestration or a policy-selected worker. | [frontier-check](frontier-check.md) |
 | journal | Generate the daily work journal — collect today's AI usage across Claude Code, Copilot CLI, and Codex CLI plus git activity into a digest, then write the narrative, technical, and next-day-plan summaries. Use when the user asks for their work journal, daily summary, "what did I do today", or to plan tomorrow. | [journal](journal.md) |
 | memory | Recall a small, relevance-gated set of private local facts and review their staleness. Use when durable project context may help but context quality and privacy must stay bounded. | [memory](memory.md) |
-| route | Pick the right Codex model for a task and estimate its burn before running it. Use when unsure which GPT-5.6 tier a task needs, what it will cost (API) or burn (subscription), or how to run it fast. | [route](route.md) |
+| route | Estimate a Codex task and preview its central policy worker assignment. | [route](route.md) |
 | usage | Analyze historical Codex CLI activity from local session logs, read-only — honestly unpriced or labeled-proxy. Use when the user asks what they've used, burned, or spent in Codex. | [usage](usage.md) |
 
 ## Using these skills

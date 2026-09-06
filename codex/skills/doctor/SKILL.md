@@ -1,32 +1,19 @@
 ---
 name: doctor
-description: Diagnose Polytropos Codex plugin, agent, skill, prompt, and managed-install state without changing it. Use for setup, upgrades, stale paths, missing skills, or install conflicts.
+description: Diagnose Codex plugin, policy, app configuration, agents, skills, and managed-install state without changing it.
 ---
 
 # Diagnose Codex setup safely
 
-## Resolve the plugin root before running commands
+Resolve `POLYTROPOS_ROOT` from this skill's location. In a managed copy use `POLYTROPOS_ROOT="{{POLYTROPOS_ROOT}}"`; reject the literal placeholder. Confirm pricing data, `bin/harness_select.py`, `bin/codex_policy.py`, and `bin/codex_app_policy.py` exist. If they do not, stop rather than guessing a path.
 
-Set `POLYTROPOS_ROOT` from this file's real location: in plugin mode, this file is
-`<root>/codex/skills/doctor/SKILL.md`, so ascend to `<root>`; in a managed copied install,
-use the installer-resolved `POLYTROPOS_ROOT="{{POLYTROPOS_ROOT}}"`. Reject a literal placeholder.
-Before shelling out, verify `$POLYTROPOS_ROOT/data/pricing.codex.json` and
-`$POLYTROPOS_ROOT/bin/harness_select.py` exist. If proof fails, stop and direct the user to
-`python3 bin/harness_select.py doctor --harness codex`; never run a guessed or stale path.
-
-Run the read-only doctor with an explicit Codex home when one is known:
+Run the read-only doctor and application diagnostics against explicit roots only:
 
 ```bash
-python3 "$POLYTROPOS_ROOT/bin/harness_select.py" doctor --harness codex --repo-root "$POLYTROPOS_ROOT" --codex-home <codex-home>
 python3 "$POLYTROPOS_ROOT/bin/harness_select.py" doctor --harness codex --repo-root "$POLYTROPOS_ROOT" --codex-home <codex-home> --json
+python3 "$POLYTROPOS_ROOT/bin/codex_app_policy.py" status --repo-root "$POLYTROPOS_ROOT" --codex-home <codex-home> --backup-root <new-empty-dir> --json
 ```
 
-You may also preview an intended install with `install ... --dry-run`; preview and doctor must
-remain byte-read-only. Summarize each component state (`install`, `up-to-date`,
-`managed-update`, `conflict`, `unmanaged`, or `skip`) and give the exact remedy printed by the
-engine. Never suggest `--force`, deleting the Codex home, or overwriting config.toml.
+Report package readiness, runtime activation as observed or `unknown`, policy availability, role-file ownership, planned application changes, and any unavailable required worker. Do not claim an arbitrary host-selected model or direct host tool is sandboxed by this policy boundary.
 
-An actual `install` or `--refresh-managed` is a write. Show the plan and obtain explicit user
-authority before running it. Managed refresh is allowed only for unchanged recorded copies;
-user-edited or unrelated destinations remain conflicts. Remind the user to restart Codex or
-start a new task after enabling a plugin or changing agents.
+`codex_app_policy.py apply` writes configuration and needs an explicit runtime availability snapshot, explicit repository, Codex-home, and new empty backup roots. Preview with `plan` first, then obtain explicit user authority. It preserves unrelated TOML and refuses to overwrite unmanaged or edited agent roles. Legacy refresh remains an explicit `--refresh-managed` install action. Restart or start a new task after an authorized app change.

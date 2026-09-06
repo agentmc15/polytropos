@@ -58,6 +58,10 @@ from pathlib import Path
 
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
 PRICING_PATH = PLUGIN_ROOT / "data" / "pricing.copilot.json"
+LONG_CONTEXT_LIMITATION = (
+    "Long-context thresholds require one request's input size; session aggregates are priced "
+    "at default rates because they do not reveal that request-level value."
+)
 # Runtime default only; tests always override it via --copilot-home / --session-dir.
 DEFAULT_COPILOT_HOME = Path.home() / ".copilot"
 
@@ -629,6 +633,7 @@ def build_usage_payload(session_dir, days=30, top=10, kits_dir=None):
     ]
 
     labels = ["token-priced estimate (est.) — Copilot bills in premium requests/AIC"]
+    labels.append(LONG_CONTEXT_LIMITATION)
     if multi_model_sessions:
         labels.append("multi-model sessions attributed to last model (≈)")
 
@@ -822,7 +827,8 @@ def render_markdown(payload):
     # 9. Footer.
     out.append(
         f"\n*Prices cached {payload['cached_date']} from pricing.copilot.json; costs are "
-        "token-priced estimates, not bills. Event format observed on Copilot CLI v1.0.68.*"
+        "token-priced estimates, not bills. " + LONG_CONTEXT_LIMITATION +
+        " Event format observed on Copilot CLI v1.0.68.*"
     )
 
     return "\n".join(out)
