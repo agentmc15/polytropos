@@ -1,77 +1,25 @@
 ---
-description: "Control the GPT-5.6 reasoning-effort dial per run — pick the right level, apply it, and step it up only on failure evidence. Use when the user asks to raise/lower reasoning effort, run at the deepest level, or make a run think harder or cheaper."
+description: "Choose a data-derived reasoning effort for a policy-routed Codex run."
 ---
 
 > Deprecated compatibility prompt; prefer `$effort`.
 
-# Effort — the reasoning-effort dial
+# Reasoning effort
 
 ## Resolve the plugin root before running commands
 
-Set `POLYTROPOS_ROOT` from this file's real location: in plugin mode, this file is
-`<root>/codex/skills/effort/SKILL.md`, so ascend to `<root>`; in a managed copied install,
-use the installer-resolved `POLYTROPOS_ROOT="{{POLYTROPOS_ROOT}}"`. Reject a literal placeholder.
-Before shelling out, verify `$POLYTROPOS_ROOT/data/pricing.codex.json` and every referenced
-`$POLYTROPOS_ROOT/bin/` engine exist. If proof fails, stop and direct the user to
-`python3 bin/harness_select.py doctor --harness codex`; never run a guessed or stale path.
+Resolve `POLYTROPOS_ROOT` from this skill's location. In a managed copy use `POLYTROPOS_ROOT="{{POLYTROPOS_ROOT}}"`. Reject a literal placeholder. Confirm pricing data and `bin/codex_execute.py` exist. If not, use `python3 bin/harness_select.py doctor --harness codex`.
 
-You control HOW HARD a Codex run thinks, independent of which model it runs on. You are a
-decision aid, not a report.
+Derive the complete effort ladder and mode notes at runtime. Do not enumerate levels, model support, or prices in prose:
 
-## Determine the billing mode FIRST
+```bash
+python3 "$POLYTROPOS_ROOT/bin/codex_pricing.py" knobs
+```
 
-How the user pays decides which framing leads — establish it before recommending anything:
+Omit an override for routine work. Increase one data-reported rung only after concrete machine evidence says the current worker's reasoning was insufficient. A worker-tier change addresses capability; effort addresses thinking time. For a kit, carry the validated selection through the central driver:
 
-- **ChatGPT sign-in ⇒ subscription framing.** Effort drives usage-limit burn, not dollars.
-  Any dollar figure you show is a labeled API-equivalent proxy — never present it as a bill.
-- **`OPENAI_API_KEY` auth ⇒ API framing.** The token-metered dollars are real and authoritative.
-- If you are unsure which mode applies, ask before recommending a level.
+```bash
+python3 "$POLYTROPOS_ROOT/bin/codex_execute.py" run --kit tasks/kits/<slug> --task <id> --effort <level>
+```
 
-Deeper effort means more reasoning tokens, which means faster burn either way — a subscription
-run at the top of the ladder draws down usage limits fastest of anything on the roster, and an
-API run at the top of the ladder is the most expensive per task.
-
-## Get the ladder from data — never from memory
-
-The level vocabulary lives ONLY in `$POLYTROPOS_ROOT/data/pricing.codex.json`'s
-`knobs.reasoning_efforts`. Never enumerate the levels yourself — run
-
-`python3 "$POLYTROPOS_ROOT/bin/codex_pricing.py" knobs`
-
-and relay what it prints: the ladder in ascending order plus its notes, which name which level
-is newest and whether it needs a settings toggle. The same command also prints `mode` lines
-(`ultra`, `fast`) — these are MODES, not rungs on the effort ladder, and their CLI surfaces are
-unpublished as of the data's `cached_date`: relay the note verbatim, never invent a flag for
-them.
-
-## Apply it
-
-- **One-shot dispatch**: `-c model_reasoning_effort=<level>` on `codex exec` — the one confirmed
-  surface (same form as the `route` skill's mechanism table), where `<level>` is a value taken
-  verbatim from `knobs` output, never guessed.
-- **Kit tasks**: `python3 "$POLYTROPOS_ROOT/bin/codex_execute.py" run --kit <dir> --task <id> --effort <level>`
-  — the driver validates `<level>` against the data's knobs at run time and rejects an unknown
-  word; it never accepts an invented one.
-
-## Choose the level
-
-- **Omit the override for routine work.** The configured default applies, and that is correct
-  for most runs.
-- **The low end of the ladder** is for bulk, extraction, formatting, and other latency-sensitive
-  work — deliberately shallow thinking is the point there.
-- **Step UP one level at a time, only on concrete failure evidence** — a run that got it wrong,
-  not a hunch. Don't start at the deepest level; that mirrors the `escalate` skill's
-  ladder-stepping rule exactly, and for the same reason: the expensive end of the ladder should
-  be earned, not assumed.
-- **Effort is per-model and orthogonal to model choice.** A tier jump (`route`, `escalate`)
-  fixes a capability gap; turning effort up on the CURRENT model fixes a thinking-time gap.
-  When a run underperforms, try the cheaper move first — more effort on the same model — before
-  reaching for a stronger tier.
-
-## Output shape
-
-Keep it compact: the recommended level (or "omit the override"), the one-line reason, and the
-exact command to run. If the task is routine, say so and stop — don't manufacture a reason to
-turn the dial up.
-
-The root proof above applies before every driver or pricing command.
+The driver applies the validated selection through its `model_reasoning_effort` configuration while preserving the policy-selected worker and planned/dispatched/observed records. For subscription use, explain increased burn before any API-equivalent proxy; for API-key runs, use the engine when a token-metered estimate is needed.

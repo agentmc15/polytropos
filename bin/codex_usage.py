@@ -38,12 +38,12 @@ per-turn sum, which would double-count.
 as well would double-count output. It is read (so it never falls through to an "unknown
 field" surprise) and silently dropped.
 
-Pricing prices only what these logs can observe: input, cache-read (at
-``cache_read_multiplier`` from the pricing file — never a hardcoded 0.1), and output tokens.
-Cache WRITES are never priced here because these logs do not carry an observable
-cache-write count — this is an intentional asymmetry with ``data/pricing.codex.json``'s
-``cache_write_multiplier``, which exists only to serve ``codex_pricing.py``'s forecast
-estimator, not this observed-usage reader.
+Raw OpenAI ``input_tokens`` is inclusive of cache-read and cache-write tokens. Pricing therefore
+subtracts observed cache-read and cache-write counts from that total before passing uncached input
+to the pricing engine. Cache writes are priced only when a known nested
+``input_tokens_details.cache_write_tokens`` count is present; absent data never invents writes.
+If observed writes have no configured write rate, the affected rollout is surfaced as unpriced
+rather than silently undercharging. Raw output continues to retain the inclusive input count.
 
 Honesty ladder (PLAN.md D8), in order:
   (a) rollout tokens found -> per-model table (tokens by class, est API-USD), the standing
@@ -110,6 +110,7 @@ TOKEN_FIELD_MAP = {
     "input_tokens": "input", "prompt_tokens": "input",
     "cached_input_tokens": "cache_read", "cache_read_input_tokens": "cache_read",
     "cached_tokens": "cache_read",
+    "cache_write_tokens": "cache_write",
     "output_tokens": "output", "completion_tokens": "output",
     # reasoning_output_tokens is deliberately NOT mapped here (see module docstring): OpenAI
     # includes reasoning tokens inside output_tokens already, so mapping it too would
@@ -122,6 +123,22 @@ PROXY_DISCLAIMER = (
     "usage is usage-limited, not token-billed."
 )
 UNPRICED_NOTE = "no token usage found in these logs — activity counted, unpriced"
+LONG_CONTEXT_LIMITATION = (
+    "Long-context thresholds require one request's input size. These logs expose cumulative "
+    "session totals, so observed usage is priced at default rates rather than treating the "
+    "session total as one request."
+)
+
+
+def _load_pricing_engine():
+    path = PLUGIN_ROOT / "bin" / "codex_pricing.py"
+    spec = importlib.util.spec_from_file_location("codex_pricing_for_usage", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+_pricing_engine = _load_pricing_engine()
 
 
 def load_pricing():
@@ -171,14 +188,42 @@ def _find_containers(obj, container_keys, wrappers=WRAPPER_KEYS, max_depth=MAX_W
 
 
 def _normalize_tokens(raw):
-    """Map a raw usage-container dict to `{"input", "cache_read", "output"}` via
-    `TOKEN_FIELD_MAP`; unmapped fields (including `reasoning_output_tokens`) are dropped.
+    """Map a raw usage container to inclusive input, cache categories, and output.
+
+    OpenAI may place cache category counts under ``input_tokens_details``. Only known numeric
+    values are accepted; absent or malformed categories remain zero rather than inferred.
     """
-    out = {"input": 0, "cache_read": 0, "output": 0}
-    for k, v in raw.items():
-        field = TOKEN_FIELD_MAP.get(k)
-        if field and isinstance(v, (int, float)) and not isinstance(v, bool):
-            out[field] += v
+    def first_valid(mapping, names):
+        for name in names:
+            value = mapping.get(name)
+            if isinstance(value, (int, float)) and not isinstance(value, bool) and value >= 0:
+                return value
+        return None
+
+    # These names are aliases for the same counters, not independent token categories.
+    # Prefer the canonical modern spelling instead of summing duplicate aliases.
+    out = {
+        "input": first_valid(raw, ("input_tokens", "prompt_tokens")) or 0,
+        "cache_read": 0,
+        "cache_write": 0,
+        "output": first_valid(raw, ("output_tokens", "completion_tokens")) or 0,
+    }
+    details = raw.get("input_tokens_details")
+    nested_read = None
+    nested_write = None
+    if isinstance(details, dict):
+        nested_read = first_valid(
+            details, ("cached_tokens", "cached_input_tokens", "cache_read_input_tokens")
+        )
+        nested_write = first_valid(details, ("cache_write_tokens",))
+    out["cache_read"] = (
+        nested_read if nested_read is not None else first_valid(
+            raw, ("cached_input_tokens", "cache_read_input_tokens", "cached_tokens")
+        ) or 0
+    )
+    out["cache_write"] = (
+        nested_write if nested_write is not None else first_valid(raw, ("cache_write_tokens",)) or 0
+    )
     return out
 
 
@@ -197,20 +242,43 @@ def match_model(model_id, pricing):
     return None
 
 
-def price_tokens(u, key, pricing):
+def _priceable_counts(u, input_includes_cache=True):
+    """Return disjoint counts under an explicit input/cache reporting convention."""
+    cache_read = u.get("cache_read", 0)
+    cache_write = u.get("cache_write", 0)
+    input_total = u["input"]
+    if not input_includes_cache:
+        return input_total, cache_read, cache_write
+    if cache_read + cache_write > input_total:
+        raise ValueError("observed cache categories exceed inclusive input_tokens")
+    return input_total - cache_read - cache_write, cache_read, cache_write
+
+
+def price_tokens(u, key, pricing, input_includes_cache=True):
     """USD for one observed token bundle priced against model `key`.
 
-    Cache reads are priced at ``input_per_mtok * cache_read_multiplier`` (both read from the
-    pricing dict at run time — never a hardcoded 0.1). Cache writes are never priced here:
-    these logs carry no observable cache-write count (see module docstring).
+    Cache reads use the explicit per-model rate when present and the pricing-file multiplier
+    only for legacy schema compatibility. Cache writes are charged only when observed.
     """
-    m = pricing["models"][key]
-    cache_read_rate = m["input_per_mtok"] * pricing["cache_read_multiplier"]
-    return (
-        u["input"] * m["input_per_mtok"]
-        + u["cache_read"] * cache_read_rate
-        + u["output"] * m["output_per_mtok"]
-    ) / 1e6
+    return price_tokens_detail(
+        u, key, pricing, input_includes_cache=input_includes_cache
+    )["usd_api"]
+
+
+def price_tokens_detail(u, key, pricing, input_includes_cache=True):
+    """Price aggregate observed tokens without inferring a per-request context size."""
+    uncached_input, cache_read, cache_write = _priceable_counts(
+        u, input_includes_cache=input_includes_cache
+    )
+    return _pricing_engine.cost_tokens(
+        pricing,
+        key,
+        input_tokens=uncached_input,
+        cached_input_tokens=cache_read,
+        cache_write_tokens=cache_write,
+        output_tokens=u["output"],
+        request_input_tokens=None,
+    )
 
 
 # ---- timestamps ---------------------------------------------------------------------------------
@@ -262,7 +330,7 @@ def parse_rollout(lines):
     Otherwise this rollout carries no observable token usage (``tokens`` is None).
     """
     cumulative = None
-    per_turn_sum = {"input": 0, "cache_read": 0, "output": 0}
+    per_turn_sum = {"input": 0, "cache_read": 0, "cache_write": 0, "output": 0}
     has_per_turn = False
     models = []
     session_ids = set()
@@ -629,7 +697,7 @@ def build_usage_payload(codex_home, days=30, top=10, kits_dir=None):
     ledger_index = build_ledger_index(kits_dir) if kits_dir is not None else None
 
     by_model = defaultdict(
-        lambda: {"input": 0, "cache_read": 0, "output": 0, "rollouts": 0, "usd": 0.0,
+        lambda: {"input": 0, "cache_read": 0, "cache_write": 0, "output": 0, "rollouts": 0, "usd": 0.0,
                   "approx": False}
     )
     unpriced_models = set()
@@ -672,10 +740,15 @@ def build_usage_payload(codex_home, days=30, top=10, kits_dir=None):
 
         approx = len(matched) > 1
         key = matched[-1]
-        usd = price_tokens(parsed["tokens"], key, pricing)
+        try:
+            usd = price_tokens_detail(parsed["tokens"], key, pricing)["usd_api"]
+        except (KeyError, ValueError) as exc:
+            unpriced_models.add(key)
+            read_errors.append(f"{f}: pricing unavailable: {exc}")
+            continue
 
         b = by_model[key]
-        for field in ("input", "cache_read", "output"):
+        for field in ("input", "cache_read", "cache_write", "output"):
             b[field] += parsed["tokens"][field]
         b["usd"] += usd
         b["rollouts"] += 1
@@ -741,6 +814,7 @@ def build_usage_payload(codex_home, days=30, top=10, kits_dir=None):
                 "rollouts": b["rollouts"],
                 "input": b["input"],
                 "cache_read": b["cache_read"],
+                "cache_write": b["cache_write"],
                 "output": b["output"],
                 "usd": round(b["usd"], 6),
                 "approx": bool(b["approx"]),
@@ -759,6 +833,7 @@ def build_usage_payload(codex_home, days=30, top=10, kits_dir=None):
         "malformed_lines": total_malformed,
         "read_errors": read_errors,
         "cached_date": pricing["cached_date"],
+        "long_context_limitation": LONG_CONTEXT_LIMITATION,
         # Internal transport only (full-precision markdown formatting), consolidated under
         # ONE key so the public payload above stays bounded and card-shaped. Never echoed
         # as-is by the CLI's --json output. rows_sorted is capped at `top` because that is
@@ -834,6 +909,7 @@ def _print_priced(payload, want_json):
             "days": payload["days"],
             "codex_home": payload["codex_home"],
             "disclaimer": payload["disclaimer"],
+            "long_context_limitation": payload["long_context_limitation"],
             "total_usd": payload["total_usd"],
             "rollouts_scanned": payload["rollouts_scanned"],
             "rollouts_with_tokens": payload["rollouts_with_tokens"],
@@ -865,16 +941,17 @@ def _print_priced(payload, want_json):
         f"({payload['rollouts_scanned']} rollout(s) scanned).\n"
     )
     out.append(PROXY_DISCLAIMER)
+    out.append(LONG_CONTEXT_LIMITATION)
 
     out.append("\n## Spend by model\n")
-    out.append("| Model | Rollouts | Input | Cache read | Output | USD |")
-    out.append("|---|---:|---:|---:|---:|---:|")
+    out.append("| Model | Rollouts | Input | Cache read | Cache write | Output | USD |")
+    out.append("|---|---:|---:|---:|---:|---:|---:|")
     for key, b in sorted(by_model.items(), key=lambda kv: -kv[1]["usd"]):
         disp = pricing["models"][key]["display"]
         rollouts_cell = f"{b['rollouts']:,}" + (" ≈" if b["approx"] else "")
         out.append(
             f"| {disp} | {rollouts_cell} | {b['input']:,} | {b['cache_read']:,} "
-            f"| {b['output']:,} | ${b['usd']:,.4f} |"
+            f"| {b['cache_write']:,} | {b['output']:,} | ${b['usd']:,.4f} |"
         )
     if any(b["approx"] for b in by_model.values()):
         out.append(

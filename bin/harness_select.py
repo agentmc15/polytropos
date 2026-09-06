@@ -51,6 +51,7 @@ Usage:
 
 import argparse
 import hashlib
+import importlib.util
 import json
 import os
 import re
@@ -77,6 +78,9 @@ PLACEHOLDER = "{{POLYTROPOS_ROOT}}"
 CODEX_COMPONENTS = ("plugin", "agents", "skills", "prompts", "guidance")
 OWNERSHIP_RELATIVE = Path("polytropos") / "install-manifest.json"
 OWNERSHIP_VERSION = 1
+APP_POLICY_OWNERSHIP_RELATIVE = Path("polytropos") / "app-policy-manifest.json"
+APP_POLICY_GUIDANCE_START = "<!-- polytropos-app-policy:start -->"
+APP_POLICY_GUIDANCE_END = "<!-- polytropos-app-policy:end -->"
 
 CLAUDE_CODE_MESSAGE = (
     "installed live from this repo via the local marketplace — nothing to install"
@@ -389,6 +393,58 @@ def _load_ownership(codex_home):
     return payload
 
 
+def _load_app_policy_ownership(codex_home):
+    """Load only well-formed app-policy digest ownership; malformed state owns nothing."""
+    path = Path(codex_home) / APP_POLICY_OWNERSHIP_RELATIVE
+    if not path.is_file():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    files = payload.get("files") if isinstance(payload, dict) else None
+    if not isinstance(files, dict) or any(
+        not isinstance(key, str) or not isinstance(value, str)
+        for key, value in files.items()
+    ):
+        return {}
+    return files
+
+
+def _is_expected_app_policy_agent(repo_root, destination, current):
+    """Validate an app-managed role against canonical text and pricing policy."""
+    destination = Path(destination)
+    if destination.suffix != ".toml" or tomllib is None:
+        return False
+    try:
+        source = Path(repo_root) / "codex" / "agents" / destination.name
+        canonical = tomllib.loads(source.read_text(encoding="utf-8"))
+        installed = tomllib.loads(current.decode("utf-8"))
+        pricing = json.loads(
+            (Path(repo_root) / "data" / "pricing.codex.json").read_text(encoding="utf-8")
+        )
+        policy = pricing["orchestration_policy"]
+        verifier_names = {"phase-reviewer", "kit-verifier"}
+        if destination.stem in verifier_names:
+            extra = {"model", "sandbox_mode"}
+            base = {key: value for key, value in installed.items() if key not in extra}
+            module_path = Path(repo_root) / "bin" / "codex_policy.py"
+            spec = importlib.util.spec_from_file_location("polytropos_policy_for_setup", module_path)
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            verifier_model = module.resolve_assignment(pricing, role="verifier")["model_id"]
+            return (
+                base == canonical
+                and installed.get("model") == verifier_model
+                and installed.get("sandbox_mode") == "read-only"
+                and set(installed) == set(canonical) | extra
+            )
+        return installed == canonical
+    except (KeyError, OSError, TypeError, ValueError, UnicodeDecodeError, json.JSONDecodeError,
+            tomllib.TOMLDecodeError):
+        return False
+
+
 def _bundle_version(repo_root):
     try:
         payload = json.loads(
@@ -502,6 +558,7 @@ def plan_codex_setup(
     root = Path(repo_root).resolve()
     home = Path(codex_home).resolve()
     ownership = _load_ownership(home)
+    app_policy_owned = _load_app_policy_ownership(home)
     owned = {
         entry.get("destination"): entry
         for entry in ownership.get("files", [])
@@ -566,8 +623,27 @@ def plan_codex_setup(
             else:
                 current = _read_bytes(destination)
                 destination_digest = _sha256_bytes(current)
+                app_policy_digest = app_policy_owned.get(str(destination))
+                app_policy_content = False
+                if app_policy_digest == destination_digest:
+                    if component == "agents":
+                        app_policy_content = _is_expected_app_policy_agent(root, destination, current)
+                    elif component == "guidance":
+                        try:
+                            guidance_text = current.decode("utf-8")
+                        except UnicodeDecodeError:
+                            guidance_text = ""
+                        app_policy_content = (
+                            APP_POLICY_GUIDANCE_START in guidance_text
+                            and APP_POLICY_GUIDANCE_END in guidance_text
+                        )
                 if current == installed:
                     state, reason = "up-to-date", "destination matches the current bundle"
+                elif app_policy_content:
+                    state, reason = (
+                        "up-to-date",
+                        "destination is managed by the central Codex app policy; preserving managed policy content",
+                    )
                 elif PLACEHOLDER.encode("utf-8") in current:
                     state, reason = "conflict", "destination contains an unresolved literal placeholder"
                 elif record and record.get("installed_hash") == destination_digest:

@@ -124,7 +124,7 @@ class CumulativeMaxTests(unittest.TestCase):
         ]
         parsed = cu.parse_rollout(_lines(records))
         # Element-wise MAX; a naive sum would give 700/50/105.
-        self.assertEqual(parsed["tokens"], {"input": 300, "cache_read": 20, "output": 50})
+        self.assertEqual(parsed["tokens"], {"input": 300, "cache_read": 20, "cache_write": 0, "output": 50})
 
 
 # ---- 2. Per-turn SUM rule (and BOTH-kinds -> cumulative MAX only) ---------------------------
@@ -137,7 +137,7 @@ class PerTurnSumTests(unittest.TestCase):
             _tok_rec("usage", input_tokens=50, cached_input_tokens=4, output_tokens=3),
         ]
         parsed = cu.parse_rollout(_lines(records))
-        self.assertEqual(parsed["tokens"], {"input": 150, "cache_read": 14, "output": 8})
+        self.assertEqual(parsed["tokens"], {"input": 150, "cache_read": 14, "cache_write": 0, "output": 8})
 
     def test_both_kinds_in_one_file_use_cumulative_max_only_never_added(self):
         records = [
@@ -148,7 +148,7 @@ class PerTurnSumTests(unittest.TestCase):
         parsed = cu.parse_rollout(_lines(records))
         # Cumulative wins for the whole file; per-turn 999/1 containers are discarded, never
         # added (a sum would blow past 500/200/20).
-        self.assertEqual(parsed["tokens"], {"input": 500, "cache_read": 200, "output": 20})
+        self.assertEqual(parsed["tokens"], {"input": 500, "cache_read": 200, "cache_write": 0, "output": 20})
 
 
 # ---- 3. reasoning_output_tokens must NOT inflate output ------------------------------------
@@ -174,16 +174,95 @@ class ReasoningTokensTests(unittest.TestCase):
 
 class PricingMathTests(unittest.TestCase):
     def test_price_tokens_hand_computed_with_cache_read_multiplier(self):
-        u = {"input": 1_000_000, "cache_read": 1_000_000, "output": 1_000_000}
+        u = {"input": 2_000_000, "cache_read": 1_000_000, "cache_write": 0, "output": 1_000_000}
         # fake-mid: input 2.0/MTok, cache_read = 2.0 * 0.5 = 1.0/MTok, output 10.0/MTok.
         usd = cu.price_tokens(u, "fake-mid", FIXTURE)
         self.assertAlmostEqual(usd, 2.0 + 1.0 + 10.0)
 
     def test_cache_read_term_uses_fixture_half_not_real_tenth(self):
         # Only cache_read tokens -> pure cache-read term = input_per_mtok * 0.5.
-        u = {"input": 0, "cache_read": 2_000_000, "output": 0}
+        u = {"input": 2_000_000, "cache_read": 2_000_000, "cache_write": 0, "output": 0}
         usd = cu.price_tokens(u, "fake-mid", FIXTURE)
         self.assertAlmostEqual(usd, 2_000_000 * 2.0 * 0.5 / 1e6)  # == 2.0, not 0.4 (0.1x)
+
+    def test_inclusive_input_with_nested_read_and_write_is_priced_once_per_category(self):
+        pricing = json.loads(json.dumps(FIXTURE))
+        pricing["models"]["fake-mid"]["cache_write_per_mtok"] = 3.0
+        raw = {
+            "input_tokens": 1_000_000,
+            "output_tokens": 1_000_000,
+            "input_tokens_details": {"cached_tokens": 200_000, "cache_write_tokens": 300_000},
+        }
+        tokens = cu._normalize_tokens(raw)
+        self.assertEqual(tokens, {
+            "input": 1_000_000, "cache_read": 200_000, "cache_write": 300_000,
+            "output": 1_000_000,
+        })
+        # 500k uncached at 2/MTok + 200k read at 1/MTok + 300k write at 3/MTok + output at 10.
+        self.assertAlmostEqual(cu.price_tokens(tokens, "fake-mid", pricing), 12.1)
+
+    def test_malformed_or_absent_nested_categories_are_not_invented(self):
+        tokens = cu._normalize_tokens({
+            "input_tokens": 100,
+            "input_tokens_details": {"cached_tokens": "bad", "cache_write_tokens": -1},
+        })
+        self.assertEqual(tokens, {"input": 100, "cache_read": 0, "cache_write": 0, "output": 0})
+
+    def test_equal_flat_and_nested_cache_aliases_are_not_added(self):
+        tokens = cu._normalize_tokens({
+            "input_tokens": 100,
+            "cached_input_tokens": 40,
+            "input_tokens_details": {"cached_tokens": 40, "cached_input_tokens": 40},
+        })
+        self.assertEqual(tokens["cache_read"], 40)
+
+    def test_nested_cache_counter_has_deterministic_precedence_on_conflict(self):
+        tokens = cu._normalize_tokens({
+            "input_tokens": 100,
+            "cached_input_tokens": 90,
+            "input_tokens_details": {"cached_tokens": 25, "cached_input_tokens": 30},
+        })
+        self.assertEqual(tokens["cache_read"], 25)
+
+    def test_observed_write_without_rate_is_unpriced_error_not_silent_undercharge(self):
+        pricing = json.loads(json.dumps(FIXTURE))
+        pricing.pop("cache_write_multiplier")
+        tokens = {"input": 100, "cache_read": 0, "cache_write": 10, "output": 0}
+        with self.assertRaisesRegex(ValueError, "cache-write"):
+            cu.price_tokens_detail(tokens, "fake-mid", pricing)
+
+    def test_categories_exceeding_inclusive_input_are_rejected(self):
+        with self.assertRaisesRegex(ValueError, "exceed inclusive"):
+            cu.price_tokens_detail(
+                {"input": 10, "cache_read": 8, "cache_write": 3, "output": 0},
+                "fake-mid", FIXTURE,
+            )
+
+    def test_explicit_disjoint_cache_only_carry_is_supported(self):
+        tokens = {"input": 0, "cache_read": 20, "cache_write": 0, "output": 0}
+        detail = cu.price_tokens_detail(
+            tokens, "fake-mid", FIXTURE, input_includes_cache=False
+        )
+        self.assertGreater(detail["usd_api"], 0)
+
+    def test_cumulative_session_total_does_not_trigger_long_context_rates(self):
+        pricing = json.loads(json.dumps(FIXTURE))
+        pricing["models"]["fake-mid"]["cached_input_per_mtok"] = 1.0
+        pricing["models"]["fake-mid"]["long_context"] = {
+            "threshold_input_tokens": 100,
+            "input_per_mtok": 20.0,
+            "cached_input_per_mtok": 10.0,
+            "cache_write_per_mtok": 25.0,
+            "output_per_mtok": 100.0,
+        }
+        detail = cu.price_tokens_detail(
+            {"input": 1_000_000, "cache_read": 0, "cache_write": 0, "output": 0},
+            "fake-mid",
+            pricing,
+        )
+        self.assertEqual(detail["rates_used"], "default")
+        self.assertEqual(detail["threshold_assumption"], "default-rates-no-request-size")
+        self.assertAlmostEqual(detail["usd_api"], 2.0)
 
     def test_unmatched_model_lands_in_unpriced_list_with_no_dollars(self):
         with tempfile.TemporaryDirectory() as td:
@@ -323,7 +402,7 @@ class RobustnessTests(unittest.TestCase):
         parsed = cu.parse_rollout(lines)  # must not raise
         self.assertEqual(parsed["malformed"], 2)  # the garbage line + the JSON array
         self.assertEqual(parsed["records"], 1)  # the one real dict record
-        self.assertEqual(parsed["tokens"], {"input": 42, "cache_read": 0, "output": 7})
+        self.assertEqual(parsed["tokens"], {"input": 42, "cache_read": 0, "cache_write": 0, "output": 7})
 
     def test_epoch_millis_and_iso_timestamps_both_parse(self):
         iso = cu.parse_timestamp("2026-06-30T10:00:00Z")
@@ -414,7 +493,7 @@ class RealPricingStructureSmokeTests(unittest.TestCase):
         self.assertIn("display", row)
         self.assertEqual(cu.match_model(model_id, pricing), model_id)
         usd = cu.price_tokens(
-            {"input": 1_000_000, "cache_read": 0, "output": 1_000_000}, model_id, pricing
+            {"input": 1_000_000, "cache_read": 0, "cache_write": 0, "output": 1_000_000}, model_id, pricing
         )
         self.assertIsInstance(usd, float)
         self.assertGreater(usd, 0.0)

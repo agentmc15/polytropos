@@ -16,7 +16,10 @@ class CodexPluginTests(unittest.TestCase):
 
     def test_manifest_identifies_skills_only_plugin(self):
         self.assertEqual(self.manifest["name"], "polytropos")
-        self.assertRegex(self.manifest["version"], r"^\d+\.\d+\.\d+$")
+        self.assertRegex(
+            self.manifest["version"],
+            r"^\d+\.\d+\.\d+(?:\+codex\.\d{14})?$",
+        )
         self.assertTrue(self.manifest["description"].strip())
         self.assertEqual(self.manifest["author"]["name"], "agentmc15")
         self.assertEqual(self.manifest["license"], "MIT")

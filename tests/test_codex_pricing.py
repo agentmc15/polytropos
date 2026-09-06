@@ -170,6 +170,53 @@ class CacheWriteExclusionTests(unittest.TestCase):
         self.assertEqual(baseline["usd_api"], after_stripped["usd_api"])
 
 
+class ExplicitTokenRateTests(unittest.TestCase):
+    def fixture(self):
+        fx = copy.deepcopy(FIXTURE_EMPTY_STRONG)
+        fx["models"]["fake-cheap"].update({
+            "cached_input_per_mtok": 0.25,
+            "cache_write_per_mtok": 3.5,
+            "long_context": {
+                "threshold_input_tokens": 100,
+                "input_per_mtok": 10.0,
+                "cached_input_per_mtok": 1.0,
+                "cache_write_per_mtok": 12.0,
+                "output_per_mtok": 20.0,
+            },
+        })
+        return fx
+
+    def test_prices_all_four_token_categories(self):
+        got = cx.cost_tokens(self.fixture(), "fake-cheap", 1_000_000, 1_000_000,
+                             cached_input_tokens=1_000_000, cache_write_tokens=1_000_000)
+        self.assertAlmostEqual(got["usd_api"], 2.0 + 0.25 + 3.5 + 4.0)
+
+    def test_exact_threshold_remains_default(self):
+        got = cx.cost_tokens(self.fixture(), "fake-cheap", 1, 1, request_input_tokens=100)
+        self.assertEqual(got["rates_used"], "default")
+
+    def test_above_threshold_uses_long_context(self):
+        got = cx.cost_tokens(self.fixture(), "fake-cheap", 1, 1, request_input_tokens=101)
+        self.assertEqual(got["rates_used"], "long_context")
+        self.assertEqual(got["threshold_assumption"], "explicit-request-size")
+
+    def test_aggregate_without_request_size_never_triggers_threshold(self):
+        got = cx.cost_tokens(self.fixture(), "fake-cheap", 999_999, 1)
+        self.assertEqual(got["rates_used"], "default")
+        self.assertEqual(got["threshold_assumption"], "default-rates-no-request-size")
+
+    def test_cache_write_rejected_when_rate_not_applicable(self):
+        fx = self.fixture()
+        fx["models"]["fake-cheap"]["cache_write_per_mtok"] = None
+        with self.assertRaisesRegex(ValueError, "cache-write pricing is unavailable"):
+            cx.cost_tokens(fx, "fake-cheap", 1, 1, cache_write_tokens=1)
+
+    def test_nonfinite_tokens_are_rejected(self):
+        for bad in (float("nan"), float("inf"), float("-inf")):
+            with self.assertRaisesRegex(ValueError, "finite nonnegative"):
+                cx.cost_tokens(self.fixture(), "fake-cheap", bad, 1)
+
+
 class BurnIndexTests(unittest.TestCase):
     """Burn index = usd_api / cheapest same-profile usd_api across the whole roster."""
 
@@ -196,6 +243,16 @@ class BurnIndexTests(unittest.TestCase):
             self.assertAlmostEqual(
                 result["subscription"]["api_equivalent_usd"], result["usd_api"]
             )
+
+    def test_policy_burn_baseline_excludes_reserved_and_cost_only_models(self):
+        fx = copy.deepcopy(FIXTURE_EMPTY_STRONG)
+        fx["orchestration_policy"] = {"worker_tiers": ["cheap", "mid"]}
+        fx["models"]["fake-cost"] = {
+            "display": "Fake Cost", "vendor": "fake", "tier": "cost-only",
+            "input_per_mtok": 0.001, "output_per_mtok": 0.001,
+        }
+        result = cx.est_cost(fx, "T", "fake-mid", cache_hit=0.8)
+        self.assertEqual(result["subscription"]["cheapest_model_id"], "fake-cheap")
 
 
 class ResolveTierSkipUpTests(unittest.TestCase):
@@ -380,7 +437,7 @@ class LiveDataStructureTests(unittest.TestCase):
         # A model's tier is either a routing tier OR the documented 'non-routing' sentinel:
         # observed, non-selectable ids (e.g. codex-auto-review, Codex Desktop's auto-review
         # feature) live in the roster only so usage can be priced, and resolve_tier skips them.
-        valid_tiers = set(cx.TIER_ORDER) | {"non-routing"}
+        valid_tiers = set(cx.TIER_ORDER) | {"non-routing", "cost-only"}
         for model_id, info in pricing["models"].items():
             self.assertIn("display", info, model_id)
             self.assertIn("vendor", info, model_id)

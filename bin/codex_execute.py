@@ -30,21 +30,20 @@ permissions. An explicit --sandbox/-s option in extra_args replaces the default.
 contracts are tested with injected runners/stubs, never a live model dispatch. If current CLI
 documentation contradicts this contract, report the mismatch rather than guessing a flag.
 
-Tier resolution & escalation (D4, the SHARED skip-up rule — sibling implementation
-`codex_pricing.resolve_tier`): a task's `model` field may be a model id from
-`data/pricing.codex.json` OR a tier word (`cheap|mid|strong|frontier`). A tier word resolves
-to the FIRST model in pricing-file order carrying that tier; if the tier is unpopulated, the
-next populated tier UP is used (`strong` -> the frontier model today). The escalation ladder
-walks tiers strictly ABOVE the resolved model's tier, skipping empty tiers, first model in file
-order per tier. The rule is implemented LOCALLY here against the loaded dict — this driver does
-NOT import `codex_pricing` (unlike `bin/copilot_execute.py`, which DOES import `copilot_pricing`
-for its budget mode's cost math — this driver has no budget mode and no cost math, so there is
-nothing here that needs it; see NOTES.md's `stale-plan-decision` entry for why the older
-"mirrors copilot_execute, which also does not import its pricing module" wording was false and
-has been corrected here).
-A task with no `model` field dispatches WITHOUT `--model` (the user's configured Codex default
-applies). All model ids and tiers are derived at run time from `data/pricing.codex.json`;
-nothing here hardcodes a model id or a price. This script NEVER invokes the `codex` CLI itself.
+Central assignment and recovery policy lives in `bin/codex_policy.py` and reads only
+`data/pricing.codex.json`. Ordinary task pins resolve within the configured cheap/mid/strong
+worker tiers; a missing legacy pin uses the configured default worker, and a legacy frontier
+pin migrates at dispatch to the maximum worker without rewriting the kit. Worker escalation
+never enters the reserved orchestration tier. Only driver-observed failed dispatch/verify
+attempts can unlock one scoped Astra recovery attempt. Review uses the configured independent
+verification worker, while `accept` uses the orchestrator in a read-only acceptance role.
+The sequential driver has no warm-agent pool, so Astra is represented as a reserved target and
+is instantiated only for orchestration, acceptance, or evidence-gated recovery.
+
+Every dispatch requests Codex JSON output. When that output provides a thread id, the production
+runner correlates it to a fresh rollout `turn_context` before recording an observed model;
+otherwise actual model/role stay `unknown`. Planned, dispatched, and observed fields are never
+collapsed. Model ids, availability, effort levels, and prices are never hardcoded here.
 
 Dispatch stays strictly SEQUENTIAL (PLAN D5) — one task, one dispatch, one verify, at a time;
 no fan-out, no concurrency. This was cut from scope deliberately: fan-out on a paid/
@@ -100,7 +99,10 @@ Usage:
 """
 
 import argparse
+import hashlib
+import importlib.util
 import json
+import os
 import re
 import secrets
 import shlex
@@ -118,6 +120,17 @@ STATUSES = ("pending", "in-progress", "done", "blocked")
 DEFAULT_ESCALATION_START = "mid"
 
 EM_DASH = " — "  # spaced em dash — the required task-heading separator
+
+# Load the adjacent policy module without relying on bin/ being a package or on cwd/sys.path.
+_POLICY_SPEC = importlib.util.spec_from_file_location(
+    "polytropos_codex_policy", Path(__file__).resolve().with_name("codex_policy.py")
+)
+_POLICY = importlib.util.module_from_spec(_POLICY_SPEC)
+_POLICY_SPEC.loader.exec_module(_POLICY)
+PolicyError = _POLICY.PolicyError
+resolve_assignment = _POLICY.resolve_assignment
+resolve_orchestrator = _POLICY.resolve_orchestrator
+worker_ladder = _POLICY.worker_ladder
 
 
 def load_pricing():
@@ -268,41 +281,21 @@ def set_status(text, task_id, new_status):
 # ---- tier resolution (D4 skip-up rule, implemented locally — see module docstring) ----------
 
 def resolve_tier(pricing, tier):
-    """The D4 skip-up rule: a tier word -> a model id, skipping empty tiers UPWARD.
-
-    Return the id of the FIRST model in pricing-file order whose `tier` equals `tier`; if that
-    tier is unpopulated, retry with the next tier UP in TIER_ORDER (cheap->mid->strong->
-    frontier), repeating as needed. Unknown tier word -> KeyError listing TIER_ORDER. No
-    populated tier at or above the request -> KeyError. Shared with `codex_pricing.resolve_tier`.
-    """
-    if tier not in TIER_ORDER:
-        raise KeyError(f"unknown tier {tier!r}; valid tiers: {', '.join(TIER_ORDER)}")
-    models = pricing["models"]
-    start = TIER_ORDER.index(tier)
-    for t in TIER_ORDER[start:]:
-        for mid, info in models.items():
-            if info.get("tier") == t:
-                return mid
-    raise KeyError(f"roster has no model at or above tier {tier!r}")
+    """Resolve an ordinary worker tier; reserved frontier migrates to the maximum worker."""
+    try:
+        return resolve_assignment(pricing, planned_model=tier, role="implementer")["model_id"]
+    except PolicyError as exc:
+        raise KeyError(str(exc)) from exc
 
 
 def resolve_model(pricing, model_or_tier):
-    """Resolve a task `model` field to a model id (or None).
-
-    None -> None (dispatch without `--model`). A key of `pricing["models"]` -> itself. A tier
-    word -> `resolve_tier`. Anything else -> KeyError listing valid model ids and tier words.
-    """
-    if model_or_tier is None:
-        return None
-    models = pricing["models"]
-    if model_or_tier in models:
-        return model_or_tier
-    if model_or_tier in TIER_ORDER:
-        return resolve_tier(pricing, model_or_tier)
-    raise KeyError(
-        f"unknown model or tier {model_or_tier!r}; valid model ids: "
-        f"{', '.join(models)}; valid tiers: {', '.join(TIER_ORDER)}"
-    )
+    """Resolve an ordinary implementation assignment; never return the orchestrator."""
+    try:
+        return resolve_assignment(
+            pricing, planned_model=model_or_tier, role="implementer"
+        )["model_id"]
+    except PolicyError as exc:
+        raise KeyError(str(exc)) from exc
 
 
 # ---- role preambles (replace Copilot's --agent; PLAN.md D7 item 2) --------------------------
@@ -350,7 +343,10 @@ def build_dispatch(codex_bin, model_id, prompt, effort=None, extra_args=()):
     supply reasoning effort and explicit CLI options. Do not probe the CLI from this builder.
     """
     extra_args = list(extra_args)
+    _validate_extra_args(extra_args)
     argv = [codex_bin, "exec"]
+    if "--json" not in extra_args:
+        argv.append("--json")
     if model_id:
         argv += ["--model", model_id]
     # The short form also accepts an attached value: -sread-only or -s=read-only.
@@ -367,29 +363,27 @@ def build_dispatch(codex_bin, model_id, prompt, effort=None, extra_args=()):
     return argv
 
 
+def _validate_extra_args(extra_args):
+    """Reject options that could override the policy-selected model or profile."""
+    blocked_flags = {
+        "--model", "-m", "--profile", "-p", "--config", "-c",
+        "--dangerously-bypass-approvals-and-sandbox", "--yolo", "--full-auto",
+        "--approve-for-me",
+    }
+    for arg in extra_args:
+        if arg in blocked_flags:
+            raise PolicyError(f"extra dispatch option {arg!r} may override routing policy")
+        if arg.startswith(("--model=", "--profile=", "--config=", "-m", "-p", "-c")):
+            raise PolicyError(f"extra dispatch option {arg!r} may override routing policy")
+
+
 def escalation_ladder(pricing, model_id=None):
-    """Model ids to escalate through, in ascending tier order, computed from the pricing dict.
-
-    Start tier = the tier of `model_id` in `pricing["models"]` (unknown/None ->
-    DEFAULT_ESCALATION_START). For each tier strictly above the start tier in TIER_ORDER,
-    take the FIRST model id in file order carrying that tier; tiers with no models are
-    skipped (the D4 skip-up rule applied to the ladder). No model ids are hardcoded.
-    """
-    models = pricing["models"]
-    start_tier = DEFAULT_ESCALATION_START
-    if model_id is not None and model_id in models:
-        tier = models[model_id].get("tier")
-        if tier in TIER_ORDER:
-            start_tier = tier
-    start_idx = TIER_ORDER.index(start_tier)
-
-    ladder = []
-    for tier in TIER_ORDER[start_idx + 1:]:
-        for mid, info in models.items():
-            if info.get("tier") == tier:
-                ladder.append(mid)
-                break
-    return ladder
+    """Return higher eligible workers only; never include reserved orchestration."""
+    try:
+        start = resolve_model(pricing, model_id)
+        return worker_ladder(pricing, start)
+    except (PolicyError, KeyError) as exc:
+        raise KeyError(str(exc)) from exc
 
 
 # ---- run ids (PLAN D8 -- content-free, one per driver invocation) -----------------------------
@@ -646,7 +640,8 @@ def _evidence(verify_cmd, rc, output):
 
 
 def run_task(task, pricing, runner, verify_runner, prompt=None, role="implementer",
-             max_escalations=None, codex_bin="codex", effort=None, extra_args=()):
+             max_escalations=None, codex_bin="codex", effort=None, extra_args=(),
+             allow_recovery=True):
     """Orchestrate one task: dispatch, verify, escalate up the tier ladder on failure.
 
     `runner(argv) -> (returncode, output)` and `verify_runner(cmd) -> (returncode, output)`
@@ -654,40 +649,169 @@ def run_task(task, pricing, runner, verify_runner, prompt=None, role="implemente
     `prompt` is the full dispatch text (a role preamble + the task brief); if None it falls
     back to the raw brief.
 
-    Flow: resolve the task's `model` field (id or tier word, via the D4 rule), dispatch at that
-    model, run verify; rc 0 -> `done`. Otherwise walk `escalation_ladder(pricing, resolved)`
-    (truncated to `max_escalations` if given), each rung re-dispatching the SAME prompt with the
-    verify-failure evidence appended at that rung's model, then re-verifying. First passing
-    verify -> `done`; ladder exhausted -> `blocked`.
+    Flow: resolve through the central policy, dispatch to a worker, and verify only after a
+    successful dispatch. Failures walk the configured worker ladder. If those workers exhaust,
+    structured driver-observed evidence unlocks one reserved orchestrator recovery attempt.
+    Verification roles never enter implementation escalation or recovery.
 
-    Returns {"id", "status", "model_used", "escalations", "verify_rc"}.
+    Returns status plus planned assignment, per-attempt dispatched/observed usage, worker
+    escalations, verification result, and the recovery audit when recovery occurred.
     """
     if prompt is None:
         prompt = task["brief"]
     verify_cmd = task.get("verify")
-    model_id = resolve_model(pricing, task.get("model"))
+    if not isinstance(verify_cmd, str) or not verify_cmd.strip():
+        raise PolicyError(f"task {task.get('id')!r} has no runnable verify command")
+    if max_escalations is not None and max_escalations < 0:
+        raise PolicyError("max_escalations must be non-negative")
+    assignment = resolve_assignment(pricing, task.get("model"), role=role)
+    model_id = assignment["model_id"]
     escalations = []
     model_used = model_id
+    attempts = []
 
-    argv = build_dispatch(codex_bin, model_id, prompt, effort=effort, extra_args=extra_args)
-    runner(argv)
-    rc, output = verify_runner(verify_cmd)
+    def validate_model_effort(chosen_model):
+        supported = pricing.get("models", {}).get(chosen_model, {}).get(
+            "supported_reasoning_efforts"
+        )
+        if effort is not None and supported is not None and effort not in supported:
+            raise PolicyError(
+                f"model {chosen_model!r} does not support effort {effort!r}; valid: "
+                f"{', '.join(supported)}"
+            )
 
-    if rc != 0:
-        ladder = escalation_ladder(pricing, model_id)
-        if max_escalations is not None:
-            ladder = ladder[:max_escalations]
+    candidate_ladder = (
+        worker_ladder(pricing, model_id)
+        if assignment["resolved_role"] == "implementer" else []
+    )
+    if max_escalations is not None:
+        candidate_ladder = candidate_ladder[:max_escalations]
+    preflight_models = [model_id, *candidate_ladder]
+    recovery_allowed_by_cap = max_escalations is None or len(candidate_ladder) < max_escalations
+    if assignment["resolved_role"] == "implementer" and allow_recovery and recovery_allowed_by_cap:
+        preflight_models.append(resolve_orchestrator(pricing))
+    for candidate in preflight_models:
+        validate_model_effort(candidate)
+
+    def dispatch_and_verify(chosen_model, chosen_role, dispatch_prompt):
+        validate_model_effort(chosen_model)
+        argv = build_dispatch(
+            codex_bin, chosen_model, dispatch_prompt, effort=effort, extra_args=extra_args
+        )
+        try:
+            raw = runner(argv)
+        except OSError as exc:
+            raw = (126, f"dispatch failed: {exc}")
+        if raw is None:  # Backward-compatible injected runner seam.
+            dispatch_rc, dispatch_output, telemetry = 0, "", {}
+        elif len(raw) == 3:
+            dispatch_rc, dispatch_output, telemetry = raw
+        else:
+            dispatch_rc, dispatch_output = raw
+            telemetry = {}
+        observed_model = telemetry.get("actual_model") if isinstance(telemetry, dict) else None
+        observed_role = telemetry.get("actual_role") if isinstance(telemetry, dict) else None
+        observed_provenance = telemetry.get("provenance") if isinstance(telemetry, dict) else None
+        mismatch = ((observed_model is not None and observed_model != chosen_model) or
+                    (observed_role is not None and observed_role != chosen_role))
+        if mismatch:
+            effective_rc, verify_rc = 3, None
+            verify_output = (
+                f"runtime attestation disagrees with policy assignment: expected "
+                f"{chosen_model}/{chosen_role}, observed {observed_model}/{observed_role}"
+            )
+            attempt_result = "policy-mismatch"
+        elif dispatch_rc != 0:
+            effective_rc, verify_rc, verify_output = dispatch_rc, None, dispatch_output
+            attempt_result = "dispatch-failed"
+        else:
+            try:
+                verify_rc, verify_output = verify_runner(verify_cmd)
+            except OSError as exc:
+                verify_rc, verify_output = 126, f"verify failed to start: {exc}"
+            effective_rc = verify_rc
+            attempt_result = "passed" if verify_rc == 0 else "verify-failed"
+        attempts.append({
+            "planned_model": task.get("model"),
+            "dispatched_model": chosen_model,
+            "dispatched_role": chosen_role,
+            "actual_model": observed_model,
+            "actual_role": observed_role,
+            "actual_provenance": observed_provenance,
+            "dispatch_exit_code": dispatch_rc,
+            "verify_exit_code": verify_rc,
+            "result": attempt_result,
+            "failure_digest": " ".join((verify_output or "").split())[-500:],
+        })
+        return effective_rc, verify_output
+
+    rc, output = dispatch_and_verify(model_id, assignment["resolved_role"], prompt)
+
+    policy_violation = attempts[-1]["result"] == "policy-mismatch"
+    if rc != 0 and assignment["resolved_role"] == "implementer" and not policy_violation:
+        ladder = candidate_ladder
         for rung in ladder:
             escalated_prompt = prompt + _evidence(verify_cmd, rc, output)
-            argv = build_dispatch(
-                codex_bin, rung, escalated_prompt, effort=effort, extra_args=extra_args
-            )
-            runner(argv)
             escalations.append(rung)
             model_used = rung
-            rc, output = verify_runner(verify_cmd)
+            rc, output = dispatch_and_verify(rung, "implementer", escalated_prompt)
+            if attempts[-1]["result"] == "policy-mismatch":
+                policy_violation = True
+                break
             if rc == 0:
                 break
+
+    recovery = None
+    if (rc != 0 and assignment["resolved_role"] == "implementer" and allow_recovery
+            and recovery_allowed_by_cap and not policy_violation):
+        evidence_kind = (
+            "lower_tier_correction_failed"
+            if attempts[-1]["verify_exit_code"] is None else "verify_failure"
+        )
+        evidence = {
+            "kind": evidence_kind,
+            "task_id": task["id"],
+            "attempts": [
+                {
+                    "dispatched_model": a["dispatched_model"],
+                    "dispatched_role": a["dispatched_role"],
+                    "actual_model": a["actual_model"],
+                    "actual_role": a["actual_role"],
+                    "actual_provenance": a["actual_provenance"],
+                    "result": "failed" if a["result"] != "passed" else "passed",
+                    "verify_exit_code": a["verify_exit_code"],
+                    "dispatch_exit_code": a["dispatch_exit_code"],
+                    "failure_digest": a["failure_digest"],
+                }
+                for a in attempts
+            ],
+            "correction_scope": task.get("brief", ""),
+            "verify_command": verify_cmd,
+            "failure_digest": attempts[-1]["failure_digest"],
+        }
+        if evidence_kind == "verify_failure":
+            evidence["verify_exit_code"] = rc
+        recovery_assignment = resolve_assignment(
+            pricing, role="recovery", evidence=evidence
+        )
+        recovery_prompt = prompt + _evidence(verify_cmd, rc, output)
+        recovery_prompt += (
+            "\n\n--- RESERVED ORCHESTRATOR RECOVERY ---\n"
+            "Correct only the documented failure. Return implementation work to the cheapest "
+            "sufficient worker after this attempt.\n"
+        )
+        model_used = recovery_assignment["model_id"]
+        rc, output = dispatch_and_verify(model_used, "recovery", recovery_prompt)
+        recovery = {
+            "failure_evidence": evidence,
+            "prior_attempts": evidence["attempts"],
+            "correction_scope": evidence["correction_scope"],
+            "verification_result": {
+                "dispatch_exit_code": attempts[-1]["dispatch_exit_code"],
+                "verify_exit_code": attempts[-1]["verify_exit_code"],
+                "passed": rc == 0,
+            },
+        }
 
     return {
         "id": task["id"],
@@ -695,6 +819,10 @@ def run_task(task, pricing, runner, verify_runner, prompt=None, role="implemente
         "model_used": model_used,
         "escalations": escalations,
         "verify_rc": rc,
+        "planned_model": task.get("model"),
+        "assignment": assignment,
+        "attempts": attempts,
+        "recovery": recovery,
     }
 
 
@@ -731,10 +859,38 @@ def append_note(notes_path, result, task, run_id=None, parent=None):
     block_lines = [
         f"## {ts}{EM_DASH}{task_id}",
         f"- role: {role}",
+        f"- planned model: {result.get('planned_model') or 'legacy-unpinned'}",
         f"- model used: {model_used_label}",
         f"- escalations: {chain}",
         f"- verify: exit {rc}",
     ]
+    for index, attempt in enumerate(result.get("attempts") or [], 1):
+        block_lines.append(
+            f"- actual-use: attempt={index} planned={attempt.get('planned_model') or 'unpinned'} "
+            f"dispatched_model={attempt['dispatched_model']} "
+            f"dispatched_role={attempt['dispatched_role']} "
+            f"actual_model={attempt.get('actual_model') or 'unknown'} "
+            f"actual_role={attempt.get('actual_role') or 'unknown'} "
+            f"actual_provenance={attempt.get('actual_provenance') or 'none'} "
+            f"dispatch_exit={attempt['dispatch_exit_code']} "
+            f"verify_exit={attempt['verify_exit_code']} result={attempt['result']}"
+        )
+    recovery = result.get("recovery")
+    if recovery:
+        evidence = recovery["failure_evidence"]
+        scope = " ".join((recovery["correction_scope"] or "").split())
+        digest = " ".join((evidence.get("failure_digest") or "").split())
+        block_lines += [
+            f"- recovery evidence: kind={evidence['kind']} "
+            f"verify_command={evidence.get('verify_command')!r} "
+            f"verify_exit={evidence.get('verify_exit_code', 'not-run')} digest={digest}",
+            f"- recovery prior attempts: {len(recovery['prior_attempts'])}",
+            f"- recovery correction scope: {scope}",
+            f"- recovery verification: dispatch_exit="
+            f"{recovery['verification_result']['dispatch_exit_code']} verify_exit="
+            f"{recovery['verification_result']['verify_exit_code']} "
+            f"passed={str(recovery['verification_result']['passed']).lower()}",
+        ]
     if escalations:
         pinned = task.get("model") or "codex default"
         block_lines.append(
@@ -742,9 +898,11 @@ def append_note(notes_path, result, task, run_id=None, parent=None):
             f"{model_used_label} — record via the lessons-loop skill."
         )
 
-    attempts = 1 + len(escalations)
+    attempts = len(result.get("attempts") or []) or (1 + len(escalations))
     outcome_model = model_used if model_used else "unpinned"
     result_word = outcome_result(result.get("status"), escalations, parent)
+    if recovery and result_word == "pass":
+        result_word = "escalated-pass"
     line_parent = parent if result_word in PARENT_RESULTS else None
     block_lines.append(
         "- " + build_outcome_line(
@@ -770,8 +928,67 @@ def default_runner(argv):
     !!! Invoking this with a real `codex` argv spends the user's real subscription usage
     limits / API dollars and hits the network. !!!
     """
+    started = datetime.now(timezone.utc)
     proc = subprocess.run(argv, capture_output=True, text=True)
-    return proc.returncode, (proc.stdout or "") + (proc.stderr or "")
+    output = (proc.stdout or "") + (proc.stderr or "")
+    telemetry = attest_runtime_model(output, started)
+    return proc.returncode, output, telemetry
+
+
+def attest_runtime_model(output, started, codex_root=None):
+    """Correlate this dispatch's JSON thread id to a fresh rollout turn_context model.
+
+    Free-form output is never trusted as model evidence. If the CLI or rollout does not expose
+    a correlated structured record, the caller records actual_model=unknown.
+    """
+    thread_id = None
+    for line in (output or "").splitlines():
+        try:
+            event = json.loads(line)
+        except (TypeError, json.JSONDecodeError):
+            continue
+        if isinstance(event, dict) and event.get("type") == "thread.started" and isinstance(event.get("thread_id"), str):
+            thread_id = event["thread_id"]
+    if not thread_id:
+        return {}
+    if not re.fullmatch(r"[A-Za-z0-9-]+", thread_id):
+        return {}
+    configured_root = os.environ.get("CODEX_HOME")
+    root = (Path(codex_root) if codex_root is not None else
+            Path(configured_root) if configured_root else Path.home() / ".codex")
+    sessions = root / "sessions"
+    if not sessions.is_dir():
+        return {}
+    try:
+        candidates = list(sessions.rglob(f"*{thread_id}*.jsonl"))
+    except OSError:
+        return {}
+    if len(candidates) != 1:
+        return {}
+    observed = None
+    try:
+        lines = candidates[0].read_text(errors="replace").splitlines()
+    except OSError:
+        return {}
+    for line in lines:
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(record, dict):
+            continue
+        try:
+            stamp = datetime.fromisoformat(record.get("timestamp", "").replace("Z", "+00:00"))
+        except (AttributeError, TypeError, ValueError):
+            continue
+        if stamp.astimezone(timezone.utc) < started.astimezone(timezone.utc):
+            continue
+        payload = record.get("payload")
+        if record.get("type") == "turn_context" and isinstance(payload, dict):
+            model = payload.get("model")
+            if isinstance(model, str) and model:
+                observed = model
+    return {"actual_model": observed, "provenance": "correlated-rollout-turn_context"} if observed else {}
 
 
 def default_verify_runner(cmd):
@@ -783,6 +1000,49 @@ def default_verify_runner(cmd):
     return proc.returncode, (proc.stdout or "") + (proc.stderr or "")
 
 
+def append_role_use(notes_path, phase, role, planned_model, dispatched_model, dispatch_rc,
+                    actual_model=None, actual_role=None, result=None, evidence_fingerprint=None,
+                    report=None):
+    """Record a non-task review/acceptance dispatch without claiming requested=observed."""
+    notes_path = Path(notes_path)
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    report_text = " ".join((report or "").split())[-2000:]
+    report_digest = hashlib.sha256((report or "").encode()).hexdigest() if report is not None else None
+    block = (
+        f"## {ts}{EM_DASH}phase-{phase}-{role}\n"
+        f"- actual-use: planned={planned_model or 'policy'} dispatched_model={dispatched_model} "
+        f"dispatched_role={role} actual_model={actual_model or 'unknown'} "
+        f"actual_role={actual_role or 'unknown'} dispatch_exit={dispatch_rc}"
+        f"{f' result={result}' if result else ''}\n"
+    )
+    if evidence_fingerprint:
+        block += f"- evidence-fingerprint: {evidence_fingerprint}\n"
+    if report is not None:
+        block += f"- report-sha256: {report_digest}\n- report: {report_text or '(empty)'}\n"
+    existing = notes_path.read_text() if notes_path.exists() else ""
+    if existing and not existing.endswith("\n"):
+        existing += "\n"
+    notes_path.write_text(existing + ("\n" if existing.strip() else "") + block)
+
+
+def enforce_attested_assignment(rc, output, telemetry, expected_model, expected_role):
+    actual_model = telemetry.get("actual_model")
+    actual_role = telemetry.get("actual_role")
+    mismatch = ((actual_model is not None and actual_model != expected_model) or
+                (actual_role is not None and actual_role != expected_role))
+    if mismatch:
+        return 3, output + (
+            f"\npolicy mismatch: expected {expected_model}/{expected_role}, observed "
+            f"{actual_model}/{actual_role}\n"
+        )
+    return rc, output
+
+
+def parse_acceptance_verdict(output):
+    matches = re.findall(r"POLYTROPOS_ACCEPTANCE:\s*(accepted|rejected)\b", output or "")
+    return matches[-1] if matches else None
+
+
 # ---- CLI ------------------------------------------------------------------------------------
 
 def _read_tasks_text(kit_dir):
@@ -792,10 +1052,114 @@ def _read_tasks_text(kit_dir):
     return path.read_text()
 
 
+def _phase_tasks(tasks_text, phase):
+    """Return parsed tasks bounded by one exact Phase heading."""
+    match = re.search(
+        rf"^## Phase {re.escape(str(phase))}(?:\s|—|-).*?(?=^## Phase |\Z)",
+        tasks_text, re.MULTILINE | re.DOTALL,
+    )
+    return parse_tasks(match.group(0)) if match else []
+
+
+def review_evidence_fingerprint(kit, tasks_text, phase):
+    """Hash the reviewed phase and git workspace, excluding the append-only kit NOTES file."""
+    match = re.search(
+        rf"^## Phase {re.escape(str(phase))}(?:\s|—|-).*?(?=^## Phase |\Z)",
+        tasks_text, re.MULTILINE | re.DOTALL,
+    )
+    if not match:
+        raise PolicyError(f"phase {phase!r} has no tasks")
+    kit = Path(kit).resolve()
+    probe = subprocess.run(
+        ["git", "-C", str(kit), "rev-parse", "--show-toplevel"],
+        capture_output=True, text=True,
+    )
+    if probe.returncode != 0:
+        raise PolicyError("final acceptance requires a git workspace to prove review freshness")
+    root = Path(probe.stdout.strip()).resolve()
+    head = subprocess.run(
+        ["git", "-C", str(root), "rev-parse", "HEAD"], capture_output=True,
+    )
+    if head.returncode != 0:
+        raise PolicyError("final acceptance requires a committed HEAD for review freshness")
+    notes = (kit / "NOTES.md").resolve()
+    try:
+        notes_rel = notes.relative_to(root).as_posix()
+    except ValueError:
+        notes_rel = None
+    exclude = [f":(exclude){notes_rel}"] if notes_rel else []
+    diff = subprocess.run(
+        ["git", "-C", str(root), "diff", "--binary", "--no-ext-diff", "HEAD", "--", ".", *exclude],
+        capture_output=True,
+    )
+    status = subprocess.run(
+        ["git", "-C", str(root), "status", "--porcelain=v1", "-z", "--untracked-files=all"],
+        capture_output=True,
+    )
+    if diff.returncode != 0 or status.returncode != 0:
+        raise PolicyError("could not fingerprint workspace for review freshness")
+    untracked = []
+    for entry in status.stdout.split(b"\0"):
+        if not entry.startswith(b"?? "):
+            continue
+        rel = entry[3:].decode(errors="surrogateescape")
+        if notes_rel and rel == notes_rel:
+            continue
+        path = root / rel
+        try:
+            untracked.append(rel.encode() + b"\0" + path.read_bytes())
+        except OSError as exc:
+            raise PolicyError(f"could not fingerprint untracked file {rel}: {exc}") from exc
+    plan_path = kit / "PLAN.md"
+    try:
+        plan_bytes = plan_path.read_bytes() if plan_path.exists() else b""
+        notes_text = notes.read_text(errors="replace") if notes.exists() else ""
+    except OSError as exc:
+        raise PolicyError(f"could not read kit evidence for review freshness: {exc}") from exc
+    task_note_blocks = []
+    for block in notes_text.split("\n## "):
+        first = block.splitlines()[0] if block.strip() else ""
+        if re.search(r"phase-\S+-(?:verifier|orchestrator)", first):
+            continue
+        task_note_blocks.append(block)
+    task_notes = "\n## ".join(task_note_blocks).encode()
+    material = (head.stdout.strip() + b"\0" + plan_bytes + b"\0" + match.group(0).encode()
+                + b"\0" + task_notes + b"\0" + diff.stdout + b"\0"
+                + b"\0".join(untracked))
+    return hashlib.sha256(material).hexdigest()
+
+
+def _role_use_succeeded(notes_text, phase, role, evidence_fingerprint=None):
+    marker = f"phase-{phase}-{role}"
+    blocks = notes_text.split("\n## ")
+    for block in reversed(blocks):
+        if not block.strip() or marker not in block.splitlines()[0]:
+            continue
+        if evidence_fingerprint is not None:
+            return ("dispatch_exit=0" in block and
+                    f"evidence-fingerprint: {evidence_fingerprint}" in block)
+        return "dispatch_exit=0" in block
+    return False
+
+
+def _acceptance_state(notes_text, phase, evidence_fingerprint=None):
+    marker = f"phase-{phase}-orchestrator"
+    for block in reversed(notes_text.split("\n## ")):
+        if block.strip() and marker in block.splitlines()[0]:
+            match = re.search(r"\bresult=(accepted|rejected)\b", block)
+            if evidence_fingerprint and f"evidence-fingerprint: {evidence_fingerprint}" not in block:
+                return "pending"
+            return match.group(1) if match else "pending"
+    return "pending"
+
+
 def _select_task(tasks, task_id=None):
     if task_id is not None:
         for t in tasks:
             if t["id"] == task_id:
+                status_by_id = {item["id"]: item["status"] for item in tasks}
+                if not all(status_by_id.get(dep) == "done" for dep in t["depends"]):
+                    return None
                 return t
         return None
     status_by_id = {t["id"]: t["status"] for t in tasks}
@@ -808,9 +1172,37 @@ def _select_task(tasks, task_id=None):
 
 
 def cmd_status(args):
-    tasks = parse_tasks(_read_tasks_text(args.kit))
+    tasks_text = _read_tasks_text(args.kit)
+    tasks = parse_tasks(tasks_text)
+    pricing = load_pricing()
+    orchestrator = resolve_orchestrator(pricing)
+    enriched = []
+    for task in tasks:
+        try:
+            assignment = resolve_assignment(pricing, task.get("model"), role="implementer")
+            policy_fields = {"effective_model": assignment["model_id"],
+                             "effective_role": assignment["resolved_role"],
+                             "migration": assignment["migration"]}
+        except PolicyError as exc:
+            policy_fields = {"effective_model": None, "effective_role": None,
+                             "migration": None, "policy_error": str(exc)}
+        enriched.append({**task, **policy_fields})
+    notes_path = Path(args.kit) / "NOTES.md"
+    notes_text = notes_path.read_text() if notes_path.exists() else ""
+    phases = re.findall(r"^## Phase (\S+)", tasks_text, re.MULTILINE)
+    acceptance = {}
+    for phase in phases:
+        try:
+            fingerprint = review_evidence_fingerprint(args.kit, tasks_text, phase)
+        except PolicyError:
+            fingerprint = None
+        acceptance[phase] = (
+            _acceptance_state(notes_text, phase, fingerprint) if fingerprint else "pending"
+        )
     if args.json:
-        print(json.dumps(tasks, indent=2))
+        print(json.dumps({"orchestration": {"model": orchestrator, "mode": "reserved",
+                                           "ordinary_implementation": False},
+                          "acceptance": acceptance, "tasks": enriched}, indent=2))
         return
 
     id_w = max((len(t["id"]) for t in tasks), default=0)
@@ -826,6 +1218,9 @@ def cmd_status(args):
         f"{counts['pending']} pending / {counts['in-progress']} in-progress / "
         f"{counts['done']} done / {counts['blocked']} blocked"
     )
+    print(f"orchestrator: {orchestrator} (reserved; recovery requires failure evidence)")
+    for phase, state in acceptance.items():
+        print(f"phase {phase} final acceptance: {state}")
 
 
 def cmd_run(args):
@@ -837,12 +1232,28 @@ def cmd_run(args):
     task = _select_task(tasks, args.task)
     if task is None:
         if args.task:
-            print(f"no task with id {args.task!r} in {tasks_path}", file=sys.stderr)
+            requested = next((t for t in tasks if t["id"] == args.task), None)
+            if requested:
+                status_by_id = {t["id"]: t["status"] for t in tasks}
+                missing = [d for d in requested["depends"] if status_by_id.get(d) != "done"]
+                print(
+                    f"task {args.task!r} is not eligible; unfinished dependencies: "
+                    f"{', '.join(missing)}",
+                    file=sys.stderr,
+                )
+            else:
+                print(f"no task with id {args.task!r} in {tasks_path}", file=sys.stderr)
         else:
             print(
                 f"no eligible pending task (all deps done) in {tasks_path}", file=sys.stderr
             )
         sys.exit(2)
+
+    if args.role != "implementer":
+        raise PolicyError(
+            "kit run dispatches ordinary implementation only; use review for independent "
+            "verification or accept for Astra final acceptance"
+        )
 
     # One content-free `run=` id per invocation (T8, ported in shape from T7, PLAN D8) --
     # generated unconditionally (including under --dry-run, so the preview shows the same id
@@ -851,6 +1262,11 @@ def cmd_run(args):
     run_id = generate_run_id()
 
     pricing = load_pricing()
+
+    if not task.get("verify"):
+        raise PolicyError(f"task {task['id']!r} has no runnable verify command")
+    if args.max_escalations is not None and args.max_escalations < 0:
+        raise PolicyError("--max-escalations must be non-negative")
 
     if args.effort is not None:
         efforts = pricing.get("knobs", {}).get("reasoning_efforts", [])
@@ -871,13 +1287,17 @@ def cmd_run(args):
     id_preamble = build_id_preamble(kit=slug, run_id=run_id, task_id=task["id"])
     if id_preamble:
         prompt = f"{id_preamble}\n\n{prompt}"
-    model_id = resolve_model(pricing, task["model"])
+    assignment = resolve_assignment(pricing, task["model"], role="implementer")
+    model_id = assignment["model_id"]
 
     if args.dry_run:
         argv = build_dispatch(
             args.codex_bin, model_id, prompt, effort=args.effort, extra_args=extra_args
         )
         print(f"task: {task['id']}")
+        print(f"policy: role={assignment['resolved_role']} planned={task['model'] or 'unpinned'} "
+              f"dispatched={model_id} migration={assignment['migration'] or 'none'}")
+        print(f"orchestrator: {resolve_orchestrator(pricing)} (reserved recovery target)")
         print(f"dispatch: {shlex.join(argv)}")
         print(f"verify: {task['verify']}")
         return
@@ -964,12 +1384,30 @@ def cmd_run(args):
         f"(model_used={result['model_used'] or 'codex default'}, "
         f"escalations={escalations}, verify_rc={result['verify_rc']}, run={run_id})"
     )
+    if result["status"] == "done":
+        print("implementation complete; phase final acceptance remains pending until `accept`")
     if result["status"] == "blocked":
         sys.exit(1)
 
 
 def cmd_review(args):
+    tasks_text = _read_tasks_text(args.kit)
+    phase_tasks = _phase_tasks(tasks_text, args.phase)
+    if not phase_tasks:
+        raise PolicyError(f"phase {args.phase!r} has no tasks")
+    incomplete = [t["id"] for t in phase_tasks if t["status"] != "done"]
+    if incomplete:
+        raise PolicyError(
+            f"phase {args.phase} is not ready for independent review; incomplete tasks: "
+            f"{', '.join(incomplete)}"
+        )
+    evidence_fingerprint = review_evidence_fingerprint(args.kit, tasks_text, args.phase)
+    pricing = load_pricing()
+    assignment = resolve_assignment(pricing, role="independent_verifier")
     extra_args = tuple(args.extra_arg or ())
+    if any(a == "--sandbox" or a.startswith(("--sandbox=", "-s")) for a in extra_args):
+        raise PolicyError("review sandbox is fixed to read-only")
+    extra_args = ("--sandbox", "read-only", *extra_args)
     preamble = load_preamble("reviewer", REPO_ROOT)
     body = (
         f"Review phase {args.phase} of the execution kit at {args.kit}. Read "
@@ -978,15 +1416,100 @@ def cmd_review(args):
         f"for drift, scope creep, and contract breakage. Report findings; change nothing."
     )
     prompt = preamble + "\n\n---\n\n" + body
-    argv = build_dispatch(args.codex_bin, None, prompt, extra_args=extra_args)
+    argv = build_dispatch(args.codex_bin, assignment["model_id"], prompt, extra_args=extra_args)
     if args.dry_run:
         print(f"phase: {args.phase}")
         print(f"dispatch: {shlex.join(argv)}")
         return
-    rc, output = default_runner(argv)
+    rc, output, telemetry = default_runner(argv)
+    rc, output = enforce_attested_assignment(
+        rc, output, telemetry, assignment["model_id"], "verifier"
+    )
+    append_role_use(Path(args.kit) / "NOTES.md", args.phase, "verifier", None,
+                    assignment["model_id"], rc, telemetry.get("actual_model"),
+                    telemetry.get("actual_role"), evidence_fingerprint=evidence_fingerprint,
+                    report=output)
     print(output)
     if rc != 0:
         sys.exit(1)
+
+
+def cmd_accept(args):
+    """Reserve Astra for final acceptance decisions without granting implementation scope."""
+    tasks_text = _read_tasks_text(args.kit)
+    phase_tasks = _phase_tasks(tasks_text, args.phase)
+    if not phase_tasks:
+        raise PolicyError(f"phase {args.phase!r} has no tasks")
+    incomplete = [t["id"] for t in phase_tasks if t["status"] != "done"]
+    if incomplete:
+        raise PolicyError(
+            f"phase {args.phase} is not ready for final acceptance; incomplete tasks: "
+            f"{', '.join(incomplete)}"
+        )
+    notes_path = Path(args.kit) / "NOTES.md"
+    notes_text = notes_path.read_text() if notes_path.exists() else ""
+    evidence_fingerprint = review_evidence_fingerprint(args.kit, tasks_text, args.phase)
+    if not _role_use_succeeded(
+        notes_text, args.phase, "verifier", evidence_fingerprint=evidence_fingerprint
+    ):
+        raise PolicyError(
+            f"phase {args.phase} has no successful independent Sol review record; run review first"
+        )
+    pricing = load_pricing()
+    assignment = resolve_assignment(pricing, role="orchestrator")
+    extra_args = tuple(args.extra_arg or ())
+    if any(a == "--sandbox" or a.startswith(("--sandbox=", "-s")) for a in extra_args):
+        raise PolicyError("acceptance sandbox is fixed to read-only")
+    extra_args = ("--sandbox", "read-only", *extra_args)
+    body = (
+        f"Perform final acceptance for phase {args.phase} of the execution kit at {args.kit}. "
+        "Inspect the plan, task records, independent review, verification evidence, and actual "
+        "changes. Decide accepted or rejected and explain the evidence. Do not implement or "
+        "modify files; corrective work requires the driver's structured recovery gate. End "
+        "with exactly `POLYTROPOS_ACCEPTANCE: accepted` or `POLYTROPOS_ACCEPTANCE: rejected`."
+    )
+    prompt = load_preamble("reviewer", REPO_ROOT) + "\n\n---\n\n" + body
+    argv = build_dispatch(
+        args.codex_bin, assignment["model_id"], prompt, extra_args=extra_args
+    )
+    if args.dry_run:
+        print(f"phase: {args.phase}")
+        print(f"policy: role=orchestrator dispatched={assignment['model_id']} scope=acceptance-only")
+        print(f"dispatch: {shlex.join(argv)}")
+        return
+    rc, output, telemetry = default_runner(argv)
+    rc, output = enforce_attested_assignment(
+        rc, output, telemetry, assignment["model_id"], "orchestrator"
+    )
+    verdict = parse_acceptance_verdict(output) if rc == 0 else None
+    if rc == 0 and verdict is None:
+        rc = 4
+        output += "\nfinal acceptance did not provide the required machine verdict\n"
+    append_role_use(notes_path, args.phase, "orchestrator", None,
+                    assignment["model_id"], rc, telemetry.get("actual_model"),
+                    telemetry.get("actual_role"), result=verdict or "failed",
+                    evidence_fingerprint=evidence_fingerprint, report=output)
+    print(output)
+    if verdict == "rejected" and rc == 0:
+        rc = 1
+    if rc != 0:
+        sys.exit(1)
+
+
+def cmd_prepare(args):
+    """Machine-readable assignment bridge for app/interactive orchestration."""
+    pricing = load_pricing()
+    if args.role == "recovery":
+        raise PolicyError(
+            "interactive prepare cannot unlock recovery from caller-supplied evidence; "
+            "use kit run so the driver observes and records the failed attempts"
+        )
+    evidence = json.loads(args.evidence_json) if args.evidence_json else None
+    assignment = resolve_assignment(
+        pricing, planned_model=args.model, role=args.role, evidence=evidence
+    )
+    print(json.dumps({**assignment, "pool_mode": "reserved",
+                      "actual_model": "unknown", "actual_role": "unknown"}, indent=2))
 
 
 def build_parser():
@@ -1037,6 +1560,23 @@ def build_parser():
     p_review.add_argument("--dry-run", action="store_true",
                           help="print the dispatch argv; spawn nothing")
     p_review.set_defaults(func=cmd_review)
+
+    p_accept = sub.add_parser("accept", help="dispatch Astra for acceptance-only review")
+    p_accept.add_argument("--kit", required=True, help="kit directory")
+    p_accept.add_argument("--phase", required=True, help="phase number to accept")
+    p_accept.add_argument("--codex-bin", default="codex", help="Codex CLI binary")
+    p_accept.add_argument("--extra-arg", action="append", help="extra dispatch flag")
+    p_accept.add_argument("--dry-run", action="store_true", help="print argv; spawn nothing")
+    p_accept.set_defaults(func=cmd_accept)
+
+    p_prepare = sub.add_parser(
+        "prepare", help="resolve a central policy assignment for an app or driver"
+    )
+    p_prepare.add_argument("--role", default="implementer")
+    p_prepare.add_argument("--model", default=None, help="planned tier or model id")
+    p_prepare.add_argument("--evidence-json", default=None,
+                           help="structured recovery evidence JSON (recovery role only)")
+    p_prepare.set_defaults(func=cmd_prepare)
 
     return ap
 
