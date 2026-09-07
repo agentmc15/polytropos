@@ -78,7 +78,22 @@ TELEMETRY_FILENAME_RE = re.compile(r"^\d{4}-\d{2}-\d{2}\.json$")
 _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_STORE_DIR = PLUGIN_ROOT / "telemetry"
+
+def _store_default(name):
+    """Default location for a runtime store, via `bin/runtime_data.py` (step 13).
+
+    Outside the plugin tree unless a store already exists in it, in which case that one keeps
+    being used. Per-command `--*-dir` flags override this and are unchanged.
+    """
+    import importlib.util
+    module_path = Path(__file__).resolve().parent / "runtime_data.py"
+    spec = importlib.util.spec_from_file_location("runtime_data", module_path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.store_path(name, PLUGIN_ROOT)
+
+
+DEFAULT_STORE_DIR = _store_default("telemetry")
 
 # The capture registry. Order is the write order and the summary order.
 SOURCES = (
@@ -404,13 +419,30 @@ def envelope_path(store_dir, source, date_str):
     return Path(store_dir) / source / f"{date_str}.json"
 
 
+def _sp():
+    """Lazy-load bin/safe_paths.py -- the repo's ONE path-containment helper."""
+    import importlib.util
+    path = Path(__file__).resolve().parent / "safe_paths.py"
+    spec = importlib.util.spec_from_file_location("safe_paths", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
 def _write_envelope(store_dir, source, date_str, envelope):
     """Write one envelope. Same-day re-run overwrites: latest GOOD wins per day (the
     ``write_snapshot`` semantics, minus the one case that would destroy evidence — see
     :func:`_existing_ok_envelope` and :func:`capture`)."""
     path = envelope_path(store_dir, source, date_str)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(envelope, indent=2) + "\n")
+    Path(store_dir).mkdir(parents=True, exist_ok=True)
+    # The store holds personal usage data in a directory the caller selected. Written through
+    # the shared containment helper: no link followed at any component, replaced atomically,
+    # and created 0600 rather than whatever umask allows.
+    _sp().confined_replace(
+        store_dir, f"{source}/{date_str}.json",
+        json.dumps(envelope, indent=2) + "\n",
+        what=f"telemetry envelope {source}/{date_str}", mode=0o600,
+    )
     return path
 
 

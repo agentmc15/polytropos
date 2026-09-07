@@ -40,6 +40,7 @@ Ordered task list. Every task must be executable by a model with **zero access t
 - **Self-contained brief**: files involved, relevant conventions, interfaces/contracts pinned down exactly, known gotchas, and the *why* behind the approach
 - **Acceptance criteria**: concrete and checkable
 - **Verify command**: a shell command (tests, build, lint, a curl) that proves the task done
+- **Optional `evidence:`** — `red-green` (default), `regression`, or `precondition`. Default means the verify command must be able to fail before the work; if it already passes, execute blocks the task. Mark `regression`/`precondition` when passing beforehand is the point (refactors, drift guards) — not to silence a check that should have gone red.
 - Tasks are grouped under `## Phase N — <name>` headings; the execute loop dispatches the reviewer agent at each phase end.
 - Each task marks ordering explicitly: `depends: <ids>` or `independent: yes` — execute parallelizes only tasks marked independent.
 - Flag **warm-cluster candidates** as free text in the TASKS.md dispatch preamble (e.g. "T2 → T3 → T4 are strictly serial (same file)"): serial `depends:` chains that share a primary file and carry the same `model` pin. Execute may then serve the whole cluster with one continued (warm) implementer instead of N cold spawns; tasks marked `independent:` still fan out fresh. This is a hint, not a new task field — the task-field contract is unchanged.

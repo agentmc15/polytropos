@@ -200,8 +200,12 @@ class ReadInboxTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             path = Path(td) / "inbox.md"
             result = jc.read_inbox(path)
+            # `redactions`/`redaction_note` are present even for an absent inbox: the shape
+            # of the signal must not depend on whether anything was found, or a reader would
+            # have to tell "clean" from "not checked" by a missing key.
             self.assertEqual(result, {
                 "present": False, "path": str(path), "items": [], "truncated": False,
+                "redactions": {}, "redaction_note": "",
             })
 
     def test_marker_stripping_and_comment_blank_skip(self):
@@ -686,3 +690,48 @@ class ContentHygieneTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class InboxRedactionTests(unittest.TestCase):
+    """A credential typed into the inbox must not reach the digest or a cloud dispatch.
+
+    The confirmed step-13 defect: inbox lines were read verbatim into the digest, written to
+    disk, and forwarded to a model, while the documentation said nothing secret is ever written
+    to the journal. That sentence was only ever true about git.
+    """
+
+    CANARY = "ghp_CANARYcanaryCANARYcanary01234"
+
+    def _inbox(self, text):
+        td = tempfile.TemporaryDirectory()
+        self.addCleanup(td.cleanup)
+        path = Path(td.name) / "inbox.md"
+        path.write_text(text)
+        return jc.read_inbox(path)
+
+    def test_a_credential_shape_does_not_survive_into_the_items(self):
+        result = self._inbox(f"- ask ops to rotate {self.CANARY}\n")
+        joined = "\n".join(result["items"])
+        self.assertNotIn(self.CANARY, joined)
+        self.assertIn("[redacted:github-token]", joined)
+        self.assertEqual(result["redactions"], {"github-token": 1})
+
+    def test_the_report_says_what_kind_was_caught_and_never_the_value(self):
+        result = self._inbox(f"- {self.CANARY}\n- db_password = hunter2\n")
+        self.assertNotIn(self.CANARY, result["redaction_note"])
+        self.assertNotIn("hunter2", result["redaction_note"])
+        self.assertIn("github-token", result["redaction_note"])
+        self.assertIn("assigned-secret", result["redaction_note"])
+        # And it refuses to overclaim.
+        self.assertIn("cannot prove no secret remains", result["redaction_note"])
+
+    def test_an_ordinary_note_is_left_alone_and_reported_as_clean(self):
+        result = self._inbox("- call Bob about the renewal\n- review the Q3 deck\n")
+        self.assertEqual(result["items"], ["call Bob about the renewal", "review the Q3 deck"])
+        self.assertEqual(result["redactions"], {})
+        self.assertEqual(result["redaction_note"], "")
+
+    def test_an_unbounded_line_is_bounded(self):
+        result = self._inbox("- " + ("x" * 5000) + "\n")
+        self.assertLess(len(result["items"][0]), 700)
+        self.assertIn("truncated", result["items"][0])

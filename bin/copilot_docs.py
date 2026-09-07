@@ -330,6 +330,59 @@ def build_marked_block(name, inner):
 
 # --------------------------------------------------------------------------- Markdown rendering
 
+#: The only URL schemes a generated page may link to. `mailto:` is here because the docs
+#: legitimately carry contact links; everything else a browser will ACT on -- `javascript:`,
+#: `data:`, `vbscript:`, `file:` -- is absent, and so is every scheme nobody has thought about.
+#: An allowlist is the right shape: the set of schemes these documents need is small and known,
+#: and the set a browser will execute grows without asking us.
+ALLOWED_URL_SCHEMES = ("http", "https", "mailto")
+
+#: `scheme:` per RFC 3986, which is what a browser looks for before deciding what a link does.
+_URL_SCHEME_RE = re.compile(r"\A([A-Za-z][A-Za-z0-9+.\-]*):")
+
+#: Control characters, which browsers STRIP from a URL before resolving it -- so `java`, TAB,
+#: `script:alert(1)` is a working `javascript:` link that no naive scheme check matches. These
+#: documents are generated from committed Markdown and have no legitimate use for any of them,
+#: so their presence is refused outright rather than normalized away.
+_URL_CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]")
+
+
+def safe_href(url, what="link"):
+    """Validate a link target -> the url, or `MarkdownError`.
+
+    Called AFTER link rewriting, because rewriting is what decides the final target and a check
+    before it would be checking something else. Escaping the URL for HTML -- which this module
+    already did -- prevents breaking out of the attribute; it does nothing about what the
+    browser does when the attribute's value is `javascript:alert(1)`.
+
+    RAISING, NOT NEUTRALIZING. These pages are generated from committed sources by a
+    maintainer. An unsupported scheme is a defect in a source document, and rewriting it
+    silently into a dead link would hide it; `render_markdown` already refuses unsupported raw
+    HTML the same way. Adding a scheme is a deliberate edit to `ALLOWED_URL_SCHEMES`.
+    """
+    if _URL_CONTROL_RE.search(url):
+        raise MarkdownError(
+            f"{what}: control character in URL {url!r} — browsers strip these before resolving, "
+            f"so they can hide a scheme from any check that reads the string literally"
+        )
+    candidate = url.strip()
+    if candidate.startswith("//"):
+        raise MarkdownError(
+            f"{what}: protocol-relative URL {url!r} — it inherits the page's scheme and points "
+            f"off-site; write the scheme explicitly"
+        )
+    match = _URL_SCHEME_RE.match(candidate)
+    if match is None:
+        return url  # relative path or bare `#fragment`: navigates within the generated site
+    scheme = match.group(1).lower()
+    if scheme not in ALLOWED_URL_SCHEMES:
+        raise MarkdownError(
+            f"{what}: unsupported URL scheme {scheme!r} in {url!r} — allowed: "
+            f"{', '.join(ALLOWED_URL_SCHEMES)}"
+        )
+    return url
+
+
 _RAW_HTML_RE = re.compile(r"<[a-zA-Z!/][^>]*>")
 _INLINE_RE = re.compile(
     r"`(?P<code>[^`]+)`"
@@ -381,6 +434,7 @@ def _render_inline(text, link_rewrite=None):
             url = m.group("linkurl")
             if link_rewrite is not None:
                 url = link_rewrite(url)
+            url = safe_href(url)
             out.append(f'<a href="{html.escape(url)}">{html.escape(m.group("linktext"))}</a>')
         elif m.group("strong") is not None:
             out.append(f"<strong>{html.escape(m.group('strong'))}</strong>")
@@ -543,8 +597,10 @@ def build_html_shell(title, body_html, markdown_href, css_href=ASSET_CSS_PATH, l
     companion-Markdown link, and a relative stylesheet link. No script tag, no external
     resource."""
     safe_title = html.escape(title)
-    safe_md_href = html.escape(markdown_href)
-    safe_css_href = html.escape(css_href)
+    # The shell's own two hrefs go through the same gate as body links: they are parameters,
+    # and a caller is a place a bad value can come from.
+    safe_md_href = html.escape(safe_href(markdown_href, what="markdown source link"))
+    safe_css_href = html.escape(safe_href(css_href, what="stylesheet link"))
     return (
         "<!DOCTYPE html>\n"
         f'<html lang="{html.escape(lang)}">\n'

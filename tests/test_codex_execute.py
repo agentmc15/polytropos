@@ -1238,9 +1238,12 @@ class ParsePlanBudgetTests(unittest.TestCase):
 
 class CountPlanBudgetUsageTests(unittest.TestCase):
     def test_empty_notes_all_zero(self):
+        # Derived from PLAN_BUDGET_KEYS rather than a frozen literal: the counter must always
+        # report EVERY cap (step 08 added `max-model-calls`), and a cap the counter forgets is
+        # a cap that reads as zero-used forever.
         self.assertEqual(
             ce.count_plan_budget_usage(""),
-            {"max-dispatches": 0, "max-escalations": 0, "max-consults": 0},
+            {key: 0 for key in ce.PLAN_BUDGET_KEYS},
         )
 
     def test_sums_attempts_and_escalations_across_lines(self):

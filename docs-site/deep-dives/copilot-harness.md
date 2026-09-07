@@ -44,6 +44,16 @@ placeholder has to be resolved at install time instead of read at run time. The 
 `~/.copilot`; override it with `--copilot-home <dir>`. Add `--dry-run` to see the destination
 paths without writing anything.
 
+**The installer will not overwrite what it does not own.** Each destination is classified before
+anything is written: absent (installed), already identical (left alone), written by this
+installer and unchanged since (refreshed — the routine upgrade, no flag needed), or *anything
+else*. That last case — a same-named agent you wrote yourself, or your edits to one of ours — is
+**preserved**, printed with its reason, and the command exits 2. It used to be overwritten
+silently. To take those destinations over anyway, rerun with `--adopt-existing`, which writes
+the bundle's version and keeps your prior bytes beside it as `<name>.polytropos-bak`. Ownership
+is recorded in `<home>/polytropos/install-manifest.json`; delete it and every destination
+becomes unowned again.
+
 **Precedence gotcha:** an agent under `~/.copilot/agents/` overrides a same-named agent defined
 at the repo level, so a stale installed copy of `route.agent.md` silently shadows an updated one
 in `copilot/.github/agents/` until you reinstall.

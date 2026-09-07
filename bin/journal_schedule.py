@@ -24,6 +24,21 @@ import sys
 from pathlib import Path
 
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
+
+def _store_default(name):
+    """Default location for a runtime store, via `bin/runtime_data.py` (step 13).
+
+    Outside the plugin tree unless a store already exists in it, in which case that one keeps
+    being used. Per-command `--*-dir` flags override this and are unchanged.
+    """
+    import importlib.util
+    module_path = Path(__file__).resolve().parent / "runtime_data.py"
+    spec = importlib.util.spec_from_file_location("runtime_data", module_path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.store_path(name, PLUGIN_ROOT)
+
+
 LABEL = "com.polytropos.daily-journal"
 
 # The ONE home-directory lookup in this file — a runtime default for the user's real machine.
@@ -199,7 +214,7 @@ def main(argv=None):
     p_install.add_argument("--launch-agents-dir", default=str(DEFAULT_LAUNCH_AGENTS_DIR))
     p_install.add_argument("--hour", type=int, default=DEFAULT_HOUR)
     p_install.add_argument("--minute", type=int, default=DEFAULT_MINUTE)
-    p_install.add_argument("--journal-dir", default=str(PLUGIN_ROOT / "journal"))
+    p_install.add_argument("--journal-dir", default=str(_store_default("journal")))
 
     p_uninstall = sub.add_parser("uninstall", help="remove the launchd plist if present")
     p_uninstall.add_argument("--launch-agents-dir", default=str(DEFAULT_LAUNCH_AGENTS_DIR))
@@ -210,7 +225,7 @@ def main(argv=None):
     p_run = sub.add_parser("run", help="run the collector then the summarizer, in-process")
     p_run.add_argument("--date", default=None)
     p_run.add_argument("--utc", action="store_true")
-    p_run.add_argument("--journal-dir", default=str(PLUGIN_ROOT / "journal"))
+    p_run.add_argument("--journal-dir", default=str(_store_default("journal")))
     p_run.add_argument("--collect-only", action="store_true")
     p_run.add_argument("--dry-run", action="store_true")
 

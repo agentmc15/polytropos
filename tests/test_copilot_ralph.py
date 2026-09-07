@@ -365,5 +365,56 @@ class CliSafetySmokeTests(unittest.TestCase):
             self.assertIn("tick argv:", dry_run_buf.getvalue())
 
 
+class SpendAdmissionTests(unittest.TestCase):
+    """Step 08: Ralph must not make a paid call it cannot afford, and must not believe a
+    model-emitted number about what it costs."""
+
+    def test_a_zero_budget_makes_no_paid_call(self):
+        calls = []
+        result = cr.run_ralph(
+            "goal", lambda i, p: calls.append(i) or "", lambda: (1, "failing"),
+            {"max_iterations": 3, "no_progress_stop": 2, "budget_usd": 0.0}, 0.01,
+        )
+        self.assertEqual(calls, [], "a tick that cannot be afforded must not be dispatched")
+        self.assertEqual(result["status"], "budget")
+        self.assertEqual(result["iterations"], 0)
+
+    def test_the_loop_stops_before_the_tick_that_would_overrun(self):
+        calls = []
+        result = cr.run_ralph(
+            "goal", lambda i, p: calls.append(i) or "", lambda: (1, "failing"),
+            {"max_iterations": 10, "no_progress_stop": 99, "budget_usd": 0.05}, 0.02,
+        )
+        self.assertEqual(result["status"], "budget")
+        # Every dispatch was affordable at the moment it was made.
+        self.assertLessEqual(len(calls) * 0.02, 0.05 + 0.02)
+
+    def test_a_model_reported_negative_cost_is_not_a_refund(self):
+        """`cost_usd += parsed` with a negative value buys more ticks. The value is read out
+        of MODEL OUTPUT, so it is untrusted input to a spending control."""
+        self.assertIsNone(cr.parse_cost('{"total_cost_usd": -1000}'))
+        self.assertIsNone(cr.parse_cost('{"cost_usd": -0.01}'))
+
+    def test_non_finite_and_boolean_costs_are_rejected(self):
+        self.assertIsNone(cr.parse_cost('{"total_cost_usd": NaN}'))
+        self.assertIsNone(cr.parse_cost('{"total_cost_usd": Infinity}'))
+        self.assertIsNone(cr.parse_cost('{"total_cost_usd": true}'))
+
+    def test_a_valid_cost_is_still_read(self):
+        self.assertEqual(cr.parse_cost('{"total_cost_usd": 0.25}'), 0.25)
+        self.assertEqual(cr.parse_cost('{"total_cost_usd": 0}'), 0.0)
+
+    def test_a_rejected_cost_falls_back_to_the_data_derived_estimate(self):
+        seen = []
+        cr.run_ralph(
+            "goal", lambda i, p: '{"total_cost_usd": -999}', lambda: (1, "failing"),
+            {"max_iterations": 2, "no_progress_stop": 99, "budget_usd": 1.0}, 0.10,
+            on_tick=seen.append,
+        )
+        self.assertTrue(seen)
+        self.assertEqual(seen[0]["cost_source"], "estimated")
+        self.assertEqual(seen[0]["cost_usd"], 0.10)
+
+
 if __name__ == "__main__":
     unittest.main()

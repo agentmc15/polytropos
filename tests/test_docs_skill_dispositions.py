@@ -403,13 +403,21 @@ def cost_report_parser():
 # Group 6: the three orchestration-ceiling skills may only shrink (D1).
 # Durable across future kits: fails the moment any of the three GROWS past
 # its recorded ceiling, without pinning them to never change at all.
+#
+# RE-FROZEN by step 09 (evidence-bound completion), which added an optional
+# `evidence:` task field. That is a KIT-CONTRACT change, and the repo invariant
+# requires architect and execute to document the contract in step with each
+# other -- so the two of them genuinely had to grow. The values below are the
+# new exact counts, re-frozen at the smallest wording that states the field and
+# its consequence; the "may only shrink" rule resumes from here. `repo-bench`
+# was not touched and keeps its original number.
 # ---------------------------------------------------------------------------
 
 
 class CeilingSkillsTests(unittest.TestCase):
     CEILINGS = {
-        "architect": 2767,
-        "execute": 5998,
+        "architect": 2819,
+        "execute": 6063,
         "repo-bench": 6567,
     }
 

@@ -95,6 +95,18 @@ def _tree_snapshot(root):
 # ---------------------------------------------------------------------------------------------
 
 
+
+def git_verb(argv):
+    """The git VERB in a built argv: the first token after `-C <path>` and any `-c <kv>` pairs."""
+    i = 1
+    while i < len(argv):
+        if argv[i] in ("-C", "-c"):
+            i += 2
+            continue
+        return argv[i]
+    return None
+
+
 class AllowlistTests(unittest.TestCase):
     def test_allowlist_membership_is_exact(self):
         self.assertEqual(
@@ -140,7 +152,47 @@ class AllowlistTests(unittest.TestCase):
 
         rc, out = rb.git_target("/some/target", "rev-parse", "HEAD", git_runner=runner)
         self.assertEqual((rc, out), (0, "deadbeef\n"))
-        self.assertEqual(calls, [["git", "-C", "/some/target", "rev-parse", "HEAD"]])
+        self.assertEqual(calls, [[
+            "git", "-C", "/some/target",
+            "-c", "core.fsmonitor=", "-c", "diff.external=",
+            "rev-parse", "HEAD",
+        ]])
+
+    def test_target_calls_suppress_configured_helper_execution(self):
+        """A read-only VERB is not a read-only OPERATION: `.gitattributes` plus a
+        `diff.<driver>.textconv` entry makes `git diff` run a configured program, and
+        `--no-ext-diff` alone does not stop it."""
+        calls = []
+
+        def runner(argv):
+            calls.append(argv)
+            return 0, ""
+
+        rb.git_target("/some/target", "diff", "A", "B", git_runner=runner)
+        argv = calls[0]
+        # fsmonitor and diff.external are overridden for every verb...
+        self.assertIn("core.fsmonitor=", argv)
+        self.assertIn("diff.external=", argv)
+        # ...and the diff family additionally refuses textconv and external diff by flag.
+        self.assertIn("--no-textconv", argv)
+        self.assertIn("--no-ext-diff", argv)
+        self.assertLess(argv.index("diff"), argv.index("--no-textconv"))
+
+        # Verbs that would reject those flags never receive them.
+        calls.clear()
+        rb.git_target("/some/target", "archive", "--format=tar", "HEAD", git_runner=runner)
+        self.assertNotIn("--no-textconv", calls[0])
+        self.assertNotIn("--no-ext-diff", calls[0])
+
+    def test_an_explicit_flag_is_not_duplicated(self):
+        calls = []
+
+        def runner(argv):
+            calls.append(argv)
+            return 0, ""
+
+        rb.git_target("/t", "diff", "--no-textconv", "A", "B", git_runner=runner)
+        self.assertEqual(calls[0].count("--no-textconv"), 1)
 
     def test_git_sandbox_has_no_allowlist_and_pins_identity(self):
         calls = []
@@ -265,7 +317,7 @@ class SandboxTests(unittest.TestCase):
             for argv in runner_calls:
                 self.assertEqual(argv[0], "git")
                 if argv[2] == str(repo):
-                    self.assertIn(argv[3], rb.READ_ONLY_GIT)
+                    self.assertIn(git_verb(argv), rb.READ_ONLY_GIT)
                 else:
                     self.assertEqual(argv[2], str(td / "sb"))
 
@@ -1652,7 +1704,22 @@ class ReuseTests(unittest.TestCase):
 
     def test_plugin_root_and_default_store(self):
         self.assertTrue((rb.PLUGIN_ROOT / "bin" / "repo_bench.py").exists())
-        self.assertEqual(rb.DEFAULT_STORE_DIR, rb.PLUGIN_ROOT / "benchruns")
+        # Step 13: runtime data no longer defaults into the plugin tree. The repository is a
+        # distributable, cached, sometimes cloud-synced artifact, and personal benchmark records and dollar figures should
+        # not ride along with it. The one exception is continuity: a store that ALREADY exists
+        # in the tree keeps being used, so an upgrade never looks like data loss.
+        default = rb.DEFAULT_STORE_DIR
+        legacy = rb.PLUGIN_ROOT / "benchruns"
+        if legacy.is_dir() and any(legacy.iterdir()):
+            self.assertEqual(default, legacy)
+        else:
+            self.assertNotEqual(default, legacy)
+            self.assertFalse(
+                str(default).startswith(str(rb.PLUGIN_ROOT) + "/"),
+                f"the default store is inside the plugin tree: {default}",
+            )
+            self.assertEqual(default.name, "benchruns")
+
 
 
 # ---------------------------------------------------------------------------------------------
@@ -11256,5 +11323,286 @@ class RegradeOnARealStubbedRunTests(unittest.TestCase):
             )
 
 
+class JudgePermissionTests(unittest.TestCase):
+    """Step 06: a judge compares patches already in its prompt — it is not doing engineering
+    and does not need a coding agent's blanket grant."""
+
+    def test_the_judge_argv_carries_no_blanket_permission_grant(self):
+        flag = rb._ce().PERMISSION_FLAG
+        self.assertNotIn(flag, rb.build_judge_argv("claude", "m", "prompt"))
+        # ...while the candidate, which really is doing engineering, still has it.
+        self.assertIn(flag, rb.build_claude_argv("claude", "m", "prompt"))
+
+    def test_the_judge_still_carries_the_output_format_it_is_read_back_with(self):
+        self.assertTrue(rb.argv_carries_output_format(rb.build_judge_argv("claude", "m", "p")))
+
+    def test_the_adapter_exposes_the_judge_shape_separately(self):
+        self.assertIs(rb.CLAUDE_ADAPTER["build_judge_argv"], rb.build_judge_argv)
+        self.assertIs(rb.CLAUDE_ADAPTER["build_argv"], rb.build_claude_argv)
+
+    def test_a_stub_adapter_without_a_judge_shape_still_works(self):
+        """Back-compat: the judge member is optional and falls back to `build_argv`."""
+        adapter = {"build_argv": lambda b, m, p: ["stub", m, p]}
+        build = adapter.get("build_judge_argv") or adapter["build_argv"]
+        self.assertEqual(build("bin", "m", "p"), ["stub", "m", "p"])
+
+
+class UsageIngestionTests(unittest.TestCase):
+    """Step 08: harness-reported counts are priced and charged against `--max-usd`, so they
+    are untrusted input to a spending control."""
+
+    def _usage(self, value):
+        return rb.extract_usage(
+            json.dumps({"usage": {"input_tokens": value, "output_tokens": 10}})
+        )
+
+    def test_impossible_counts_are_refused(self):
+        for label, value in (("negative", -5), ("nan", float("nan")),
+                             ("infinity", float("inf")), ("boolean", True),
+                             ("fractional", 1.5), ("string", "100")):
+            self.assertIsNone(self._usage(value), f"{label} must not read as a token count")
+
+    def test_ordinary_counts_still_price(self):
+        self.assertEqual(self._usage(100), {"input_tokens": 100, "output_tokens": 10})
+        # An integral float is a count; it is normalised to int rather than refused.
+        self.assertEqual(self._usage(100.0), {"input_tokens": 100, "output_tokens": 10})
+
+    def test_a_negative_count_cannot_refund_the_ceiling(self):
+        """The failure this prevents: negative tokens price to negative dollars, `spent_usd`
+        goes DOWN, and the ceiling funds more work than it authorised."""
+        self.assertIsNone(self._usage(-1000000))
+
+    def test_nan_would_have_defeated_the_ceiling_comparison(self):
+        """Stated as the measurement that justifies the refusal: every comparison against NaN
+        is false, so `spent + NaN > max_usd` does not trip."""
+        self.assertFalse(0.0 + float("nan") > 1.0)
+        self.assertIsNone(self._usage(float("nan")))
+
+    def test_consumption_is_never_reversed(self):
+        self.assertEqual(rb.accrue_spend(5.0, 1.5), 6.5)
+        for bad in (-3.0, float("nan"), float("-inf"), None, "x"):
+            self.assertEqual(rb.accrue_spend(5.0, bad), 5.0,
+                             f"{bad!r} must not hand allowance back")
+
+
 if __name__ == "__main__":
     unittest.main()
+
+
+class GitMetadataBoundaryTests(unittest.TestCase):
+    """Step 03: commit metadata is attacker-influenced text, and it must never reach git as a
+    revision or an option."""
+
+    def test_a_commit_message_carrying_the_old_separators_does_not_split_a_record(self):
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td) / "r"
+            repo.mkdir()
+            _git(repo, "init", "-q")
+            (repo / "m.py").write_text("x = 1\n")
+            _git(repo, "add", "-A")
+            _git(repo, "commit", "-q", "-m", "start")
+            (repo / "m.py").write_text("x = 2\n")
+            (repo / "tests").mkdir()
+            (repo / "tests" / "test_m.py").write_text("import m\nassert m.x == 2\n")
+            _git(repo, "add", "-A")
+            # \x1e / \x1f were the old record/field separators, and git accepts them in a
+            # message. The forged tail names a plausible-looking commit id.
+            forged = (
+                "fixes #7: real fix\n\nbody\x1e"
+                + "a" * 40 + "\x1ffixes #8: forged subject\x1fforged body"
+            )
+            _git(repo, "commit", "-q", "-m", forged)
+
+            tasks, notes = rb.mine_issue_tasks(repo, gh_runner=None)
+            # Exactly one real task; the forged record never becomes a second one.
+            self.assertEqual(len(tasks), 1)
+            self.assertNotIn("a" * 40, [task["base_commit"] for task in tasks])
+            self.assertNotIn(8, [task.get("issue") for task in tasks])
+
+    def test_require_object_id_accepts_both_formats_and_refuses_everything_else(self):
+        sha1 = "a" * 40
+        sha256 = "b" * 64
+        self.assertEqual(rb.require_object_id(sha1, "x"), sha1)
+        self.assertEqual(rb.require_object_id(sha256, "x"), sha256)
+        self.assertEqual(rb.require_object_id(f"  {sha1}\n", "x"), sha1)
+        for bad in ("HEAD", "--upload-pack=touch /tmp/x", "a" * 39, "A" * 40, "", None,
+                    "a" * 41, "../etc/passwd", f"{sha1} extra"):
+            with self.assertRaises(ValueError, msg=f"{bad!r} must be refused"):
+                rb.require_object_id(bad, "x")
+
+    def test_unexpected_parent_output_is_refused_before_any_diff(self):
+        """`rev-parse` output is what the NEXT git command is built from; "it came from git" is
+        not the same as "it is an object id"."""
+        seen = []
+
+        def runner(argv):
+            seen.append(argv)
+            verb = git_verb(argv)
+            if verb == "log":
+                # one well-formed record, using whatever separators the protocol chose
+                fmt = next(a for a in argv if a.startswith("--format="))[len("--format="):]
+                field = fmt.split("%H")[1].split("%s")[0]
+                record = fmt.split("%b")[1]
+                return 0, f"{'c' * 40}{field}fixes #7: x{field}body{record}"
+            if verb == "rev-parse":
+                return 0, "--output=/tmp/pwned\n"   # not an object id
+            raise AssertionError(f"a diff must never be reached: {argv}")
+
+        tasks, notes = rb.mine_issue_tasks("/some/target", git_runner=runner, gh_runner=None)
+        self.assertEqual(tasks, [])
+        self.assertTrue(any("not a canonical git object id" in n for n in notes), notes)
+        self.assertNotIn("diff", [git_verb(a) for a in seen])
+
+    def test_ordinary_and_root_commits_still_mine_correctly(self):
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td) / "r"
+            build_issue_fixture_repo(repo)
+            sentinel = Path(td) / "outside.txt"
+            sentinel.write_text("untouched\n")
+            before = _git(repo, "status", "--porcelain")
+
+            tasks, notes = rb.mine_issue_tasks(repo, gh_runner=None)
+            self.assertTrue(tasks)
+            for task in tasks:
+                rb.require_object_id(task["base_commit"], "mined base")
+                rb.require_object_id(task["fix_commit"], "mined fix")
+            # The target repository is untouched, and so is anything outside it.
+            self.assertEqual(_git(repo, "status", "--porcelain"), before)
+            self.assertEqual(sentinel.read_text(), "untouched\n")
+
+
+class SubstrateConfinementTests(unittest.TestCase):
+    """Step 02: the candidate's patch lands in the substrate BEFORE the withheld reference
+    tests are written into it, so every component of that destination is candidate-controlled."""
+
+    def _substrate(self, td):
+        root = Path(td) / "substrate"
+        (root / "tests").mkdir(parents=True)
+        return root
+
+    def test_a_reference_test_path_replaced_by_a_link_is_not_written_through(self):
+        """THE step-02 defect. The candidate's patch turns a reference-test path into a
+        symlink; the trusted write then lands on the referent. The link is now REMOVED and a
+        real file takes its place -- grading continues, and the external file never moves."""
+        with tempfile.TemporaryDirectory() as td:
+            root = self._substrate(td)
+            outside = Path(td) / "outside.txt"
+            outside.write_text("ORIGINAL\n")
+            (root / "tests" / "test_m.py").symlink_to(outside)
+
+            rb.confined_write_bytes(root, "tests/test_m.py", "REFERENCE\n")
+
+            self.assertEqual(outside.read_text(), "ORIGINAL\n")
+            written = root / "tests" / "test_m.py"
+            self.assertFalse(written.is_symlink())
+            self.assertEqual(written.read_text(), "REFERENCE\n")
+
+    def test_a_fifo_at_the_destination_is_replaced_not_opened(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = self._substrate(td)
+            os.mkfifo(root / "tests" / "test_m.py")
+            rb.confined_write_bytes(root, "tests/test_m.py", "REFERENCE\n")
+            self.assertEqual((root / "tests" / "test_m.py").read_text(), "REFERENCE\n")
+
+    def test_a_directory_at_the_destination_is_a_conflict_not_a_deletion(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = self._substrate(td)
+            (root / "tests" / "test_m.py").mkdir()
+            (root / "tests" / "test_m.py" / "keep.txt").write_text("keep\n")
+            with self.assertRaises(ValueError):
+                rb.confined_write_bytes(root, "tests/test_m.py", "REFERENCE\n")
+            self.assertTrue((root / "tests" / "test_m.py" / "keep.txt").exists())
+
+    def test_a_linked_parent_directory_is_not_traversed(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td) / "substrate"
+            root.mkdir()
+            outside_dir = Path(td) / "elsewhere"
+            outside_dir.mkdir()
+            (outside_dir / "test_m.py").write_text("ORIGINAL\n")
+            (root / "tests").symlink_to(outside_dir)
+
+            with self.assertRaises(ValueError) as caught:
+                rb.confined_write_bytes(root, "tests/test_m.py", "REFERENCE")
+            self.assertIn("traverses", str(caught.exception))
+            self.assertEqual((outside_dir / "test_m.py").read_text(), "ORIGINAL\n")
+
+    def test_traversal_and_absolute_paths_are_refused(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = self._substrate(td)
+            for bad in ("../escape.py", "tests/../../escape.py", "/etc/passwd", "", "   "):
+                with self.assertRaises(ValueError, msg=f"{bad!r} must be refused"):
+                    rb.confined_write_bytes(root, bad, "x")
+            self.assertFalse((Path(td) / "escape.py").exists())
+
+    def test_ordinary_reference_test_restoration_still_works(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = self._substrate(td)
+            # over a candidate's own regular file, and into a directory that does not exist yet
+            (root / "tests" / "test_m.py").write_text("CANDIDATE VERSION\n")
+            rb.confined_write_bytes(root, "tests/test_m.py", "REFERENCE\n")
+            rb.confined_write_bytes(root, "tests/deep/test_new.py", "NEW\n")
+            self.assertEqual((root / "tests" / "test_m.py").read_text(), "REFERENCE\n")
+            self.assertEqual((root / "tests" / "deep" / "test_new.py").read_text(), "NEW\n")
+            self.assertFalse((root / "tests" / "test_m.py").is_symlink())
+
+    def test_hydration_through_a_linked_parent_is_blocked_not_followed(self):
+        """A linked PARENT cannot be resolved by replacement the way a linked leaf can -- the
+        directory may be legitimate -- so hydration refuses, and `build_grade_substrate` turns
+        that into an unavailable cell rather than a tree graded without its withheld test."""
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td) / "substrate"
+            root.mkdir()
+            outside_dir = Path(td) / "elsewhere"
+            outside_dir.mkdir()
+            (outside_dir / "test_m.py").write_text("ORIGINAL\n")
+            (root / "tests").symlink_to(outside_dir)
+
+            task = {"test_blobs": {"tests/test_m.py": "assert False\n"}}
+            with self.assertRaises(ValueError):
+                rb._write_reference_test_blobs(root, task)
+            self.assertEqual((outside_dir / "test_m.py").read_text(), "ORIGINAL\n")
+            self.assertIn("unavailable", rb.SUBSTRATE_HYDRATION_BLOCKED_NOTE)
+
+
+class ArtifactIntegrityTests(unittest.TestCase):
+    """Step 02: a captured artifact's digest must cover the bytes later consumed."""
+
+    def test_an_external_symlink_artifact_is_refused_rather_than_hashed_by_link_text(self):
+        with tempfile.TemporaryDirectory() as td:
+            tree = Path(td) / "build"
+            (tree / "node_modules").mkdir(parents=True)
+            outside = Path(td) / "outside.bin"
+            outside.write_text("v1\n")
+
+            (tree / "node_modules" / "linked").symlink_to(outside)
+            reason = rb.external_symlink_reason(tree, "node_modules/linked")
+            self.assertIsNotNone(reason)
+            self.assertIn("outside the captured tree", reason)
+
+    def test_an_internal_symlink_artifact_is_kept(self):
+        with tempfile.TemporaryDirectory() as td:
+            tree = Path(td) / "build"
+            (tree / "pkg").mkdir(parents=True)
+            (tree / "pkg" / "real.js").write_text("v1\n")
+            (tree / "pkg" / "alias.js").symlink_to("real.js")
+            self.assertIsNone(rb.external_symlink_reason(tree, "pkg/alias.js"))
+            self.assertIsNone(rb.external_symlink_reason(tree, "pkg/real.js"))
+
+    def test_the_digest_of_an_external_link_would_not_have_moved_with_its_referent(self):
+        """Why the refusal above exists, stated as a measurement rather than an assertion
+        about intent."""
+        with tempfile.TemporaryDirectory() as td:
+            tree = Path(td) / "build"
+            tree.mkdir()
+            outside = Path(td) / "outside.bin"
+            outside.write_text("v1\n")
+            link = tree / "linked"
+            link.symlink_to(outside)
+
+            first = rb._artifact_digest(link)
+            outside.write_text("COMPLETELY DIFFERENT\n")
+            self.assertEqual(rb._artifact_digest(link), first)
+            # ...which is exactly why such an artifact is never captured.
+            self.assertIsNotNone(rb.external_symlink_reason(tree, "linked"))
+

@@ -658,3 +658,134 @@ class SafetyStaticScopeTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LinkSchemeTests(unittest.TestCase):
+    """Generated pages link only where they are meant to (step 14).
+
+    The renderer escaped a URL for HTML, which stops it breaking out of the attribute and does
+    nothing about what the browser does when the attribute's value is `javascript:alert(1)`.
+    Unsafe links rendered in a fixture; reaching a reader takes influence over a canonical doc
+    plus a click, so this is hardening rather than an open hole — and it is the kind of gap
+    that stops being theoretical the moment a doc is generated from something less trusted.
+    """
+
+    def test_ordinary_navigation_still_works(self):
+        for url in ("https://example.com/x", "http://example.com", "mailto:team@example.com",
+                    "#a-fragment", "guide.html", "./guide.html", "../other/guide.html",
+                    "guide.html#section", "HTTPS://Example.COM/Y"):
+            with self.subTest(url=url):
+                self.assertEqual(cd.safe_href(url), url)
+                rendered = cd.render_markdown(f"[text]({url})")
+                self.assertIn("<a href=", rendered)
+
+    def test_active_schemes_are_refused(self):
+        for url in ("javascript:alert(1)", "JavaScript:alert(1)", "vbscript:msgbox(1)",
+                    "data:text/html;base64,PHNjcmlwdD5hbGVydCgxKTwvc2NyaXB0Pg==",
+                    "file:///etc/passwd", "jAvAsCrIpT:alert(1)"):
+            with self.subTest(url=url):
+                with self.assertRaises(cd.MarkdownError):
+                    cd.safe_href(url)
+
+    def test_an_active_scheme_is_refused_through_the_renderer_too(self):
+        # Separate from the case list above because a Markdown link's URL ends at the first
+        # `)`, so a payload containing one is not parsed as a link at all and the renderer
+        # never sees it. These are the parenthesis-free forms that do reach `safe_href`.
+        for url in ("javascript:void%200", "jAvAsCrIpT:void%200", "vbscript:msgbox%201",
+                    "data:text/html;base64,PHNjcmlwdD5hbGVydCgxKTwvc2NyaXB0Pg==",
+                    "file:///etc/passwd"):
+            with self.subTest(url=url):
+                with self.assertRaises(cd.MarkdownError):
+                    cd.render_markdown(f"[click me]({url})")
+
+    def test_control_character_obfuscation_is_refused(self):
+        # Browsers STRIP these before resolving, so `java` + TAB + `script:` is a working
+        # javascript: link that a literal scheme check reads as a relative path.
+        for raw in ("java\tscript:alert(1)", "java\nscript:alert(1)", "java\rscript:alert(1)",
+                    "\x01javascript:alert(1)", "javascript\x00:alert(1)"):
+            with self.subTest(url=repr(raw)):
+                with self.assertRaises(cd.MarkdownError) as ctx:
+                    cd.safe_href(raw)
+                self.assertIn("control character", str(ctx.exception))
+
+    def test_an_unknown_scheme_is_refused_rather_than_assumed_harmless(self):
+        # The allowlist is the point: the set of schemes these docs need is small and known,
+        # the set a browser will act on is not.
+        for url in ("ftp://example.com/x", "slack://channel", "vscode://file/x", "tel:+15551234"):
+            with self.subTest(url=url):
+                with self.assertRaises(cd.MarkdownError):
+                    cd.safe_href(url)
+
+    def test_a_protocol_relative_url_is_refused(self):
+        with self.assertRaises(cd.MarkdownError) as ctx:
+            cd.safe_href("//evil.example/x")
+        self.assertIn("protocol-relative", str(ctx.exception))
+
+    def test_validation_happens_after_rewriting_not_before(self):
+        # Rewriting decides the final target; checking the pre-rewrite string checks something
+        # the browser never sees.
+        seen = []
+
+        def rewrite(url):
+            seen.append(url)
+            return "javascript:alert(1)"
+
+        with self.assertRaises(cd.MarkdownError):
+            cd.render_markdown("[text](safe.md)", link_rewrite=rewrite)
+        self.assertEqual(seen, ["safe.md"])
+
+    def test_the_shells_own_hrefs_are_validated_too(self):
+        for kwargs in ({"markdown_href": "javascript:alert(1)"},
+                       {"markdown_href": "x.md", "css_href": "javascript:alert(1)"}):
+            with self.subTest(**kwargs):
+                with self.assertRaises(cd.MarkdownError):
+                    cd.build_html_shell("Title", "<p>b</p>", **kwargs)
+
+    def test_the_real_doc_center_contains_no_active_scheme(self):
+        # End to end over what actually ships, not only over fixtures.
+        for path in sorted((REPO_ROOT / "copilot-docs").rglob("*.html")):
+            with self.subTest(page=path.name):
+                text = path.read_text(encoding="utf-8").lower()
+                for bad in ("href=\"javascript:", "href=\"data:", "href=\"vbscript:",
+                            "href=\"file:"):
+                    self.assertNotIn(bad, text)
+
+
+class WorkflowSupplyChainTests(unittest.TestCase):
+    """CI runs pinned code and hands deploy credentials only to the deploy job (step 14)."""
+
+    WORKFLOW = REPO_ROOT / ".github" / "workflows" / "docs-site.yml"
+
+    def test_every_action_is_pinned_to_a_full_commit_sha(self):
+        # A tag is a mutable pointer: `@v4` runs whatever it points at today, so an action
+        # that is re-pointed changes what CI executes with no commit here.
+        uses = re.findall(r"uses:\s*(\S+)", self.WORKFLOW.read_text(encoding="utf-8"))
+        self.assertTrue(uses)
+        for ref in uses:
+            with self.subTest(action=ref):
+                self.assertRegex(ref, r"@[0-9a-f]{40}$")
+
+    def test_each_pin_records_which_version_it_is(self):
+        # A bare SHA is unreviewable; the comment is what makes an update decision possible.
+        for line in self.WORKFLOW.read_text(encoding="utf-8").splitlines():
+            if "uses:" in line and "@" in line:
+                with self.subTest(line=line.strip()):
+                    self.assertRegex(line, r"#\s*v\d+\.\d+")
+
+    def test_deploy_credentials_do_not_reach_the_job_that_runs_repository_code(self):
+        text = self.WORKFLOW.read_text(encoding="utf-8")
+        build = text[text.index("  build:"):text.index("  deploy:")]
+        deploy = text[text.index("  deploy:"):]
+        for credential in ("pages: write", "id-token: write"):
+            with self.subTest(credential=credential):
+                self.assertNotIn(credential, build)
+                self.assertIn(credential, deploy)
+
+    def test_the_toolchain_is_locked_by_hash(self):
+        requirements = (REPO_ROOT / "docs-src" / "requirements.txt").read_text(encoding="utf-8")
+        pins = re.findall(r"^([A-Za-z0-9._-]+)==", requirements, re.M)
+        self.assertGreater(len(pins), 10, "a lock with no transitives is not a lock")
+        self.assertEqual(len(pins), requirements.count("--hash=sha256:"))
+        self.assertIn("--require-hashes", self.WORKFLOW.read_text(encoding="utf-8"))
+        # And no unpinned range survives.
+        self.assertNotRegex(requirements, r"^[A-Za-z0-9._-]+[><~]", )

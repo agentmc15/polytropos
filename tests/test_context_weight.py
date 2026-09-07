@@ -367,11 +367,15 @@ class DemoTests(unittest.TestCase):
         self.assertIn("Sidechain (subagents): 1 call(s), 5,000 tokens", out)
         # attribution: Bash 5000 est. ranked ahead of Read 2000 est.; assistant output (measured)
         # 750 measured; unattributed 12250 est. (NOT 13000 — T13 subtracted measured output).
-        self.assertIn("| Bash | ls -la | 5,000 est. |", out)
+        # Since step 13 the contributor table withholds a command's ARGUMENTS by default and
+        # keeps the program, which is what identifies the contributor. The demo renders the
+        # default so a reader sees what they will actually get.
+        self.assertIn("| Bash | ls … | 5,000 est. |", out)
+        self.assertNotIn("ls -la", out)
         self.assertIn("| Read | /workspace/demo.txt | 2,000 est. |", out)
         self.assertIn(f"| {cw.ASSISTANT_OUTPUT_LABEL} |  | 750 measured |", out)
         self.assertIn("| unattributed growth |  | 12,250 est. |", out)
-        bash_idx = out.index("| Bash | ls -la | 5,000 est. |")
+        bash_idx = out.index("| Bash | ls … | 5,000 est. |")
         read_idx = out.index("| Read | /workspace/demo.txt | 2,000 est. |")
         self.assertLess(bash_idx, read_idx)
 
@@ -2972,3 +2976,44 @@ class AuditConstraintsSectionTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SalientWithholdingTests(unittest.TestCase):
+    """Command and prompt text is withheld from the shareable report by default (step 13).
+
+    "What filled this window" is a report people paste into a channel. A 60-character prefix of
+    a shell command is exactly where a token in a `curl -H` or a credential in an inline
+    environment assignment lives.
+    """
+
+    def test_a_shell_commands_arguments_are_withheld_but_the_program_is_kept(self):
+        salient = cw._salient_for("Bash", {"command": "curl -H 'Authorization: Bearer sk-secret123456789012' x"})
+        self.assertEqual(salient, "curl …")
+        self.assertNotIn("Bearer", salient)
+        self.assertNotIn("sk-secret", salient)
+
+    def test_a_subagent_prompt_is_withheld_and_only_its_size_is_reported(self):
+        salient = cw._salient_for("Agent", {"prompt": "the deploy key is ghp_abcdefghijklmnopqrstuvwxyz01"})
+        self.assertNotIn("ghp_", salient)
+        self.assertEqual(salient, "<prompt, 50 chars>")
+
+    def test_asking_for_detail_shows_the_prefix_but_still_redacts_credentials(self):
+        salient = cw._salient_for(
+            "Bash", {"command": "deploy --token ghp_abcdefghijklmnopqrstuvwxyz01"}, sensitive=True
+        )
+        self.assertIn("deploy", salient)
+        self.assertNotIn("ghp_abcdefghijklmnopqrstuvwxyz01", salient)
+        self.assertIn("redacted", salient)
+
+    def test_file_paths_are_not_withheld_because_they_are_the_attribution(self):
+        for tool in ("Read", "Edit", "Write"):
+            with self.subTest(tool=tool):
+                self.assertEqual(
+                    cw._salient_for(tool, {"file_path": "/repo/src/main.py"}),
+                    "/repo/src/main.py",
+                )
+
+    def test_an_empty_or_malformed_input_still_yields_an_empty_salient(self):
+        self.assertEqual(cw._salient_for("Bash", {"command": ""}), "")
+        self.assertEqual(cw._salient_for("Bash", "not a dict"), "")
+        self.assertEqual(cw._salient_for("Agent", {}), "")

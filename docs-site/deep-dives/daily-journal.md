@@ -182,11 +182,38 @@ titles, and inbox text leave the machine via your own account, and this is state
 summarizer's own docstring, its `--dry-run` output, the skill, and here. The content-hygiene
 rule above (metadata only, never transcript text) bounds what can possibly leak.
 
-Nothing secret is ever written to the journal, its logs, or git — `journal/` is a single
-gitignored entry covering the digest, the three documents, the inbox, and the logs together, so
-none of it can land in a commit. This kit's own tests never touch a real source home or a real
-schedule directory; every test and verify run points every source at a synthetic fixture in a
-temporary directory instead.
+### What actually leaves, field by field
+
+This document used to say "nothing secret is ever written to the journal, its logs, or git".
+That was only ever true about **git**: `journal/` is a single gitignored entry, so none of it
+can land in a commit. It said nothing about the two things that matter more — the digest is
+written to disk, and the summarizer sends it to a model. A synthetic credential typed into
+`inbox.md` reached both, unchanged. The precise statement is:
+
+| Field | Persisted | Sent to the summarizer's model |
+|---|---|---|
+| project / repo names, commit subjects | yes | yes |
+| kit task titles (never briefs) | yes | yes |
+| **inbox lines — your own free text** | yes, redacted and bounded | yes, redacted and bounded |
+| transcript text, message content | never | never |
+
+Inbox lines pass through `bin/redact.py` before they are persisted or dispatched: strings
+matching known credential shapes (provider token prefixes, private-key headers, JWTs,
+`password:`-style assignments) are replaced with a label naming the KIND, and each line is
+bounded. The digest reports what was caught, by kind and count, never by value.
+
+**This is shape-matching, and shape-matching cannot prove absence.** A password that looks like
+an ordinary word, a customer name, an unreleased product, an address — none of those have a
+shape and none of them are caught. The inbox is your own free text and it is dispatched to a
+model; write it accordingly.
+
+Runtime output lives outside the plugin tree by default (`bin/runtime_data.py where` prints the
+resolved location). A `journal/` directory that already exists inside the repository keeps
+being used, so upgrading never looks like data loss; `runtime_data.py migrate --store journal`
+copies it out, and never deletes the original.
+
+This kit's own tests never touch a real source home or a real schedule directory; every test
+and verify run points every source at a synthetic fixture in a temporary directory instead.
 
 ## Deferred
 

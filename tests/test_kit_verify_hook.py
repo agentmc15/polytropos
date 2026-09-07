@@ -664,5 +664,89 @@ class StaticSafetyTests(unittest.TestCase):
         self.assertIn("Path.home()", source)
 
 
+class MultipleFlipTests(unittest.TestCase):
+    """Step 09: one Edit call carries a LIST of edits, and finishing a phase flips several
+    tasks at once. Checking only the first let every task after it through unchecked."""
+
+    def _event(self, tasks_path, ids):
+        return {
+            "tool_name": "Edit",
+            "tool_input": {
+                "file_path": str(tasks_path),
+                "edits": [
+                    {"old_str": f"### {i} — t\n- status: pending",
+                     "new_str": f"### {i} — t\n- status: done"}
+                    for i in ids
+                ],
+            },
+        }
+
+    def _kit(self, tmp, ids):
+        kit = Path(tmp) / ".claude" / "kits" / "demo"
+        kit.mkdir(parents=True)
+        body = "## Phase 1 — p\n\n" + "\n".join(
+            f"### {i} — t\n- status: done\n- model: m\n- depends: (none)\n"
+            f"- independent: no\n\n**Brief.** b\n\n**Verify.**\n```bash\ntrue\n```\n"
+            for i in ids
+        )
+        (kit / "TASKS.md").write_text(body)
+        return kit
+
+    def test_every_flipped_task_is_detected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            kit = self._kit(tmp, ["T1", "T2", "T3"])
+            flips = kvh.detect_done_flips(self._event(kit / "TASKS.md", ["T1", "T2", "T3"]))
+            self.assertEqual([task_id for _dir, task_id in flips], ["T1", "T2", "T3"])
+
+    def test_a_later_task_without_a_marker_is_not_let_through(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            kit = self._kit(tmp, ["T1", "T2"])
+            # T1 earns a marker; T2 does not.
+            kvh.run_precheck(str(kit), "T1", "true", lambda cmd: (1, "red"))
+            kvh.run_record(str(kit), "T1", "true")
+
+            allow, message = kvh.evaluate_hook_event(
+                self._event(kit / "TASKS.md", ["T1", "T2"])
+            )
+            self.assertFalse(allow)
+            self.assertIn("T2", message)
+            self.assertNotIn("task T1 was flipped", message)
+
+    def test_the_single_result_wrapper_still_returns_the_first(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            kit = self._kit(tmp, ["T1", "T2"])
+            found = kvh.detect_done_flip(self._event(kit / "TASKS.md", ["T1", "T2"]))
+            self.assertEqual(found[1], "T1")
+
+
+class TaskIdConfinementTests(unittest.TestCase):
+    """Step 10: task ids become marker filenames, so an id that can name a path moved the
+    read, the write and -- worst -- the DELETE in `precheck` outside the kit."""
+
+    def test_escaping_task_ids_are_refused_before_any_path_is_composed(self):
+        for bad in ("../../etc/passwd", "a/b", "/abs", "..", "", ".hidden", "C:\\x"):
+            with self.assertRaises(ValueError, msg=f"{bad!r} must be refused"):
+                kvh.marker_path("/tmp/kit", bad)
+            with self.assertRaises(ValueError):
+                kvh.validate_task_id(bad)
+
+    def test_ordinary_task_ids_still_resolve_inside_the_kit(self):
+        for good in ("T1", "T17R", "E1"):
+            path = kvh.marker_path("/tmp/kit", good)
+            self.assertEqual(path.parent, Path("/tmp/kit") / kvh.MARKER_SUBDIR)
+            self.assertEqual(path.name, good)
+
+    def test_a_precheck_cannot_delete_outside_the_kit(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            outside = Path(tmp) / "outside.txt"
+            outside.write_text("keep\n")
+            kit = Path(tmp) / ".claude" / "kits" / "demo"
+            kit.mkdir(parents=True)
+            with self.assertRaises(ValueError):
+                kvh.run_precheck(str(kit), f"../../../{outside.name}", "true",
+                                 lambda cmd: (1, ""))
+            self.assertTrue(outside.exists(), "precheck deleted a file outside the kit")
+
+
 if __name__ == "__main__":
     unittest.main()

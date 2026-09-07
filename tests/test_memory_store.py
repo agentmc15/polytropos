@@ -729,5 +729,62 @@ class IndexStateTests(unittest.TestCase):
             self.assertIn("(reference, high, fresh)", out)
 
 
+class StoreContainmentTests(unittest.TestCase):
+    """Step 10: the store is private user data in a directory the user selected, and a write
+    that follows a link is a write into somewhere else."""
+
+    def setUp(self):
+        self.td = Path(tempfile.mkdtemp())
+        self.mem = self.td / "mem"
+        (self.mem / "facts").mkdir(parents=True)
+        self.outside = self.td / "outside"
+        self.outside.mkdir()
+        self.target = self.outside / "target.md"
+        self.target.write_text("ORIGINAL\n")
+
+    def test_a_malformed_existing_fact_is_not_an_absent_destination(self):
+        """It used to be treated as free to write, so the write went through the link."""
+        (self.mem / "facts" / "linked-fact.md").symlink_to(self.target)
+        self.assertFalse(ms.fact_is_writable_destination(self.mem, "linked-fact"))
+
+    def test_an_absent_or_ordinary_destination_is_writable(self):
+        self.assertTrue(ms.fact_is_writable_destination(self.mem, "brand-new-fact"))
+        (self.mem / "facts" / "real-fact.md").write_text("x")
+        self.assertTrue(ms.fact_is_writable_destination(self.mem, "real-fact"))
+
+    def test_a_write_replaces_a_link_rather_than_following_it(self):
+        (self.mem / "facts" / "linked-fact.md").symlink_to(self.target)
+        ms.write_fact_file(self.mem, "linked-fact", "REPLACED\n")
+        self.assertEqual(self.target.read_text(), "ORIGINAL\n")
+        self.assertFalse((self.mem / "facts" / "linked-fact.md").is_symlink())
+
+    def test_a_symlinked_facts_directory_is_refused(self):
+        mem2 = self.td / "mem2"
+        mem2.mkdir()
+        (mem2 / "facts").symlink_to(self.outside)
+        with self.assertRaises(ValueError):
+            ms.write_fact_file(mem2, "some-fact", "NEW")
+        self.assertFalse((self.outside / "some-fact.md").exists())
+
+    def test_facts_are_private_by_construction_not_by_umask(self):
+        ms.write_fact_file(self.mem, "private-fact", "x")
+        mode = (self.mem / "facts" / "private-fact.md").stat().st_mode & 0o777
+        self.assertEqual(mode, 0o600, f"fact created world-readable ({oct(mode)})")
+
+    def test_the_index_is_written_under_the_same_rules(self):
+        mem2 = self.td / "mem3"
+        mem2.mkdir()
+        (mem2 / "index.md").symlink_to(self.target)
+        ms.write_index_file(mem2, "# index\n")
+        self.assertEqual(self.target.read_text(), "ORIGINAL\n")
+        self.assertFalse((mem2 / "index.md").is_symlink())
+
+    def test_recall_never_reads_through_a_link(self):
+        """Reading through one pulls content from outside the store into a session."""
+        (self.mem / "facts" / "linked-fact.md").symlink_to(self.target)
+        _facts, notes = ms.load_store(self.mem)
+        self.assertTrue(any("not a regular file" in n for n in notes), notes)
+
+
 if __name__ == "__main__":
     unittest.main()

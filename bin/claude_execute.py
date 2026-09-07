@@ -125,6 +125,18 @@ line is written instead -- no new CLI flag, absent block = today's behavior. The
 that line is NOT written: the task already carries a recorded `result=` of its own. A
 budget-stop is not a verdict and must never displace one (`recorded_outcome_result`).
 
+Step 08 changed WHEN that check happens and WHAT counts. It used to run once, at invocation
+entry, and `run_task` then dispatched the initial attempt plus every escalation rung without
+asking again -- so `max-dispatches=1` funded one dispatch AND the whole ladder. Admission is
+now asked immediately before each consuming operation (`BudgetAdmission`), and operations
+carry an explicit KIND, so an initial attempt no longer trips `max-escalations` (declaring
+`max-escalations=0` used to refuse to run the first task at all).
+
+COMPATIBILITY. `max-dispatches` keeps exactly its recorded meaning -- initial attempts,
+retries, escalations and consults, every model call on a TASK -- and still excludes phase
+review and final acceptance, so existing ledgers do not silently start meaning something new.
+`max-model-calls` is the separately named cap that does include them.
+
 Usage:
     claude_execute.py status --kit DIR [--json]
     claude_execute.py run --kit DIR [--task ID] [--role NAME] [--claude-bin BIN]
@@ -150,10 +162,68 @@ PRICING_PATH = REPO_ROOT / "data" / "pricing.json"
 # `tier` values models actually carry in data/pricing.json (haiku/sonnet/opus/frontier).
 # Never a price, never a model id; this driver does not import routing_scorecard.
 TIER_ORDER = ("haiku", "sonnet", "opus", "frontier")
-STATUSES = ("pending", "in-progress", "done", "blocked")
+
+# ---- the shared kit contract ---------------------------------------------------------------
+#
+# Everything below is DEFINED ONCE in `bin/kit_contract.py` and re-exported here. These names
+# used to be written out in full in each of the three drivers, identically; see that module's
+# docstring for the measurement. Re-exporting rather than importing-and-renaming keeps this
+# module's surface exactly what it was, so callers -- this file, its tests, and
+# `bin/journal_collect.py`, which uses `parse_tasks` as the kit-task format authority -- are
+# unaffected, and a test that patches one of these names on this module still works.
+
+_KIT_CONTRACT = None
+
+
+def _kc():
+    """Lazy-load `bin/kit_contract.py` -- the repo's ONE kit/task/run contract (step 15)."""
+    global _KIT_CONTRACT
+    if _KIT_CONTRACT is None:
+        import importlib.util
+        module_path = Path(__file__).resolve().parent / "kit_contract.py"
+        spec = importlib.util.spec_from_file_location("kit_contract", module_path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        _KIT_CONTRACT = module
+    return _KIT_CONTRACT
+
+
+_CONTRACT = _kc()
+CONTRACT_VERSION = _CONTRACT.CONTRACT_VERSION
+TASK_FIELDS = _CONTRACT.TASK_FIELDS
+to_contract = _CONTRACT.to_contract
+BudgetAdmission = _CONTRACT.BudgetAdmission
+EM_DASH = _CONTRACT.EM_DASH
+OPERATION_CAPS = _CONTRACT.OPERATION_CAPS
+PLAN_BUDGET_KEYS = _CONTRACT.PLAN_BUDGET_KEYS
+PLAN_BUDGET_RE = _CONTRACT.PLAN_BUDGET_RE
+STATUSES = _CONTRACT.STATUSES
+_ep = _CONTRACT._ep
+_evidence = _CONTRACT._evidence
+_extract_brief = _CONTRACT._extract_brief
+_extract_verify = _CONTRACT._extract_verify
+_parse_block = _CONTRACT._parse_block
+_parse_depends = _CONTRACT._parse_depends
+_pr = _CONTRACT._pr
+_read_tasks_text = _CONTRACT._read_tasks_text
+_select_task = _CONTRACT._select_task
+append_plan_budget_stop_note = _CONTRACT.append_plan_budget_stop_note
+blocking_cap = _CONTRACT.blocking_cap
+build_outcome_line = _CONTRACT.build_outcome_line
+count_plan_budget_usage = _CONTRACT.count_plan_budget_usage
+default_verify_runner = _CONTRACT.default_verify_runner
+dispatch_status = _CONTRACT.dispatch_status
+generate_run_id = _CONTRACT.generate_run_id
+outcome_result = _CONTRACT.outcome_result
+parse_plan_budget = _CONTRACT.parse_plan_budget
+parse_tasks = _CONTRACT.parse_tasks
+plan_budget_exhausted = _CONTRACT.plan_budget_exhausted
+recorded_outcome_result = _CONTRACT.recorded_outcome_result
+select_task = _CONTRACT.select_task
+set_status = _CONTRACT.set_status
+
 DEFAULT_ESCALATION_START = "sonnet"  # matches journal_summarize.DEFAULT_START_TIER
 
-EM_DASH = " — "  # spaced em dash — the required task-heading separator
 
 # MEDIUM confidence (PLAN.md Risks "Headless `claude` flag surface") -- pinned from the
 # official CLI reference via WebFetch, never live-verified against the real binary (that
@@ -161,6 +231,77 @@ EM_DASH = " — "  # spaced em dash — the required task-heading separator
 # here, never a redesign. Grants unattended tool use (edit/Bash) in `-p` mode, the same role
 # `--full-auto` plays for codex_execute and `--allow-all-tools` plays for copilot_execute.
 PERMISSION_FLAG = "--dangerously-skip-permissions"
+
+#: The tool-restriction flag, emitted in the `--flag=value` form. VERIFIED once against Claude
+#: Code 2.1.263 on 2026-09-06 (`claude --help`, a no-spend invocation made under explicit
+#: one-off user authorisation); the standing rule is unchanged -- tests and kit execution never
+#: invoke a real CLI, and nothing re-probes this at run time.
+#:
+#: The `=` is LOAD-BEARING and not a style choice. The flag is variadic (`<tools...>`), so the
+#: separated form swallows the following positional: `--allowedTools 'Bash Read' <prompt>`
+#: consumes the prompt as another tool name, and the CLI then fails with "Input must be
+#: provided either through stdin or as a prompt argument". Binding the value to the flag keeps
+#: the prompt a positional. The value itself is a "comma or space-separated list" in one
+#: argument, which is the documented shape (their own example: `"Bash(git *) Edit"`).
+ALLOWED_TOOLS_FLAG = "--allowedTools"
+
+
+def allowed_tools_arg(tools):
+    """The single argv element pinning `tools`. See ALLOWED_TOOLS_FLAG on why `=` matters."""
+    return f"{ALLOWED_TOOLS_FLAG}={' '.join(tools)}"
+
+#: Roles whose job is to READ and report. They never get a blanket permission grant.
+READ_ONLY_ROLES = ("reviewer", "verifier")
+
+
+def permission_profile(tools=None, bypass=True, source="unspecified"):
+    """One dispatch's effective permissions, as a recordable fact.
+
+    `tools`  -- the agent's declared tool pin, translated to `--allowedTools`. None means no
+                pin was declared, NOT "no tools".
+    `bypass` -- whether the blanket permission grant is added.
+    `source` -- why this profile, in words, so a log says what was enforced and why.
+
+    WHAT THIS IS NOT. A tool pin is a CLI-level control, not an OS boundary. In particular,
+    these reviewers declare `Bash`, so a pin that omits Write and Edit does NOT make the run
+    read-only -- anything reachable through a shell is still reachable. Immutability is a claim
+    about the execution boundary (`bin/exec_policy.py`), never about an absent Edit tool.
+    """
+    return {
+        "tools": tuple(tools) if tools else None,
+        "bypass": bool(bypass),
+        "source": source,
+    }
+
+
+def parse_tools_pin(value):
+    """`"Bash, Read, Grep"` -> `("Bash", "Read", "Grep")`; empty/None -> None."""
+    if not value:
+        return None
+    names = tuple(part.strip() for part in str(value).split(",") if part.strip())
+    return names or None
+
+
+def role_permission_profile(role, frontmatter=None, review_mode="restricted"):
+    """The profile for `role`, honouring the agent file's own declaration.
+
+    Review roles never receive the blanket grant under the default `restricted` mode. The
+    `bypass` mode is the named, recorded opt-out -- it restores the historical behaviour for
+    someone who needs it, and says so in `source` rather than looking like enforcement.
+    """
+    tools = parse_tools_pin((frontmatter or {}).get("tools"))
+    if role in READ_ONLY_ROLES:
+        if review_mode == "bypass":
+            return permission_profile(tools, bypass=True, source=f"{role}: explicit bypass opt-out")
+        return permission_profile(tools, bypass=False, source=f"{role}: restricted (no bypass)")
+    return permission_profile(tools, bypass=True, source=f"{role}: implementation grant")
+
+
+def describe_permissions(profile):
+    """One line naming what was actually enforced -- for logs and role-use records."""
+    tools = ", ".join(profile["tools"]) if profile["tools"] else "no tool pin declared"
+    grant = "blanket permission grant" if profile["bypass"] else "no blanket grant"
+    return f"permissions[{profile['source']}]: {grant}; tools: {tools}"
 
 
 def load_pricing():
@@ -172,141 +313,16 @@ def load_pricing():
 
 # ---- parsing (identical TASKS.md contract to codex_execute/copilot_execute -- PLAN D1) ------
 
-def _extract_brief(block):
-    """Text between `**Brief.**` and the next `**Acceptance.**` (or `**Verify.**`), stripped."""
-    marker = "**Brief.**"
-    i = block.find(marker)
-    if i == -1:
-        return ""
-    rest = block[i + len(marker):]
-    for end_marker in ("**Acceptance.**", "**Verify.**"):
-        j = rest.find(end_marker)
-        if j != -1:
-            return rest[:j].strip()
-    return rest.strip()
 
 
-def _extract_verify(block):
-    """Contents of the first ```bash fence after `**Verify.**`, stripped; None if absent."""
-    marker = "**Verify.**"
-    i = block.find(marker)
-    if i == -1:
-        return None
-    rest = block[i + len(marker):]
-    fence = "```bash"
-    j = rest.find(fence)
-    if j == -1:
-        return None
-    after = rest[j + len(fence):]
-    nl = after.find("\n")
-    if nl == -1:
-        return None
-    close = after.find("```", nl + 1)
-    if close == -1:
-        return None
-    return after[nl + 1:close].strip()
 
 
-def _parse_depends(value):
-    value = value.strip()
-    if not value or value == "(none)":
-        return []
-    return [d.strip() for d in value.split(",") if d.strip()]
 
 
-def _parse_block(task_id, title, block):
-    status = None
-    model = None
-    depends = []
-    independent = False
-    for line in block.splitlines():
-        s = line.strip()
-        if status is None and s.startswith("- status:"):
-            status = s[len("- status:"):].strip()
-        elif model is None and s.startswith("- model:"):
-            value = s[len("- model:"):].strip()
-            model = value or None
-        elif s.startswith("- depends:"):
-            depends = _parse_depends(s[len("- depends:"):])
-        elif s.startswith("- independent:"):
-            independent = s[len("- independent:"):].strip().lower() == "yes"
-    if status not in STATUSES:
-        raise ValueError(
-            f"task {task_id}: '- status:' is required and must be one of "
-            f"{' | '.join(STATUSES)} (got {status!r})"
-        )
-    return {
-        "id": task_id,
-        "title": title,
-        "status": status,
-        "model": model,
-        "depends": depends,
-        "independent": independent,
-        "brief": _extract_brief(block),
-        "verify": _extract_verify(block),
-    }
 
 
-def parse_tasks(text):
-    """Parse a kit TASKS.md into a list of task dicts.
-
-    Task blocks start at `### <id>{em dash}<title>` headings (the spaced em dash ` — ` is
-    required; the id is the first whitespace-free token). A `### ` heading without the spaced
-    em dash is not a task and is skipped, but it still bounds the preceding block. Each dict
-    carries: id, title, status, model, depends, independent, brief, verify.
-    """
-    lines = text.splitlines()
-    heading_idxs = [i for i, ln in enumerate(lines) if ln.startswith("### ")]
-    tasks = []
-    for pos, start in enumerate(heading_idxs):
-        heading = lines[start][len("### "):].strip()
-        if EM_DASH not in heading:
-            continue
-        task_id = heading.split()[0]
-        title = heading.split(EM_DASH, 1)[1].strip()
-        end = heading_idxs[pos + 1] if pos + 1 < len(heading_idxs) else len(lines)
-        block = "\n".join(lines[start:end])
-        tasks.append(_parse_block(task_id, title, block))
-    return tasks
 
 
-def set_status(text, task_id, new_status):
-    """Return `text` with exactly one change: the `- status:` line inside `task_id`'s block.
-
-    Surgical: find the `### <id>{em dash}...` heading, then replace the FIRST `- status:` line
-    that appears before the next `### ` heading. Everything else stays byte-identical. Raises
-    ValueError on an unknown id or an invalid status.
-    """
-    if new_status not in STATUSES:
-        raise ValueError(
-            f"invalid status {new_status!r}; valid: {' | '.join(STATUSES)}"
-        )
-    lines = text.splitlines(keepends=True)
-    heading_idx = None
-    for i, ln in enumerate(lines):
-        stripped = ln.rstrip("\n")
-        if stripped.startswith("### "):
-            heading = stripped[len("### "):].strip()
-            if EM_DASH in heading and heading.split()[0] == task_id:
-                heading_idx = i
-                break
-    if heading_idx is None:
-        raise ValueError(f"unknown task id {task_id!r}")
-
-    end = len(lines)
-    for i in range(heading_idx + 1, len(lines)):
-        if lines[i].rstrip("\n").startswith("### "):
-            end = i
-            break
-
-    for i in range(heading_idx, end):
-        raw = lines[i]
-        if raw.strip().startswith("- status:"):
-            leading = raw[: len(raw) - len(raw.lstrip())]
-            newline = "\n" if raw.endswith("\n") else ""
-            lines[i] = f"{leading}- status: {new_status}{newline}"
-            return "".join(lines)
-    raise ValueError(f"no '- status:' line in task {task_id!r}")
 
 
 # ---- tier resolution (skip-up rule, implemented locally -- see module docstring) -------------
@@ -351,14 +367,34 @@ def resolve_model(pricing, model_or_tier):
 
 # ---- kit-agent preambles (per-slug, unlike codex's/copilot's generic role bundle) -------------
 
-def _strip_frontmatter(text):
-    """Drop a leading `---`-delimited YAML frontmatter block, if present; return the body."""
+def parse_frontmatter(text):
+    """A leading `---` block as `(fields, body)`; `({}, text)` when there is none.
+
+    Deliberately not a YAML parser -- stdlib only, and these agent files use a flat
+    `key: value` shape. A line that does not fit that shape is ignored rather than guessed at.
+
+    This exists because the frontmatter is where an agent's `tools:` pin lives, and the pin was
+    being DISCARDED: a reviewer declared `tools: Bash, Read, Grep, Glob` and then got a
+    dispatch with a blanket permission grant and no tool restriction at all. A declaration
+    nothing reads is not a control.
+    """
     lines = text.splitlines(keepends=True)
-    if lines and lines[0].strip() == "---":
-        for i in range(1, len(lines)):
-            if lines[i].strip() == "---":
-                return "".join(lines[i + 1:])
-    return text
+    if not lines or lines[0].strip() != "---":
+        return {}, text
+    for i in range(1, len(lines)):
+        if lines[i].strip() == "---":
+            fields = {}
+            for raw in lines[1:i]:
+                key, sep, value = raw.partition(":")
+                if sep and key.strip() and not key.startswith((" ", "\t", "#")):
+                    fields[key.strip()] = value.strip()
+            return fields, "".join(lines[i + 1:])
+    return {}, text
+
+
+def _strip_frontmatter(text):
+    """The body with any leading frontmatter removed (see `parse_frontmatter`)."""
+    return parse_frontmatter(text)[1]
 
 
 def load_preamble(role, slug, repo_root=None):
@@ -371,19 +407,38 @@ def load_preamble(role, slug, repo_root=None):
     if repo_root is None:
         repo_root = REPO_ROOT
     repo_root = Path(repo_root)
+    return load_role_spec(role, slug, repo_root)[0]
+
+
+def load_role_spec(role, slug, repo_root=None):
+    """`(body, frontmatter)` for a kit agent file -- the preamble AND its declaration.
+
+    `load_preamble` keeps returning just the body for every caller that only needs the prompt;
+    the dispatch path uses this one, because the `tools:` pin lives in the half that used to be
+    dropped on the floor.
+    """
+    if repo_root is None:
+        repo_root = REPO_ROOT
+    repo_root = Path(repo_root)
     path = repo_root / ".claude" / "agents" / f"{slug}-{role}.md"
     if not path.exists():
         raise FileNotFoundError(f"no kit agent at {path}")
-    return _strip_frontmatter(path.read_text()).strip()
+    fields, body = parse_frontmatter(path.read_text())
+    return body.strip(), fields
 
 
 # ---- dispatch + escalation --------------------------------------------------------------------
 
-def build_dispatch(claude_bin, model_id, prompt, extra_args=()):
+def build_dispatch(claude_bin, model_id, prompt, extra_args=(), permissions=None):
     """Build the `claude -p` dispatch argv LIST (never a joined string; never shell=True).
 
     [claude_bin, "-p"] + (["--model", model_id] if model_id else []) + [PERMISSION_FLAG]
         + list(extra_args) + [prompt]
+
+    `permissions` is a `permission_profile` -- the agent's declared tool pin and whether this
+    dispatch gets the blanket grant. Omitted, it defaults to the implementation grant, which is
+    the historical shape. Review paths pass a restricted profile instead, so a role that
+    declares `tools:` is dispatched with that pin rather than having it discarded.
 
     `PERMISSION_FLAG` is the non-interactive permission grant (Codex's `--full-auto`/
     Copilot's `--allow-all-tools` analogue -- MEDIUM confidence, see module docstring). A
@@ -391,10 +446,16 @@ def build_dispatch(claude_bin, model_id, prompt, extra_args=()):
     `--extra-arg` feeds future surfaces; no flag is invented beyond what the module docstring
     pins. Flags are best-effort, NOT live-verified -- do NOT re-run the CLI to check them.
     """
+    profile = permissions if permissions is not None else permission_profile(
+        source="default: implementation grant"
+    )
     argv = [claude_bin, "-p"]
     if model_id:
         argv += ["--model", model_id]
-    argv += [PERMISSION_FLAG]
+    if profile["tools"]:
+        argv += [allowed_tools_arg(profile["tools"])]
+    if profile["bypass"]:
+        argv += [PERMISSION_FLAG]
     argv += list(extra_args)
     argv += [prompt]
     return argv
@@ -425,16 +486,51 @@ def escalation_ladder(pricing, model_id=None):
     return ladder
 
 
-def _evidence(verify_cmd, rc, output):
-    return (
-        "\n\n--- ESCALATION EVIDENCE (verify failed) ---\n"
-        f"verify: {verify_cmd}\n"
-        f"exit: {rc}\n"
-        f"{(output or '')[-2000:]}"
-    )
+
+
+#: How much dispatch output travels with a failure record. Enough to see the cause; bounded so
+#: a crashed process cannot flood the ledger.
+DISPATCH_EVIDENCE_LIMIT = 2000
+
+
+
+_budget_stop = _CONTRACT._budget_stop
+cmd_status = _CONTRACT.cmd_status
+
+#: This driver's bounded, environment-reduced dispatch runner. The body is
+#: `kit_contract.provider_runner`; only the provider differs.
+default_runner = _CONTRACT.provider_runner("claude")
+
+
+def main(argv=None):
+    """CLI entry point. `build_parser` is this driver's; the rest is shared."""
+    return _CONTRACT.run_cli(build_parser, argv)
+
+
+
+def _dispatch_failure(task, model_used, escalations, dispatch_rc, dispatch_out):
+    """The record for a task whose MODEL PROCESS failed.
+
+    `status` is blocked and `verify_rc` is None -- not zero, and not the verdict of a check
+    that ran against a tree this attempt never touched. Dispatch and verification are separate
+    facts, and the whole point of this record is that it does not let one stand in for the
+    other: a failed process followed by an already-passing check used to read as `done`.
+    """
+    evidence = " ".join((dispatch_out or "").split())[-DISPATCH_EVIDENCE_LIMIT:]
+    return {
+        "id": task["id"],
+        "status": "blocked",
+        "model_used": model_used,
+        "escalations": escalations,
+        "verify_rc": None,
+        "dispatch_rc": dispatch_rc,
+        "failure": "dispatch",
+        "dispatch_evidence": evidence or "(no output)",
+    }
 
 
 def run_task(task, pricing, runner, verify_runner, prompt=None, role="implementer",
+             permissions=None, admission=None, consult=False,
              max_escalations=None, claude_bin="claude", extra_args=()):
     """Orchestrate one task: dispatch, verify, escalate up the tier ladder on failure.
 
@@ -447,6 +543,14 @@ def run_task(task, pricing, runner, verify_runner, prompt=None, role="implemente
     are injected callables (the money-safety seam -- never construct a real command in
     tests). `prompt` is the full dispatch text (a kit-agent preamble + the task brief); if
     None it falls back to the raw brief.
+
+    DISPATCH AND VERIFICATION ARE SEPARATE FACTS. The dispatch return code used to be
+    discarded, so a model process that crashed, hit an auth error, or was permission-denied
+    reported `done` whenever the verify command happened to pass -- which it often does, since
+    a check that was already green stays green when nothing was written. A reported non-zero
+    dispatch now returns a `failure: "dispatch"` record with `verify_rc: None`, and does NOT
+    climb the ladder: an infrastructure failure fails the same way on a more expensive model.
+    A runner returning None (the injected-fixture shape) is UNKNOWN, not success.
 
     Flow: resolve the task's `model` field (id or tier word), dispatch at that model, run
     verify; rc 0 -> `done`. Otherwise walk `escalation_ladder(pricing, resolved)` (truncated
@@ -465,8 +569,20 @@ def run_task(task, pricing, runner, verify_runner, prompt=None, role="implemente
     escalations = []
     model_used = model_id
 
-    argv = build_dispatch(claude_bin, model_id, prompt, extra_args=extra_args)
-    runner(argv)
+    initial_kind = "consult" if consult else "initial"
+    if admission is not None:
+        ok, reason = admission.admit(initial_kind)
+        if not ok:
+            return _budget_stop(task, model_used, escalations, initial_kind, reason)
+    argv = build_dispatch(claude_bin, model_id, prompt, extra_args=extra_args,
+                          permissions=permissions)
+    dispatch_rc, dispatch_out = dispatch_status(runner(argv))
+    if dispatch_rc is not None and dispatch_rc != 0:
+        # A FAILED dispatch is not an implementation failure, so it does not climb the ladder:
+        # a crashed, unauthenticated or permission-denied process fails the same way on a more
+        # expensive model, and the verify command's verdict describes the tree as it was left,
+        # not work this attempt did. Stop, and say which fact stopped it.
+        return _dispatch_failure(task, model_used, escalations, dispatch_rc, dispatch_out)
     rc, output = verify_runner(verify_cmd)
 
     if rc != 0:
@@ -474,11 +590,22 @@ def run_task(task, pricing, runner, verify_runner, prompt=None, role="implemente
         if max_escalations is not None:
             ladder = ladder[:max_escalations]
         for rung in ladder:
+            # Admission before EVERY rung, not once at invocation entry. This is the defect:
+            # a one-dispatch allowance used to fund the initial attempt plus the whole ladder.
+            if admission is not None:
+                ok, reason = admission.admit("escalation")
+                if not ok:
+                    return _budget_stop(task, model_used, escalations, "escalation", reason)
             escalated_prompt = prompt + _evidence(verify_cmd, rc, output)
-            argv = build_dispatch(claude_bin, rung, escalated_prompt, extra_args=extra_args)
-            runner(argv)
+            # The SAME profile as the initial attempt: an escalation is a bigger model, not
+            # a wider grant. Permissions that change on retry are permissions nobody declared.
+            argv = build_dispatch(claude_bin, rung, escalated_prompt, extra_args=extra_args,
+                                  permissions=permissions)
+            dispatch_rc, dispatch_out = dispatch_status(runner(argv))
             escalations.append(rung)
             model_used = rung
+            if dispatch_rc is not None and dispatch_rc != 0:
+                return _dispatch_failure(task, model_used, escalations, dispatch_rc, dispatch_out)
             rc, output = verify_runner(verify_cmd)
             if rc == 0:
                 break
@@ -489,22 +616,13 @@ def run_task(task, pricing, runner, verify_runner, prompt=None, role="implemente
         "model_used": model_used,
         "escalations": escalations,
         "verify_rc": rc,
+        "dispatch_rc": dispatch_rc,
+        "failure": None if rc == 0 else "verification",
     }
 
 
 # ---- run ids (PLAN D8 -- content-free, one per driver invocation) -----------------------------
 
-def generate_run_id(now=None):
-    """One content-free `run=` id per driver invocation: `<UTC-date>-<4 hex>` (PLAN D8).
-
-    `secrets.token_hex(2)` supplies the four hex characters from 2 cryptographically random
-    bytes -- never a hostname, username, pid, or path fragment (NOTES.md is committed in
-    consumer repos, so nothing content-bearing may enter it). `now` is injectable so tests
-    can pin the date segment without touching wall-clock time; the hex segment is always
-    freshly random.
-    """
-    now = now or datetime.now(timezone.utc)
-    return f"{now.strftime('%Y-%m-%d')}-{secrets.token_hex(2)}"
 
 
 # ---- kit_verify_hook integration (PLAN D3/D10 -- lazy sibling import, never duplicated) -------
@@ -523,19 +641,6 @@ def _load_verify_hook_module():
 
 # ---- outcome ledger (T1 grammar: run=/parent=) -------------------------------------------------
 
-def outcome_result(status, escalations, parent):
-    """Classify a finished `run_task` result into the T1 `result=` vocabulary.
-
-    `blocked` when the task never passed. Otherwise `escalated-pass` when the ladder needed a
-    rung beyond the task's own pinned tier (`escalations` non-empty) OR this run was itself a
-    consult for a different task (`parent` given -- module docstring, "Escalation lineage").
-    Otherwise plain `pass`.
-    """
-    if status != "done":
-        return "blocked"
-    if escalations or parent:
-        return "escalated-pass"
-    return "pass"
 
 
 # The `result=` values a `parent=` field may ride on. `bin/routing_scorecard.py`'s
@@ -548,20 +653,6 @@ def outcome_result(status, escalations, parent):
 PARENT_RESULTS = ("escalated-pass",)
 
 
-def build_outcome_line(task_id, model, attempts, result, review="none", run_id=None,
-                        parent=None):
-    """One `outcome:` ledger line (T1 grammar). `model` must be a non-whitespace token --
-    callers pass `"unpinned"` (never a phrase with a space) for a task with no model pin, so
-    the line still parses under `routing_scorecard.PAIR_RE` (`\\w+=\\S+`)."""
-    line = (
-        f"outcome: {task_id} model={model} attempts={attempts} "
-        f"result={result} review={review}"
-    )
-    if run_id:
-        line += f" run={run_id}"
-    if parent:
-        line += f" parent={parent}"
-    return line
 
 
 def build_defect_line(task_id, kind):
@@ -574,170 +665,22 @@ def build_defect_line(task_id, kind):
     return f"defect: {task_id} kind={kind}"
 
 
-# ---- PLAN.md budget dial (T9, graph-convergence) -----------------------------------------------
-#
-# `budget: max-dispatches=N max-escalations=N max-consults=N` is an OPTIONAL PLAN.md line
-# FAMILY -- exactly like `autonomy:` (skills/architect/SKILL.md's "Autonomy posture (optional)"
-# bullet): never a task field, the TASKS.md contract (`id`/`title`/`status`/`model`/brief/
-# acceptance/verify) is untouched, and PLAN.md stays execute-owned. Absent block = today's
-# behavior everywhere (unbounded, no check performed) -- PLAN D6. `bin/routing_scorecard.py`
-# never parses this line itself; it only recognizes the RESULT the block may cause a driver to
-# write (`result=budget-stop`, a fifth, no-verdict value in the outcome grammar -- see its
-# RESULTS comment). Ported identically in shape across all three drivers (PLAN D1 convergence:
-# same constant names, same parse helper shape, same stop semantics, same ledger line) -- this
-# driver never imports another driver or routing_scorecard, so the shape is duplicated, not
-# shared, on purpose (matches the tier-resolution precedent above).
-#
-# Enforcement is a START-OF-INVOCATION gate against the kit's OWN recorded history, not a
-# mid-flight cutoff of this invocation's own escalation ladder (that is the existing, unrelated
-# `--max-escalations` CLI flag, which caps ONE invocation's ladder walk -- the PLAN.md dial
-# caps the WHOLE KIT across every invocation, past and future, resumed sessions included). A
-# real (non `--dry-run`) `run` reads the kit's already-recorded `outcome:` lines from NOTES.md
-# BEFORE dispatching anything; if a declared cap is already met or exceeded, the task is NEVER
-# dispatched, its status is left exactly as found (pending stays pending -- "remaining tasks
-# untouched" per the brief), and ONE `outcome: ... result=budget-stop` line is appended instead
-# -- never folded into a fluent summary, always naming which cap was hit and how many tasks are
-# left untouched (`cmd_run` below). `--dry-run` is UNAFFECTED (today's behavior): it never
-# dispatches or spends anything regardless, so the gate buys no additional safety there and
-# checking it would only add a second code path to keep in sync.
-PLAN_BUDGET_RE = re.compile(r"^\s*budget:\s*(.+)$", re.MULTILINE)
-PLAN_BUDGET_KEYS = ("max-dispatches", "max-escalations", "max-consults")
 
 
-def parse_plan_budget(text):
-    """Read the kit's optional PLAN.md `budget:` line -> dict or `None`.
-
-    `text` is PLAN.md's content (or `None`/empty when there is no PLAN.md -- `None` right
-    back, no error). Any subset of `PLAN_BUDGET_KEYS`, in any order, each a base-10
-    non-negative integer: `budget: max-dispatches=5 max-consults=1`. No `budget:` line, no
-    recognized key on that line, or no PLAN.md at all -> `None` (today's behavior: unbounded,
-    no check performed). Unrecognized tokens on the line are silently ignored (forward-
-    compatible, matching the outcome-ledger's own unknown-`key=value` tolerance).
-    """
-    if not text:
-        return None
-    m = PLAN_BUDGET_RE.search(text)
-    if not m:
-        return None
-    budget = dict(re.findall(r"(max-dispatches|max-escalations|max-consults)=(\d+)", m.group(1)))
-    return {k: int(v) for k, v in budget.items()} or None
 
 
-def count_plan_budget_usage(notes_text):
-    """Count dispatches/escalations/consults already recorded in a kit's NOTES.md ledger.
-
-    A minimal re-implementation of `routing_scorecard`'s own `outcome:` grammar (this driver
-    imports no pricing/scorecard module -- the same tier-resolution precedent above), read-only
-    over `notes_text`. Per `outcome:` line: `attempts=` (default 1 when absent or non-integer,
-    mirroring `routing_scorecard.parse_outcomes`) counts toward `max-dispatches`; `attempts - 1`
-    counts toward `max-escalations` (an in-ladder escalation IS an extra dispatch); a line
-    carrying `parent=` counts ONE `max-consults` (a run dispatched with `--parent` is a consult
-    by definition, whether it passed, was blocked, or was itself a budget-stop). Returns a dict
-    with all three `PLAN_BUDGET_KEYS`, always present (0 when nothing is recorded yet).
-    """
-    used = {k: 0 for k in PLAN_BUDGET_KEYS}
-    for line in notes_text.splitlines():
-        s = line.strip()
-        if s.startswith("- "):
-            s = s[2:]
-        if not s.startswith("outcome:"):
-            continue
-        m = re.search(r"\battempts=(\d+)\b", s)
-        try:
-            attempts = int(m.group(1)) if m else 1
-        except ValueError:
-            attempts = 1
-        used["max-dispatches"] += attempts
-        used["max-escalations"] += max(attempts - 1, 0)
-        if re.search(r"(?:^|\s)parent=\S+", s):
-            used["max-consults"] += 1
-    return used
 
 
-def recorded_outcome_result(notes_text, task_id):
-    """The LAST `result=` already recorded for `task_id` in `notes_text`, or `None`.
-
-    Read-only over the kit's NOTES.md, same minimal `outcome:` grammar as
-    `count_plan_budget_usage` above (optional `- ` bullet, id as the first token, `key=value`
-    pairs). Later lines win, mirroring `routing_scorecard.parse_outcomes`'s last-wins rule.
-
-    Its ONE caller is the budget gate below: a `budget-stop` is not a verdict, so writing one
-    for a task that ALREADY carries a real verdict would append a ledger line that supersedes
-    (or, once the reader's precedence rule drops it, contradicts) recorded evidence. Rejected
-    at the WRITER, before anything is written -- the same precedent as the self-`--parent`
-    guard in `cmd_run`, and the same reasoning as the Phase 1 review's F2 invariant: nothing
-    may write a line the reader has to ignore.
-    """
-    found = None
-    for line in notes_text.splitlines():
-        s = line.strip()
-        if s.startswith("- "):
-            s = s[2:]
-        if not s.startswith("outcome:"):
-            continue
-        parts = s[len("outcome:"):].split()
-        if not parts or parts[0] != task_id:
-            continue
-        m = re.search(r"(?:^|\s)result=(\S+)", s)
-        if m:
-            found = m.group(1)
-    return found
 
 
-def plan_budget_exhausted(plan_budget, used, is_consult):
-    """The first `PLAN_BUDGET_KEYS` cap already reached by `used`, or `None`.
-
-    A cap is "reached" at `used[key] >= cap` -- the recorded usage already consumed the last
-    unit the budget allowed, so the task in front of this call must not add one more.
-    `max-consults` is checked ONLY when `is_consult` is true (this run carries `--parent`): a
-    plain (non-consult) run never trips on a consult cap, and a budget with no `max-consults`
-    key never trips regardless of `is_consult`. Checked in `PLAN_BUDGET_KEYS` order, so
-    `max-dispatches` wins ties over `max-escalations`/`max-consults` when more than one cap is
-    simultaneously exhausted -- an arbitrary but stable and reproducible choice.
-    """
-    for key in PLAN_BUDGET_KEYS:
-        cap = plan_budget.get(key)
-        if cap is None:
-            continue
-        if key == "max-consults" and not is_consult:
-            continue
-        if used.get(key, 0) >= cap:
-            return key
-    return None
 
 
-def append_plan_budget_stop_note(notes_path, task, run_id, exhausted_key, cap, used, remaining,
-                                  role):
-    """Append ONE budget-stop block to the kit's NOTES.md -- the T9 "never hide the stop
-    behind a fluent summary" contract. No dispatch happened: `attempts=0`, no escalations, no
-    model was actually used (the task's OWN pin, or `unpinned`, labels the line). The block
-    states plainly which PLAN.md budget cap was hit, the used/cap counts, and how many pending
-    tasks (including this one -- none of them were touched) remain, as its own bullet lines --
-    never folded into prose. Structurally the same append-only block shape as `append_note`
-    (created if missing, one blank-line-separated block appended), and the SAME
-    `build_outcome_line` -- carries `run=` (always, since `cmd_run` always generates one) and
-    never `parent=` (a budget-stopped run is not counted as lineage; see `PARENT_RESULTS`,
-    which `budget-stop` is deliberately not a member of).
-    """
-    notes_path = Path(notes_path)
-    ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    task_id = task["id"]
-    model_label = task.get("model") or "unpinned"
-    block_lines = [
-        f"## {ts}{EM_DASH}{task_id}",
-        f"- role: {role}",
-        f"- budget-stop: {exhausted_key}={cap} reached (used={used})",
-        f"- remaining tasks untouched: {remaining}",
-        "- " + build_outcome_line(task_id, model_label, 0, "budget-stop", run_id=run_id),
-    ]
-    block = "\n".join(block_lines) + "\n"
 
-    existing = notes_path.read_text() if notes_path.exists() else ""
-    if existing and not existing.endswith("\n"):
-        existing += "\n"
-    separator = "\n" if existing.strip() else ""
-    notes_path.parent.mkdir(parents=True, exist_ok=True)
-    notes_path.write_text(existing + separator + block)
+
+
+
+
+
 
 
 def append_note(notes_path, result, task, run_id=None, parent=None, defect_kind=None):
@@ -811,68 +754,24 @@ def append_note(notes_path, result, task, run_id=None, parent=None, defect_kind=
 
 # ---- default runners (module level, injectable everywhere) ------------------------------------
 
-def default_runner(argv):
-    """Dispatch runner for real runs: `subprocess.run(argv, ...)` -> (rc, stdout+stderr).
-
-    !!! Invoking this with a real `claude` argv spends the user's real tokens and hits the
-    network. !!!
-    """
-    proc = subprocess.run(argv, capture_output=True, text=True)
-    return proc.returncode, (proc.stdout or "") + (proc.stderr or "")
 
 
-def default_verify_runner(cmd):
-    """Verify runner for real runs: shell out (verify commands are repo-authored shell lines).
 
-    Same trust model as the kit contract: `subprocess.run(cmd, shell=True, ...)`.
-    """
-    proc = subprocess.run(cmd, shell=True, capture_output=True, text=True)
-    return proc.returncode, (proc.stdout or "") + (proc.stderr or "")
+
+
+
 
 
 # ---- CLI ----------------------------------------------------------------------------------------
 
-def _read_tasks_text(kit_dir):
-    path = Path(kit_dir) / "TASKS.md"
-    if not path.exists():
-        raise FileNotFoundError(f"no TASKS.md under kit dir {kit_dir}")
-    return path.read_text()
 
 
-def _select_task(tasks, task_id=None):
-    if task_id is not None:
-        for t in tasks:
-            if t["id"] == task_id:
-                return t
-        return None
-    status_by_id = {t["id"]: t["status"] for t in tasks}
-    for t in tasks:
-        if t["status"] == "pending" and all(
-            status_by_id.get(dep) == "done" for dep in t["depends"]
-        ):
-            return t
-    return None
 
 
-def cmd_status(args):
-    tasks = parse_tasks(_read_tasks_text(args.kit))
-    if args.json:
-        print(json.dumps(tasks, indent=2))
-        return
 
-    id_w = max((len(t["id"]) for t in tasks), default=0)
-    status_w = max((len(t["status"]) for t in tasks), default=0)
-    model_w = max((len(t["model"] or "-") for t in tasks), default=0)
-    for t in tasks:
-        print(
-            f"{t['id']:<{id_w}}  {t['status']:<{status_w}}  "
-            f"{(t['model'] or '-'):<{model_w}}  {t['title']}"
-        )
-    counts = {s: sum(1 for t in tasks if t["status"] == s) for s in STATUSES}
-    print(
-        f"{counts['pending']} pending / {counts['in-progress']} in-progress / "
-        f"{counts['done']} done / {counts['blocked']} blocked"
-    )
+
+
+
 
 
 def _print_dispatch_preview(task, claude_bin, model_id, prompt, extra_args):
@@ -891,7 +790,8 @@ def cmd_run(args):
 
     pricing = load_pricing()
     extra_args = tuple(args.extra_arg or ())
-    preamble = load_preamble(args.role, slug, REPO_ROOT)
+    preamble, role_frontmatter = load_role_spec(args.role, slug, REPO_ROOT)
+    permissions = role_permission_profile(args.role, role_frontmatter)
 
     if args.dry_run:
         # `--dry-run` with no `--task` previews EVERY pending task (not just the first
@@ -905,23 +805,18 @@ def cmd_run(args):
                 prompt = preamble + "\n\n---\n\n" + t["brief"]
                 _print_dispatch_preview(t, args.claude_bin, model_id, prompt, extra_args)
             return
-        task = _select_task(tasks, args.task)
+        task, reason = select_task(tasks, args.task, allow_rerun=args.rerun)
         if task is None:
-            print(f"no task with id {args.task!r} in {tasks_path}", file=sys.stderr)
+            print(f"{reason} ({tasks_path})", file=sys.stderr)
             sys.exit(2)
         model_id = resolve_model(pricing, task["model"])
         prompt = preamble + "\n\n---\n\n" + task["brief"]
         _print_dispatch_preview(task, args.claude_bin, model_id, prompt, extra_args)
         return
 
-    task = _select_task(tasks, args.task)
+    task, reason = select_task(tasks, args.task, allow_rerun=args.rerun)
     if task is None:
-        if args.task:
-            print(f"no task with id {args.task!r} in {tasks_path}", file=sys.stderr)
-        else:
-            print(
-                f"no eligible pending task (all deps done) in {tasks_path}", file=sys.stderr
-            )
+        print(f"{reason} ({tasks_path})", file=sys.stderr)
         sys.exit(2)
 
     # A task is never its own parent. `bin/routing_scorecard.py` DROPS a self-referencing
@@ -950,10 +845,15 @@ def cmd_run(args):
     # this gate only ever stops a REAL run. See the module's "PLAN.md budget dial" section.
     plan_path = kit / "PLAN.md"
     plan_budget = parse_plan_budget(plan_path.read_text()) if plan_path.exists() else None
+    admission = None
     if plan_budget:
         notes_path = kit / "NOTES.md"
         notes_text = notes_path.read_text() if notes_path.exists() else ""
         used = count_plan_budget_usage(notes_text)
+        # The entry gate below still stops a run before it writes `in-progress`. This carries
+        # the same numbers INTO the run, so every escalation rung asks again instead of the
+        # ladder spending freely on one entry-time grant.
+        admission = BudgetAdmission(plan_budget, used)
         exhausted_key = plan_budget_exhausted(plan_budget, used, is_consult=bool(args.parent))
         if exhausted_key:
             cap = plan_budget[exhausted_key]
@@ -993,25 +893,41 @@ def cmd_run(args):
     tasks_path.write_text(text)
 
     verify_cmd = task.get("verify")
+    # One confined runner for BOTH the precheck and the task's own verification: the precheck
+    # runs the same repo-authored line against the same tree, so it cannot be the unconfined
+    # one. `--exec-mode enforced` refuses outright on a host with no backend rather than
+    # quietly running it with the parent's privileges.
+    verify_runner = _ep().verify_runner(Path.cwd(), mode=args.exec_mode)
+
     vh = _load_verify_hook_module()
-    precheck = vh.run_precheck(str(kit), task["id"], verify_cmd, default_verify_runner)
+    precheck = vh.run_precheck(
+        str(kit), task["id"], verify_cmd, verify_runner, evidence=task.get("evidence")
+    )
 
     result = run_task(
-        task, pricing, default_runner, default_verify_runner,
-        prompt=prompt, role=args.role, max_escalations=args.max_escalations,
+        task, pricing, default_runner, verify_runner,
+        prompt=prompt, role=args.role, permissions=permissions,
+        admission=admission, consult=bool(args.parent),
+        max_escalations=args.max_escalations,
         claude_bin=args.claude_bin, extra_args=extra_args,
     )
 
-    # Neither `run_precheck`'s record nor `run_record`'s refusal may be discarded: a verify
-    # command that already passed on the pre-task tree proves nothing about the implementation
-    # (PLAN D10), so an `outcome: ... result=pass` written from it would be indistinguishable
-    # in the ledger from a genuine red -> green first-try pass -- and NOTES.md is the routing
-    # evidence base the scorecard and the next architect read. The refusal therefore (1) rides
-    # into NOTES.md as an in-grammar `defect:` line in the same write path as the `outcome:`
-    # line, (2) goes to stderr, and (3) makes this command exit nonzero for an unattended
-    # caller. It deliberately does NOT block the `done` write: the implementation may be
-    # perfectly fine, status follows the verify's exit code, and letting an analysis signal
-    # change routing state is the shape PLAN D11 forbids. The ledger carries the honesty label.
+    # THE DRIVER AND THE MARKER MUST AGREE (step 09). Both facts are still recorded: the
+    # refusal rides into NOTES.md as an in-grammar `defect:` line, goes to stderr, and makes
+    # this command exit nonzero.
+    #
+    # What changed is that a REQUIRED proof no longer fails quietly. This block used to let
+    # `done` stand anyway, reasoning that an analysis signal must not change routing state --
+    # correct while the rule was BLANKET, because it fired on refactors, docs guards and
+    # regression fences where a pre-task pass is the expected result and the task was fine.
+    # With `- evidence:` declaring what each task's check has to demonstrate, a red-green
+    # task's pre-task pass is no longer an analysis finding: it is that task's required proof
+    # failing, and a task whose proof failed is not done. Tasks that legitimately pass
+    # beforehand say `- evidence: regression` (or `precondition`) and are never flagged at all.
+    #
+    # NOT a claim that the marker proves verification ran: `record` is directly callable and
+    # PostToolUse fires after the edit lands. The authoritative signal is the driver's OWN
+    # verify result; the marker is the cooperative half, and this makes the two agree.
     tautological = bool((precheck or {}).get("tautological"))
     refused = False
 
@@ -1022,6 +938,19 @@ def cmd_run(args):
         else:
             refused = True
             print(message, file=sys.stderr)
+
+    if result["status"] == "done" and (tautological or refused):
+        result["status"] = "blocked"
+        result["failure"] = "required-evidence"
+        print(
+            f"required-evidence: task {task['id']} declares evidence="
+            f"{vh.normalize_evidence(task.get('evidence'))} and its verify command already "
+            f"passed on the pre-task tree, so the check demonstrates nothing about this work. "
+            f"Status is blocked, NOT done. If the command is protecting behaviour that already "
+            f"works, declare `- evidence: regression` on the task; if it is meant to prove a "
+            f"change, make it able to fail first.",
+            file=sys.stderr,
+        )
 
     defect_kind = "tautological-verify" if (tautological or refused) else None
 
@@ -1048,7 +977,10 @@ def cmd_review(args):
     kit = Path(args.kit)
     slug = kit.name
     extra_args = tuple(args.extra_arg or ())
-    preamble = load_preamble("reviewer", slug, REPO_ROOT)
+    preamble, frontmatter = load_role_spec("reviewer", slug, REPO_ROOT)
+    profile = role_permission_profile(
+        "reviewer", frontmatter, review_mode=args.review_permissions
+    )
     body = (
         f"Review phase {args.phase} of the execution kit at {args.kit}. Read "
         f"{args.kit}/PLAN.md (goal, decisions, out-of-scope fence, tripwires) and the tasks "
@@ -1056,7 +988,9 @@ def cmd_review(args):
         f"for drift, scope creep, and contract breakage. Report findings; change nothing."
     )
     prompt = preamble + "\n\n---\n\n" + body
-    argv = build_dispatch(args.claude_bin, None, prompt, extra_args=extra_args)
+    argv = build_dispatch(args.claude_bin, None, prompt, extra_args=extra_args,
+                          permissions=profile)
+    print(describe_permissions(profile))
     if args.dry_run:
         print(f"phase: {args.phase}")
         print(f"dispatch: {shlex.join(argv)}")
@@ -1103,6 +1037,16 @@ def build_parser():
              "outcome line on success; TASK_ID must differ from the task being run -- a value "
              "equal to the task's own id is REJECTED with exit 2, nothing written)",
     )
+    p_run.add_argument("--exec-mode", choices=("enforced", "trusted-host"), default="enforced",
+                       help="verification confinement (step 05). `enforced` runs the verify "
+                            "command inside an OS boundary — writes limited to the workspace, "
+                            "network denied, credential stores unreadable — and REFUSES when "
+                            "no backend can enforce that. `trusted-host` runs it with no "
+                            "boundary at all and says so; choose it only for a host you trust.")
+    p_run.add_argument("--rerun", action="store_true",
+                       help="allow selecting a task already marked done (step 07). Without it, "
+                            "naming a completed task is refused rather than silently repeating "
+                            "finished work.")
     p_run.add_argument("--dry-run", action="store_true",
                        help="print the dispatch argv and verify command; spawn/write nothing")
     p_run.set_defaults(func=cmd_run)
@@ -1113,6 +1057,13 @@ def build_parser():
     p_review.add_argument("--claude-bin", default="claude", help="Claude Code CLI binary")
     p_review.add_argument("--extra-arg", action="append",
                           help="extra dispatch flag (repeatable)")
+    p_review.add_argument("--review-permissions", choices=("restricted", "bypass"),
+                          default="restricted",
+                          help="review dispatch permissions (step 06). `restricted` honours the "
+                               "reviewer agent's own `tools:` pin and adds NO blanket permission "
+                               "grant. `bypass` is the named opt-out that restores the historical "
+                               "blanket grant, and is recorded as such — a tool pin is a CLI "
+                               "control, not an OS boundary.")
     p_review.add_argument("--dry-run", action="store_true",
                           help="print the dispatch argv; spawn nothing")
     p_review.set_defaults(func=cmd_review)
@@ -1120,14 +1071,6 @@ def build_parser():
     return ap
 
 
-def main(argv=None):
-    ap = build_parser()
-    args = ap.parse_args(argv)
-    try:
-        args.func(args)
-    except (ValueError, FileNotFoundError, KeyError) as e:
-        print(str(e), file=sys.stderr)
-        sys.exit(2)
 
 
 if __name__ == "__main__":

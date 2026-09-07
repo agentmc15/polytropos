@@ -133,14 +133,19 @@ class WorkflowTopLevelShapeTests(unittest.TestCase):
         on_block = _block(self.text, "on:") or ""
         self.assertRegex(on_block, r"workflow_dispatch\s*:?")
 
-    def test_top_level_permissions_block_pinned(self):
-        """Brief: 'Top-level permissions: -> contents: read, pages: write,
-        id-token: write'."""
+    def test_top_level_permissions_are_least_privilege(self):
+        """Since step 14 the top level grants READ ONLY.
+
+        It used to grant `pages: write` and `id-token: write` workflow-wide, which put a
+        Pages-deploy credential and a mintable OIDC token in the same job as `pip install`
+        and `mkdocs build` — the job that runs repository content through a third-party
+        toolchain. Deploy credentials now live in the deploy job, which runs no repo code.
+        """
         perm_block = _block(self.text, "permissions:")
         self.assertIsNotNone(perm_block, "top-level 'permissions:' block must exist")
         self.assertRegex(perm_block, r"contents:\s*read")
-        self.assertRegex(perm_block, r"pages:\s*write")
-        self.assertRegex(perm_block, r"id-token:\s*write")
+        self.assertNotRegex(perm_block, r"pages:\s*write")
+        self.assertNotRegex(perm_block, r"id-token:\s*write")
 
     def test_top_level_concurrency_block_pinned(self):
         """Brief: 'concurrency: -> group: pages, cancel-in-progress: true'."""
@@ -163,17 +168,20 @@ class WorkflowBuildJobTests(unittest.TestCase):
         self.assertTrue(build_block, "jobs.build must exist")
         self.assertRegex(build_block, r"runs-on:\s*ubuntu-latest")
 
-    def test_checkout_action_pinned_v4(self):
-        self.assertRegex(self.text, r"uses:\s*actions/checkout@v4")
+    def test_checkout_action_pinned_to_a_commit_sha(self):
+        # A tag is a mutable pointer; `@v4` runs whatever it points at today.
+        self.assertRegex(self.text, r"uses:\s*actions/checkout@[0-9a-f]{40}\s+#\s*v4\.")
 
-    def test_setup_python_action_pinned_v5_with_312(self):
-        self.assertRegex(self.text, r"uses:\s*actions/setup-python@v5")
+    def test_setup_python_action_pinned_to_a_commit_sha_with_312(self):
+        self.assertRegex(self.text, r"uses:\s*actions/setup-python@[0-9a-f]{40}\s+#\s*v5\.")
         # python-version must be pinned to 3.12 (brief: 'python-version: "3.12"')
         self.assertRegex(self.text, r'python-version:\s*["\']?3\.12["\']?')
 
-    def test_pip_install_requirements_step(self):
+    def test_pip_install_enforces_the_lock(self):
+        # `--require-hashes` is what makes docs-src/requirements.txt binding: without it the
+        # pins are advisory and a substituted artifact installs silently.
         self.assertRegex(
-            self.text, r"pip install -r docs-src/requirements\.txt"
+            self.text, r"pip install [^\n]*--require-hashes[^\n]*docs-src/requirements\.txt"
         )
 
     def test_drift_gate_step_present(self):
@@ -205,8 +213,9 @@ class WorkflowBuildJobTests(unittest.TestCase):
         """Brief: 'actions/upload-pages-artifact@v3 with path: site-build'.
         Check the path is an input on THAT step, not merely present somewhere
         else in the file."""
-        idx = _line_index_containing(self.lines, "upload-pages-artifact@v3")
-        self.assertIsNotNone(idx, "upload-pages-artifact@v3 step must be present")
+        idx = _line_index_containing(self.lines, "upload-pages-artifact@")
+        self.assertIsNotNone(idx, "upload-pages-artifact step must be present")
+        self.assertRegex(self.lines[idx], r"upload-pages-artifact@[0-9a-f]{40}\s+#\s*v3\.")
         # the `with:`/`path:` for this step should appear within the next
         # few lines (same step block), not arbitrarily far away.
         window = "\n".join(self.lines[idx: idx + 6])
@@ -238,8 +247,14 @@ class WorkflowDeployJobTests(unittest.TestCase):
             r"url:\s*\$\{\{\s*steps\.deployment\.outputs\.page_url\s*\}\}",
         )
 
-    def test_deploy_pages_action_pinned_v4(self):
-        self.assertRegex(self.deploy_block, r"uses:\s*actions/deploy-pages@v4")
+    def test_deploy_pages_action_pinned_to_a_commit_sha(self):
+        self.assertRegex(self.deploy_block,
+                         r"uses:\s*actions/deploy-pages@[0-9a-f]{40}\s+#\s*v4\.")
+
+    def test_the_deploy_job_is_the_only_holder_of_deploy_credentials(self):
+        for credential in (r"pages:\s*write", r"id-token:\s*write"):
+            with self.subTest(credential=credential):
+                self.assertRegex(self.deploy_block, credential)
 
     def test_deploy_step_id_is_deployment(self):
         self.assertRegex(self.deploy_block, r"id:\s*deployment")

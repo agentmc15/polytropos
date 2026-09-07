@@ -1215,9 +1215,12 @@ class ParsePlanBudgetTests(unittest.TestCase):
 
 class CountPlanBudgetUsageTests(unittest.TestCase):
     def test_empty_notes_all_zero(self):
+        # Derived from PLAN_BUDGET_KEYS rather than a frozen literal: the counter must always
+        # report EVERY cap (step 08 added `max-model-calls`), and a cap the counter forgets is
+        # a cap that reads as zero-used forever.
         self.assertEqual(
             ce.count_plan_budget_usage(""),
-            {"max-dispatches": 0, "max-escalations": 0, "max-consults": 0},
+            {key: 0 for key in ce.PLAN_BUDGET_KEYS},
         )
 
     def test_sums_attempts_and_escalations_across_lines(self):
@@ -1410,6 +1413,210 @@ class EndToEndPlanBudgetStopTests(unittest.TestCase):
             notes_text = (kit_dir / "NOTES.md").read_text()
             self.assertIn("result=pass", notes_text)
             self.assertNotIn("budget-stop", notes_text)
+
+
+class ReviewPermissionTests(unittest.TestCase):
+    """Step 06: review dispatch no longer receives approval for every tool, including
+    command execution."""
+
+    def test_implementation_dispatch_keeps_the_blanket_grant(self):
+        argv = ce.build_dispatch("implementer", "brief")
+        self.assertIn("--allow-all-tools", argv)
+
+    def test_review_dispatch_omits_the_blanket_grant(self):
+        argv = ce.build_dispatch("reviewer", "brief", allow_all_tools=False)
+        self.assertNotIn("--allow-all-tools", argv)
+        # ...and nothing narrower was INVENTED to replace it.
+        self.assertNotIn("--deny-tool", argv)
+        self.assertNotIn("--allow-tool", argv)
+
+    def test_the_rest_of_the_dispatch_shape_is_untouched(self):
+        with_grant = ce.build_dispatch("reviewer", "brief", model="m")
+        without = ce.build_dispatch("reviewer", "brief", model="m", allow_all_tools=False)
+        self.assertEqual([a for a in with_grant if a != "--allow-all-tools"], without)
+
+
+class DispatchAndReadinessTests(unittest.TestCase):
+    """Step 07: dispatch status and verification status are separate facts, and one readiness
+    rule governs both explicit and automatic selection."""
+
+    def _task(self, **overrides):
+        base = {"id": "T1", "title": "t", "status": "pending", "model": "mid",
+                "depends": [], "brief": "do it", "verify": "true"}
+        base.update(overrides)
+        return base
+
+    def test_a_failed_dispatch_does_not_become_done_on_a_passing_check(self):
+        """THE defect. The model process failed; the verify command passes because it was
+        already passing. That is not work this attempt did."""
+        runner = mock.Mock(return_value=(1, "auth error: not logged in"))
+        verify_runner = mock.Mock(return_value=(0, "ok"))
+
+        result = ce.run_task(self._task(), PRICING_FIXTURE, runner, verify_runner, copilot_bin=STUB_BIN)
+
+        self.assertEqual(result["status"], "blocked")
+        self.assertEqual(result["dispatch_rc"], 1)
+        self.assertEqual(result["failure"], "dispatch")
+        # The check's verdict is not borrowed to describe a dispatch that never ran.
+        self.assertIsNone(result["verify_rc"])
+        self.assertIn("auth error", result["dispatch_evidence"])
+
+    def test_a_failed_dispatch_does_not_climb_the_escalation_ladder(self):
+        """A crashed or unauthenticated process fails the same way on a pricier model."""
+        runner = mock.Mock(return_value=(1, "boom"))
+        verify_runner = mock.Mock(return_value=(1, "failing"))
+
+        result = ce.run_task(self._task(), PRICING_FIXTURE, runner, verify_runner, copilot_bin=STUB_BIN)
+
+        self.assertEqual(result["status"], "blocked")
+        self.assertEqual(result["escalations"], [])
+        self.assertEqual(runner.call_count, 1, "must not retry an infrastructure failure")
+
+    def test_verification_failure_after_a_successful_dispatch_still_escalates(self):
+        runner = mock.Mock(return_value=(0, ""))
+        verify_runner = mock.Mock(side_effect=[(1, "red"), (0, "green")])
+
+        result = ce.run_task(self._task(), PRICING_FIXTURE, runner, verify_runner, copilot_bin=STUB_BIN)
+
+        self.assertEqual(result["status"], "done")
+        self.assertEqual(result["failure"], None)
+        self.assertEqual(result["dispatch_rc"], 0)
+        self.assertTrue(result["escalations"])
+
+    def test_a_runner_that_reports_nothing_is_unknown_not_success(self):
+        """Injected fixtures return None. That is absence of evidence, recorded as such --
+        it is not a reported failure, so it does not block completion."""
+        result = ce.run_task(self._task(), PRICING_FIXTURE, mock.Mock(return_value=None),
+                             mock.Mock(return_value=(0, "ok")), copilot_bin=STUB_BIN)
+        self.assertEqual(result["status"], "done")
+        self.assertIsNone(result["dispatch_rc"])
+
+    def test_explicit_selection_obeys_the_same_dependency_rule_as_automatic(self):
+        tasks = [self._task(id="T1", status="pending"),
+                 self._task(id="T2", status="pending", depends=["T1"])]
+        task, reason = ce.select_task(tasks, "T2")
+        self.assertIsNone(task, "naming a task must not bypass its dependencies")
+        self.assertIn("depends on T1", reason)
+        self.assertIn("pending", reason)
+
+    def test_a_nonexistent_dependency_is_named(self):
+        tasks = [self._task(id="T2", depends=["T99"])]
+        task, reason = ce.select_task(tasks, "T2")
+        self.assertIsNone(task)
+        self.assertIn("unknown task 'T99'", reason)
+
+    def test_an_unknown_task_id_is_named(self):
+        task, reason = ce.select_task([self._task(id="T1")], "T9")
+        self.assertIsNone(task)
+        self.assertIn("no task with id 'T9'", reason)
+
+    def test_a_ready_task_is_selected_explicitly_and_automatically(self):
+        tasks = [self._task(id="T1", status="done"),
+                 self._task(id="T2", status="pending", depends=["T1"])]
+        explicit, reason = ce.select_task(tasks, "T2")
+        self.assertIsNotNone(explicit, reason)
+        self.assertEqual(explicit["id"], "T2")
+        automatic, reason = ce.select_task(tasks)
+        self.assertEqual(automatic["id"], "T2", reason)
+
+    def test_completed_work_is_not_silently_repeated(self):
+        tasks = [self._task(id="T1", status="done")]
+        task, reason = ce.select_task(tasks, "T1")
+        self.assertIsNone(task)
+        self.assertIn("already done", reason)
+        rerun, reason = ce.select_task(tasks, "T1", allow_rerun=True)
+        self.assertIsNotNone(rerun, reason)
+
+    def test_automatic_selection_explains_an_empty_frontier(self):
+        blocked = [self._task(id="T2", status="pending", depends=["T1"]),
+                   self._task(id="T1", status="blocked")]
+        task, reason = ce.select_task(blocked)
+        self.assertIsNone(task)
+        self.assertIn("no pending task has all dependencies done", reason)
+
+
+MODEL_PIN = "mid"
+RUN_KWARGS = {"copilot_bin": STUB_BIN}
+
+
+class BudgetAdmissionTests(unittest.TestCase):
+    """Step 08: every consuming operation is admitted BEFORE it spends."""
+
+    def _task(self, **overrides):
+        base = {"id": "T1", "title": "t", "status": "pending", "model": MODEL_PIN,
+                "depends": [], "brief": "do it", "verify": "true"}
+        base.update(overrides)
+        return base
+
+    def test_a_one_dispatch_allowance_funds_exactly_one_dispatch(self):
+        """THE defect: the gate ran once at invocation entry, so `max-dispatches=1` paid for
+        the initial attempt AND every rung of the escalation ladder."""
+        runner = mock.Mock(return_value=(0, ""))
+        verify_runner = mock.Mock(return_value=(1, "always failing"))
+        admission = ce.BudgetAdmission({"max-dispatches": 1}, {})
+
+        result = ce.run_task(self._task(), PRICING_FIXTURE, runner, verify_runner,
+                             admission=admission, **RUN_KWARGS)
+
+        self.assertEqual(runner.call_count, 1)
+        self.assertEqual(result["status"], "blocked")
+        self.assertEqual(result["failure"], "budget")
+        self.assertEqual(result["budget_stop"]["operation"], "escalation")
+
+    def test_a_zero_escalation_allowance_still_permits_the_initial_attempt(self):
+        """`used=0 >= cap=0` is true, and the old check tested every cap against every
+        operation -- so declaring `max-escalations=0` refused to run the first task at all."""
+        self.assertIsNone(ce.plan_budget_exhausted({"max-escalations": 0}, {}, False))
+
+        runner = mock.Mock(return_value=(0, ""))
+        verify_runner = mock.Mock(return_value=(0, "ok"))
+        admission = ce.BudgetAdmission({"max-escalations": 0}, {})
+        result = ce.run_task(self._task(), PRICING_FIXTURE, runner, verify_runner,
+                             admission=admission, **RUN_KWARGS)
+
+        self.assertEqual(result["status"], "done")
+        self.assertEqual(runner.call_count, 1)
+
+    def test_a_zero_escalation_allowance_still_refuses_the_ladder(self):
+        runner = mock.Mock(return_value=(0, ""))
+        verify_runner = mock.Mock(return_value=(1, "failing"))
+        admission = ce.BudgetAdmission({"max-escalations": 0}, {})
+        result = ce.run_task(self._task(), PRICING_FIXTURE, runner, verify_runner,
+                             admission=admission, **RUN_KWARGS)
+
+        self.assertEqual(runner.call_count, 1)
+        self.assertEqual(result["budget_stop"]["operation"], "escalation")
+
+    def test_a_failed_consult_still_consumes_its_allowance(self):
+        """An operation that can fail for free is an operation nobody is counting."""
+        admission = ce.BudgetAdmission({"max-consults": 1}, {})
+        ok, _ = admission.admit("consult")
+        self.assertTrue(ok)
+        ok, reason = admission.admit("consult")
+        self.assertFalse(ok, "the first consult spent the allowance even though it failed")
+        self.assertIn("max-consults", reason)
+
+    def test_operation_kinds_draw_down_the_caps_they_should(self):
+        self.assertEqual(ce.OPERATION_CAPS["initial"], ("max-dispatches", "max-model-calls"))
+        self.assertIn("max-escalations", ce.OPERATION_CAPS["escalation"])
+        self.assertIn("max-consults", ce.OPERATION_CAPS["consult"])
+        # An initial attempt never consults the escalation cap -- that IS the zero-cap fix.
+        self.assertNotIn("max-escalations", ce.OPERATION_CAPS["initial"])
+        # Review and acceptance are outside max-dispatches, historically and still.
+        self.assertNotIn("max-dispatches", ce.OPERATION_CAPS["review"])
+        self.assertNotIn("max-dispatches", ce.OPERATION_CAPS["acceptance"])
+
+    def test_max_dispatches_keeps_its_recorded_meaning(self):
+        """Compatibility: an existing ledger must not start meaning something new."""
+        notes = "- outcome: T1 model=m attempts=3 result=escalated-pass\n"
+        used = ce.count_plan_budget_usage(notes)
+        self.assertEqual(used["max-dispatches"], 3)
+        self.assertEqual(used["max-escalations"], 2)
+        self.assertEqual(used["max-model-calls"], 3)
+
+    def test_the_new_cap_parses_alongside_the_historical_ones(self):
+        budget = ce.parse_plan_budget("budget: max-dispatches=5 max-model-calls=9")
+        self.assertEqual(budget, {"max-dispatches": 5, "max-model-calls": 9})
 
 
 if __name__ == "__main__":

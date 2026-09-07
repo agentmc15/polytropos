@@ -42,10 +42,26 @@ import argparse
 import json
 import subprocess
 import sys
+import tempfile
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
+
+def _store_default(name):
+    """Default location for a runtime store, via `bin/runtime_data.py` (step 13).
+
+    Outside the plugin tree unless a store already exists in it, in which case that one keeps
+    being used. Per-command `--*-dir` flags override this and are unchanged.
+    """
+    import importlib.util
+    module_path = Path(__file__).resolve().parent / "runtime_data.py"
+    spec = importlib.util.spec_from_file_location("runtime_data", module_path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.store_path(name, PLUGIN_ROOT)
+
+
 PRICING_PATH = PLUGIN_ROOT / "data" / "pricing.json"
 
 # Structural tier VOCABULARY (like cost_report.py's EXPENSIVE_TIERS) — these are pricing-tier
@@ -69,6 +85,16 @@ PRIVACY_NOTE = (
     "Privacy: this step sends the digest — project/repo names, commit subjects, kit task "
     "titles, and inbox text — to the model via the claude CLI."
 )
+
+
+def _sp():
+    """Lazy-load bin/safe_paths.py -- the repo's ONE path-containment helper."""
+    import importlib.util
+    path = Path(__file__).resolve().parent / "safe_paths.py"
+    spec = importlib.util.spec_from_file_location("safe_paths", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
 
 
 def load_pricing():
@@ -187,8 +213,9 @@ def build_prompts(digest):
         "## Harness plan\n"
         "  For each To-do above, recommend a harness (Claude Code / Copilot CLI / Codex\n"
         "  CLI), a model tier, a ready-to-paste command built from that harness's\n"
-        "  command_template in signals.harness (fill {model} with the recommended model\n"
-        "  id from its est entries), and a one-line WHY grounded in the signals.harness\n"
+        "  command_argv in signals.harness (a pinned argv shape: replace the {{model}} slot\n"
+        "  with the recommended model id from its est entries and the {{task}} slot with the\n"
+        "  to-do text), and a one-line WHY grounded in the signals.harness\n"
         "  estimates and today's usage. Advisory only — the user decides and runs it;\n"
         "  nothing auto-executes. Codex dollar figures are API-equivalent relative-burn\n"
         "  proxies, never bills.\n\n"
@@ -199,24 +226,70 @@ def build_prompts(digest):
     return {"narrative": narrative, "technical": technical, "next_day": next_day}
 
 
+def _pr():
+    """Lazy-load bin/proc_runner.py -- the repo's ONE process-lifecycle helper (step 12)."""
+    import importlib.util
+    path = Path(__file__).resolve().parent / "proc_runner.py"
+    spec = importlib.util.spec_from_file_location("proc_runner", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
 def build_dispatch(model_id, claude_bin=DEFAULT_CLAUDE_BIN):
     """The dispatch argv (PLAN.md D9): exactly ``[claude_bin, "-p", "--model", model_id]``.
     The prompt travels on STDIN — never in argv (no ARG_MAX risk, nothing in ``ps`` output)."""
     return [claude_bin, "-p", "--model", model_id]
 
 
+#: Returned when the dispatch left something behind in its isolated workspace. Distinct from
+#: any code the CLI itself returns, because it is a verdict about BEHAVIOUR, not about the run.
+SIDE_EFFECT_RC = 126
+
+
 def default_runner(argv, prompt):
     """The default injectable dispatch — the ONLY subprocess in this module. Runs ``argv``
     with ``prompt`` on stdin and returns ``(returncode, stdout)``. A missing binary ->
-    ``(127, ...)``; a timeout -> ``(124, ...)`` (never raises to the caller)."""
-    try:
-        proc = subprocess.run(
-            argv, input=prompt, capture_output=True, text=True, timeout=600)
-    except FileNotFoundError as e:
-        return (127, f"<claude bin not found: {e}>")
-    except subprocess.TimeoutExpired as e:
-        return (124, f"<claude dispatch timed out: {e}>")
-    return (proc.returncode, proc.stdout)
+    ``(127, ...)``; a timeout -> ``(124, ...)`` (never raises to the caller).
+
+    SUMMARISING IS A PURE TEXT TRANSFORMATION and this dispatch is arranged so that it can be
+    checked to have been one, rather than asked to be one in the prompt. Three controls, and
+    the reason each is here rather than a flag:
+
+    - AN ISOLATED WORKING DIRECTORY. The run happens in an empty temp dir, so the repository's
+      ``CLAUDE.md``, ``.claude/settings.json``, hooks, and ``.mcp.json`` — all discovered
+      relative to the working directory — are not in scope. Ambient project instructions have
+      no business steering a summary of metadata, and the source text being summarised is
+      untrusted input.
+    - A REDUCED ENVIRONMENT, from ``bin/proc_runner.py``: this provider's variables and the
+      base set, never the machine's other credentials.
+    - A SIDE-EFFECT CHECK. The isolated directory must still be empty afterwards. A summary
+      that wrote a file did something a text transformation cannot, and is REJECTED rather
+      than accepted with a note.
+
+    No tool-restricting FLAG is passed. ``bin/claude_execute.py`` pins its dispatch flags as
+    best-effort and explicitly not live-verified, and guessing at the semantics of an empty
+    ``--allowedTools`` on the daily path would risk breaking it to gain a control this cannot
+    confirm. Note also that this dispatch has never carried the blanket permission grant. The
+    isolation and the check above are what is enforced; nothing here claims the model was
+    incapable of tool use, only that it demonstrably did not act in the one place it was given.
+    """
+    pr = _pr()
+    with tempfile.TemporaryDirectory(prefix="journal-summary-") as isolated:
+        result = pr.run(argv, cwd=isolated, env=pr.dispatch_env("claude"), input_text=prompt,
+                        timeout=600, name="journal summary")
+        left_behind = sorted(p.name for p in Path(isolated).iterdir())
+    if result["outcome"] == pr.OUTCOME_MISSING_EXECUTABLE:
+        return (127, f"<claude bin not found: {result['detail']}>")
+    if not result["terminal"]:
+        return (result["rc"], f"<claude dispatch {result['outcome']}: {result['detail']}>")
+    if left_behind:
+        return (SIDE_EFFECT_RC,
+                f"<summary dispatch wrote into its isolated workspace: {', '.join(left_behind)} "
+                f"— rejected; summarising metadata requires no side effect>")
+    # stdout only: the summary is what the model wrote, and folding diagnostics into it would
+    # put them in the digest.
+    return (result["rc"], result["stdout"])
 
 
 def summarize(digest, models, runner, claude_bin=DEFAULT_CLAUDE_BIN):
@@ -271,7 +344,7 @@ def main(argv=None):
                     help="YYYY-MM-DD (default: today; matches journal_collect.py)")
     ap.add_argument("--utc", action="store_true",
                     help="resolve the default date in UTC (tests/verifies use it)")
-    ap.add_argument("--journal-dir", default=str(PLUGIN_ROOT / "journal"),
+    ap.add_argument("--journal-dir", default=str(_store_default("journal")),
                     help="journal root (digest dir is <journal-dir>/<date>)")
     ap.add_argument("--digest", default=None,
                     help="explicit digest.json path (overrides --date/--journal-dir)")
@@ -322,9 +395,13 @@ def main(argv=None):
 
     docs, meta = summarize(digest, models, default_runner, claude_bin=args.claude_bin)
     out_dir = digest_path.parent
+    # Summaries are personal work data; same containment rules as the digest they came from.
+    sp = _sp()
     for doc, text in docs.items():
-        (out_dir / FILENAMES[doc]).write_text(text)
-    (out_dir / "summary-meta.json").write_text(json.dumps(meta, indent=2))
+        sp.confined_replace(out_dir, FILENAMES[doc], text,
+                            what=f"journal {doc}", mode=0o600)
+    sp.confined_replace(out_dir, "summary-meta.json", json.dumps(meta, indent=2),
+                        what="journal summary metadata", mode=0o600)
 
     for doc in DOCS:
         if doc in docs:

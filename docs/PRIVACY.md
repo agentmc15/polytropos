@@ -23,6 +23,29 @@ kit task's verify command — if any of them ever becomes tracked:
 Zero files under any of these have ever been committed, verified across the full git
 history (`git log --all --diff-filter=A`) on 2026-07-25.
 
+## Where runtime data actually lives (since step 13)
+
+These stores no longer default into the repository. Being gitignored keeps them out of a
+commit and out of nothing else: this repository is also a distributable plugin that gets
+installed, copied, cached, archived, and on many machines sits inside a cloud-synced folder.
+
+`python3 bin/runtime_data.py where` prints the resolved location of every store. A fresh
+install puts them under the OS application-data directory
+(`~/Library/Application Support/polytropos/<project>/` on macOS,
+`$XDG_DATA_HOME/polytropos/<project>/` on Linux), namespaced per checkout, created `0700` with
+`0600` files — private by construction rather than by whatever umask was set.
+
+**A store that already exists inside the tree keeps being used.** Nothing is relocated
+automatically, because an upgrade that moved a user's notes would be indistinguishable, from
+their side, from one that lost them. `runtime_data.py migrate --store <name> --apply` copies a
+store out; it never overwrites a destination file and never deletes the original, so undoing it
+is deleting the copy. `export` copies a store anywhere you name; `forget` lists what it would
+delete and only deletes with `--apply`. Neither can do anything about copies a backup or a
+cloud sync already made — those are invisible to this tool and it does not claim to clean them.
+
+`POLYTROPOS_DATA_HOME` overrides all of it. Per-command `--memory-dir` / `--store-dir` flags
+still override that, and remain how every test points at a temp fixture.
+
 ## Committed by design (private-repo tier)
 
 The following personal *metadata* IS in the tracked tree and git history, deliberately —

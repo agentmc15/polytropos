@@ -55,6 +55,21 @@ from pathlib import Path
 
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
 
+def _store_default(name):
+    """Default location for a runtime store, via `bin/runtime_data.py` (step 13).
+
+    Outside the plugin tree unless a store already exists in it, in which case that one keeps
+    being used. Per-command `--*-dir` flags override this and are unchanged.
+    """
+    import importlib.util
+    module_path = Path(__file__).resolve().parent / "runtime_data.py"
+    spec = importlib.util.spec_from_file_location("runtime_data", module_path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.store_path(name, PLUGIN_ROOT)
+
+
+
 # ---- pinned constants ------------------------------------------------------------------------
 
 PLAN_SCHEMA = 1
@@ -143,13 +158,6 @@ def _line_seed(line):
 
 
 # ---- title + key helpers ---------------------------------------------------------------------
-
-def sanitize_title(title):
-    """Strip every ``"`` and backtick, collapse internal whitespace runs to single spaces,
-    strip ends. This is what flows into a ready-to-paste shell command (the injection guard)."""
-    cleaned = (title or "").replace('"', "").replace("`", "")
-    return " ".join(cleaned.split()).strip()
-
 
 def dedup_key(card):
     """Dedup key: the ``source`` token when it starts ``kit:`` or ``wip:`` (structural,
@@ -540,8 +548,8 @@ def compose_harness_block(card, signal):
     ``signal`` None, or a signal whose three ``est`` values are all None -> exactly
     ``NO_SIGNAL_LINE`` as the whole block. Else: an ``- ideal:`` line from ``pick_ideal``, then
     one line per harness in ``HARNESS_ORDER``. A present slot entry renders the model id, the
-    command (its ``command_template`` with ``{model}`` and ``<task>`` filled — ``<task>`` is
-    the sanitized title), and the est text; a None entry renders ``- <harness>: <EST_NA>`` with
+    command (built by ``journal_advisor.render_command`` from that harness's pinned argv
+    shape, with the card's title preserved literally and POSIX-quoted), and the est text; a None entry renders ``- <harness>: <EST_NA>`` with
     NO command and NO model id (never guessed). An ``opus`` model-hint appends
     ``OPUS_SLOT_NOTE`` as the block's last line."""
     if signal is None:
@@ -565,7 +573,7 @@ def compose_harness_block(card, signal):
     harness, reason = pick_ideal(card, entries)
     lines = [f"{_IDEAL_PREFIX}{harness} — {reason}"]
 
-    task = sanitize_title(card.get("title"))
+    task = card.get("title") or ""
     for h in HARNESS_ORDER:
         entry = entries[h]
         est_text = _est_text(h, entry) if entry is not None else None
@@ -573,8 +581,15 @@ def compose_harness_block(card, signal):
         if entry is None or est_text is None or model is None:
             lines.append(f"- {h}: {EST_NA}")
             continue
-        template = (harnesses.get(h) or {}).get("command_template") or ""
-        command = template.replace("{model}", str(model)).replace("<task>", task)
+        # The EXECUTABLE SHAPE comes from the advisor's pinned table, never from the digest.
+        # A digest carrying its own command template would be handing this renderer a command
+        # to bless as safe -- the same defect one level up. The card's title passes through
+        # untouched and is quoted by the renderer.
+        try:
+            command = ja.render_command(h, model, task)
+        except KeyError:
+            lines.append(f"- {h}: {EST_NA}")
+            continue
         lines.append(f"- {h} ({model}, {est_text}): `{command}`")
 
     if card.get("model_hint") == "opus":
@@ -856,7 +871,7 @@ def _list_plan_files(plan_dir):
 # ---- CLI ---------------------------------------------------------------------------------
 
 def _add_common_args(sp):
-    sp.add_argument("--journal-dir", default=str(PLUGIN_ROOT / "journal"),
+    sp.add_argument("--journal-dir", default=str(_store_default("journal")),
                     help="journal root (writes land ONLY under <journal-dir>/plan/)")
     sp.add_argument("--date", default=None,
                     help="as-of date, YYYY-MM-DD (default: today)")

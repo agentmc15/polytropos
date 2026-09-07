@@ -328,17 +328,56 @@ def detect_drops(weights):
 
 _SALIENT_FILE_TOOLS = ("Read", "Edit", "Write")
 
+_REDACT = None
 
-def _salient_for(tool_name, tool_input):
+
+def _redact_mod():
+    """Lazy-load bin/redact.py -- the repo's ONE credential-shape redactor (step 13)."""
+    global _REDACT
+    if _REDACT is None:
+        import importlib.util
+        path = Path(__file__).resolve().parent / "redact.py"
+        spec = importlib.util.spec_from_file_location("redact", path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        _REDACT = module
+    return _REDACT
+
+
+def _salient_for(tool_name, tool_input, sensitive=False):
     """Salient descriptor for a tool_use block, per D4's pinned mapping. ``tool_input`` may be
-    anything JSON put there; only a dict is trusted to carry the named field."""
+    anything JSON put there; only a dict is trusted to carry the named field.
+
+    COMMAND AND PROMPT TEXT IS WITHHELD BY DEFAULT (step 13). These reports are written to be
+    read by someone else — "what filled this window" is a thing people paste into a channel —
+    and a 60-character prefix of a shell command is exactly where a token in a `curl -H` or a
+    credential in an environment assignment lives. What identifies the contributor is the
+    PROGRAM, not its arguments, so the default keeps the first shell word and drops the rest.
+
+    ``sensitive=True`` (the CLI's ``--sensitive-detail``) restores the prefix, still passed
+    through ``bin/redact.py`` — an explicit request to see more is not a request to see a key.
+
+    File paths are NOT withheld: attributing window growth to the file that caused it is the
+    report's entire purpose, and a path is what a reader needs to act.
+    """
     inp = tool_input if isinstance(tool_input, dict) else {}
     if tool_name in _SALIENT_FILE_TOOLS:
         return inp.get("file_path") or ""
     if tool_name == "Bash":
-        return str(inp.get("command") or "")[:60]
+        command = str(inp.get("command") or "")
+        if not command:
+            return ""
+        if not sensitive:
+            program = command.strip().split()[0] if command.strip() else ""
+            return f"{program} …" if program else ""
+        return _redact_mod().redact(command, limit=60)["text"]
     if tool_name == "Agent":
-        return str(inp.get("prompt") or "")[:60]
+        prompt = str(inp.get("prompt") or "")
+        if not prompt:
+            return ""
+        if not sensitive:
+            return f"<prompt, {len(prompt)} chars>"
+        return _redact_mod().redact(prompt, limit=60)["text"]
     return ""
 
 
@@ -351,7 +390,7 @@ def _serialize_len(content):
     return len(json.dumps(content))
 
 
-def attribute_growth(objs):
+def attribute_growth(objs, sensitive=False):
     """Rank what filled the window between two measured points (D4).
 
     Pass 1: build ``tool_use_id -> (tool_name, salient)`` from every non-sidechain assistant
@@ -391,7 +430,7 @@ def attribute_growth(objs):
             if not tool_use_id:
                 continue
             name = block.get("name") or "(unknown)"
-            tool_map[tool_use_id] = (name, _salient_for(name, block.get("input")))
+            tool_map[tool_use_id] = (name, _salient_for(name, block.get("input"), sensitive))
 
     agg = defaultdict(int)
     notes = []
@@ -568,7 +607,7 @@ def classify_prunable(records):
     return _classify_prunable_over(_resident_window_records(records))
 
 
-def _classify_prunable_over(records):
+def _classify_prunable_over(records, sensitive=False):
     """The unscoped three-way split ``classify_prunable`` performs once its input is already
     limited to the resident window (or is the whole transcript, when no compaction was found to
     scope past). Kept separate from ``classify_prunable`` purely so the window-scoping step
@@ -629,7 +668,7 @@ def _classify_prunable_over(records):
                 tid = block.get("id")
                 if tid:
                     name = block.get("name") or "(unknown)"
-                    tool_map[tid] = (name, _salient_for(name, block.get("input")))
+                    tool_map[tid] = (name, _salient_for(name, block.get("input"), sensitive))
     last_assistant_idx = assistant_positions[-1] if assistant_positions else None
 
     tool_results = []
@@ -2962,6 +3001,7 @@ def build_demo_cards():
     codex_model = next(iter(codex_pricing["models"]))
     copilot_model = next(iter(copilot_pricing["models"]))
 
+    sensitive = False  # the demo is synthetic; it has nothing to withhold and nothing to show
     with tempfile.TemporaryDirectory() as tmp_name:
         tmp = Path(tmp_name)
 
@@ -2978,7 +3018,7 @@ def build_demo_cards():
         main_objs = _read_jsonl_objs(files[0]) if files else []
         calls, sidechain, notes = claude_call_weights(main_objs)
         drops = detect_drops([c["weight"] for c in calls])
-        attribution_entries, attribution_notes = attribute_growth(main_objs)
+        attribution_entries, attribution_notes = attribute_growth(main_objs, sensitive)
         claude_card = build_session_card(
             claude_session_id, files, calls, sidechain, notes, drops, claude_pricing, top=20,
             attribution_entries=attribution_entries, attribution_notes=attribution_notes,
@@ -3118,6 +3158,7 @@ def _cmd_session_copilot(args):
 
 
 def cmd_session(args):
+    sensitive = bool(getattr(args, "sensitive_detail", False))
     if args.harness == "codex":
         return _cmd_session_codex(args)
     if args.harness == "copilot":
@@ -3152,7 +3193,7 @@ def cmd_session(args):
         combined_objs = main_objs + subagent_objs
         calls, sidechain, notes = claude_call_weights(combined_objs)
         drops = detect_drops([c["weight"] for c in calls])
-        attribution_entries, attribution_notes = attribute_growth(combined_objs)
+        attribution_entries, attribution_notes = attribute_growth(combined_objs, sensitive)
         pricing = cr.load_pricing()
         card = build_session_card(
             session_id, files, calls, sidechain, notes, drops, pricing, top=args.top,
@@ -3228,6 +3269,12 @@ def build_parser():
                           help="analyze only the main transcript")
     session.add_argument("--codex-home", default=str(DEFAULT_CODEX_HOME))
     session.add_argument("--copilot-home", default=str(DEFAULT_COPILOT_HOME))
+    session.add_argument(
+        "--sensitive-detail", action="store_true",
+        help=("show shell command and subagent prompt text in the contributor table "
+              "(withheld by default: these reports get shared, and a command's arguments are "
+              "where a token lives). Shown text is still credential-redacted."),
+    )
     session.add_argument("--json", action="store_true")
 
     overview = sub.add_parser("overview", help="Cross-session working-set table, per harness")
@@ -3276,6 +3323,12 @@ def build_parser():
     watch.add_argument("--projects-dir", default=str(DEFAULT_PROJECTS_DIR))
     watch.add_argument("--tasks-dir", action="append", default=[],
                         help="dir of subagent *.output transcripts (repeatable)")
+    watch.add_argument(
+        "--sensitive-detail", action="store_true",
+        help=("show shell command and subagent prompt text in the contributor table "
+              "(withheld by default: these reports get shared, and a command's arguments are "
+              "where a token lives). Shown text is still credential-redacted."),
+    )
     watch.add_argument("--json", action="store_true")
 
     constraints = sub.add_parser(

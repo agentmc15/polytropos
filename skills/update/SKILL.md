@@ -58,6 +58,13 @@ or just a look, run `apply --dry-run` and show the would-do plan rather than gue
 for how much actually changed is the `prompts differing before this run: N` line beneath it,
 together with the listed destinations.
 
+**A `preserved:` list under the copilot section is not a failure.** Those destinations were left
+exactly as found because the installer does not own them, or because they were edited after
+install. Report them and their reasons; the fix is the user's call, not `apply`'s. If they want
+the bundle's version anyway, the command is
+`python3 bin/harness_select.py install --harness copilot --adopt-existing`, which keeps each
+prior file beside its destination as `<name>.polytropos-bak`. Never run it on your own initiative.
+
 ## What `check` cannot do
 
 Pricing NUMBERS and docs snapshot TABLES are never auto-edited by this engine — a stale

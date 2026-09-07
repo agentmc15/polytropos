@@ -40,6 +40,21 @@ from pathlib import Path
 
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
 
+def _store_default(name):
+    """Default location for a runtime store, via `bin/runtime_data.py` (step 13).
+
+    Outside the plugin tree unless a store already exists in it, in which case that one keeps
+    being used. Per-command `--*-dir` flags override this and are unchanged.
+    """
+    import importlib.util
+    module_path = Path(__file__).resolve().parent / "runtime_data.py"
+    spec = importlib.util.spec_from_file_location("runtime_data", module_path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.store_path(name, PLUGIN_ROOT)
+
+
+
 # 3 tools x MAX_ASK_BULLETS stays well under journal_collect.py's MAX_INBOX_ITEMS (100).
 MAX_ASK_BULLETS = 15
 
@@ -182,7 +197,7 @@ def main(argv=None):
                     help="YYYY-MM-DD (default: today; matches journal_collect.py)")
     ap.add_argument("--utc", action="store_true",
                     help="resolve the default date in UTC (tests/verifies use it)")
-    ap.add_argument("--journal-dir", default=str(PLUGIN_ROOT / "journal"),
+    ap.add_argument("--journal-dir", default=str(_store_default("journal")),
                     help="journal root (output is <journal-dir>/<date>/ask-the-tools.md)")
     ap.add_argument("--digest", default=None,
                     help="explicit digest.json path for project-name context only "

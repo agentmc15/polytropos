@@ -309,7 +309,12 @@ class BudgetByteStabilityTests(unittest.TestCase):
         task = _task()
         runner = mock.Mock(return_value=None)
         verify_runner = mock.Mock(return_value=(0, "ok"))
-        expected_keys = {"id", "status", "model_used", "escalations", "verify_rc"}
+        # Step 07 added `dispatch_rc` and `failure` deliberately: the dispatch return code was
+        # being discarded, so a failed model process reported `done` whenever the verify
+        # command happened to pass. The budget keys this test guards (`budget`, `prefs_notes`)
+        # still appear only when asked for — that is the drift this test exists to catch.
+        expected_keys = {"id", "status", "model_used", "escalations", "verify_rc",
+                         "dispatch_rc", "failure"}
 
         result_default = ce.run_task(
             task, BUDGET_PRICING_FIXTURE, runner, verify_runner, copilot_bin=STUB_BIN,

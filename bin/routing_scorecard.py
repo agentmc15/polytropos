@@ -101,6 +101,21 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
+
+def _store_default(name):
+    """Default location for a runtime store, via `bin/runtime_data.py` (step 13).
+
+    Outside the plugin tree unless a store already exists in it, in which case that one keeps
+    being used. Per-command `--*-dir` flags override this and are unchanged.
+    """
+    import importlib.util
+    module_path = Path(__file__).resolve().parent / "runtime_data.py"
+    spec = importlib.util.spec_from_file_location("runtime_data", module_path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.store_path(name, PLUGIN_ROOT)
+
+
 DEFAULT_KITS_DIR = PLUGIN_ROOT / ".claude" / "kits"
 SCHEMA_VERSION = 1
 
@@ -224,7 +239,7 @@ _LABEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 TREND_SCHEMA_VERSION = 1
 SNAPSHOT_FILENAME_RE = re.compile(r"^\d{4}-\d{2}-\d{2}\.json$")
 _SNAPSHOT_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
-DEFAULT_SNAPSHOT_DIR = PLUGIN_ROOT / "trends"
+DEFAULT_SNAPSHOT_DIR = _store_default("trends")
 
 # --- escalation-rate alarm (T11, PLAN D11) — the ONE new constant is a z-score
 # MULTIPLIER, the same species as LIVE_RATE_THRESHOLD's "structural policy, not a

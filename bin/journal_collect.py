@@ -38,7 +38,22 @@ from datetime import datetime
 from pathlib import Path
 
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
-DEFAULT_JOURNAL_DIR = PLUGIN_ROOT / "journal"
+
+def _store_default(name):
+    """Default location for a runtime store, via `bin/runtime_data.py` (step 13).
+
+    Outside the plugin tree unless a store already exists in it, in which case that one keeps
+    being used. Per-command `--*-dir` flags override this and are unchanged.
+    """
+    import importlib.util
+    module_path = Path(__file__).resolve().parent / "runtime_data.py"
+    spec = importlib.util.spec_from_file_location("runtime_data", module_path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.store_path(name, PLUGIN_ROOT)
+
+
+DEFAULT_JOURNAL_DIR = _store_default("journal")
 
 # The THREE runtime-default source roots below are the ONLY home-directory reads in this file.
 # They are runtime defaults for the user's real machine; every test and verify command
@@ -55,6 +70,16 @@ MAX_INBOX_ITEMS = 100
 SCHEMA_VERSION = 1
 
 INBOX_MARKERS = ("- ", "* ", "[ ] ")
+
+
+def _sp():
+    """Lazy-load bin/safe_paths.py -- the repo's ONE path-containment helper."""
+    import importlib.util
+    path = Path(__file__).resolve().parent / "safe_paths.py"
+    spec = importlib.util.spec_from_file_location("safe_paths", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
 
 
 def _load(name):
@@ -100,6 +125,16 @@ def load_config(path):
     return config, []
 
 
+def _redact():
+    """Lazy-load bin/redact.py -- the repo's ONE credential-shape redactor (step 13)."""
+    import importlib.util
+    path = Path(__file__).resolve().parent / "redact.py"
+    spec = importlib.util.spec_from_file_location("redact", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
 def read_inbox(path):
     """Parse ``journal/inbox.md`` into the pinned inbox signal dict.
 
@@ -107,9 +142,18 @@ def read_inbox(path):
     marker is stripped. Capped at ``MAX_INBOX_ITEMS`` (``truncated`` set when exceeded). These
     are user-authored lines — the one place a person drops meeting notes / email to-dos today
     (and where a future Graph/MCP connector would land its items).
+
+    EVERY ITEM IS REDACTED AND BOUNDED BEFORE IT IS RETURNED (step 13). This is the only
+    user-authored free text in the digest, and the digest is both written to disk and sent to a
+    cloud model by ``journal_summarize``. It used to travel verbatim: a credential typed into
+    the inbox reached both, while the documentation claimed nothing secret was ever written to
+    the journal — a sentence that was only ever true about git. ``redactions`` reports what was
+    caught, by kind and count, never by value; see ``bin/redact.py`` on why that report is a
+    disclosure of what happened and not a guarantee about what did not.
     """
     path = Path(path)
-    result = {"present": False, "path": str(path), "items": [], "truncated": False}
+    result = {"present": False, "path": str(path), "items": [], "truncated": False,
+              "redactions": {}, "redaction_note": ""}
     if not path.is_file():
         return result
     result["present"] = True
@@ -129,6 +173,10 @@ def read_inbox(path):
             result["truncated"] = True
             break
         result["items"].append(line)
+    rd = _redact()
+    result["items"], report = rd.redact_all(result["items"])
+    result["redactions"] = report["redactions"]
+    result["redaction_note"] = rd.describe(report)
     return result
 
 
@@ -309,8 +357,13 @@ def main(argv=None):
         sys.exit(f"cannot create journal dir {out_dir}: {e}")
     digest_path = out_dir / "digest.json"
     try:
-        digest_path.write_text(json.dumps(digest, indent=2))
-    except OSError as e:
+        # The digest is personal work data. Written through the shared containment helper so a
+        # link left in the journal directory cannot redirect it, and created 0600.
+        _sp().confined_replace(
+            out_dir, "digest.json", json.dumps(digest, indent=2),
+            what="journal digest", mode=0o600,
+        )
+    except (OSError, ValueError) as e:
         sys.exit(f"cannot write digest {digest_path}: {e}")
 
     totals = digest["totals"]

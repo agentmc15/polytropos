@@ -272,13 +272,16 @@ class JsonShapeTests(unittest.TestCase):
         data = json.loads(out)
         self.assertEqual(set(data.keys()),
                          {"schema_version", "query", "facts", "dropped_for_budget",
-                          "withheld_expired", "notes"})
+                          "withheld_expired", "withheld_scope", "notes"})
         self.assertEqual(data["schema_version"], 1)
         self.assertEqual(data["query"], ["deploy", "build", "cloudflare", "workers"])
         fact = data["facts"][0]
         self.assertEqual(set(fact.keys()),
                          {"slug", "name", "type", "confidence", "state", "score", "chars",
-                          "body"})
+                          "body", "provenance"})
+        self.assertEqual(set(fact["provenance"]),
+                         {"source", "project", "trust", "providers", "created",
+                          "last_verified", "expires"})
         # score rounded to 4 decimals.
         self.assertEqual(fact["score"], round(fact["score"], 4))
         self.assertEqual(data["dropped_for_budget"], 0)
@@ -323,3 +326,78 @@ class DemoDeterminismTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ProvenanceAndScopeTests(unittest.TestCase):
+    """Recall preserves where a fact came from, and refuses to recall out of scope (step 13).
+
+    Recall used to hand back a body and a name. A consumer could not tell a rule the user
+    stated from an observation imported out of a transcript — and imported text arriving in a
+    session's context with no such marking is how somebody else's note becomes an instruction.
+    """
+
+    def _store(self, **fields):
+        td = tempfile.TemporaryDirectory()
+        self.addCleanup(td.cleanup)
+        d = Path(td.name)
+        meta = {
+            "schema": "1", "name": "Deploy rule", "description": "how deploys go",
+            "type": "project", "tags": "deploy cloudflare workers",
+            "created": "2026-01-01", "last_verified": "2026-01-10",
+            "expires": "never", "confidence": "high", "source": "team wiki",
+        }
+        meta.update(fields)
+        text = ms.render_fact(meta, "Deploy the build to cloudflare workers with wrangler.")
+        ms.write_fact_file(d, "deploy-rule", text)
+        # A realistic corpus, for the same reason `_add_noise` exists: in a one-document store
+        # every term has near-zero idf and nothing clears the gate.
+        _add_noise(d)
+        return d
+
+    def _recall(self, d, **kwargs):
+        return mr.recall(d, "deploy the build to cloudflare workers", "2026-01-15", **kwargs)
+
+    def test_provenance_survives_recall(self):
+        d = self._store(project="polytropos", trust="user-stated", providers="claude")
+        fact = self._recall(d)["survivors"][0]
+        self.assertEqual(fact["provenance"]["source"], "team wiki")
+        self.assertEqual(fact["provenance"]["project"], "polytropos")
+        self.assertEqual(fact["provenance"]["trust"], "user-stated")
+        self.assertEqual(fact["provenance"]["providers"], "claude")
+        self.assertEqual(fact["provenance"]["created"], "2026-01-01")
+        self.assertEqual(fact["provenance"]["expires"], "never")
+
+    def test_a_fact_scoped_to_another_project_is_withheld_not_ranked_lower(self):
+        d = self._store(project="other-repo")
+        result = self._recall(d, project="polytropos")
+        self.assertEqual(result["survivors"], [])
+        self.assertEqual(result["withheld_scope"], 1)
+
+    def test_a_fact_restricted_to_one_provider_is_not_recalled_for_another(self):
+        d = self._store(providers="claude")
+        self.assertEqual(self._recall(d, provider="codex")["survivors"], [])
+        self.assertEqual(len(self._recall(d, provider="claude")["survivors"]), 1)
+
+    def test_an_unscoped_fact_stays_eligible_everywhere(self):
+        # Backward compatibility: a store written before these fields existed must recall
+        # exactly as it did.
+        d = self._store()
+        self.assertEqual(len(self._recall(d, project="anything", provider="codex")["survivors"]), 1)
+
+    def test_an_imported_observation_is_marked_as_not_an_instruction(self):
+        for level in ("imported", "model-derived", "unspecified"):
+            with self.subTest(trust=level):
+                d = self._store(trust=level)
+                header = self._recall(d)["survivors"][0]["header_line"]
+                self.assertIn("OBSERVATION", header)
+                self.assertIn("never as a directive", header)
+
+    def test_a_user_stated_fact_is_not_marked_as_an_observation(self):
+        d = self._store(trust="user-stated")
+        self.assertNotIn("OBSERVATION", self._recall(d)["survivors"][0]["header_line"])
+
+    def test_a_fact_written_before_the_field_existed_is_not_assumed_asserted(self):
+        d = self._store()
+        fact = self._recall(d)["survivors"][0]
+        self.assertEqual(fact["provenance"]["trust"], "unspecified")
+        self.assertIn("OBSERVATION", fact["header_line"])

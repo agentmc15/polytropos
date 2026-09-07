@@ -6,6 +6,14 @@
 
 A Claude Code plugin that picks the right model per task, estimates the cost before you run it, and keeps Fable 5 reserved for work that actually needs it.
 
+> **Security posture — read before unattended use.** On macOS the kit drivers run each verify
+> command inside an OS boundary (`bin/exec_policy.py`, `sandbox-exec`): writes confined to the
+> workspace, network denied, credential stores unreadable. It is the default and it refuses
+> rather than downgrading. **Linux and Windows have no backend implemented yet**, so
+> verification there requires the explicit `--exec-mode trusted-host`, which enforces nothing.
+> Benchmark candidate and judge dispatch is not yet confined either. See
+> [SECURITY.md](SECURITY.md) for what is and is not enforced today.
+
 **The manual — full documentation site:** <https://agentmc15.github.io/polytropos/> — every skill on every harness (Claude Code, Copilot CLI, Codex CLI), getting-started guides, workflows, and deep dives. Generated from the skill files themselves and rebuilt on every push to `main` (drift-gated by `tests/test_docs_site.py`).
 
 **In-depth architecture guide:** [docs/HOW-IT-WORKS.md](docs/HOW-IT-WORKS.md) (Markdown) · [docs/how-it-works.html](docs/how-it-works.html) (styled HTML — open in a browser).
@@ -32,7 +40,7 @@ A Claude Code plugin that picks the right model per task, estimates the cost bef
 
 **Evidence-loop measurement surfaces:** [docs/EVIDENCE-LOOP.md](docs/EVIDENCE-LOOP.md) — auditing whether guardrails survive compaction (residency), when recurring lessons can become skills (promotion), and whether the escalation ladder outperforms simpler cascades (envelope).
 
-**Repo-bench — measure models on a repo's own real work:** [skills/repo-bench/SKILL.md](skills/repo-bench/SKILL.md) — mine a target repo's issue-fix history into benchmark tasks, run candidate models in history-free sandboxes, grade through four oracle classes (tests, structural, blind LLM judge, cost/latency) on a leak-proof substrate, and get an interval-honest verdict you can opt into applying to routing (`bin/repo_bench.py`; `plan`/`demo` spend nothing — only `run --live --max-usd` ever spends).
+**Repo-bench — measure models on a repo's own real work:** [skills/repo-bench/SKILL.md](skills/repo-bench/SKILL.md) — mine a target repo's issue-fix history into benchmark tasks, run candidate models in history-free sandboxes, grade through four oracle classes (tests, structural, blind LLM judge, cost/latency) on a constructed substrate that withholds the reference tests from the candidate, and get an interval-honest verdict you can opt into applying to routing (`bin/repo_bench.py`; `plan`/`demo` spend nothing — only `run --live --max-usd` ever spends).
 
 **All-harness freshness — the update skill:** [skills/update/SKILL.md](skills/update/SKILL.md) — one read-only card (`bin/harness_update.py check`, exit 3 on drift) covering the Claude plugin cache, Copilot and Codex bundle drift, pricing-file ages, generated mirrors, and docs snapshot labels; `apply` refreshes exactly what each harness's own writer sanctions and never touches `~/.claude` (the remedy is printed, never executed).
 
@@ -120,7 +128,7 @@ The kit's agents pin their own models in frontmatter, so the model mix enforces 
 | `/polytropos:memory` | Durable facts across sessions with pull-only, relevance-gated, budget-capped recall — never bulk-injected into context. |
 | `/polytropos:bench-routing` | External benchmark rankings joined against this repo's own measured outcomes; `compare` answers "should role X move up a model?" — and measured outcomes beat benchmark priors. |
 | `/polytropos:context-weight` | What fills your context window and what to do about it: per-call weight curves, ranked contributors, sidechain split, and a live watch with checkpoint-before-compact guidance. |
-| `/polytropos:repo-bench` | Benchmark models against a target repo's own issue-fix history — sandboxed, leak-proofed, four oracle classes, spend only behind `--live --max-usd`, verdicts below the evidence floor never applied. |
+| `/polytropos:repo-bench` | Benchmark models against a target repo's own issue-fix history — history-free sandboxes, reference tests withheld from candidates, four oracle classes, spend only behind `--live --max-usd`, verdicts below the evidence floor never applied. |
 | `/polytropos:update` | One freshness card across all three harness installs and every data surface; `apply` refreshes what each harness's own writer sanctions and never writes `~/.claude`. |
 | `/polytropos:graphify` | Local knowledge graph of a repo via the external graphify CLI (offline set only, availability-gated), read through the `graph_brief` architect-grounding card. |
 

@@ -77,6 +77,10 @@ CODEX_MARKETPLACE = REPO_ROOT / ".agents" / "plugins" / "marketplace.json"
 PLACEHOLDER = "{{POLYTROPOS_ROOT}}"
 CODEX_COMPONENTS = ("plugin", "agents", "skills", "prompts", "guidance")
 OWNERSHIP_RELATIVE = Path("polytropos") / "install-manifest.json"
+COPILOT_OWNERSHIP_RELATIVE = Path("polytropos") / "install-manifest.json"
+#: Where an adopted destination's prior bytes are kept, beside the destination itself so
+#: recovering them never depends on remembering a separate backup root.
+COPILOT_BACKUP_SUFFIX = ".polytropos-bak"
 OWNERSHIP_VERSION = 1
 APP_POLICY_OWNERSHIP_RELATIVE = Path("polytropos") / "app-policy-manifest.json"
 APP_POLICY_GUIDANCE_START = "<!-- polytropos-app-policy:start -->"
@@ -110,7 +114,349 @@ def detect():
     }
 
 
-def install_copilot(home, repo_root=None, dry_run=False):
+_SAFE_PATHS = None
+
+
+def _sp():
+    """Lazy-load `bin/safe_paths.py` -- the repo's ONE path-containment helper.
+
+    By file path and cached: `bin/harness_update.py` loads THIS module by path, so `bin/` is
+    not reliably importable when the code below runs.
+    """
+    global _SAFE_PATHS
+    if _SAFE_PATHS is None:
+        path = Path(__file__).resolve().parent / "safe_paths.py"
+        spec = importlib.util.spec_from_file_location("safe_paths", path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        _SAFE_PATHS = module
+    return _SAFE_PATHS
+
+
+class StalePlanError(RuntimeError):
+    """A plan whose stated precondition no longer held at the moment it was applied.
+
+    An installer computes a plan, then writes. Between those two moments a file the plan
+    called absent can appear, and a managed file the plan called unchanged can be edited.
+    Applying the plan anyway destroys whatever arrived in the gap. Every write below states
+    its precondition to the kernel instead of assuming it still holds, and raises this when
+    the answer comes back different. The plan is stale; nothing about the path is wrong.
+    """
+
+
+class InstallResult(list):
+    """The destination list `install_copilot` has always returned, plus what happened to each.
+
+    `install_copilot` returned a bare `list[Path]` for as long as it has existed, and callers
+    (`bin/harness_update.py`, `cmd_install`, tests) index it, count it, and compare it to a
+    literal list. Ownership classification gives it something new to say -- which destinations
+    were left alone and why -- with no way to say it through a list of paths. Subclassing
+    keeps every existing use exact (list equality is by contents) and hangs the classification
+    off the side for callers that want it.
+    """
+
+    def __init__(self, destinations, actions):
+        super().__init__(destinations)
+        self.actions = list(actions)
+
+    @property
+    def conflicts(self):
+        """Destinations preserved rather than written, each with a reason."""
+        return [action for action in self.actions if action["state"] == "conflict"]
+
+
+#: States whose application writes bytes to a destination.
+COPILOT_WRITE_STATES = ("install", "managed-update", "adopt-update")
+
+
+def _copilot_bundle_dirs(repo_root):
+    if repo_root is None:
+        return REPO_ROOT, BUNDLE_AGENTS, BUNDLE_SKILLS
+    root = Path(repo_root)
+    return root, root / "copilot" / ".github" / "agents", root / "copilot" / ".github" / "skills"
+
+
+def _copilot_inventory(repo_root=None):
+    """`[(component, source, relative_destination)]` in the historical install order.
+
+    Agents in filename order, then every file under the skills bundle in path order -- the
+    exact sequence the two write loops produced, so the returned destination list is
+    unchanged.
+    """
+    root, bundle_agents, bundle_skills = _copilot_bundle_dirs(repo_root)
+    agent_files = sorted(bundle_agents.glob("*.agent.md")) if bundle_agents.is_dir() else []
+    if not agent_files:
+        raise FileNotFoundError(
+            f"no *.agent.md files found under {bundle_agents} — is the Copilot bundle "
+            "(copilot/.github/agents/) present?"
+        )
+    inventory = [("agents", src, f"agents/{src.name}") for src in agent_files]
+    if bundle_skills.is_dir():
+        for src in sorted(p for p in bundle_skills.rglob("*") if p.is_file()):
+            rel = src.relative_to(bundle_skills).as_posix()
+            inventory.append(("skills", src, f"skills/{rel}"))
+    return root, inventory
+
+
+def _copilot_resolved_bytes(source, repo_root):
+    """The exact bytes this installer writes for `source`.
+
+    Deliberately substitutes `str(repo_root)` UNRESOLVED, because that is what the two write
+    loops did and `bin/harness_update.py`'s comparator is pinned to it byte for byte.
+    """
+    return source.read_text().replace(PLACEHOLDER, str(repo_root)).encode("utf-8")
+
+
+def _load_copilot_ownership(home):
+    """Well-formed Copilot install ownership, or an empty manifest. Malformed state owns nothing.
+
+    Owning nothing is the safe reading of a manifest we cannot parse: every destination then
+    classifies as unmanaged and is preserved, rather than being overwritten on the strength of
+    a record we could not read.
+    """
+    home = Path(home)
+    if not home.is_dir():
+        return {}
+    try:
+        raw = _sp().confined_read_bytes(
+            home, COPILOT_OWNERSHIP_RELATIVE.as_posix(),
+            what="copilot ownership manifest", missing_ok=True,
+        )
+    except (_sp().SafePathError, OSError):
+        return {}
+    if raw is None:
+        return {}
+    try:
+        payload = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return {}
+    if not isinstance(payload, dict) or not isinstance(payload.get("files"), list):
+        return {}
+    return {
+        record["destination"]: record
+        for record in payload["files"]
+        if isinstance(record, dict) and isinstance(record.get("destination"), str)
+    }
+
+
+def plan_copilot_install(home, repo_root=None, adopt_unmanaged=False):
+    """Classify every Copilot destination before anything is written.
+
+    Five outcomes, and only three of them touch a destination:
+
+    - `install` -- nothing is there.
+    - `up-to-date` -- the destination already holds exactly the bytes this bundle produces.
+    - `managed-update` -- this installer wrote the destination and nobody has changed it
+      since (or it is a recognizable copy of the same source from an earlier repo location),
+      so refreshing it to the current bundle takes nothing away. This is the routine upgrade
+      path and it asks for no confirmation.
+    - `adopt-update` -- the destination is unknown or locally edited, and the caller passed
+      `adopt_unmanaged` to say so explicitly. The prior bytes are kept alongside it.
+    - `conflict` -- the destination is unknown or locally edited and nobody authorized
+      overwriting it. It is left exactly as it is.
+
+    The last two are the whole point. This installer used to write every destination
+    unconditionally, so a user's own `agents/route.agent.md` -- or their edits to ours -- was
+    replaced with no record that it had existed.
+
+    Classification reads the filesystem, so it is a snapshot; `apply_copilot_plan` restates
+    each precondition to the kernel at the moment it writes rather than trusting this.
+    """
+    sp = _sp()
+    root, inventory = _copilot_inventory(repo_root)
+    home = Path(home)
+    home_exists = home.is_dir()
+    owned = _load_copilot_ownership(home) if home_exists else {}
+
+    actions = []
+    for component, source, rel in inventory:
+        content = _copilot_resolved_bytes(source, root)
+        destination = home.joinpath(*rel.split("/"))
+        current = None
+        state = "install"
+        reason = "destination is absent"
+        unreadable = None
+        if home_exists:
+            if sp.leaf_is_regular(home, rel):
+                try:
+                    current = sp.confined_read_bytes(home, rel, what="copilot install")
+                except (sp.SafePathError, OSError) as exc:
+                    unreadable = str(exc)
+            elif destination.is_symlink() or destination.exists():
+                unreadable = "not reachable as a plain file without following a link"
+
+        record = owned.get(rel)
+        if unreadable is not None:
+            state, reason = "conflict", f"destination preserved — {unreadable}"
+        elif current is None:
+            pass
+        elif current == content:
+            state, reason = "up-to-date", "destination matches the current bundle"
+        elif record and record.get("installed_hash") == _sha256_bytes(current):
+            state, reason = "managed-update", "unchanged managed copy refreshed to the current bundle"
+        elif _normalized_legacy_bytes(current, source, root) is not None:
+            state, reason = (
+                "managed-update",
+                "recognized earlier polytropos copy (same source, different repo path) refreshed",
+            )
+        elif adopt_unmanaged:
+            state, reason = (
+                "adopt-update",
+                "adopted on explicit request; prior bytes kept as "
+                f"{Path(rel).name}{COPILOT_BACKUP_SUFFIX}",
+            )
+        elif record:
+            state, reason = (
+                "conflict",
+                "managed destination was edited after install; preserving your changes "
+                "(rerun with --adopt-existing to overwrite, keeping a backup)",
+            )
+        else:
+            state, reason = (
+                "conflict",
+                "destination is not ours and differs from the bundle; preserving it "
+                "(rerun with --adopt-existing to overwrite, keeping a backup)",
+            )
+
+        actions.append(
+            {
+                "component": component,
+                "source": str(source),
+                "destination": str(destination),
+                "relative": rel,
+                "state": state,
+                "reason": reason,
+                "source_digest": _sha256_bytes(_normalized_source_bytes(source)),
+                "destination_digest": _sha256_bytes(current) if current is not None else None,
+                "_content": content,
+            }
+        )
+
+    return {
+        "version": OWNERSHIP_VERSION,
+        "repo_root": str(root),
+        "copilot_home": str(home),
+        "adopt_unmanaged": bool(adopt_unmanaged),
+        "actions": actions,
+    }
+
+
+def apply_copilot_plan(plan, fail_after=None):
+    """Write the plan's writable actions, restating each precondition at the moment of writing.
+
+    `install` uses exclusive creation, so "the destination is absent" is asserted by the
+    kernel and cannot be lost between the check and the write. `managed-update` and
+    `adopt-update` re-read the destination immediately before replacing it and refuse if its
+    bytes are no longer the ones the plan classified — that narrows the window to the span of
+    one read, which is as far as a rename-based replacement can close it. Neither is a lock;
+    what they rule out is applying a plan to a file that has visibly moved on.
+
+    A failure part-way through rolls back — but only over bytes this call actually wrote. A
+    destination that changed again after we wrote it belongs to whoever changed it: it is left
+    alone, its backup is retained, and the raised error names it. Undoing our own write is
+    repair; undoing someone else's is the same bug in the other direction.
+
+    `fail_after` raises after that many writes, so rollback is testable without a fault
+    injector.
+    """
+    sp = _sp()
+    home = Path(plan["copilot_home"])
+    blocking = [action for action in plan["actions"] if action["state"] == "conflict"]
+    writable = [action for action in plan["actions"] if action["state"] in COPILOT_WRITE_STATES]
+    if writable:
+        home.mkdir(parents=True, exist_ok=True)
+
+    written = []
+    try:
+        for index, action in enumerate(writable, start=1):
+            rel = action["relative"]
+            content = action["_content"]
+            what = f"copilot install {rel}"
+            if action["state"] == "install":
+                try:
+                    sp.confined_create_bytes(home, rel, content, what=what, mode=0o644)
+                except sp.SafePathExists as exc:
+                    raise StalePlanError(
+                        f"{action['destination']} was absent when the plan was built and exists "
+                        f"now; refusing to overwrite it — rerun to reclassify it"
+                    ) from exc
+                written.append((home, rel, None, content))
+            else:
+                current = sp.confined_read_bytes(home, rel, what=what, missing_ok=True)
+                if current is None or _sha256_bytes(current) != action["destination_digest"]:
+                    raise StalePlanError(
+                        f"{action['destination']} changed after the plan was built; refusing to "
+                        f"overwrite it — rerun to reclassify it"
+                    )
+                if action["state"] == "adopt-update":
+                    backup_rel = rel + COPILOT_BACKUP_SUFFIX
+                    try:
+                        sp.confined_create_bytes(
+                            home, backup_rel, current, what=f"copilot backup {backup_rel}",
+                            mode=0o600,
+                        )
+                    except sp.SafePathExists as exc:
+                        raise StalePlanError(
+                            f"{home.joinpath(*backup_rel.split('/'))} already exists; an earlier "
+                            f"adoption's backup would be lost — move or remove it, then rerun"
+                        ) from exc
+                sp.confined_replace(home, rel, content, what=what, mode=0o644)
+                written.append((home, rel, current, content))
+            if fail_after is not None and index >= fail_after:
+                raise RuntimeError("simulated copilot install failure")
+    except BaseException as exc:
+        preserved = _rollback_written(written, mode=0o644)
+        if preserved:
+            raise type(exc)(
+                f"{exc}; rolled back, except {', '.join(preserved)} — changed by something else "
+                f"after this run wrote them, so they were left as found"
+            ).with_traceback(exc.__traceback__) from exc
+        raise
+
+    _write_copilot_ownership(home, plan, writable)
+    return {"written": writable, "conflicts": blocking}
+
+
+def _write_copilot_ownership(home, plan, writable):
+    """Record ownership from the bytes this run wrote, merged over any prior manifest.
+
+    The hash stored is of `_content` -- what we put there -- not of a re-read of the
+    destination, which could pick up somebody else's concurrent write and record it as ours.
+
+    `up-to-date` destinations are recorded too. They already hold our bytes, so claiming them
+    changes nothing on disk and it is what lets a home installed before ownership existed
+    become managed without overwriting anything.
+    """
+    sp = _sp()
+    records = {
+        record["destination"]: record
+        for record in _load_copilot_ownership(home).values()
+    }
+    claimable = list(writable) + [
+        action for action in plan["actions"] if action["state"] == "up-to-date"
+    ]
+    for action in claimable:
+        records[action["relative"]] = {
+            "component": action["component"],
+            "destination": action["relative"],
+            "source_hash": action["source_digest"],
+            "installed_hash": _sha256_bytes(action["_content"]),
+        }
+    if not records:
+        return
+    manifest = {
+        "version": OWNERSHIP_VERSION,
+        "repo_root": plan["repo_root"],
+        "files": sorted(records.values(), key=lambda record: record["destination"]),
+    }
+    payload = (json.dumps(manifest, indent=2, sort_keys=True) + "\n").encode("utf-8")
+    sp.confined_replace(
+        home, COPILOT_OWNERSHIP_RELATIVE.as_posix(), payload,
+        what="copilot ownership manifest", mode=0o600,
+    )
+
+
+def install_copilot(home, repo_root=None, dry_run=False, adopt_unmanaged=False):
     """Materialize `copilot/.github/agents/*.agent.md` into `<home>/agents/`, plus every
     file under `copilot/.github/skills/` into `<home>/skills/`.
 
@@ -120,53 +466,25 @@ def install_copilot(home, repo_root=None, dry_run=False):
     needed). Returns the list of destination paths in every case, including `dry_run=True`,
     which writes NOTHING (no files, no directories).
 
+    Destinations are OWNERSHIP-AWARE (they were not always): a destination this installer did
+    not write, or wrote and someone has since edited, is PRESERVED rather than overwritten.
+    The returned `InstallResult` still equals the historical list of destinations, and carries
+    `.actions` (one classification per destination) and `.conflicts` (those left alone).
+    `adopt_unmanaged=True` is the explicit authorization to overwrite them anyway, keeping the
+    prior bytes as a sibling `.polytropos-bak`. Routine refreshes of unchanged managed copies
+    need no such flag.
+
     Raises `FileNotFoundError` (message names the expected bundle path) if the bundle
     agents directory is missing or contains no `*.agent.md` files. Agents remain the
-    required core: a missing or empty skills directory is NOT an error.
+    required core: a missing or empty skills directory is NOT an error. Raises
+    `StalePlanError` if a destination changed between classification and writing.
     """
-    if repo_root is None:
-        repo_root = REPO_ROOT
-        bundle_agents = BUNDLE_AGENTS
-        bundle_skills = BUNDLE_SKILLS
-    else:
-        repo_root = Path(repo_root)
-        bundle_agents = repo_root / "copilot" / ".github" / "agents"
-        bundle_skills = repo_root / "copilot" / ".github" / "skills"
-
-    home = Path(home)
-    agent_files = sorted(bundle_agents.glob("*.agent.md")) if bundle_agents.is_dir() else []
-    if not agent_files:
-        raise FileNotFoundError(
-            f"no *.agent.md files found under {bundle_agents} — is the Copilot bundle "
-            "(copilot/.github/agents/) present?"
-        )
-
-    dest_dir = home / "agents"
-    dest_paths = []
-    for src in agent_files:
-        dest = dest_dir / src.name
-        dest_paths.append(dest)
-        if dry_run:
-            continue
-        text = src.read_text()
-        text = text.replace(PLACEHOLDER, str(repo_root))
-        dest_dir.mkdir(parents=True, exist_ok=True)
-        dest.write_text(text)
-
-    if bundle_skills.is_dir():
-        skill_files = sorted(p for p in bundle_skills.rglob("*") if p.is_file())
-        for src in skill_files:
-            rel = src.relative_to(bundle_skills)
-            dest = home / "skills" / rel
-            dest_paths.append(dest)
-            if dry_run:
-                continue
-            text = src.read_text()
-            text = text.replace(PLACEHOLDER, str(repo_root))
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            dest.write_text(text)
-
-    return dest_paths
+    plan = plan_copilot_install(home, repo_root=repo_root, adopt_unmanaged=adopt_unmanaged)
+    if not dry_run:
+        apply_copilot_plan(plan)
+    return InstallResult(
+        [Path(action["destination"]) for action in plan["actions"]], plan["actions"]
+    )
 
 
 def install_codex(home, repo_root=None, dry_run=False):
@@ -381,12 +699,24 @@ def parse_retirement_components(raw):
 
 
 def _load_ownership(codex_home):
-    path = Path(codex_home) / OWNERSHIP_RELATIVE
-    if not path.is_file():
+    # Read through the containment helper, not `read_text`: this manifest decides which
+    # destinations may be overwritten, so a symlink standing in for it would be a way to
+    # hand us ownership of files we do not own. A link is refused, and refusal lands in the
+    # `invalid` branch below -- which callers already treat as "do not act".
+    home = Path(codex_home)
+    if not home.is_dir():
         return {"version": OWNERSHIP_VERSION, "bundle_version": None, "files": []}
     try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+        raw = _sp().confined_read_bytes(
+            home, OWNERSHIP_RELATIVE.as_posix(), what="codex ownership manifest", missing_ok=True
+        )
+    except (_sp().SafePathError, OSError):
+        return {"version": None, "bundle_version": None, "files": [], "invalid": True}
+    if raw is None:
+        return {"version": OWNERSHIP_VERSION, "bundle_version": None, "files": []}
+    try:
+        payload = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
         return {"version": None, "bundle_version": None, "files": [], "invalid": True}
     if not isinstance(payload, dict) or not isinstance(payload.get("files"), list):
         return {"version": None, "bundle_version": None, "files": [], "invalid": True}
@@ -726,8 +1056,50 @@ def _atomic_write(path, payload):
         raise
 
 
+def _codex_write_target(plan, action):
+    """`(root, relative)` for a destination: which approved root holds it, and where inside.
+
+    Rooting the write is what lets it go through `bin/safe_paths.py`, so a symlinked component
+    under the Codex home or the project tree cannot redirect an install outside either.
+    `_ownership_key` already refuses a destination belonging to neither root when the plan is
+    built; this refuses the same thing on the write path, where it is load-bearing.
+    """
+    destination = Path(action["destination"])
+    for base in (Path(plan["codex_home"]), Path(plan["repo_root"])):
+        try:
+            return base, destination.relative_to(base).as_posix()
+        except ValueError:
+            continue
+    raise ValueError(f"destination escapes approved roots: {destination}")
+
+
 def apply_codex_plan(plan, fail_after=None):
-    """Apply writable actions atomically as a group; ownership is always written last."""
+    """Apply writable actions as a group; ownership is always written last.
+
+    A PLAN IS A SNAPSHOT, AND APPLYING ONE IS NOT INSTANTANEOUS. Between the moment
+    `plan_codex_setup` classified a destination and the moment this writes it, a file it
+    called absent can be created and a managed file it called unchanged can be edited. Both
+    used to be overwritten without a word. So every write restates its precondition here:
+
+    - `install` creates with `O_EXCL`. "Nothing is there" is asserted by the kernel as part of
+      the same operation that writes, so it cannot be lost in between.
+    - `managed-update` re-reads the destination immediately before replacing it and refuses
+      unless the bytes are still the ones the plan classified. That narrows the window to a
+      single read rather than closing it — which is as far as a rename-based replacement goes,
+      and is stated here rather than dressed up as a lock.
+
+    Either refusal raises `StalePlanError`: the plan is out of date, nothing is wrong with the
+    path, and rerunning reclassifies.
+
+    ROLLBACK UNDOES ONLY THIS CALL'S OWN BYTES. Before restoring a destination it checks that
+    the destination still holds exactly what this call wrote. If it does not, something else
+    changed it after we did, and erasing that would be the same destruction this method exists
+    to prevent — so it is left as found, its content retained, and the raised error names it.
+
+    The ownership manifest is written last and atomically, so a failure never leaves it half
+    applied and there is nothing about it to undo.
+    """
+    sp = _sp()
     blocking = [
         action for action in plan["actions"] if action["state"] in {"conflict", "unmanaged"}
     ]
@@ -736,14 +1108,35 @@ def apply_codex_plan(plan, fail_after=None):
     writable = [
         action for action in plan["actions"] if action["state"] in {"install", "managed-update"}
     ]
-    backups = {}
+    written = []
     ownership_path = Path(plan["codex_home"]) / OWNERSHIP_RELATIVE
     prior_manifest = ownership_path.read_bytes() if ownership_path.is_file() else None
     try:
         for index, action in enumerate(writable, start=1):
-            destination = Path(action["destination"])
-            backups[destination] = destination.read_bytes() if destination.is_file() else None
-            _atomic_write(destination, action["_content"])
+            root, relative = _codex_write_target(plan, action)
+            payload = action["_content"]
+            what = f"codex setup {relative}"
+            # `safe_paths` walks DOWN from an existing root; creating the root itself is the
+            # one directory it will not make. Everything below it is created no-follow.
+            root.mkdir(parents=True, exist_ok=True)
+            if action["state"] == "install":
+                try:
+                    sp.confined_create_bytes(root, relative, payload, what=what, mode=0o600)
+                except sp.SafePathExists as exc:
+                    raise StalePlanError(
+                        f"{action['destination']} was absent when the plan was built and exists "
+                        "now; refusing to overwrite it — rerun to reclassify it"
+                    ) from exc
+                written.append((root, relative, None, payload))
+            else:
+                current = sp.confined_read_bytes(root, relative, what=what, missing_ok=True)
+                if current is None or _sha256_bytes(current) != action["destination_digest"]:
+                    raise StalePlanError(
+                        f"{action['destination']} changed after the plan was built; refusing to "
+                        "overwrite it — rerun to reclassify it"
+                    )
+                sp.confined_replace(root, relative, payload, what=what, mode=0o600)
+                written.append((root, relative, current, payload))
             if fail_after is not None and index >= fail_after:
                 raise RuntimeError("simulated setup write failure")
 
@@ -761,15 +1154,16 @@ def apply_codex_plan(plan, fail_after=None):
         for action in plan["actions"]:
             if action["component"] == "plugin" or action["state"] in {"conflict", "unmanaged", "skip"}:
                 continue
-            destination = Path(action["destination"])
-            if not destination.is_file():
+            if not Path(action["destination"]).is_file():
                 continue
             records_by_destination[action["_ownership_key"]] = {
                 "component": action["component"],
                 "destination": action["_ownership_key"],
                 "bundle_version": plan["bundle_version"],
                 "source_hash": action["source_digest"],
-                "installed_hash": _sha256_bytes(destination.read_bytes()),
+                # The digest of the bytes this run PUT there -- never of a re-read, which
+                # could pick up a concurrent write and record someone else's content as ours.
+                "installed_hash": action["_installed_digest"],
             }
         manifest.update({
             "version": OWNERSHIP_VERSION,
@@ -790,18 +1184,50 @@ def apply_codex_plan(plan, fail_after=None):
         if records:
             manifest_bytes = (json.dumps(manifest, indent=2, sort_keys=True) + "\n").encode("utf-8")
             if prior_manifest != manifest_bytes:
-                _atomic_write(ownership_path, manifest_bytes)
-    except BaseException:
-        for destination, prior in reversed(list(backups.items())):
-            if prior is None:
-                destination.unlink(missing_ok=True)
-            else:
-                _atomic_write(destination, prior)
-        if prior_manifest is None:
-            ownership_path.unlink(missing_ok=True)
-        else:
-            _atomic_write(ownership_path, prior_manifest)
+                Path(plan["codex_home"]).mkdir(parents=True, exist_ok=True)
+                sp.confined_replace(
+                    Path(plan["codex_home"]), OWNERSHIP_RELATIVE.as_posix(), manifest_bytes,
+                    what="codex ownership manifest", mode=0o600,
+                )
+    except BaseException as exc:
+        preserved = _rollback_written(written)
+        if preserved:
+            raise type(exc)(
+                f"{exc}; rolled back, except {', '.join(preserved)} — changed by something "
+                "else after this run wrote them, so they were left as found"
+            ).with_traceback(exc.__traceback__) from exc
         raise
+
+
+def _rollback_written(written, mode=0o600):
+    """Undo `(root, relative, prior, payload)` writes; return what someone else has changed.
+
+    Shared by the Copilot and Codex appliers because the rule is the same one in both: this
+    call may take back exactly the bytes it put down, and nothing else. Byte equality against
+    `payload` is the whole test — a destination that no longer matches has an owner who is not
+    us, and restoring `prior` over it would destroy a change we never saw.
+    """
+    sp = _sp()
+    preserved = []
+    for root, relative, prior, payload in reversed(written):
+        try:
+            current = sp.confined_read_bytes(
+                root, relative, what="rollback", missing_ok=True
+            )
+        except (sp.SafePathError, OSError):
+            preserved.append(relative)
+            continue
+        if current is not None and current != payload:
+            preserved.append(relative)
+            continue
+        try:
+            if prior is None:
+                sp.confined_unlink(root, relative, what="rollback")
+            else:
+                sp.confined_replace(root, relative, prior, what="rollback", mode=mode)
+        except (sp.SafePathError, OSError):
+            preserved.append(relative)
+    return sorted(preserved)
 
 
 def doctor_codex(repo_root, codex_home):
@@ -960,6 +1386,8 @@ def cmd_install(args):
     )
     if args.harness != "codex" and any(codex_only_values):
         raise SystemExit("Codex setup flags may be used only with --harness codex")
+    if args.harness != "copilot" and args.adopt_existing:
+        raise SystemExit("--adopt-existing may be used only with --harness copilot")
 
     if args.harness == "claude-code":
         print(f"claude-code: {CLAUDE_CODE_MESSAGE}")
@@ -993,14 +1421,31 @@ def cmd_install(args):
 
     home = Path(args.copilot_home) if args.copilot_home else (Path.home() / ".copilot")
     try:
-        dest_paths = install_copilot(home, dry_run=args.dry_run)
+        result = install_copilot(
+            home, dry_run=args.dry_run, adopt_unmanaged=args.adopt_existing
+        )
     except FileNotFoundError as e:
         print(str(e), file=sys.stderr)
         sys.exit(2)
+    except StalePlanError as e:
+        print(str(e), file=sys.stderr)
+        sys.exit(3)
 
     verb = "would install" if args.dry_run else "installed"
-    for dest in dest_paths:
-        print(f"{verb} {dest}")
+    for action in result.actions:
+        if action["state"] == "conflict":
+            print(f"preserved {action['destination']} — {action['reason']}")
+        elif action["state"] == "up-to-date":
+            print(f"up-to-date {action['destination']}")
+        else:
+            print(f"{verb} {action['destination']} ({action['state']})")
+    if result.conflicts:
+        print(
+            f"{len(result.conflicts)} destination(s) preserved and NOT written; "
+            "rerun with --adopt-existing to overwrite them, keeping a backup of each",
+            file=sys.stderr,
+        )
+        sys.exit(2)
 
 
 def cmd_doctor(args):
@@ -1093,6 +1538,14 @@ def build_parser():
     p_install.add_argument(
         "--refresh-managed", action="store_true",
         help="refresh only destinations proven unchanged by the ownership manifest",
+    )
+    p_install.add_argument(
+        "--adopt-existing", action="store_true",
+        help=(
+            "Copilot only: overwrite destinations this installer does not own or that were "
+            "edited after install, keeping each one's prior bytes as a sibling "
+            f"{COPILOT_BACKUP_SUFFIX} file"
+        ),
     )
     p_install.add_argument(
         "--json", action="store_true", help="machine-readable Codex setup plan",

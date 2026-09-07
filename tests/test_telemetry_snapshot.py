@@ -858,8 +858,23 @@ class MainTests(unittest.TestCase):
         self.assertEqual(out, "")
         self.assertEqual(blocked.read_text(), "i am a file, not a directory\n")
 
-    def test_store_dir_default_is_the_repo_store(self):
-        self.assertEqual(ts.DEFAULT_STORE_DIR, ts.PLUGIN_ROOT / "telemetry")
+    def test_store_dir_default_is_outside_the_plugin_tree(self):
+        # Step 13: runtime data no longer defaults into the plugin tree. The repository is a
+        # distributable, cached, sometimes cloud-synced artifact, and personal cost and usage envelopes should
+        # not ride along with it. The one exception is continuity: a store that ALREADY exists
+        # in the tree keeps being used, so an upgrade never looks like data loss.
+        default = ts.DEFAULT_STORE_DIR
+        legacy = ts.PLUGIN_ROOT / "telemetry"
+        if legacy.is_dir() and any(legacy.iterdir()):
+            self.assertEqual(default, legacy)
+        else:
+            self.assertNotEqual(default, legacy)
+            self.assertFalse(
+                str(default).startswith(str(ts.PLUGIN_ROOT) + "/"),
+                f"the default store is inside the plugin tree: {default}",
+            )
+            self.assertEqual(default.name, "telemetry")
+
 
 
 class SourceLawTests(unittest.TestCase):

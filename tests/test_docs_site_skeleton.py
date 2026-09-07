@@ -276,15 +276,28 @@ class RequirementsTxtTests(unittest.TestCase):
     def _lines(self):
         return REQUIREMENTS_TXT.read_text(encoding="utf-8").splitlines()
 
-    def test_exactly_one_dependency_line(self):
-        dep_lines = [
-            line for line in self._lines()
-            if line.strip() and not line.strip().startswith("#")
-        ]
-        self.assertEqual(
-            dep_lines, ["mkdocs-material>=9.5,<10"],
-            f"expected exactly one pinned dependency line, got {dep_lines!r}",
-        )
+    def test_every_package_is_pinned_exactly_and_hashed(self):
+        """Since step 14 this is a LOCK, not a requirement.
+
+        It used to be the single line `mkdocs-material>=9.5,<10`, which pinned neither a
+        version nor a transitive set: two CI runs a week apart could install different code,
+        and nothing verified that what arrived was what the author of that version published.
+        """
+        text = REQUIREMENTS_TXT.read_text(encoding="utf-8")
+        pins = re.findall(r"(?m)^([A-Za-z0-9._-]+)==([^\s\\]+)", text)
+        self.assertGreater(len(pins), 10, "a lock without transitives is not a lock")
+        self.assertEqual(len(pins), text.count("--hash=sha256:"),
+                         "every pinned package needs exactly one recorded hash")
+        # mkdocs-material is still the reason this file exists.
+        self.assertIn("mkdocs-material", [name.lower() for name, _ in pins])
+        # And no unpinned range survives anywhere.
+        self.assertNotRegex(text, r"(?m)^[A-Za-z0-9._-]+\s*[><~!]")
+
+    def test_the_lock_records_how_to_regenerate_itself(self):
+        # A lock nobody can rebuild is a lock nobody will update.
+        comments = " ".join(l for l in self._lines() if l.strip().startswith("#")).lower()
+        self.assertIn("regenerate", comments)
+        self.assertIn("--platform", comments)
 
     def test_has_stdlib_only_comment(self):
         comment_lines = [

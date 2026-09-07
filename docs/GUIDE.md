@@ -241,7 +241,8 @@ The all-harness freshness custodian. `bin/harness_update.py check` renders one r
 Claude plugin cache (via `bin/plugin_staleness.py`), Copilot bundle drift (per-file comparator),
 Codex install state (via `harness_select`'s doctor), pricing-file ages, generated mirrors, and
 docs snapshot labels — exit 0 fresh, exit 3 on drift, absence is never failure. `apply` refreshes
-only what each harness's own writer sanctions: Copilot files overwrite in place (stated), Codex
+only what each harness's own writer sanctions: Copilot refreshes only destinations it owns and
+nobody edited — a file you wrote or changed is preserved and listed under `preserved:`, Codex
 prompts are plugin-owned mirrors (every differing rewrite listed) while `AGENTS.md`/skills stay
 no-clobber, repo mirrors regenerate — and the Claude side is **print-only**: the
 `claude plugin update` remedy is shown, never executed, because repo code never writes

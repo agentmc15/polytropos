@@ -87,16 +87,26 @@ make progress, say so rather than thrashing.
 # ---- pure functions (no I/O except the injected callables / the state file) -------------------
 
 def _as_number(value):
-    """Return `value` as a float if it is a real JSON number, else None.
+    """Return `value` as a usable cost if it is a real, finite, non-negative JSON number.
 
     JSON booleans deserialize to Python `bool` (a subclass of `int`); they are NOT numbers
     for cost purposes and are excluded.
+
+    Negative and non-finite values are excluded too, and that is a spending control rather
+    than tidiness. This value is read out of MODEL OUTPUT -- any JSON object the model emits
+    with a `total_cost_usd` key -- so it is untrusted input to the ledger that decides whether
+    to keep spending. A negative cost SUBTRACTS from the running total and buys more ticks;
+    `NaN` defeats every comparison it appears in, because `NaN >= budget` is false. Neither is
+    a cost, so neither is accepted, and the tick falls back to the data-derived estimate.
     """
     if isinstance(value, bool):
         return None
-    if isinstance(value, (int, float)):
-        return float(value)
-    return None
+    if not isinstance(value, (int, float)):
+        return None
+    value = float(value)
+    if not math.isfinite(value) or value < 0:
+        return None
+    return value
 
 
 def parse_cost(output):
@@ -209,7 +219,11 @@ def run_ralph(goal, run_tick, run_verify, stops, est_per_tick_usd,
             "{{state_summary}}", state_summary
         )
 
-        # (b) dispatch one tick.
+        # (b) admission BEFORE the dispatch. The budget check used to run after the tick, so
+        # a loop started with no remaining budget still made one paid call before noticing --
+        # and `budget_usd=0` bought a whole tick. A tick that cannot be afforded is not made.
+        if cost_usd >= budget_usd:
+            return {"status": "budget", "iterations": i - 1, "cost_usd": cost_usd}
         output = run_tick(i, prompt)
 
         # (c) cost accrual: parsed cost wins, else the data-driven estimate.
@@ -295,6 +309,26 @@ def _halt_line(result):
     )
 
 
+def _ep():
+    """Lazy-load bin/exec_policy.py -- the OS execution boundary (step 05)."""
+    import importlib.util
+    path = Path(__file__).resolve().parent / "exec_policy.py"
+    spec = importlib.util.spec_from_file_location("exec_policy", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def _pr():
+    """Lazy-load bin/proc_runner.py -- the repo's ONE process-lifecycle helper (step 12)."""
+    import importlib.util
+    path = Path(__file__).resolve().parent / "proc_runner.py"
+    spec = importlib.util.spec_from_file_location("proc_runner", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
 def _build_tick_argv(copilot_bin, model, extra_args, prompt):
     """The REAL tick argv: plain `copilot -p`, no `--agent` (the goal loop is agent-less).
 
@@ -348,6 +382,8 @@ def build_parser():
     ap.add_argument("--prompt-file", default=None, help="override the built-in anchor prompt with a file")
     ap.add_argument("--demo", action="store_true", help="fully mocked loop; no subprocess, no network, no AIC")
     ap.add_argument("--dry-run", action="store_true", help="print stops/estimate/runway/argv; spawn nothing")
+    ap.add_argument("--exec-mode", choices=("enforced", "trusted-host"), default="enforced",
+                    help="OS boundary for --verify-cmd; 'enforced' refuses where none exists")
     return ap
 
 
@@ -454,15 +490,24 @@ def main(argv=None):
     # ---- real run: builds the ONLY real `copilot` invocation in this file ---------------
     # (never exercised by tests or verification — those use --demo / --dry-run only).
     def real_run_tick(iteration, prompt):
+        # Bounded like every other dispatch in this repo: wall clock, output ceiling, validated
+        # working directory, own process group. A tick that stalls stops the tick, not the loop.
+        pr = _pr()
         cmd = _build_tick_argv(args.copilot_bin, model, extra_args, prompt)
-        proc = subprocess.run(cmd, capture_output=True, text=True)
-        return (proc.stdout or "") + (proc.stderr or "")
+        result = pr.run(cmd, cwd=Path.cwd(), env=pr.dispatch_env("copilot"),
+                        name="copilot tick")
+        if not result["terminal"] and result["detail"]:
+            return f"{result['output']}\n{result['detail']}".strip()
+        return result["output"]
 
     def real_run_verify():
+        # Inside the OS boundary, like the three kit drivers: this line runs code a model just
+        # wrote, and running it with the loop's own privileges was the wider grant step 05
+        # closed everywhere except here.
         if not args.verify_cmd:
             return (1, "no --verify-cmd provided")
-        proc = subprocess.run(args.verify_cmd, shell=True, capture_output=True, text=True)
-        return (proc.returncode, (proc.stdout or "") + (proc.stderr or ""))
+        runner = _ep().verify_runner(Path.cwd(), mode=args.exec_mode)
+        return runner(args.verify_cmd)
 
     result = run_ralph(
         goal=(args.goal or ""),

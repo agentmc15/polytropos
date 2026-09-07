@@ -285,8 +285,12 @@ def _seed_repairable_drift(root, copilot_home, codex_home):
     prove the round-trip reaches "fresh everywhere except claude": a stale docs label is drift
     `apply` deliberately refuses to fix, so seeding one would make the follow-up check fail for a
     second, unrelated reason."""
+    # A MISSING destination, not a tampered one. Since step 11 the copilot installer is
+    # ownership-aware: a file the user edited after install is drift `apply` deliberately
+    # PRESERVES (see `CopilotApplyPreservesUserContentTests`), so seeding a tamper here would
+    # assert the pre-step-11 contract that overwriting user edits is a repair.
     agent = sorted((copilot_home / "agents").glob("*.agent.md"))[0]
-    agent.write_text(agent.read_text() + "\n# tampered by the user\n")
+    agent.unlink()
     installed_prompts = sorted((codex_home / "prompts").glob("*.md"))
     assert installed_prompts, "fixture codex home should have installed prompts"
     for prompt in installed_prompts:
@@ -1587,7 +1591,7 @@ class ApplyNeverNamesTheClaudeHomeTests(unittest.TestCase):
             [
                 hu._CLAUDE_CONDITIONAL_FRAMING,
                 hu._CLAUDE_PRINT_ONLY_NOTE,
-                hu._COPILOT_OVERWRITE_NOTE,
+                hu._COPILOT_OWNERSHIP_NOTE,
                 hu._CODEX_SKIP_DIFFERS_NOTE,
                 hu._CODEX_COVERAGE_NOTE,
                 hu._NOT_INSTALLED_NOTE,

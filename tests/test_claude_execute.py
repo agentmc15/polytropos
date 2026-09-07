@@ -192,9 +192,13 @@ true
 """
 
 
-def _single_task_text(verify_cmd, task_id="E1", model="fake-haiku"):
+def _single_task_text(verify_cmd, task_id="E1", model="fake-haiku", evidence=None):
     """A one-task kit whose verify command is caller-supplied (so tests can make it
-    genuinely fail pre-task and pass post-task, or make it trivially tautological)."""
+    genuinely fail pre-task and pass post-task, or make it trivially tautological).
+
+    `evidence` writes an optional `- evidence:` line; None omits it entirely, which is what
+    every kit written before step 09 looks like."""
+    evidence_line = f"- evidence: {evidence}\n" if evidence else ""
     return f"""## Phase 1 — Only phase
 
 ### {task_id} — Only fixture task
@@ -202,7 +206,7 @@ def _single_task_text(verify_cmd, task_id="E1", model="fake-haiku"):
 - model: {model}
 - depends: (none)
 - independent: yes
-
+{evidence_line}
 **Brief.** Fixture brief payload for the end-to-end stub-executable run.
 
 **Acceptance.** Fake acceptance text for {task_id}.
@@ -775,14 +779,16 @@ class EndToEndRunHappyPathTests(unittest.TestCase):
 
 class EndToEndTautologicalVerifyTests(unittest.TestCase):
     def test_tautological_verify_labels_the_ledger_line_and_exits_nonzero(self):
-        # `true` passes on the PRE-task tree too (D10) -- precheck flags it tautological, and
-        # record refuses to write the pass marker. The refusal is NOT discarded: it rides into
-        # NOTES.md as an in-grammar `defect: <task-id> kind=tautological-verify` line beside the
-        # `outcome:` line (a `result=pass` written off a verify that could never fail would
-        # otherwise be indistinguishable from a genuine red -> green first-try pass, and NOTES.md
-        # is the routing evidence base), goes to STDERR, and makes `run` exit nonzero.
-        # What it deliberately does NOT do is change the done/blocked decision (PLAN D11: an
-        # analysis signal never changes routing state) -- the task still ends up `done`.
+        # `true` passes on the PRE-task tree too -- precheck flags it, record refuses the pass
+        # marker, the refusal rides into NOTES.md as an in-grammar `defect:` line, goes to
+        # STDERR, and `run` exits nonzero. All of that is unchanged.
+        #
+        # STEP 09 CHANGED THE STATUS. This used to leave the task `done`, reasoning that an
+        # analysis signal must not change routing state -- right while the rule was BLANKET,
+        # because it fired on refactors and docs guards where a pre-task pass is expected. Now
+        # that `- evidence:` declares what each check must demonstrate, a red-green task whose
+        # command already passed has had its REQUIRED proof fail, and a task whose proof failed
+        # is not done. The regression case is the sibling test below.
         with tempfile.TemporaryDirectory() as tmp_s:
             tmp = Path(tmp_s)
             fixture_repo_root = _write_agent_bundle(
@@ -805,13 +811,16 @@ class EndToEndTautologicalVerifyTests(unittest.TestCase):
                                 )
             self.assertNotEqual(ctx.exception.code, 0)
 
-            # the `done` write is untouched -- status follows the verify's exit code
+            # a red-green task whose required proof failed is NOT done
             tasks = ce.parse_tasks((kit_dir / "TASKS.md").read_text())
-            self.assertEqual(tasks[0]["status"], "done")
+            self.assertEqual(tasks[0]["status"], "blocked")
+            self.assertIn("required-evidence", err.getvalue())
 
             notes_text = (kit_dir / "NOTES.md").read_text()
-            self.assertIn("result=pass", notes_text)
-            # ... but the ledger no longer LIES about it: the honesty label ships beside it
+            # The ledger records what happened rather than a pass it cannot support: the
+            # command's own `exit 0` is still stated, but the OUTCOME is not a pass.
+            self.assertIn("result=blocked", notes_text)
+            self.assertNotIn("result=pass", notes_text)
             self.assertIn("defect: E1 kind=tautological-verify", notes_text)
 
             # record refused -- no pass marker persisted; `run_record`'s refusal message
@@ -1212,9 +1221,12 @@ class ParsePlanBudgetTests(unittest.TestCase):
 
 class CountPlanBudgetUsageTests(unittest.TestCase):
     def test_empty_notes_all_zero(self):
+        # Derived from PLAN_BUDGET_KEYS rather than a frozen literal: the counter must always
+        # report EVERY cap (step 08 added `max-model-calls`), and a cap the counter forgets is
+        # a cap that reads as zero-used forever.
         self.assertEqual(
             ce.count_plan_budget_usage(""),
-            {"max-dispatches": 0, "max-escalations": 0, "max-consults": 0},
+            {key: 0 for key in ce.PLAN_BUDGET_KEYS},
         )
 
     def test_sums_attempts_and_escalations_across_lines(self):
@@ -1439,6 +1451,386 @@ class EndToEndPlanBudgetStopTests(unittest.TestCase):
             self.assertIn("result=pass", notes_text)
             self.assertNotIn("budget-stop", notes_text)
             self.assertEqual(log_path.read_text().count("===CALL==="), 1)
+
+
+class RolePermissionTests(unittest.TestCase):
+    """Step 06: a declared role capability must reach the dispatch, and a review role must not
+    receive a blanket permission grant."""
+
+    def test_frontmatter_is_parsed_rather_than_discarded(self):
+        text = (
+            "---\nname: kit-reviewer\nmodel: opus\ntools: Bash, Read, Grep, Glob\n---\n"
+            "\nBody text here.\n"
+        )
+        fields, body = ce.parse_frontmatter(text)
+        self.assertEqual(fields["tools"], "Bash, Read, Grep, Glob")
+        self.assertEqual(fields["model"], "opus")
+        self.assertEqual(body.strip(), "Body text here.")
+
+    def test_a_file_without_frontmatter_is_unchanged(self):
+        fields, body = ce.parse_frontmatter("Just a body.\n")
+        self.assertEqual(fields, {})
+        self.assertEqual(body, "Just a body.\n")
+
+    def test_a_declared_tool_pin_reaches_the_dispatch(self):
+        profile = ce.role_permission_profile(
+            "reviewer", {"tools": "Bash, Read, Grep, Glob"}
+        )
+        argv = ce.build_dispatch("claude", "m", "prompt", permissions=profile)
+        self.assertIn("--allowedTools=Bash Read Grep Glob", argv)
+
+    def test_the_tool_pin_cannot_swallow_the_prompt(self):
+        """The flag is variadic (`<tools...>`), so the SEPARATED form consumes the following
+        positional: `--allowedTools 'Bash Read' <prompt>` loses the prompt, and the CLI fails
+        with "Input must be provided either through stdin or as a prompt argument". Binding the
+        value with `=` keeps the prompt a positional. Verified once against Claude Code 2.1.263;
+        this test is the standing guard, and it invokes nothing."""
+        profile = ce.role_permission_profile("reviewer", {"tools": "Bash, Read"})
+        argv = ce.build_dispatch("claude", "m", "THE PROMPT", permissions=profile)
+
+        self.assertEqual(argv[-1], "THE PROMPT", "the prompt must stay the last positional")
+        # The bare flag never appears as its own element -- that is the shape that loses it.
+        self.assertNotIn(ce.ALLOWED_TOOLS_FLAG, argv)
+        pinned = [a for a in argv if a.startswith(ce.ALLOWED_TOOLS_FLAG + "=")]
+        self.assertEqual(pinned, ["--allowedTools=Bash Read"])
+
+    def test_review_roles_get_no_blanket_grant(self):
+        for role in ce.READ_ONLY_ROLES:
+            profile = ce.role_permission_profile(role, {"tools": "Bash, Read"})
+            argv = ce.build_dispatch("claude", "m", "prompt", permissions=profile)
+            self.assertNotIn(ce.PERMISSION_FLAG, argv, f"{role} still receives the bypass")
+
+    def test_implementation_roles_keep_the_grant(self):
+        profile = ce.role_permission_profile("implementer", {})
+        argv = ce.build_dispatch("claude", "m", "prompt", permissions=profile)
+        self.assertIn(ce.PERMISSION_FLAG, argv)
+        self.assertNotIn(ce.ALLOWED_TOOLS_FLAG, argv)
+
+    def test_the_bypass_opt_out_is_explicit_and_self_describing(self):
+        restricted = ce.role_permission_profile("reviewer", {"tools": "Bash"})
+        opted_out = ce.role_permission_profile(
+            "reviewer", {"tools": "Bash"}, review_mode="bypass"
+        )
+        self.assertFalse(restricted["bypass"])
+        self.assertTrue(opted_out["bypass"])
+        self.assertIn("opt-out", opted_out["source"])
+        self.assertIn("no blanket grant", ce.describe_permissions(restricted))
+
+    def test_default_dispatch_is_unchanged_for_callers_that_pass_nothing(self):
+        """Backward compatibility: an un-migrated caller gets exactly the historical argv."""
+        self.assertEqual(
+            ce.build_dispatch("claude", "m", "p"),
+            ["claude", "-p", "--model", "m", ce.PERMISSION_FLAG, "p"],
+        )
+
+    def test_escalation_keeps_the_same_permissions_as_the_first_attempt(self):
+        """An escalation is a bigger model, not a wider grant."""
+        seen = []
+
+        def runner(argv):
+            seen.append(list(argv))
+            return 0, ""
+
+        verify_calls = []
+
+        def verify_runner(cmd):
+            verify_calls.append(cmd)
+            return (1, "still failing") if len(verify_calls) < 3 else (0, "ok")
+
+        profile = ce.role_permission_profile("reviewer", {"tools": "Bash, Read"})
+        task = {"id": "T1", "title": "t", "status": "pending", "model": None,
+                "depends": [], "brief": "do it", "verify": "true"}
+        ce.run_task(task, PRICING_FIXTURE, runner, verify_runner, permissions=profile)
+
+        self.assertGreater(len(seen), 1, "expected at least one escalation")
+        for argv in seen:
+            self.assertNotIn(ce.PERMISSION_FLAG, argv)
+            self.assertIn("--allowedTools=Bash Read", argv)
+            # The prompt stays the last positional on every rung (escalations append failure
+            # evidence to it, so match the start rather than the whole string).
+            self.assertTrue(argv[-1].startswith("do it"), argv[-1])
+
+
+class DispatchAndReadinessTests(unittest.TestCase):
+    """Step 07: dispatch status and verification status are separate facts, and one readiness
+    rule governs both explicit and automatic selection."""
+
+    def _task(self, **overrides):
+        base = {"id": "T1", "title": "t", "status": "pending", "model": None,
+                "depends": [], "brief": "do it", "verify": "true"}
+        base.update(overrides)
+        return base
+
+    def test_a_failed_dispatch_does_not_become_done_on_a_passing_check(self):
+        """THE defect. The model process failed; the verify command passes because it was
+        already passing. That is not work this attempt did."""
+        runner = mock.Mock(return_value=(1, "auth error: not logged in"))
+        verify_runner = mock.Mock(return_value=(0, "ok"))
+
+        result = ce.run_task(self._task(), PRICING_FIXTURE, runner, verify_runner)
+
+        self.assertEqual(result["status"], "blocked")
+        self.assertEqual(result["dispatch_rc"], 1)
+        self.assertEqual(result["failure"], "dispatch")
+        # The check's verdict is not borrowed to describe a dispatch that never ran.
+        self.assertIsNone(result["verify_rc"])
+        self.assertIn("auth error", result["dispatch_evidence"])
+
+    def test_a_failed_dispatch_does_not_climb_the_escalation_ladder(self):
+        """A crashed or unauthenticated process fails the same way on a pricier model."""
+        runner = mock.Mock(return_value=(1, "boom"))
+        verify_runner = mock.Mock(return_value=(1, "failing"))
+
+        result = ce.run_task(self._task(), PRICING_FIXTURE, runner, verify_runner)
+
+        self.assertEqual(result["status"], "blocked")
+        self.assertEqual(result["escalations"], [])
+        self.assertEqual(runner.call_count, 1, "must not retry an infrastructure failure")
+
+    def test_verification_failure_after_a_successful_dispatch_still_escalates(self):
+        runner = mock.Mock(return_value=(0, ""))
+        verify_runner = mock.Mock(side_effect=[(1, "red"), (0, "green")])
+
+        result = ce.run_task(self._task(), PRICING_FIXTURE, runner, verify_runner)
+
+        self.assertEqual(result["status"], "done")
+        self.assertEqual(result["failure"], None)
+        self.assertEqual(result["dispatch_rc"], 0)
+        self.assertTrue(result["escalations"])
+
+    def test_a_runner_that_reports_nothing_is_unknown_not_success(self):
+        """Injected fixtures return None. That is absence of evidence, recorded as such --
+        it is not a reported failure, so it does not block completion."""
+        result = ce.run_task(self._task(), PRICING_FIXTURE,
+                             mock.Mock(return_value=None), mock.Mock(return_value=(0, "ok")))
+        self.assertEqual(result["status"], "done")
+        self.assertIsNone(result["dispatch_rc"])
+
+    def test_explicit_selection_obeys_the_same_dependency_rule_as_automatic(self):
+        tasks = [self._task(id="T1", status="pending"),
+                 self._task(id="T2", status="pending", depends=["T1"])]
+        task, reason = ce.select_task(tasks, "T2")
+        self.assertIsNone(task, "naming a task must not bypass its dependencies")
+        self.assertIn("depends on T1", reason)
+        self.assertIn("pending", reason)
+
+    def test_a_nonexistent_dependency_is_named(self):
+        tasks = [self._task(id="T2", depends=["T99"])]
+        task, reason = ce.select_task(tasks, "T2")
+        self.assertIsNone(task)
+        self.assertIn("unknown task 'T99'", reason)
+
+    def test_an_unknown_task_id_is_named(self):
+        task, reason = ce.select_task([self._task(id="T1")], "T9")
+        self.assertIsNone(task)
+        self.assertIn("no task with id 'T9'", reason)
+
+    def test_a_ready_task_is_selected_explicitly_and_automatically(self):
+        tasks = [self._task(id="T1", status="done"),
+                 self._task(id="T2", status="pending", depends=["T1"])]
+        explicit, reason = ce.select_task(tasks, "T2")
+        self.assertIsNotNone(explicit, reason)
+        self.assertEqual(explicit["id"], "T2")
+        automatic, reason = ce.select_task(tasks)
+        self.assertEqual(automatic["id"], "T2", reason)
+
+    def test_completed_work_is_not_silently_repeated(self):
+        tasks = [self._task(id="T1", status="done")]
+        task, reason = ce.select_task(tasks, "T1")
+        self.assertIsNone(task)
+        self.assertIn("already done", reason)
+        rerun, reason = ce.select_task(tasks, "T1", allow_rerun=True)
+        self.assertIsNotNone(rerun, reason)
+
+    def test_automatic_selection_explains_an_empty_frontier(self):
+        blocked = [self._task(id="T2", status="pending", depends=["T1"]),
+                   self._task(id="T1", status="blocked")]
+        task, reason = ce.select_task(blocked)
+        self.assertIsNone(task)
+        self.assertIn("no pending task has all dependencies done", reason)
+
+
+MODEL_PIN = None
+RUN_KWARGS = {}
+
+
+class BudgetAdmissionTests(unittest.TestCase):
+    """Step 08: every consuming operation is admitted BEFORE it spends."""
+
+    def _task(self, **overrides):
+        base = {"id": "T1", "title": "t", "status": "pending", "model": MODEL_PIN,
+                "depends": [], "brief": "do it", "verify": "true"}
+        base.update(overrides)
+        return base
+
+    def test_a_one_dispatch_allowance_funds_exactly_one_dispatch(self):
+        """THE defect: the gate ran once at invocation entry, so `max-dispatches=1` paid for
+        the initial attempt AND every rung of the escalation ladder."""
+        runner = mock.Mock(return_value=(0, ""))
+        verify_runner = mock.Mock(return_value=(1, "always failing"))
+        admission = ce.BudgetAdmission({"max-dispatches": 1}, {})
+
+        result = ce.run_task(self._task(), PRICING_FIXTURE, runner, verify_runner,
+                             admission=admission, **RUN_KWARGS)
+
+        self.assertEqual(runner.call_count, 1)
+        self.assertEqual(result["status"], "blocked")
+        self.assertEqual(result["failure"], "budget")
+        self.assertEqual(result["budget_stop"]["operation"], "escalation")
+
+    def test_a_zero_escalation_allowance_still_permits_the_initial_attempt(self):
+        """`used=0 >= cap=0` is true, and the old check tested every cap against every
+        operation -- so declaring `max-escalations=0` refused to run the first task at all."""
+        self.assertIsNone(ce.plan_budget_exhausted({"max-escalations": 0}, {}, False))
+
+        runner = mock.Mock(return_value=(0, ""))
+        verify_runner = mock.Mock(return_value=(0, "ok"))
+        admission = ce.BudgetAdmission({"max-escalations": 0}, {})
+        result = ce.run_task(self._task(), PRICING_FIXTURE, runner, verify_runner,
+                             admission=admission, **RUN_KWARGS)
+
+        self.assertEqual(result["status"], "done")
+        self.assertEqual(runner.call_count, 1)
+
+    def test_a_zero_escalation_allowance_still_refuses_the_ladder(self):
+        runner = mock.Mock(return_value=(0, ""))
+        verify_runner = mock.Mock(return_value=(1, "failing"))
+        admission = ce.BudgetAdmission({"max-escalations": 0}, {})
+        result = ce.run_task(self._task(), PRICING_FIXTURE, runner, verify_runner,
+                             admission=admission, **RUN_KWARGS)
+
+        self.assertEqual(runner.call_count, 1)
+        self.assertEqual(result["budget_stop"]["operation"], "escalation")
+
+    def test_a_failed_consult_still_consumes_its_allowance(self):
+        """An operation that can fail for free is an operation nobody is counting."""
+        admission = ce.BudgetAdmission({"max-consults": 1}, {})
+        ok, _ = admission.admit("consult")
+        self.assertTrue(ok)
+        ok, reason = admission.admit("consult")
+        self.assertFalse(ok, "the first consult spent the allowance even though it failed")
+        self.assertIn("max-consults", reason)
+
+    def test_operation_kinds_draw_down_the_caps_they_should(self):
+        self.assertEqual(ce.OPERATION_CAPS["initial"], ("max-dispatches", "max-model-calls"))
+        self.assertIn("max-escalations", ce.OPERATION_CAPS["escalation"])
+        self.assertIn("max-consults", ce.OPERATION_CAPS["consult"])
+        # An initial attempt never consults the escalation cap -- that IS the zero-cap fix.
+        self.assertNotIn("max-escalations", ce.OPERATION_CAPS["initial"])
+        # Review and acceptance are outside max-dispatches, historically and still.
+        self.assertNotIn("max-dispatches", ce.OPERATION_CAPS["review"])
+        self.assertNotIn("max-dispatches", ce.OPERATION_CAPS["acceptance"])
+
+    def test_max_dispatches_keeps_its_recorded_meaning(self):
+        """Compatibility: an existing ledger must not start meaning something new."""
+        notes = "- outcome: T1 model=m attempts=3 result=escalated-pass\n"
+        used = ce.count_plan_budget_usage(notes)
+        self.assertEqual(used["max-dispatches"], 3)
+        self.assertEqual(used["max-escalations"], 2)
+        self.assertEqual(used["max-model-calls"], 3)
+
+    def test_the_new_cap_parses_alongside_the_historical_ones(self):
+        budget = ce.parse_plan_budget("budget: max-dispatches=5 max-model-calls=9")
+        self.assertEqual(budget, {"max-dispatches": 5, "max-model-calls": 9})
+
+
+class EvidenceKindTests(unittest.TestCase):
+    """Step 09: what a task's verify command has to DEMONSTRATE is declared per task, so a
+    check that legitimately passes beforehand is no longer treated as proving nothing."""
+
+    def test_a_regression_task_may_pass_before_the_work(self):
+        """The blanket rule told a refactor, a docs guard and a regression fence to invent a
+        failing test in order to prove something true by construction."""
+        with tempfile.TemporaryDirectory() as tmp_s:
+            tmp = Path(tmp_s)
+            fixture_repo_root = _write_agent_bundle(
+                tmp, "fixturekit", "implementer", PREAMBLE_FIXTURE_BODY
+            )
+            kit_dir = _write_kit(
+                tmp, _single_task_text("true", evidence="regression"), slug="fixturekit"
+            )
+            stub_path = _write_stub(tmp, tmp / "stub.log")
+
+            with mock.patch.object(ce, "REPO_ROOT", fixture_repo_root), \
+                 mock.patch.object(ce, "load_pricing", return_value=PRICING_FIXTURE), \
+                 contextlib.redirect_stdout(io.StringIO()), \
+                 contextlib.redirect_stderr(io.StringIO()):
+                ce.main(["run", "--kit", str(kit_dir), "--claude-bin", str(stub_path)])
+
+            tasks = ce.parse_tasks((kit_dir / "TASKS.md").read_text())
+            self.assertEqual(tasks[0]["status"], "done")
+            notes_text = (kit_dir / "NOTES.md").read_text()
+            self.assertIn("result=pass", notes_text)
+            # No defect label: for this evidence kind, passing beforehand is the point.
+            self.assertNotIn("tautological-verify", notes_text)
+
+    def test_the_default_is_the_historical_rule(self):
+        """Every kit written before this field keeps behaving exactly as it did."""
+        tasks = ce.parse_tasks(_single_task_text("true"))
+        self.assertIsNone(tasks[0]["evidence"])
+        vh = ce._load_verify_hook_module()
+        self.assertEqual(vh.normalize_evidence(None), "red-green")
+        self.assertEqual(vh.normalize_evidence(""), "red-green")
+
+    def test_an_unknown_evidence_kind_fails_loudly(self):
+        """A typo silently becoming `red-green` would reinstate the blanket rule for a task
+        that explicitly asked not to have it."""
+        vh = ce._load_verify_hook_module()
+        with self.assertRaises(ValueError) as caught:
+            vh.normalize_evidence("regresion")
+        self.assertIn("red-green", str(caught.exception))
+
+    def test_precheck_records_the_kind_it_judged_by(self):
+        vh = ce._load_verify_hook_module()
+        with tempfile.TemporaryDirectory() as tmp_s:
+            kit = Path(tmp_s)
+            passing = lambda cmd: (0, "")
+            red_green = vh.run_precheck(str(kit), "T1", "true", passing)
+            self.assertTrue(red_green["tautological"])
+            self.assertEqual(red_green["evidence"], "red-green")
+
+            regression = vh.run_precheck(str(kit), "T2", "true", passing,
+                                         evidence="regression")
+            self.assertFalse(regression["tautological"])
+            self.assertEqual(regression["evidence"], "regression")
+
+    def test_a_regression_task_still_records_its_pass_marker(self):
+        vh = ce._load_verify_hook_module()
+        with tempfile.TemporaryDirectory() as tmp_s:
+            kit = Path(tmp_s)
+            vh.run_precheck(str(kit), "T1", "true", lambda cmd: (0, ""), evidence="regression")
+            ok, _message = vh.run_record(str(kit), "T1", "true")
+            self.assertTrue(ok)
+
+    def test_a_red_green_task_is_still_refused_its_marker(self):
+        vh = ce._load_verify_hook_module()
+        with tempfile.TemporaryDirectory() as tmp_s:
+            kit = Path(tmp_s)
+            vh.run_precheck(str(kit), "T1", "true", lambda cmd: (0, ""))
+            ok, message = vh.run_record(str(kit), "T1", "true")
+            self.assertFalse(ok)
+            self.assertIn("tautological-verify", message)
+
+    def test_a_changed_verify_command_clears_the_refusal(self):
+        """The refusal is bound to the exact command it judged, not to the task forever."""
+        vh = ce._load_verify_hook_module()
+        with tempfile.TemporaryDirectory() as tmp_s:
+            kit = Path(tmp_s)
+            vh.run_precheck(str(kit), "T1", "true", lambda cmd: (0, ""))
+            ok, _message = vh.run_record(str(kit), "T1", "pytest tests/test_new.py")
+            self.assertTrue(ok, "a different command was never judged tautological")
+
+    def test_a_stale_marker_does_not_survive_a_new_attempt(self):
+        vh = ce._load_verify_hook_module()
+        with tempfile.TemporaryDirectory() as tmp_s:
+            kit = Path(tmp_s)
+            vh.run_precheck(str(kit), "T1", "false", lambda cmd: (1, "red"))
+            vh.run_record(str(kit), "T1", "false")
+            self.assertTrue(vh.marker_exists(str(kit), "T1"))
+            # A new attempt starts by invalidating the previous attempt's proof.
+            with contextlib.redirect_stdout(io.StringIO()):
+                vh.run_precheck(str(kit), "T1", "false", lambda cmd: (1, "red"))
+            self.assertFalse(vh.marker_exists(str(kit), "T1"))
 
 
 if __name__ == "__main__":

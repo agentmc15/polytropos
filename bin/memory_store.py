@@ -32,7 +32,22 @@ from datetime import date
 from pathlib import Path
 
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
-DEFAULT_MEMORY_DIR = PLUGIN_ROOT / "memory"
+
+def _store_default(name):
+    """Default location for a runtime store, via `bin/runtime_data.py` (step 13).
+
+    Outside the plugin tree unless a store already exists in it, in which case that one keeps
+    being used. Per-command `--*-dir` flags override this and are unchanged.
+    """
+    import importlib.util
+    module_path = Path(__file__).resolve().parent / "runtime_data.py"
+    spec = importlib.util.spec_from_file_location("runtime_data", module_path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.store_path(name, PLUGIN_ROOT)
+
+
+DEFAULT_MEMORY_DIR = _store_default("memory")
 
 SCHEMA_VERSION = 1
 FACT_TYPES = ("user", "feedback", "project", "reference", "decision")
@@ -55,7 +70,24 @@ FRONTMATTER_FENCE = "---"
 CORE_FIELDS = (
     "schema", "name", "description", "type", "tags",
     "created", "last_verified", "expires", "confidence", "source",
+    # Provenance and scope (step 13), appended so existing files keep their field order.
+    "project", "trust", "providers",
 )
+
+#: How a fact came to be known. This is not a quality rating -- it is the difference between
+#: something a person SAID and something a machine INFERRED or a file supplied. It matters at
+#: recall: an imported or model-derived observation is text of unknown origin arriving in a
+#: session's context, and rendering it as though the user had asserted it is how a note in
+#: someone else's file becomes an instruction.
+TRUST_LEVELS = ("user-stated", "observed", "imported", "model-derived", "unspecified")
+
+#: Trust for a fact written before this field existed. NOT `user-stated`: those files are
+#: probably user-written, and "probably" is the wrong basis for treating text as authoritative.
+DEFAULT_TRUST = "unspecified"
+
+#: Providers a fact may be recalled for. `any` is the compatible default; a comma list scopes
+#: it, so a fact about one vendor's internals need not be sent to another's model.
+DEFAULT_PROVIDERS = "any"
 
 
 # --------------------------------------------------------------------------- slug / path
@@ -80,6 +112,60 @@ def slugify(name):
         # trailing "-" after the cut is possible; strip once more defensively.
         slug = slug.strip("-") or "fact"
     return slug
+
+
+def _sp():
+    """Lazy-load bin/safe_paths.py -- the repo's ONE path-containment helper."""
+    import importlib.util
+    path = Path(__file__).resolve().parent / "safe_paths.py"
+    spec = importlib.util.spec_from_file_location("safe_paths", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def write_fact_file(memory_dir, slug, text):
+    """Write one fact under ``<memory_dir>/facts/<slug>.md``, following no link.
+
+    The store is private user data in a directory the user selected, and `write_text` follows
+    whatever is at the destination: a symlink left at ``facts/<slug>.md``, or a symlinked
+    ``facts/`` directory, redirected the write outside the store entirely. This walks the path
+    directory-relative and no-follow, replaces a non-regular destination rather than writing
+    through it, and creates the file 0600 -- private by construction rather than by umask.
+    """
+    if not validate_slug(slug):
+        raise ValueError(f"invalid slug {slug!r} — expected {SLUG_RE.pattern}")
+    Path(memory_dir).mkdir(parents=True, exist_ok=True)
+    _sp().confined_replace(
+        memory_dir, f"{FACTS_SUBDIR}/{slug}.md", text,
+        what=f"memory fact {slug}", mode=0o600,
+    )
+
+
+def write_index_file(memory_dir, text):
+    """Write ``<memory_dir>/index.md`` under the same no-follow rules as a fact."""
+    Path(memory_dir).mkdir(parents=True, exist_ok=True)
+    _sp().confined_replace(memory_dir, INDEX_NAME, text, what="memory index", mode=0o600)
+
+
+def fact_is_writable_destination(memory_dir, slug):
+    """True when ``facts/<slug>.md`` is absent or a REGULAR file.
+
+    False means something else occupies the name -- a symlink, a directory, a device. Such a
+    destination is not "absent, therefore free to write": it is a destination we cannot vouch
+    for, and treating it as absent is how a store silently starts writing somewhere else.
+    """
+    if not validate_slug(slug):
+        return False
+    root = Path(memory_dir)
+    if not root.is_dir():
+        return True
+    rel = f"{FACTS_SUBDIR}/{slug}.md"
+    if _sp().leaf_is_regular(root, rel):
+        return True
+    return not (root / FACTS_SUBDIR / f"{slug}.md").exists() and not (
+        root / FACTS_SUBDIR / f"{slug}.md"
+    ).is_symlink()
 
 
 def fact_path(memory_dir, slug):
@@ -166,6 +252,12 @@ def load_store(memory_dir):
         return facts, notes
     for path in sorted(facts_dir.glob("*.md")):
         slug = path.stem
+        # A fact is a regular file. A symlink here would be read THROUGH, pulling content from
+        # outside the store into recall and then into a session's context; a directory or
+        # device is not a fact either. Noted and skipped, never followed.
+        if path.is_symlink() or not path.is_file():
+            notes.append(f"{path.name}: skipped (not a regular file)")
+            continue
         try:
             text = path.read_text(errors="replace")
         except OSError as e:
@@ -261,8 +353,7 @@ def rebuild_index(memory_dir, now):
         ftype = meta.get("type", "")
         state = staleness_state(meta, now)
         lines.append(f"- [{name}](facts/{slug}.md) — {description} ({ftype}, {state})")
-    memory_dir.mkdir(parents=True, exist_ok=True)
-    (memory_dir / INDEX_NAME).write_text("\n".join(lines) + "\n")
+    write_index_file(memory_dir, "\n".join(lines) + "\n")
 
 
 # --------------------------------------------------------------------------- shared CLI helpers
@@ -341,11 +432,20 @@ def cmd_add(args):
         "expires": args.expires or "never",
         "confidence": confidence,
         "source": args.source or "",
+        "project": args.project or "",
+        "trust": args.trust or "user-stated",
+        "providers": args.providers or DEFAULT_PROVIDERS,
     }
 
-    path = fact_path(memory_dir, slug)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(render_fact(meta, body))
+    if not fact_is_writable_destination(memory_dir, slug):
+        print(
+            f"refusing to write fact {slug!r}: facts/{slug}.md exists but is not a regular "
+            f"file (a symlink, directory or device). That is not an absent destination and it "
+            f"is not one this can vouch for — remove or replace it deliberately.",
+            file=sys.stderr,
+        )
+        return 2
+    write_fact_file(memory_dir, slug, render_fact(meta, body))
     rebuild_index(memory_dir, now)
 
     if args.json:
@@ -384,6 +484,10 @@ def cmd_update(args):
         meta["tags"] = _parse_tags(args.tags) or ""
     if args.expires is not None:
         meta["expires"] = args.expires
+    for field in ("project", "trust", "providers"):
+        value = getattr(args, field, None)
+        if value is not None:
+            meta[field] = value
     if args.source is not None:
         meta["source"] = args.source
     if args.body_file is not None:
@@ -393,8 +497,7 @@ def cmd_update(args):
 
     meta["last_verified"] = now  # an update IS a verification (PLAN D7)
 
-    path = fact_path(memory_dir, args.slug)
-    path.write_text(render_fact(meta, body))
+    write_fact_file(memory_dir, args.slug, render_fact(meta, body))
     rebuild_index(memory_dir, now)
 
     if args.json:
@@ -463,8 +566,7 @@ def cmd_verify(args):
         return 2
 
     meta["last_verified"] = now
-    path = fact_path(memory_dir, args.slug)
-    path.write_text(render_fact(meta, body))
+    write_fact_file(memory_dir, args.slug, render_fact(meta, body))
     rebuild_index(memory_dir, now)
 
     ttl_days = TYPE_TTL_DAYS.get(meta.get("type", ""), 180)
@@ -560,6 +662,14 @@ def main(argv=None):
     p_add.add_argument("--body-file", default=None)
     p_add.add_argument("--slug", default=None)
     p_add.add_argument("--expires", default=None, help="YYYY-MM-DD or 'never' (default: never)")
+    p_add.add_argument("--project", default=None,
+                       help="project this fact belongs to (default: empty = every project)")
+    p_add.add_argument("--trust", default=None, choices=TRUST_LEVELS,
+                       help="how this fact came to be known (default: user-stated, because "
+                            "`add` is a person typing it)")
+    p_add.add_argument("--providers", default=None,
+                       help=f"comma list of providers this fact may be recalled for "
+                            f"(default: {DEFAULT_PROVIDERS})")
     p_add.add_argument("--confidence", default=None,
                         help=f"one of {', '.join(CONFIDENCE_LEVELS)}")
     p_add.add_argument("--source", default=None)
@@ -577,6 +687,9 @@ def main(argv=None):
     p_update.add_argument("--body", default=None)
     p_update.add_argument("--body-file", default=None)
     p_update.add_argument("--expires", default=None)
+    p_update.add_argument("--project", default=None)
+    p_update.add_argument("--trust", default=None, choices=TRUST_LEVELS)
+    p_update.add_argument("--providers", default=None)
     p_update.add_argument("--confidence", default=None,
                            help=f"one of {', '.join(CONFIDENCE_LEVELS)}")
     p_update.add_argument("--type", default=None,

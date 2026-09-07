@@ -45,6 +45,25 @@ runner correlates it to a fresh rollout `turn_context` before recording an obser
 otherwise actual model/role stay `unknown`. Planned, dispatched, and observed fields are never
 collapsed. Model ids, availability, effort levels, and prices are never hardcoded here.
 
+Authoritative role-use evidence is TYPED and lives in `<kit>/role-use.jsonl`, one JSON object
+per dispatch, written by the driver only: the exact integer dispatch return code, phase/role/
+run/attempt identity, the evidence fingerprint, and the report's DIGEST -- never its text.
+NOTES.md keeps the readable view, report and all, and is no longer read by any gate. The two
+were one file once, and a substring search over that file could not tell a field the driver
+wrote from the same characters quoted inside a model's report -- reports quote this repository's
+own source routinely, so that was an accident waiting to happen, not only an attack. Legacy
+NOTES.md blocks import as `provable: False`: unknown, never success (`import_legacy_role_use`).
+
+The final acceptance verdict is read ONLY from a correlated terminal assistant message in a
+completed turn on STDOUT (`parse_acceptance_result`). Tool events, reasoning items, intermediate
+messages, stderr, failed turns, interrupted streams, and messages naming both verdicts all fail
+closed with a stated reason. `DispatchOutput` keeps the two streams separable for exactly this;
+once they are concatenated no consumer can tell which one a line came from.
+
+Neither is a tamper-proof boundary: both files sit in a tree a worker can write. They fix
+provenance -- what a field MEANS and where it came from -- not authority. Authority needs the
+execution boundary, not a file format.
+
 Dispatch stays strictly SEQUENTIAL (PLAN D5) — one task, one dispatch, one verify, at a time;
 no fan-out, no concurrency. This was cut from scope deliberately: fan-out on a paid/
 quota-limited harness only buys wall-clock time while multiplying real spend, and this kit's
@@ -112,14 +131,76 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+
+#: Wall clock for the local `git` reads that fingerprint a workspace. Short: these are local
+#: metadata reads, and one that does not return in a minute is stuck, not slow.
+GIT_PROBE_TIMEOUT_SECONDS = 60
 PRICING_PATH = REPO_ROOT / "data" / "pricing.codex.json"
 PLACEHOLDER = "{{POLYTROPOS_ROOT}}"
 
 TIER_ORDER = ("cheap", "mid", "strong", "frontier")
-STATUSES = ("pending", "in-progress", "done", "blocked")
+
+# ---- the shared kit contract ---------------------------------------------------------------
+#
+# Everything below is DEFINED ONCE in `bin/kit_contract.py` and re-exported here. These names
+# used to be written out in full in each of the three drivers, identically; see that module's
+# docstring for the measurement. Re-exporting rather than importing-and-renaming keeps this
+# module's surface exactly what it was, so callers -- this file, its tests, and
+# `bin/journal_collect.py`, which uses `parse_tasks` as the kit-task format authority -- are
+# unaffected, and a test that patches one of these names on this module still works.
+
+_KIT_CONTRACT = None
+
+
+def _kc():
+    """Lazy-load `bin/kit_contract.py` -- the repo's ONE kit/task/run contract (step 15)."""
+    global _KIT_CONTRACT
+    if _KIT_CONTRACT is None:
+        import importlib.util
+        module_path = Path(__file__).resolve().parent / "kit_contract.py"
+        spec = importlib.util.spec_from_file_location("kit_contract", module_path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        _KIT_CONTRACT = module
+    return _KIT_CONTRACT
+
+
+_CONTRACT = _kc()
+CONTRACT_VERSION = _CONTRACT.CONTRACT_VERSION
+TASK_FIELDS = _CONTRACT.TASK_FIELDS
+to_contract = _CONTRACT.to_contract
+BudgetAdmission = _CONTRACT.BudgetAdmission
+EM_DASH = _CONTRACT.EM_DASH
+OPERATION_CAPS = _CONTRACT.OPERATION_CAPS
+PLAN_BUDGET_KEYS = _CONTRACT.PLAN_BUDGET_KEYS
+PLAN_BUDGET_RE = _CONTRACT.PLAN_BUDGET_RE
+STATUSES = _CONTRACT.STATUSES
+_ep = _CONTRACT._ep
+_evidence = _CONTRACT._evidence
+_extract_brief = _CONTRACT._extract_brief
+_extract_verify = _CONTRACT._extract_verify
+_parse_block = _CONTRACT._parse_block
+_parse_depends = _CONTRACT._parse_depends
+_pr = _CONTRACT._pr
+_read_tasks_text = _CONTRACT._read_tasks_text
+_select_task = _CONTRACT._select_task
+append_plan_budget_stop_note = _CONTRACT.append_plan_budget_stop_note
+blocking_cap = _CONTRACT.blocking_cap
+build_outcome_line = _CONTRACT.build_outcome_line
+count_plan_budget_usage = _CONTRACT.count_plan_budget_usage
+default_verify_runner = _CONTRACT.default_verify_runner
+dispatch_status = _CONTRACT.dispatch_status
+generate_run_id = _CONTRACT.generate_run_id
+outcome_result = _CONTRACT.outcome_result
+parse_plan_budget = _CONTRACT.parse_plan_budget
+parse_tasks = _CONTRACT.parse_tasks
+plan_budget_exhausted = _CONTRACT.plan_budget_exhausted
+recorded_outcome_result = _CONTRACT.recorded_outcome_result
+select_task = _CONTRACT.select_task
+set_status = _CONTRACT.set_status
+
 DEFAULT_ESCALATION_START = "mid"
 
-EM_DASH = " — "  # spaced em dash — the required task-heading separator
 
 # Load the adjacent policy module without relying on bin/ being a package or on cwd/sys.path.
 _POLICY_SPEC = importlib.util.spec_from_file_location(
@@ -141,141 +222,16 @@ def load_pricing():
 
 # ---- parsing --------------------------------------------------------------------------------
 
-def _extract_brief(block):
-    """Text between `**Brief.**` and the next `**Acceptance.**` (or `**Verify.**`), stripped."""
-    marker = "**Brief.**"
-    i = block.find(marker)
-    if i == -1:
-        return ""
-    rest = block[i + len(marker):]
-    for end_marker in ("**Acceptance.**", "**Verify.**"):
-        j = rest.find(end_marker)
-        if j != -1:
-            return rest[:j].strip()
-    return rest.strip()
 
 
-def _extract_verify(block):
-    """Contents of the first ```bash fence after `**Verify.**`, stripped; None if absent."""
-    marker = "**Verify.**"
-    i = block.find(marker)
-    if i == -1:
-        return None
-    rest = block[i + len(marker):]
-    fence = "```bash"
-    j = rest.find(fence)
-    if j == -1:
-        return None
-    after = rest[j + len(fence):]
-    nl = after.find("\n")
-    if nl == -1:
-        return None
-    close = after.find("```", nl + 1)
-    if close == -1:
-        return None
-    return after[nl + 1:close].strip()
 
 
-def _parse_depends(value):
-    value = value.strip()
-    if not value or value == "(none)":
-        return []
-    return [d.strip() for d in value.split(",") if d.strip()]
 
 
-def _parse_block(task_id, title, block):
-    status = None
-    model = None
-    depends = []
-    independent = False
-    for line in block.splitlines():
-        s = line.strip()
-        if status is None and s.startswith("- status:"):
-            status = s[len("- status:"):].strip()
-        elif model is None and s.startswith("- model:"):
-            value = s[len("- model:"):].strip()
-            model = value or None
-        elif s.startswith("- depends:"):
-            depends = _parse_depends(s[len("- depends:"):])
-        elif s.startswith("- independent:"):
-            independent = s[len("- independent:"):].strip().lower() == "yes"
-    if status not in STATUSES:
-        raise ValueError(
-            f"task {task_id}: '- status:' is required and must be one of "
-            f"{' | '.join(STATUSES)} (got {status!r})"
-        )
-    return {
-        "id": task_id,
-        "title": title,
-        "status": status,
-        "model": model,
-        "depends": depends,
-        "independent": independent,
-        "brief": _extract_brief(block),
-        "verify": _extract_verify(block),
-    }
 
 
-def parse_tasks(text):
-    """Parse a kit TASKS.md into a list of task dicts.
-
-    Task blocks start at `### <id>{em dash}<title>` headings (the spaced em dash ` — ` is
-    required; the id is the first whitespace-free token). A `### ` heading without the spaced
-    em dash is not a task and is skipped, but it still bounds the preceding block. Each dict
-    carries: id, title, status, model, depends, independent, brief, verify.
-    """
-    lines = text.splitlines()
-    heading_idxs = [i for i, ln in enumerate(lines) if ln.startswith("### ")]
-    tasks = []
-    for pos, start in enumerate(heading_idxs):
-        heading = lines[start][len("### "):].strip()
-        if EM_DASH not in heading:
-            continue
-        task_id = heading.split()[0]
-        title = heading.split(EM_DASH, 1)[1].strip()
-        end = heading_idxs[pos + 1] if pos + 1 < len(heading_idxs) else len(lines)
-        block = "\n".join(lines[start:end])
-        tasks.append(_parse_block(task_id, title, block))
-    return tasks
 
 
-def set_status(text, task_id, new_status):
-    """Return `text` with exactly one change: the `- status:` line inside `task_id`'s block.
-
-    Surgical: find the `### <id>{em dash}...` heading, then replace the FIRST `- status:` line
-    that appears before the next `### ` heading. Everything else stays byte-identical. Raises
-    ValueError on an unknown id or an invalid status.
-    """
-    if new_status not in STATUSES:
-        raise ValueError(
-            f"invalid status {new_status!r}; valid: {' | '.join(STATUSES)}"
-        )
-    lines = text.splitlines(keepends=True)
-    heading_idx = None
-    for i, ln in enumerate(lines):
-        stripped = ln.rstrip("\n")
-        if stripped.startswith("### "):
-            heading = stripped[len("### "):].strip()
-            if EM_DASH in heading and heading.split()[0] == task_id:
-                heading_idx = i
-                break
-    if heading_idx is None:
-        raise ValueError(f"unknown task id {task_id!r}")
-
-    end = len(lines)
-    for i in range(heading_idx + 1, len(lines)):
-        if lines[i].rstrip("\n").startswith("### "):
-            end = i
-            break
-
-    for i in range(heading_idx, end):
-        raw = lines[i]
-        if raw.strip().startswith("- status:"):
-            leading = raw[: len(raw) - len(raw.lstrip())]
-            newline = "\n" if raw.endswith("\n") else ""
-            lines[i] = f"{leading}- status: {new_status}{newline}"
-            return "".join(lines)
-    raise ValueError(f"no '- status:' line in task {task_id!r}")
 
 
 # ---- tier resolution (D4 skip-up rule, implemented locally — see module docstring) ----------
@@ -388,53 +344,21 @@ def escalation_ladder(pricing, model_id=None):
 
 # ---- run ids (PLAN D8 -- content-free, one per driver invocation) -----------------------------
 
-def generate_run_id(now=None):
-    """One content-free `run=` id per driver invocation: `<UTC-date>-<4 hex>` (PLAN D8).
-
-    Ported verbatim in shape from `bin/copilot_execute.py`'s T7 function (itself ported from
-    `bin/claude_execute.py`'s T5 -- the resolved, reviewed design for this exact requirement;
-    PLAN D8 pins the format, T8 inherits it rather than re-deriving it). `secrets.token_hex(2)`
-    supplies the four hex characters from 2 cryptographically random bytes -- never a hostname,
-    username, pid, or path fragment (NOTES.md is committed in consumer repos, so nothing
-    content-bearing may enter it). `now` is injectable so tests can pin the date segment
-    without touching wall-clock time; the hex segment is always freshly random.
-    """
-    now = now or datetime.now(timezone.utc)
-    return f"{now.strftime('%Y-%m-%d')}-{secrets.token_hex(2)}"
 
 
-def build_id_preamble(kit=None, run_id=None, task_id=None):
-    """One bracketed lineage line, e.g. `[kit=fixturekit run=2026-07-26-9f3a task=T1]`, or
-    `""` when none of the three ids are given (PLAN D6 — purely additive). Only the ids
-    actually supplied appear; the bracket is omitted entirely rather than printed empty.
-    Ported verbatim in shape from `bin/copilot_execute.py`'s T7 function."""
-    pairs = []
-    if kit:
-        pairs.append(f"kit={kit}")
-    if run_id:
-        pairs.append(f"run={run_id}")
-    if task_id:
-        pairs.append(f"task={task_id}")
-    if not pairs:
-        return ""
-    return "[" + " ".join(pairs) + "]"
+
+build_id_preamble = _CONTRACT.build_id_preamble
+cmd_status = _CONTRACT.cmd_status
+
+
+def main(argv=None):
+    """CLI entry point. `build_parser` is this driver's; the rest is shared."""
+    return _CONTRACT.run_cli(build_parser, argv)
+
 
 
 # ---- outcome ledger (T1 grammar: run=/parent=) -------------------------------------------------
 
-def outcome_result(status, escalations, parent):
-    """Classify a finished `run_task` result into the T1 `result=` vocabulary.
-
-    `blocked` when the task never passed. Otherwise `escalated-pass` when the ladder needed a
-    rung beyond the task's own pinned tier (`escalations` non-empty) OR this run was itself a
-    consult for a different task (`parent` given). Otherwise plain `pass`. Ported verbatim in
-    shape from `bin/copilot_execute.py`'s T7 function.
-    """
-    if status != "done":
-        return "blocked"
-    if escalations or parent:
-        return "escalated-pass"
-    return "pass"
 
 
 # The `result=` values a `parent=` field may ride on. `bin/routing_scorecard.py`'s
@@ -447,201 +371,40 @@ def outcome_result(status, escalations, parent):
 PARENT_RESULTS = ("escalated-pass",)
 
 
-def build_outcome_line(task_id, model, attempts, result, review="none", run_id=None,
-                        parent=None):
-    """One `outcome:` ledger line (T1 grammar). `model` must be a non-whitespace token --
-    callers pass `"unpinned"` (never a phrase with a space) for a task with no model pin, so
-    the line still parses under `routing_scorecard.PAIR_RE` (`\\w+=\\S+`). Ported verbatim in
-    shape from `bin/copilot_execute.py`'s T7 function."""
-    line = (
-        f"outcome: {task_id} model={model} attempts={attempts} "
-        f"result={result} review={review}"
-    )
-    if run_id:
-        line += f" run={run_id}"
-    if parent:
-        line += f" parent={parent}"
-    return line
 
 
-# ---- PLAN.md budget dial (T9, graph-convergence) -----------------------------------------------
-#
-# `budget: max-dispatches=N max-escalations=N max-consults=N` is an OPTIONAL PLAN.md line
-# FAMILY -- exactly like `autonomy:` (skills/architect/SKILL.md's "Autonomy posture (optional)"
-# bullet): never a task field, the TASKS.md contract (`id`/`title`/`status`/`model`/brief/
-# acceptance/verify) is untouched, and PLAN.md stays execute-owned. Absent block = today's
-# behavior everywhere (unbounded, no check performed) -- PLAN D6. `bin/routing_scorecard.py`
-# never parses this line itself; it only recognizes the RESULT the block may cause a driver to
-# write (`result=budget-stop`, a fifth, no-verdict value in the outcome grammar -- see its
-# RESULTS comment). Ported identically in shape across all three drivers (PLAN D1 convergence:
-# same constant names, same parse helper shape, same stop semantics, same ledger line) -- this
-# driver imports neither another driver nor `codex_pricing`/`routing_scorecard` for this, so the
-# shape is duplicated, not shared, on purpose (matches the tier-resolution precedent above).
-#
-# Enforcement is a START-OF-INVOCATION gate against the kit's OWN recorded history, not a
-# mid-flight cutoff of this invocation's own escalation ladder (that is the existing, unrelated
-# `--max-escalations` CLI flag, which caps ONE invocation's ladder walk -- the PLAN.md dial
-# caps the WHOLE KIT across every invocation, past and future, resumed sessions included). A
-# real (non `--dry-run`) `run` reads the kit's already-recorded `outcome:` lines from NOTES.md
-# BEFORE dispatching anything; if a declared cap is already met or exceeded, the task is NEVER
-# dispatched, its status is left exactly as found (pending stays pending -- "remaining tasks
-# untouched" per the brief), and ONE `outcome: ... result=budget-stop` line is appended instead
-# -- never folded into a fluent summary, always naming which cap was hit and how many tasks are
-# left untouched (`cmd_run` below). `--dry-run` is UNAFFECTED (today's behavior): it never
-# dispatches or spends anything regardless, so the gate buys no additional safety there and
-# checking it would only add a second code path to keep in sync.
-PLAN_BUDGET_RE = re.compile(r"^\s*budget:\s*(.+)$", re.MULTILINE)
-PLAN_BUDGET_KEYS = ("max-dispatches", "max-escalations", "max-consults")
 
 
-def parse_plan_budget(text):
-    """Read the kit's optional PLAN.md `budget:` line -> dict or `None`.
-
-    `text` is PLAN.md's content (or `None`/empty when there is no PLAN.md -- `None` right
-    back, no error). Any subset of `PLAN_BUDGET_KEYS`, in any order, each a base-10
-    non-negative integer: `budget: max-dispatches=5 max-consults=1`. No `budget:` line, no
-    recognized key on that line, or no PLAN.md at all -> `None` (today's behavior: unbounded,
-    no check performed). Unrecognized tokens on the line are silently ignored (forward-
-    compatible, matching the outcome-ledger's own unknown-`key=value` tolerance).
-    """
-    if not text:
-        return None
-    m = PLAN_BUDGET_RE.search(text)
-    if not m:
-        return None
-    budget = dict(re.findall(r"(max-dispatches|max-escalations|max-consults)=(\d+)", m.group(1)))
-    return {k: int(v) for k, v in budget.items()} or None
 
 
-def count_plan_budget_usage(notes_text):
-    """Count dispatches/escalations/consults already recorded in a kit's NOTES.md ledger.
-
-    A minimal re-implementation of `routing_scorecard`'s own `outcome:` grammar (this driver
-    imports no pricing/scorecard module -- the same tier-resolution precedent above), read-only
-    over `notes_text`. Per `outcome:` line: `attempts=` (default 1 when absent or non-integer,
-    mirroring `routing_scorecard.parse_outcomes`) counts toward `max-dispatches`; `attempts - 1`
-    counts toward `max-escalations` (an in-ladder escalation IS an extra dispatch); a line
-    carrying `parent=` counts ONE `max-consults` (a run dispatched with `--parent` is a consult
-    by definition, whether it passed, was blocked, or was itself a budget-stop). Returns a dict
-    with all three `PLAN_BUDGET_KEYS`, always present (0 when nothing is recorded yet).
-    """
-    used = {k: 0 for k in PLAN_BUDGET_KEYS}
-    for line in notes_text.splitlines():
-        s = line.strip()
-        if s.startswith("- "):
-            s = s[2:]
-        if not s.startswith("outcome:"):
-            continue
-        m = re.search(r"\battempts=(\d+)\b", s)
-        try:
-            attempts = int(m.group(1)) if m else 1
-        except ValueError:
-            attempts = 1
-        used["max-dispatches"] += attempts
-        used["max-escalations"] += max(attempts - 1, 0)
-        if re.search(r"(?:^|\s)parent=\S+", s):
-            used["max-consults"] += 1
-    return used
 
 
-def recorded_outcome_result(notes_text, task_id):
-    """The LAST `result=` already recorded for `task_id` in `notes_text`, or `None`.
-
-    Read-only over the kit's NOTES.md, same minimal `outcome:` grammar as
-    `count_plan_budget_usage` above (optional `- ` bullet, id as the first token, `key=value`
-    pairs). Later lines win, mirroring `routing_scorecard.parse_outcomes`'s last-wins rule.
-
-    Its ONE caller is the budget gate below: a `budget-stop` is not a verdict, so writing one
-    for a task that ALREADY carries a real verdict would append a ledger line that supersedes
-    (or, once the reader's precedence rule drops it, contradicts) recorded evidence. Rejected
-    at the WRITER, before anything is written -- the same precedent as the self-`--parent`
-    guard in `cmd_run`, and the same reasoning as the Phase 1 review's F2 invariant: nothing
-    may write a line the reader has to ignore.
-    """
-    found = None
-    for line in notes_text.splitlines():
-        s = line.strip()
-        if s.startswith("- "):
-            s = s[2:]
-        if not s.startswith("outcome:"):
-            continue
-        parts = s[len("outcome:"):].split()
-        if not parts or parts[0] != task_id:
-            continue
-        m = re.search(r"(?:^|\s)result=(\S+)", s)
-        if m:
-            found = m.group(1)
-    return found
 
 
-def plan_budget_exhausted(plan_budget, used, is_consult):
-    """The first `PLAN_BUDGET_KEYS` cap already reached by `used`, or `None`.
-
-    A cap is "reached" at `used[key] >= cap` -- the recorded usage already consumed the last
-    unit the budget allowed, so the task in front of this call must not add one more.
-    `max-consults` is checked ONLY when `is_consult` is true (this run carries `--parent`): a
-    plain (non-consult) run never trips on a consult cap, and a budget with no `max-consults`
-    key never trips regardless of `is_consult`. Checked in `PLAN_BUDGET_KEYS` order, so
-    `max-dispatches` wins ties over `max-escalations`/`max-consults` when more than one cap is
-    simultaneously exhausted -- an arbitrary but stable and reproducible choice.
-    """
-    for key in PLAN_BUDGET_KEYS:
-        cap = plan_budget.get(key)
-        if cap is None:
-            continue
-        if key == "max-consults" and not is_consult:
-            continue
-        if used.get(key, 0) >= cap:
-            return key
-    return None
 
 
-def append_plan_budget_stop_note(notes_path, task, run_id, exhausted_key, cap, used, remaining,
-                                  role):
-    """Append ONE budget-stop block to the kit's NOTES.md -- the T9 "never hide the stop
-    behind a fluent summary" contract. No dispatch happened: `attempts=0`, no escalations, no
-    model was actually used (the task's OWN pin, or `unpinned`, labels the line). The block
-    states plainly which PLAN.md budget cap was hit, the used/cap counts, and how many pending
-    tasks (including this one -- none of them were touched) remain, as its own bullet lines --
-    never folded into prose. Structurally the same append-only block shape as `append_note`
-    (created if missing, one blank-line-separated block appended), and the SAME
-    `build_outcome_line` -- carries `run=` (always, since `cmd_run` always generates one) and
-    never `parent=` (a budget-stopped run is not counted as lineage; see `PARENT_RESULTS`,
-    which `budget-stop` is deliberately not a member of).
-    """
-    notes_path = Path(notes_path)
-    ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    task_id = task["id"]
-    model_label = task.get("model") or "unpinned"
-    block_lines = [
-        f"## {ts}{EM_DASH}{task_id}",
-        f"- role: {role}",
-        f"- budget-stop: {exhausted_key}={cap} reached (used={used})",
-        f"- remaining tasks untouched: {remaining}",
-        "- " + build_outcome_line(task_id, model_label, 0, "budget-stop", run_id=run_id),
-    ]
-    block = "\n".join(block_lines) + "\n"
-
-    existing = notes_path.read_text() if notes_path.exists() else ""
-    if existing and not existing.endswith("\n"):
-        existing += "\n"
-    separator = "\n" if existing.strip() else ""
-    notes_path.parent.mkdir(parents=True, exist_ok=True)
-    notes_path.write_text(existing + separator + block)
 
 
-def _evidence(verify_cmd, rc, output):
-    return (
-        "\n\n--- ESCALATION EVIDENCE (verify failed) ---\n"
-        f"verify: {verify_cmd}\n"
-        f"exit: {rc}\n"
-        f"{(output or '')[-2000:]}"
-    )
+
+
+
+
+
+
+
+
+class _BudgetRefused(Exception):
+    """An operation refused by admission BEFORE it spent anything."""
+
+    def __init__(self, kind, reason):
+        super().__init__(reason)
+        self.kind = kind
+        self.reason = reason
 
 
 def run_task(task, pricing, runner, verify_runner, prompt=None, role="implementer",
              max_escalations=None, codex_bin="codex", effort=None, extra_args=(),
-             allow_recovery=True):
+             allow_recovery=True, admission=None, consult=False):
     """Orchestrate one task: dispatch, verify, escalate up the tier ladder on failure.
 
     `runner(argv) -> (returncode, output)` and `verify_runner(cmd) -> (returncode, output)`
@@ -693,7 +456,14 @@ def run_task(task, pricing, runner, verify_runner, prompt=None, role="implemente
     for candidate in preflight_models:
         validate_model_effort(candidate)
 
-    def dispatch_and_verify(chosen_model, chosen_role, dispatch_prompt):
+    def dispatch_and_verify(chosen_model, chosen_role, dispatch_prompt, kind="initial"):
+        # THE choke point: every codex dispatch passes through here, so admission asks here
+        # rather than once at invocation entry. A refused operation raises rather than
+        # returning a verify-shaped tuple, so it can never be mistaken for a check result.
+        if admission is not None:
+            ok, reason = admission.admit(kind)
+            if not ok:
+                raise _BudgetRefused(kind, reason)
         validate_model_effort(chosen_model)
         argv = build_dispatch(
             codex_bin, chosen_model, dispatch_prompt, effort=effort, extra_args=extra_args
@@ -745,7 +515,10 @@ def run_task(task, pricing, runner, verify_runner, prompt=None, role="implemente
         })
         return effective_rc, verify_output
 
-    rc, output = dispatch_and_verify(model_id, assignment["resolved_role"], prompt)
+    rc, output = dispatch_and_verify(
+        model_id, assignment["resolved_role"], prompt,
+        kind="consult" if consult else "initial",
+    )
 
     policy_violation = attempts[-1]["result"] == "policy-mismatch"
     if rc != 0 and assignment["resolved_role"] == "implementer" and not policy_violation:
@@ -754,7 +527,8 @@ def run_task(task, pricing, runner, verify_runner, prompt=None, role="implemente
             escalated_prompt = prompt + _evidence(verify_cmd, rc, output)
             escalations.append(rung)
             model_used = rung
-            rc, output = dispatch_and_verify(rung, "implementer", escalated_prompt)
+            rc, output = dispatch_and_verify(rung, "implementer", escalated_prompt,
+                                             kind="escalation")
             if attempts[-1]["result"] == "policy-mismatch":
                 policy_violation = True
                 break
@@ -801,7 +575,8 @@ def run_task(task, pricing, runner, verify_runner, prompt=None, role="implemente
             "sufficient worker after this attempt.\n"
         )
         model_used = recovery_assignment["model_id"]
-        rc, output = dispatch_and_verify(model_used, "recovery", recovery_prompt)
+        rc, output = dispatch_and_verify(model_used, "recovery", recovery_prompt,
+                                         kind="retry")
         recovery = {
             "failure_evidence": evidence,
             "prior_attempts": evidence["attempts"],
@@ -922,17 +697,62 @@ def append_note(notes_path, result, task, run_id=None, parent=None):
 
 # ---- default runners (module level, injectable everywhere) ----------------------------------
 
-def default_runner(argv):
-    """Dispatch runner for real runs: `subprocess.run(argv, ...)` -> (rc, stdout+stderr).
+class DispatchOutput(str):
+    """Combined `stdout + stderr` for DISPLAY, carrying the two streams separately.
+
+    A `str` subclass so every existing consumer (`print(output)`, `output + "note"`, the
+    `rc, output, telemetry = default_runner(...)` unpacking) keeps working unchanged, while
+    anything that needs to reason about PROVENANCE can reach `.stdout` and `.stderr` instead
+    of a concatenation it cannot un-mix. The verdict parser reads `.stdout` only: a diagnostic
+    on stderr is not a model result, and once the two are joined nothing downstream can tell
+    which stream a line came from.
+
+    Note that `output + "..."` returns a plain `str` and DROPS the streams -- deliberate, since
+    an annotated string is no longer the dispatch's own output. Parse before annotating.
+    """
+
+    def __new__(cls, stdout, stderr):
+        obj = super().__new__(cls, (stdout or "") + (stderr or ""))
+        obj.stdout = stdout or ""
+        obj.stderr = stderr or ""
+        return obj
+
+
+def default_runner(argv, cwd=None, timeout=None):
+    """Dispatch runner for real runs -> (rc, DispatchOutput, telemetry).
 
     !!! Invoking this with a real `codex` argv spends the user's real subscription usage
     limits / API dollars and hits the network. !!!
+
+    Bounded since step 12: a wall clock, an output ceiling, a validated working directory, and
+    its own process group -- so a dispatch that stalls or floods cannot hang the driver, and
+    nothing it spawned outlives it. Failures that are not the model's verdict (a missing CLI, a
+    timeout) come back as an rc of `proc_runner.INFRASTRUCTURE_RC` with the reason appended to
+    the output, rather than as an exception that would strand the task in-progress.
+
+    The environment is reduced to this provider's own variables plus the base set, so the
+    machine's unrelated credentials are not handed to a coding agent. `POLYTROPOS_DISPATCH_ENV`
+    (comma-separated NAMES) widens it on a host that needs a variable the list has not learned.
     """
     started = datetime.now(timezone.utc)
-    proc = subprocess.run(argv, capture_output=True, text=True)
-    output = (proc.stdout or "") + (proc.stderr or "")
-    telemetry = attest_runtime_model(output, started)
-    return proc.returncode, output, telemetry
+    pr = _pr()
+    result = pr.run(
+        argv,
+        cwd=cwd if cwd is not None else Path.cwd(),
+        env=pr.dispatch_env("codex"),
+        timeout=timeout,
+        name="codex dispatch",
+    )
+    # stdout and stderr stay separate all the way through: attestation reads the STRUCTURED
+    # event stream, and diagnostics interleaved into it would be parsed as events. A runner
+    # diagnostic (a missing binary, a timeout) therefore joins STDERR -- putting it on stdout
+    # would feed a non-event line to the event parser.
+    stderr = result["stderr"]
+    if not result["terminal"] and result["detail"]:
+        stderr = f"{stderr}\n{result['detail']}" if stderr else result["detail"]
+    output = DispatchOutput(result["stdout"], stderr)
+    telemetry = attest_runtime_model(output.stdout, started)
+    return result["rc"], output, telemetry
 
 
 def attest_runtime_model(output, started, codex_root=None):
@@ -991,29 +811,150 @@ def attest_runtime_model(output, started, codex_root=None):
     return {"actual_model": observed, "provenance": "correlated-rollout-turn_context"} if observed else {}
 
 
-def default_verify_runner(cmd):
-    """Verify runner for real runs: shell out (verify commands are repo-authored shell lines).
-
-    Same trust model as the kit contract: `subprocess.run(cmd, shell=True, ...)`.
-    """
-    proc = subprocess.run(cmd, shell=True, capture_output=True, text=True)
-    return proc.returncode, (proc.stdout or "") + (proc.stderr or "")
 
 
-def append_role_use(notes_path, phase, role, planned_model, dispatched_model, dispatch_rc,
+
+
+
+
+#: The authoritative role-use ledger: one JSON object per line, written by the DRIVER only.
+#: Separate from NOTES.md on purpose. NOTES.md interleaves driver fields with the model's own
+#: free-form report inside one Markdown block, so a substring search over that block cannot
+#: tell a field the driver wrote from the same characters quoted inside a report -- and the
+#: report is model-authored text that routinely quotes this repository's own source. Typed
+#: records carry NO free-form body, only its digest.
+ROLE_USE_SCHEMA = "polytropos.role-use/1"
+ROLE_USE_FILENAME = "role-use.jsonl"
+
+
+def role_use_path(kit_dir):
+    return Path(kit_dir) / ROLE_USE_FILENAME
+
+
+def _is_exact_int(value):
+    """True only for a real integer. JSON booleans deserialize to `bool`, a subclass of `int`;
+    `true` is not an exit code."""
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def read_role_use_records(kit_dir):
+    """Every parseable typed record for `kit_dir`, in file order. Never raises: a malformed or
+    truncated line is skipped, because a corrupt ledger must degrade to "cannot prove success"
+    rather than to an exception that a caller might be tempted to catch and treat as success."""
+    path = role_use_path(kit_dir)
+    if not path.exists():
+        return []
+    try:
+        lines = path.read_text(errors="replace").splitlines()
+    except OSError:
+        return []
+    records = []
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(record, dict):
+            records.append(record)
+    return records
+
+
+def latest_role_use_record(kit_dir, phase, role):
+    """The LAST typed record for `(phase, role)`, or None. Later records supersede earlier ones,
+    so a fresh failed review supersedes an older successful one rather than being outvoted."""
+    found = None
+    for record in read_role_use_records(kit_dir):
+        if record.get("schema") != ROLE_USE_SCHEMA:
+            continue
+        if record.get("phase") != str(phase) or record.get("role") != role:
+            continue
+        found = record
+    return found
+
+
+def import_legacy_role_use(notes_text):
+    """Read pre-typed-record NOTES.md blocks, for DISPLAY and diagnostics only.
+
+    Every entry carries `provable: False`, always. The legacy grammar put authoritative fields
+    and model-authored report text in one block with no delimiter between them, so nothing read
+    back out of it can be attributed to the driver. Unprovable success is UNKNOWN -- it is not
+    downgraded to failure (the review may well have passed) and it is never promoted to success.
+    Re-run the role to get a record that can be checked."""
+    entries = []
+    for block in notes_text.split("\n## "):
+        if not block.strip():
+            continue
+        head = block.splitlines()[0]
+        match = re.search(r"phase-(\S+?)-(implementer|verifier|orchestrator|reviewer)\b", head)
+        if not match:
+            continue
+        entries.append({
+            "phase": match.group(1),
+            "role": match.group(2),
+            "provable": False,
+            "reason": "legacy NOTES.md block predates typed role-use records",
+        })
+    return entries
+
+
+def append_role_use(kit_dir, phase, role, planned_model, dispatched_model, dispatch_rc,
                     actual_model=None, actual_role=None, result=None, evidence_fingerprint=None,
-                    report=None):
-    """Record a non-task review/acceptance dispatch without claiming requested=observed."""
-    notes_path = Path(notes_path)
-    ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+                    report=None, run_id=None, now=None):
+    """Record a non-task review/acceptance dispatch in BOTH ledgers, without ever claiming
+    requested=observed.
+
+    The typed record in `role-use.jsonl` is authoritative and carries only fields the driver
+    itself produced -- the exact integer dispatch return code, role/phase/run/attempt identity,
+    the evidence fingerprint, and the report's DIGEST. The NOTES.md block stays the
+    human-readable view and keeps the bounded report text.
+
+    This is a provenance boundary, not a tamper-proof one: both files sit in a tree a worker
+    can write. It stops a report from being MISREAD as a driver field; it does not stop a
+    sufficiently privileged process from editing the ledger outright. That needs the execution
+    boundary, not a file format."""
+    kit_dir = Path(kit_dir)
+    stamp = (now or datetime.now(timezone.utc)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    report_digest = (
+        hashlib.sha256((report or "").encode()).hexdigest() if report is not None else None
+    )
+    attempt = 1 + sum(
+        1 for r in read_role_use_records(kit_dir)
+        if r.get("schema") == ROLE_USE_SCHEMA
+        and r.get("phase") == str(phase) and r.get("role") == role
+    )
+
+    record = {
+        "schema": ROLE_USE_SCHEMA,
+        "recorded_at": stamp,
+        "phase": str(phase),
+        "role": role,
+        "run_id": run_id,
+        "attempt": attempt,
+        "dispatch_rc": dispatch_rc,
+        "planned_model": planned_model,
+        "dispatched_model": dispatched_model,
+        "actual_model": actual_model,
+        "actual_role": actual_role,
+        "result": result,
+        "evidence_fingerprint": evidence_fingerprint,
+        "report_sha256": report_digest,
+    }
+    path = role_use_path(kit_dir)
+    with path.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(record, sort_keys=True) + "\n")
+
+    notes_path = kit_dir / "NOTES.md"
     report_text = " ".join((report or "").split())[-2000:]
-    report_digest = hashlib.sha256((report or "").encode()).hexdigest() if report is not None else None
     block = (
-        f"## {ts}{EM_DASH}phase-{phase}-{role}\n"
+        f"## {stamp}{EM_DASH}phase-{phase}-{role}\n"
         f"- actual-use: planned={planned_model or 'policy'} dispatched_model={dispatched_model} "
         f"dispatched_role={role} actual_model={actual_model or 'unknown'} "
         f"actual_role={actual_role or 'unknown'} dispatch_exit={dispatch_rc}"
         f"{f' result={result}' if result else ''}\n"
+        f"- authority: {ROLE_USE_FILENAME} (this block is the readable view, not the record)\n"
     )
     if evidence_fingerprint:
         block += f"- evidence-fingerprint: {evidence_fingerprint}\n"
@@ -1023,6 +964,7 @@ def append_role_use(notes_path, phase, role, planned_model, dispatched_model, di
     if existing and not existing.endswith("\n"):
         existing += "\n"
     notes_path.write_text(existing + ("\n" if existing.strip() else "") + block)
+    return record
 
 
 def enforce_attested_assignment(rc, output, telemetry, expected_model, expected_role):
@@ -1038,18 +980,120 @@ def enforce_attested_assignment(rc, output, telemetry, expected_model, expected_
     return rc, output
 
 
-def parse_acceptance_verdict(output):
-    matches = re.findall(r"POLYTROPOS_ACCEPTANCE:\s*(accepted|rejected)\b", output or "")
-    return matches[-1] if matches else None
+#: Codex `exec --json` event and item names this driver recognizes. BEST-EFFORT and pinned,
+#: exactly like the dispatch flags in `build_dispatch`: taken from the client's documented
+#: `exec --json` stream and NEVER probed at run time. Anything not named here is unrecognized,
+#: and unrecognized fails closed -- a verdict is only ever read from a correlated terminal
+#: assistant message, never from a tool event, a reasoning item, or stderr.
+CODEX_EVENT_THREAD_STARTED = "thread.started"
+CODEX_EVENT_ITEM_COMPLETED = "item.completed"
+CODEX_EVENT_TURN_COMPLETED = "turn.completed"
+CODEX_EVENT_TURN_FAILED = "turn.failed"
+CODEX_ITEM_AGENT_MESSAGE = "agent_message"
+
+ACCEPTANCE_RE = re.compile(r"POLYTROPOS_ACCEPTANCE:[ \t]*(accepted|rejected)\b")
+
+
+def _no_verdict(reason):
+    return {"verdict": None, "reason": reason, "provenance": "unproven"}
+
+
+def parse_acceptance_result(output):
+    """The final acceptance verdict, or a reason it could not be established.
+
+    Returns `{"verdict": "accepted"|"rejected"|None, "reason": str, "provenance": str}`.
+
+    FAIL CLOSED is the whole contract. A verdict is returned ONLY when all of the following
+    hold, and the `reason` names the first one that did not:
+
+      * the dispatch preserved a separate stdout stream (a bare `str` cannot, so it never
+        yields a verdict -- a caller that concatenated the streams has already destroyed the
+        evidence this function exists to check);
+      * stdout carried a recognized structured event stream;
+      * a `thread.started` correlated the stream to one thread;
+      * the turn COMPLETED, and did not fail -- an interrupted or failed turn has no final
+        result, whatever text it managed to emit first;
+      * the last `item.completed` carrying an `agent_message` exists. Tool-originated items
+        (command output, file changes, MCP calls, reasoning) are skipped entirely: they are
+        things the model CAUSED, not things it CONCLUDED;
+      * that message carries exactly one DISTINCT verdict. Zero is silence; two is a
+        contradiction, and a contradiction resolves to nothing rather than to the last one
+        seen.
+
+    stderr is never consulted. Markers elsewhere in the stream -- an echoed prompt, a quoted
+    instruction, a tool printing the token -- are structurally unreachable rather than merely
+    outranked.
+    """
+    stdout = getattr(output, "stdout", None)
+    if stdout is None:
+        return _no_verdict("dispatch output did not preserve a separate stdout stream")
+
+    thread_id = None
+    terminal_message = None
+    turn_completed = False
+    turn_failed = False
+    saw_event = False
+
+    for line in stdout.splitlines():
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(event, dict):
+            continue
+        etype = event.get("type")
+        if not isinstance(etype, str):
+            continue
+        saw_event = True
+        if etype == CODEX_EVENT_THREAD_STARTED:
+            tid = event.get("thread_id")
+            if isinstance(tid, str) and tid:
+                thread_id = tid
+        elif etype == CODEX_EVENT_TURN_FAILED:
+            turn_failed = True
+        elif etype == CODEX_EVENT_TURN_COMPLETED:
+            turn_completed = True
+        elif etype == CODEX_EVENT_ITEM_COMPLETED:
+            item = event.get("item")
+            if not isinstance(item, dict):
+                continue
+            if item.get("type") != CODEX_ITEM_AGENT_MESSAGE:
+                continue  # tool-originated or intermediate: never a final result
+            text = item.get("text")
+            if isinstance(text, str):
+                terminal_message = text
+
+    if not saw_event:
+        return _no_verdict("no recognized structured event stream on stdout")
+    if thread_id is None:
+        return _no_verdict("no thread.started event to correlate the result to")
+    if turn_failed:
+        return _no_verdict("the turn failed; a failed turn has no final result")
+    if not turn_completed:
+        return _no_verdict("the turn never completed (interrupted or truncated stream)")
+    if terminal_message is None:
+        return _no_verdict("no terminal assistant message in the completed turn")
+
+    verdicts = set(ACCEPTANCE_RE.findall(terminal_message))
+    if not verdicts:
+        return _no_verdict("terminal assistant message carried no acceptance marker")
+    if len(verdicts) > 1:
+        return _no_verdict(
+            "terminal assistant message carried conflicting acceptance markers "
+            f"({', '.join(sorted(verdicts))})"
+        )
+    return {
+        "verdict": verdicts.pop(),
+        "reason": "correlated terminal assistant message in a completed turn",
+        "provenance": f"thread:{thread_id}",
+    }
 
 
 # ---- CLI ------------------------------------------------------------------------------------
 
-def _read_tasks_text(kit_dir):
-    path = Path(kit_dir) / "TASKS.md"
-    if not path.exists():
-        raise FileNotFoundError(f"no TASKS.md under kit dir {kit_dir}")
-    return path.read_text()
 
 
 def _phase_tasks(tasks_text, phase):
@@ -1070,17 +1114,21 @@ def review_evidence_fingerprint(kit, tasks_text, phase):
     if not match:
         raise PolicyError(f"phase {phase!r} has no tasks")
     kit = Path(kit).resolve()
-    probe = subprocess.run(
-        ["git", "-C", str(kit), "rev-parse", "--show-toplevel"],
-        capture_output=True, text=True,
-    )
-    if probe.returncode != 0:
+    # Bounded, and in BYTES. Bounded because `git diff` under a configured `core.fsmonitor`
+    # can block on a daemon and this is the acceptance path -- an unbounded wait here stalls a
+    # run at the moment it is deciding whether the work is done. In bytes because these bytes
+    # ARE the fingerprint: a binary diff decoded with `errors="replace"` is a different diff,
+    # and every previously recorded fingerprint would stop matching.
+    def _git(*args):
+        return _pr().run(["git", "-C", *args], cwd=Path.cwd(),
+                         timeout=GIT_PROBE_TIMEOUT_SECONDS, name="git probe", text=False)
+
+    probe = _git(str(kit), "rev-parse", "--show-toplevel")
+    if probe["rc"] != 0:
         raise PolicyError("final acceptance requires a git workspace to prove review freshness")
-    root = Path(probe.stdout.strip()).resolve()
-    head = subprocess.run(
-        ["git", "-C", str(root), "rev-parse", "HEAD"], capture_output=True,
-    )
-    if head.returncode != 0:
+    root = Path(probe["stdout"].decode("utf-8", "replace").strip()).resolve()
+    head = _git(str(root), "rev-parse", "HEAD")
+    if head["rc"] != 0:
         raise PolicyError("final acceptance requires a committed HEAD for review freshness")
     notes = (kit / "NOTES.md").resolve()
     try:
@@ -1088,18 +1136,12 @@ def review_evidence_fingerprint(kit, tasks_text, phase):
     except ValueError:
         notes_rel = None
     exclude = [f":(exclude){notes_rel}"] if notes_rel else []
-    diff = subprocess.run(
-        ["git", "-C", str(root), "diff", "--binary", "--no-ext-diff", "HEAD", "--", ".", *exclude],
-        capture_output=True,
-    )
-    status = subprocess.run(
-        ["git", "-C", str(root), "status", "--porcelain=v1", "-z", "--untracked-files=all"],
-        capture_output=True,
-    )
-    if diff.returncode != 0 or status.returncode != 0:
+    diff = _git(str(root), "diff", "--binary", "--no-ext-diff", "HEAD", "--", ".", *exclude)
+    status = _git(str(root), "status", "--porcelain=v1", "-z", "--untracked-files=all")
+    if diff["rc"] != 0 or status["rc"] != 0:
         raise PolicyError("could not fingerprint workspace for review freshness")
     untracked = []
-    for entry in status.stdout.split(b"\0"):
+    for entry in status["stdout"].split(b"\0"):
         if not entry.startswith(b"?? "):
             continue
         rel = entry[3:].decode(errors="surrogateescape")
@@ -1123,104 +1165,62 @@ def review_evidence_fingerprint(kit, tasks_text, phase):
             continue
         task_note_blocks.append(block)
     task_notes = "\n## ".join(task_note_blocks).encode()
-    material = (head.stdout.strip() + b"\0" + plan_bytes + b"\0" + match.group(0).encode()
-                + b"\0" + task_notes + b"\0" + diff.stdout + b"\0"
+    material = (head["stdout"].strip() + b"\0" + plan_bytes + b"\0" + match.group(0).encode()
+                + b"\0" + task_notes + b"\0" + diff["stdout"] + b"\0"
                 + b"\0".join(untracked))
     return hashlib.sha256(material).hexdigest()
 
 
-def _role_use_succeeded(notes_text, phase, role, evidence_fingerprint=None):
-    marker = f"phase-{phase}-{role}"
-    blocks = notes_text.split("\n## ")
-    for block in reversed(blocks):
-        if not block.strip() or marker not in block.splitlines()[0]:
-            continue
-        if evidence_fingerprint is not None:
-            return ("dispatch_exit=0" in block and
-                    f"evidence-fingerprint: {evidence_fingerprint}" in block)
-        return "dispatch_exit=0" in block
-    return False
+def _role_use_succeeded(kit_dir, phase, role, evidence_fingerprint=None):
+    """True only when the latest TYPED record for `(phase, role)` proves a clean dispatch
+    against the CURRENT evidence fingerprint.
+
+    Every clause is an equality check against a driver-written field, never a substring search
+    over a block that also contains model-authored prose:
+
+      * a typed record must exist -- a legacy NOTES.md block proves nothing (see
+        `import_legacy_role_use`);
+      * `dispatch_rc` must be the exact integer 0 (`true` is not 0, `"0"` is not 0);
+      * the recorded fingerprint must EQUAL the expected one, so a review of a workspace that
+        has since changed cannot certify the current one.
+    """
+    record = latest_role_use_record(kit_dir, phase, role)
+    if record is None:
+        return False
+    if not _is_exact_int(record.get("dispatch_rc")) or record["dispatch_rc"] != 0:
+        return False
+    if evidence_fingerprint is not None:
+        recorded = record.get("evidence_fingerprint")
+        if not isinstance(recorded, str) or recorded != evidence_fingerprint:
+            return False
+    return True
 
 
-def _acceptance_state(notes_text, phase, evidence_fingerprint=None):
-    marker = f"phase-{phase}-orchestrator"
-    for block in reversed(notes_text.split("\n## ")):
-        if block.strip() and marker in block.splitlines()[0]:
-            match = re.search(r"\bresult=(accepted|rejected)\b", block)
-            if evidence_fingerprint and f"evidence-fingerprint: {evidence_fingerprint}" not in block:
-                return "pending"
-            return match.group(1) if match else "pending"
-    return "pending"
+def _acceptance_state(kit_dir, phase, evidence_fingerprint=None):
+    """`accepted` / `rejected` / `pending` for a phase, from the typed ledger only.
+
+    `pending` is the answer for every uncertainty -- no record, a stale fingerprint, a failed
+    dispatch, or a `result` outside the closed vocabulary. An unproven acceptance is not an
+    acceptance."""
+    record = latest_role_use_record(kit_dir, phase, "orchestrator")
+    if record is None:
+        return "pending"
+    if not _is_exact_int(record.get("dispatch_rc")) or record["dispatch_rc"] != 0:
+        return "pending"
+    if evidence_fingerprint is not None:
+        recorded = record.get("evidence_fingerprint")
+        if not isinstance(recorded, str) or recorded != evidence_fingerprint:
+            return "pending"
+    result = record.get("result")
+    return result if result in ("accepted", "rejected") else "pending"
 
 
-def _select_task(tasks, task_id=None):
-    if task_id is not None:
-        for t in tasks:
-            if t["id"] == task_id:
-                status_by_id = {item["id"]: item["status"] for item in tasks}
-                if not all(status_by_id.get(dep) == "done" for dep in t["depends"]):
-                    return None
-                return t
-        return None
-    status_by_id = {t["id"]: t["status"] for t in tasks}
-    for t in tasks:
-        if t["status"] == "pending" and all(
-            status_by_id.get(dep) == "done" for dep in t["depends"]
-        ):
-            return t
-    return None
 
 
-def cmd_status(args):
-    tasks_text = _read_tasks_text(args.kit)
-    tasks = parse_tasks(tasks_text)
-    pricing = load_pricing()
-    orchestrator = resolve_orchestrator(pricing)
-    enriched = []
-    for task in tasks:
-        try:
-            assignment = resolve_assignment(pricing, task.get("model"), role="implementer")
-            policy_fields = {"effective_model": assignment["model_id"],
-                             "effective_role": assignment["resolved_role"],
-                             "migration": assignment["migration"]}
-        except PolicyError as exc:
-            policy_fields = {"effective_model": None, "effective_role": None,
-                             "migration": None, "policy_error": str(exc)}
-        enriched.append({**task, **policy_fields})
-    notes_path = Path(args.kit) / "NOTES.md"
-    notes_text = notes_path.read_text() if notes_path.exists() else ""
-    phases = re.findall(r"^## Phase (\S+)", tasks_text, re.MULTILINE)
-    acceptance = {}
-    for phase in phases:
-        try:
-            fingerprint = review_evidence_fingerprint(args.kit, tasks_text, phase)
-        except PolicyError:
-            fingerprint = None
-        acceptance[phase] = (
-            _acceptance_state(notes_text, phase, fingerprint) if fingerprint else "pending"
-        )
-    if args.json:
-        print(json.dumps({"orchestration": {"model": orchestrator, "mode": "reserved",
-                                           "ordinary_implementation": False},
-                          "acceptance": acceptance, "tasks": enriched}, indent=2))
-        return
 
-    id_w = max((len(t["id"]) for t in tasks), default=0)
-    status_w = max((len(t["status"]) for t in tasks), default=0)
-    model_w = max((len(t["model"] or "-") for t in tasks), default=0)
-    for t in tasks:
-        print(
-            f"{t['id']:<{id_w}}  {t['status']:<{status_w}}  "
-            f"{(t['model'] or '-'):<{model_w}}  {t['title']}"
-        )
-    counts = {s: sum(1 for t in tasks if t["status"] == s) for s in STATUSES}
-    print(
-        f"{counts['pending']} pending / {counts['in-progress']} in-progress / "
-        f"{counts['done']} done / {counts['blocked']} blocked"
-    )
-    print(f"orchestrator: {orchestrator} (reserved; recovery requires failure evidence)")
-    for phase, state in acceptance.items():
-        print(f"phase {phase} final acceptance: {state}")
+
+
+
 
 
 def cmd_run(args):
@@ -1229,24 +1229,9 @@ def cmd_run(args):
     tasks_path = kit / "TASKS.md"
     text = _read_tasks_text(kit)
     tasks = parse_tasks(text)
-    task = _select_task(tasks, args.task)
+    task, select_reason = select_task(tasks, args.task, allow_rerun=args.rerun)
     if task is None:
-        if args.task:
-            requested = next((t for t in tasks if t["id"] == args.task), None)
-            if requested:
-                status_by_id = {t["id"]: t["status"] for t in tasks}
-                missing = [d for d in requested["depends"] if status_by_id.get(d) != "done"]
-                print(
-                    f"task {args.task!r} is not eligible; unfinished dependencies: "
-                    f"{', '.join(missing)}",
-                    file=sys.stderr,
-                )
-            else:
-                print(f"no task with id {args.task!r} in {tasks_path}", file=sys.stderr)
-        else:
-            print(
-                f"no eligible pending task (all deps done) in {tasks_path}", file=sys.stderr
-            )
+        print(f"{select_reason} ({tasks_path})", file=sys.stderr)
         sys.exit(2)
 
     if args.role != "implementer":
@@ -1324,10 +1309,15 @@ def cmd_run(args):
     # this gate only ever stops a REAL run. See the module's "PLAN.md budget dial" section.
     plan_path = kit / "PLAN.md"
     plan_budget = parse_plan_budget(plan_path.read_text()) if plan_path.exists() else None
+    admission = None
     if plan_budget:
         notes_path = kit / "NOTES.md"
         notes_text = notes_path.read_text() if notes_path.exists() else ""
         used = count_plan_budget_usage(notes_text)
+        # The entry gate below still stops a run before it writes `in-progress`. This carries
+        # the same numbers INTO the run, so every escalation rung asks again instead of the
+        # ladder spending freely on one entry-time grant.
+        admission = BudgetAdmission(plan_budget, used)
         exhausted_key = plan_budget_exhausted(plan_budget, used, is_consult=bool(args.parent))
         if exhausted_key:
             cap = plan_budget[exhausted_key]
@@ -1366,11 +1356,28 @@ def cmd_run(args):
     text = set_status(text, task["id"], "in-progress")
     tasks_path.write_text(text)
 
-    result = run_task(
-        task, pricing, default_runner, default_verify_runner,
-        prompt=prompt, role=args.role, max_escalations=args.max_escalations,
-        codex_bin=args.codex_bin, effort=args.effort, extra_args=extra_args,
-    )
+    # One confined runner for BOTH the precheck and the task's own verification: the precheck
+    # runs the same repo-authored line against the same tree, so it cannot be the unconfined
+    # one. `--exec-mode enforced` refuses outright on a host with no backend rather than
+    # quietly running it with the parent's privileges.
+    verify_runner = _ep().verify_runner(Path.cwd(), mode=args.exec_mode)
+
+    try:
+        result = run_task(
+            task, pricing, default_runner, verify_runner,
+            prompt=prompt, role=args.role, max_escalations=args.max_escalations,
+            codex_bin=args.codex_bin, effort=args.effort, extra_args=extra_args,
+            admission=admission, consult=bool(args.parent),
+        )
+    except _BudgetRefused as refusal:
+        # Refused MID-RUN, after earlier operations in this same invocation spent their
+        # allowance. Nothing ran for this operation, so there is no exit code and no verdict.
+        result = {
+            "id": task["id"], "status": "blocked", "model_used": None, "escalations": [],
+            "verify_rc": None, "dispatch_rc": None, "failure": "budget",
+            "budget_stop": {"operation": refusal.kind, "reason": refusal.reason},
+        }
+        print(f"budget-stop: {refusal.reason}", file=sys.stderr)
 
     text = set_status(text, task["id"], result["status"])
     tasks_path.write_text(text)
@@ -1425,10 +1432,10 @@ def cmd_review(args):
     rc, output = enforce_attested_assignment(
         rc, output, telemetry, assignment["model_id"], "verifier"
     )
-    append_role_use(Path(args.kit) / "NOTES.md", args.phase, "verifier", None,
+    append_role_use(args.kit, args.phase, "verifier", None,
                     assignment["model_id"], rc, telemetry.get("actual_model"),
                     telemetry.get("actual_role"), evidence_fingerprint=evidence_fingerprint,
-                    report=output)
+                    report=output, run_id=generate_run_id())
     print(output)
     if rc != 0:
         sys.exit(1)
@@ -1446,14 +1453,22 @@ def cmd_accept(args):
             f"phase {args.phase} is not ready for final acceptance; incomplete tasks: "
             f"{', '.join(incomplete)}"
         )
-    notes_path = Path(args.kit) / "NOTES.md"
-    notes_text = notes_path.read_text() if notes_path.exists() else ""
     evidence_fingerprint = review_evidence_fingerprint(args.kit, tasks_text, args.phase)
     if not _role_use_succeeded(
-        notes_text, args.phase, "verifier", evidence_fingerprint=evidence_fingerprint
+        args.kit, args.phase, "verifier", evidence_fingerprint=evidence_fingerprint
     ):
+        notes_path = Path(args.kit) / "NOTES.md"
+        notes_text = notes_path.read_text() if notes_path.exists() else ""
+        legacy = [e for e in import_legacy_role_use(notes_text)
+                  if e["phase"] == str(args.phase) and e["role"] == "verifier"]
+        detail = (
+            f"; {len(legacy)} legacy NOTES.md review block(s) exist for this phase but predate "
+            f"typed role-use records and cannot establish success -- re-run `review`"
+            if legacy else ""
+        )
         raise PolicyError(
-            f"phase {args.phase} has no successful independent Sol review record; run review first"
+            f"phase {args.phase} has no successful independent Sol review record in "
+            f"{ROLE_USE_FILENAME}; run review first{detail}"
         )
     pricing = load_pricing()
     assignment = resolve_assignment(pricing, role="orchestrator")
@@ -1466,7 +1481,9 @@ def cmd_accept(args):
         "Inspect the plan, task records, independent review, verification evidence, and actual "
         "changes. Decide accepted or rejected and explain the evidence. Do not implement or "
         "modify files; corrective work requires the driver's structured recovery gate. End "
-        "with exactly `POLYTROPOS_ACCEPTANCE: accepted` or `POLYTROPOS_ACCEPTANCE: rejected`."
+        "your final message with one line reading `POLYTROPOS_ACCEPTANCE: <verdict>`, where "
+        "<verdict> is accepted or rejected. Emit that marker exactly once and name only the "
+        "verdict you chose -- a final message naming both verdicts is discarded as conflicting."
     )
     prompt = load_preamble("reviewer", REPO_ROOT) + "\n\n---\n\n" + body
     argv = build_dispatch(
@@ -1478,17 +1495,28 @@ def cmd_accept(args):
         print(f"dispatch: {shlex.join(argv)}")
         return
     rc, output, telemetry = default_runner(argv)
+    # Parse BEFORE any annotation: `enforce_attested_assignment` may append to `output`, and
+    # `DispatchOutput + str` is a plain `str` with the streams dropped.
+    dispatch_output = output
     rc, output = enforce_attested_assignment(
         rc, output, telemetry, assignment["model_id"], "orchestrator"
     )
-    verdict = parse_acceptance_verdict(output) if rc == 0 else None
+    result = (
+        parse_acceptance_result(dispatch_output) if rc == 0
+        else _no_verdict("dispatch did not complete cleanly")
+    )
+    verdict = result["verdict"]
     if rc == 0 and verdict is None:
         rc = 4
-        output += "\nfinal acceptance did not provide the required machine verdict\n"
-    append_role_use(notes_path, args.phase, "orchestrator", None,
+        output += (
+            "\nfinal acceptance did not provide the required machine verdict: "
+            f"{result['reason']}\n"
+        )
+    append_role_use(args.kit, args.phase, "orchestrator", None,
                     assignment["model_id"], rc, telemetry.get("actual_model"),
                     telemetry.get("actual_role"), result=verdict or "failed",
-                    evidence_fingerprint=evidence_fingerprint, report=output)
+                    evidence_fingerprint=evidence_fingerprint, report=output,
+                    run_id=generate_run_id())
     print(output)
     if verdict == "rejected" and rc == 0:
         rc = 1
@@ -1547,6 +1575,16 @@ def build_parser():
              "outcome line on success; TASK_ID must differ from the task being run -- a value "
              "equal to the task's own id is REJECTED with exit 2, nothing written)",
     )
+    p_run.add_argument("--exec-mode", choices=("enforced", "trusted-host"), default="enforced",
+                       help="verification confinement (step 05). `enforced` runs the verify "
+                            "command inside an OS boundary — writes limited to the workspace, "
+                            "network denied, credential stores unreadable — and REFUSES when "
+                            "no backend can enforce that. `trusted-host` runs it with no "
+                            "boundary at all and says so; choose it only for a host you trust.")
+    p_run.add_argument("--rerun", action="store_true",
+                       help="allow selecting a task already marked done (step 07). Without it, "
+                            "naming a completed task is refused rather than silently repeating "
+                            "finished work.")
     p_run.add_argument("--dry-run", action="store_true",
                        help="print the dispatch argv and verify command; spawn/write nothing")
     p_run.set_defaults(func=cmd_run)
@@ -1581,14 +1619,6 @@ def build_parser():
     return ap
 
 
-def main(argv=None):
-    ap = build_parser()
-    args = ap.parse_args(argv)
-    try:
-        args.func(args)
-    except (ValueError, FileNotFoundError, KeyError) as e:
-        print(str(e), file=sys.stderr)
-        sys.exit(2)
 
 
 if __name__ == "__main__":

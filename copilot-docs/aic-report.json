@@ -32,7 +32,7 @@
       "kind": "markdown",
       "title": "GitHub Copilot CLI Documentation Center",
       "authoring_mode": "estimated",
-      "sources_sha256": "8397b66bcf930b7be5a2afe12afc18caa0ec198503744ba8bddece39acf52913",
+      "sources_sha256": "f78d666316e05b02d45c4680524ccaec0a335302d7a0305f717a54b15659a4c4",
       "measurement": {
         "bytes": 3586,
         "words": 564,
@@ -79,7 +79,7 @@
       "kind": "markdown",
       "title": "Installing the Copilot CLI bundle",
       "authoring_mode": "estimated",
-      "sources_sha256": "846389a734ebf376a290ba5708f4d179c880a14d88c3f6baf1eb5add7a89ad86",
+      "sources_sha256": "64c7854f4993458c571798609c0ef2a1e979fb5dad1d3c8cb1af5dc13e88f469",
       "measurement": {
         "bytes": 3516,
         "words": 551,
@@ -126,7 +126,7 @@
       "kind": "markdown",
       "title": "Safety and cost boundaries",
       "authoring_mode": "estimated",
-      "sources_sha256": "96bbf12ed1da9a25803baa7fcc6fca359026d5b31e2ee03c5d10bc91a41d6557",
+      "sources_sha256": "3c71808626b93a2b05450f25bfa23aa15e3c513a98220a8d7ece136650db58e4",
       "measurement": {
         "bytes": 4945,
         "words": 762,
@@ -173,7 +173,7 @@
       "kind": "markdown",
       "title": "Skills reference",
       "authoring_mode": "estimated",
-      "sources_sha256": "66aa3b28ccfc990cd591c465fb8434c32bab115be140c1a55dea6a6383c81fd8",
+      "sources_sha256": "3ada6b376573c08fc3b93a2c3c012c4a1032bf54103bada3521577ee8a64f86e",
       "measurement": {
         "bytes": 22563,
         "words": 3712,
@@ -218,7 +218,7 @@
       "kind": "markdown",
       "title": "Agents reference",
       "authoring_mode": "estimated",
-      "sources_sha256": "caa8d01891004ed2bb4d536534484c9baa839b6f885108ce360e724efc11cdf3",
+      "sources_sha256": "7875ebea7353a0adefeb614a9f578e73ff67f228e75540528dc68fa44e1d1cb1",
       "measurement": {
         "bytes": 16474,
         "words": 2659,
@@ -263,7 +263,7 @@
       "kind": "markdown",
       "title": "Models and preferences",
       "authoring_mode": "estimated",
-      "sources_sha256": "b34fa53148fb55ccc900682183d47b6e5204ed6f93ed089c6e9c0ea4ea5720f2",
+      "sources_sha256": "eafbabe5f6761a536785258faf8a4b6773c08cd2544b28301de45dcd89d01186",
       "measurement": {
         "bytes": 16351,
         "words": 2628,
@@ -308,7 +308,7 @@
       "kind": "markdown",
       "title": "Costs and AIC accounting",
       "authoring_mode": "estimated",
-      "sources_sha256": "f985bdfc3b17d8f56aa2cd784ee9c9e13d2e1b07e53ec1342ff5603477936732",
+      "sources_sha256": "11ecd50d38f9eac73fbb0e08f89b7018c2d96207878c3ab919835538ee2d6ad4",
       "measurement": {
         "bytes": 8430,
         "words": 1350,
@@ -353,7 +353,7 @@
       "kind": "markdown",
       "title": "Practical workflows",
       "authoring_mode": "estimated",
-      "sources_sha256": "04cab38866749e16fee81dd7044c30d2a28c7a596f3295de2f552d50842405b8",
+      "sources_sha256": "ff68b863e961b8debafffa368a4d2e02ad28200e309f51070f018037e0d9f132",
       "measurement": {
         "bytes": 12380,
         "words": 1997,

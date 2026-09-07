@@ -40,6 +40,7 @@ a ``None`` slot + a note.
 """
 
 import importlib.util
+import shlex
 from pathlib import Path
 
 
@@ -71,12 +72,63 @@ ADVISORY_NOTE = (
 
 # Repo-pinned dispatch shapes (journal_summarize.build_dispatch; CLAUDE.md's `copilot -p`
 # invariant + copilot_execute's `--model` flag; codex_execute.build_dispatch). The advisor
-# NEVER invents a CLI flag; the `{model}` placeholder is filled downstream by the prose.
-COMMAND_TEMPLATES = {
-    "claude_code": 'claude -p --model {model} "<task>"',
-    "copilot_cli": 'copilot --model {model} -p "<task>"',
-    "codex_cli": 'codex exec --model {model} --sandbox workspace-write "<task>"',
+# NEVER invents a CLI flag.
+#
+# These are ARGV, not shell strings. They used to be format strings with the task interpolated
+# inside double quotes -- where `$(...)` is still evaluated, so a card title carrying command
+# substitution became a live command the moment a human pasted the line. Deleting `"` and
+# backticks from the title did not close that, because `$(...)` needs neither.
+#
+# Each slot below is a WHOLE element, and substitution is by exact element equality: a task
+# whose text is literally "{{task}}" fills its own slot and nothing else. Task text is never
+# parsed, escaped, or edited on the way in -- only quoted on the way out, by the renderer.
+MODEL_SLOT = "{{model}}"
+TASK_SLOT = "{{task}}"
+
+COMMAND_ARGV = {
+    "claude_code": ("claude", "-p", "--model", MODEL_SLOT, TASK_SLOT),
+    "copilot_cli": ("copilot", "--model", MODEL_SLOT, "-p", TASK_SLOT),
+    "codex_cli": (
+        "codex", "exec", "--model", MODEL_SLOT, "--sandbox", "workspace-write", TASK_SLOT
+    ),
 }
+
+#: The one display renderer implemented here. `shlex.join` serializes for POSIX shells
+#: (sh/bash/zsh). PowerShell and cmd.exe are deliberately NOT implemented: their quoting rules
+#: differ, and POSIX quoting applied to either is wrong in ways that silently re-enable the
+#: bug this exists to fix. An unimplemented shell gets no renderer rather than a plausible one.
+DISPLAY_SHELL = "posix"
+
+
+def build_command_argv(harness, model, task):
+    """The literal argv for one advisory dispatch on `harness`.
+
+    `task` is placed as one argv element, byte for byte -- quotes, `$(...)`, backticks,
+    newlines, backslashes and all. Raises KeyError for a harness with no pinned shape, which
+    is the point: the shape comes from this table, never from a caller or a digest.
+    """
+    spec = COMMAND_ARGV.get(harness)
+    if spec is None:
+        raise KeyError(f"no pinned dispatch shape for harness {harness!r}")
+    argv = []
+    for element in spec:
+        if element == MODEL_SLOT:
+            argv.append(str(model))
+        elif element == TASK_SLOT:
+            argv.append(task if isinstance(task, str) else str(task))
+        else:
+            argv.append(element)
+    return argv
+
+
+def render_command(harness, model, task):
+    """A ready-to-paste POSIX shell line for `harness`, with `task` preserved literally.
+
+    ADVISORY: this renders text for a human to read and decide about. Nothing here executes
+    it, and nothing should start to -- the safety of the rendering is what makes it safe to
+    display, not a substitute for the human in front of it.
+    """
+    return shlex.join(build_command_argv(harness, model, task))
 
 # Per-harness structural billing strings (label semantics — no numbers).
 BILLING = {
@@ -280,7 +332,7 @@ def build_harness_signal(reports, pricing_claude, pricing_copilot, pricing_codex
             "sessions_today": claude_r.get("sessions", 0),
             "usd_today": claude_r.get("usd"),
             "billing": BILLING["claude_code"],
-            "command_template": COMMAND_TEMPLATES["claude_code"],
+            "command_argv": list(COMMAND_ARGV["claude_code"]),
             "est": claude_est,
         },
         "copilot_cli": {
@@ -289,7 +341,7 @@ def build_harness_signal(reports, pricing_claude, pricing_copilot, pricing_codex
             "usd_today": copilot_r.get("usd"),
             "aic_today": copilot_extra.get("aic"),
             "billing": BILLING["copilot_cli"],
-            "command_template": COMMAND_TEMPLATES["copilot_cli"],
+            "command_argv": list(COMMAND_ARGV["copilot_cli"]),
             "est": copilot_est,
         },
         "codex_cli": {
@@ -299,7 +351,7 @@ def build_harness_signal(reports, pricing_claude, pricing_copilot, pricing_codex
             "usd_today": codex_r.get("usd"),
             "proxy_today": codex_proxy.get("api_equivalent_usd_total"),
             "billing": BILLING["codex_cli"],
-            "command_template": COMMAND_TEMPLATES["codex_cli"],
+            "command_argv": list(COMMAND_ARGV["codex_cli"]),
             "est": codex_est,
         },
     }

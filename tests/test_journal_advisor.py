@@ -150,18 +150,97 @@ class ShapeTests(unittest.TestCase):
         self.assertEqual(sig["cache_hit"], ja.ADVISOR_CACHE_HIT)
         self.assertEqual(set(sig["harnesses"]), {"claude_code", "copilot_cli", "codex_cli"})
 
-    def test_command_templates_match_verbatim_with_placeholder_intact(self):
+    def test_command_argv_matches_verbatim_with_both_slots_intact(self):
         sig = ja.build_harness_signal({}, CLAUDE_PRICING, COPILOT_PRICING, CODEX_PRICING)
-        for harness, template in ja.COMMAND_TEMPLATES.items():
-            self.assertEqual(sig["harnesses"][harness]["command_template"], template)
-            self.assertIn("{model}", template)
+        for harness, spec in ja.COMMAND_ARGV.items():
+            self.assertEqual(sig["harnesses"][harness]["command_argv"], list(spec))
+            self.assertIn(ja.MODEL_SLOT, spec)
+            self.assertIn(ja.TASK_SLOT, spec)
 
     def test_codex_command_uses_supported_workspace_sandbox(self):
         sig = ja.build_harness_signal({}, CLAUDE_PRICING, COPILOT_PRICING, CODEX_PRICING)
         self.assertEqual(
-            sig["harnesses"]["codex_cli"]["command_template"],
-            'codex exec --model {model} --sandbox workspace-write "<task>"',
+            sig["harnesses"]["codex_cli"]["command_argv"],
+            ["codex", "exec", "--model", "{{model}}", "--sandbox", "workspace-write", "{{task}}"],
         )
+
+    def test_task_text_reaches_argv_byte_for_byte(self):
+        """Step 04: the task is DATA. Every one of these used to be either deleted from the
+        title or evaluated by the shell that ran the pasted line."""
+        hostile = [
+            'fix $(touch /tmp/pwned) crash',
+            "fix `id` crash",
+            'fix "quoted" crash',
+            "fix 'single' crash",
+            "fix ${HOME} crash",
+            "fix a\\backslash crash",
+            "fix a\nnewline crash",
+            "fix; rm -rf /; crash",
+            "fix a|b&&c crash",
+            "fix ünïcödé — em dash crash",
+            "fix   multiple   spaces",
+            ja.TASK_SLOT,
+        ]
+        for task in hostile:
+            for harness in ja.COMMAND_ARGV:
+                argv = ja.build_command_argv(harness, "fake-model-1", task)
+                self.assertEqual(argv[-1], task, f"{harness}: {task!r} was altered")
+                self.assertEqual(argv.count(task), 1)
+
+    def test_render_command_is_posix_quoted_and_reparses_to_the_same_argv(self):
+        import shlex
+        for task in ('a $(id) b', "a `id` b", 'a "q" b', "a 'q' b", "a\nb", "a\\b"):
+            for harness in ja.COMMAND_ARGV:
+                line = ja.render_command(harness, "fake-model-1", task)
+                self.assertEqual(shlex.split(line), ja.build_command_argv(
+                    harness, "fake-model-1", task))
+
+    def test_the_rendered_line_delivers_literal_argv_to_a_fake_cli(self):
+        """End to end: the line a human would actually paste, run by a real POSIX shell
+        against stub executables. Nothing real is invoked -- PATH points at a temp dir, the
+        stubs only record their argv, and no model or network is involved."""
+        import os
+        import subprocess
+        import tempfile
+
+        title = 'fix $(touch SENTINEL) and `touch SENTINEL2` and "quotes" crash'
+        with tempfile.TemporaryDirectory() as td:
+            td = Path(td)
+            bindir = td / "bin"
+            bindir.mkdir()
+            for name in ("claude", "copilot", "codex"):
+                stub = bindir / name
+                stub.write_text(
+                    "#!/usr/bin/env python3\n"
+                    "import json, sys, pathlib\n"
+                    "pathlib.Path(sys.argv[0] + '.argv.json').write_text(json.dumps(sys.argv[1:]))\n"
+                )
+                stub.chmod(0o755)
+
+            env = dict(os.environ, PATH=f"{bindir}:{os.environ.get('PATH', '')}")
+            for harness, binary in (
+                ("claude_code", "claude"), ("copilot_cli", "copilot"), ("codex_cli", "codex")
+            ):
+                line = ja.render_command(harness, "fake-model-1", title)
+                proc = subprocess.run(
+                    ["sh", "-c", line], cwd=str(td), env=env,
+                    capture_output=True, text=True, timeout=60,
+                )
+                self.assertEqual(proc.returncode, 0, proc.stderr)
+                received = json.loads((bindir / f"{binary}.argv.json").read_text())
+                self.assertEqual(received[-1], title, f"{harness} did not receive it literally")
+
+            # And the shell expanded none of it: neither substitution ran.
+            self.assertFalse((td / "SENTINEL").exists())
+            self.assertFalse((td / "SENTINEL2").exists())
+            self.assertFalse((bindir / "SENTINEL").exists())
+
+    def test_an_unimplemented_harness_gets_no_command_rather_than_a_plausible_one(self):
+        with self.assertRaises(KeyError):
+            ja.build_command_argv("powershell_thing", "m", "t")
+        with self.assertRaises(KeyError):
+            ja.render_command("cursor_cli", "m", "t")
+        self.assertEqual(ja.DISPLAY_SHELL, "posix")
 
 
 # ---- 2. estimate math reuse ----------------------------------------------------------------

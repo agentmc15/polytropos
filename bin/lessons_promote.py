@@ -70,9 +70,24 @@ from datetime import date
 from pathlib import Path
 
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
+
+def _store_default(name):
+    """Default location for a runtime store, via `bin/runtime_data.py` (step 13).
+
+    Outside the plugin tree unless a store already exists in it, in which case that one keeps
+    being used. Per-command `--*-dir` flags override this and are unchanged.
+    """
+    import importlib.util
+    module_path = Path(__file__).resolve().parent / "runtime_data.py"
+    spec = importlib.util.spec_from_file_location("runtime_data", module_path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.store_path(name, PLUGIN_ROOT)
+
+
 DEFAULT_KITS_DIR = PLUGIN_ROOT / ".claude" / "kits"
 DEFAULT_LESSONS_FILE = PLUGIN_ROOT / "tasks" / "lessons.md"
-DEFAULT_OUTPUT_DIR = PLUGIN_ROOT / "journal" / "promotions"
+DEFAULT_OUTPUT_DIR = _store_default("journal") / "promotions"
 
 # PLAN E2 gate 1 — the ONE pinned constant this tool hardcodes. No recurrence score, no
 # confidence weighting, no other cutoff belongs here (GUARDRAILS.md: "thresholds come from

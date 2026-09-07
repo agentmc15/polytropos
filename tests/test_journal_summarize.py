@@ -529,3 +529,62 @@ class MainExplicitModelAndErrorsTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class IsolatedSummaryDispatchTests(unittest.TestCase):
+    """Summarising is a pure text transformation, and this is arranged to be checkable.
+
+    The step-13 finding: the summary dispatched a coding CLI with no tool-free controls, in the
+    project directory — so the repository's own instructions, hooks, and MCP config were in
+    scope for a run whose whole job is rewriting metadata it was handed on stdin.
+    """
+
+    def _stub(self, body):
+        td = tempfile.TemporaryDirectory()
+        self.addCleanup(td.cleanup)
+        path = Path(td.name) / "claude-stub.sh"
+        path.write_text("#!/bin/sh\n" + body)
+        path.chmod(0o755)
+        return str(path)
+
+    def test_the_dispatch_does_not_run_in_the_project_directory(self):
+        # `CLAUDE.md`, `.claude/settings.json`, hooks and `.mcp.json` are all discovered
+        # relative to the working directory. Running elsewhere is what takes them out of scope.
+        stub = self._stub("pwd\n")
+        rc, out = jsz.default_runner([stub], "prompt")
+        self.assertEqual(rc, 0)
+        self.assertNotIn(str(Path.cwd()), out)
+        self.assertNotIn("polytropos", out)
+
+    def test_a_dispatch_that_writes_a_file_is_rejected_not_accepted(self):
+        # Verified by BEHAVIOUR, not by asking the model not to in the prompt.
+        stub = self._stub("echo summary; : > side-effect.txt\n")
+        rc, out = jsz.default_runner([stub], "prompt")
+        self.assertEqual(rc, jsz.SIDE_EFFECT_RC)
+        self.assertIn("isolated workspace", out)
+        self.assertIn("side-effect.txt", out)
+
+    def test_a_clean_dispatch_still_returns_its_summary(self):
+        stub = self._stub("cat >/dev/null; echo 'the summary'\n")
+        rc, out = jsz.default_runner([stub], "prompt")
+        self.assertEqual(rc, 0)
+        self.assertEqual(out.strip(), "the summary")
+
+    def test_a_rejected_dispatch_is_recorded_as_a_failed_attempt(self):
+        stub = self._stub("echo x; : > wrote.txt\n")
+
+        def runner(argv, prompt):
+            return jsz.default_runner([stub], prompt)
+
+        docs, meta = jsz.summarize(SAMPLE_DIGEST, ["m1"], runner)
+        self.assertEqual(docs, {})
+        for record in meta["docs"].values():
+            self.assertTrue(record["failed"])
+            self.assertEqual([a["rc"] for a in record["attempts"]], [jsz.SIDE_EFFECT_RC])
+
+    def test_the_prompt_never_travels_in_argv(self):
+        # Unchanged contract, re-asserted here because isolation moved the call: a prompt in
+        # argv is visible in `ps` to every user on the machine.
+        argv = jsz.build_dispatch("m1")
+        self.assertNotIn("prompt", " ".join(argv))
+        self.assertEqual(argv[1], "-p")

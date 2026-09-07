@@ -240,16 +240,44 @@ def _task_verify_cmd(text, task_id):
 
 # ---- marker + precheck-record storage (all under the gitignored verify-pass/ dir) ------------
 
+def _sp():
+    """Lazy-load bin/safe_paths.py -- the repo's ONE path-containment helper."""
+    import importlib.util
+    path = Path(__file__).resolve().parent / "safe_paths.py"
+    spec = importlib.util.spec_from_file_location("safe_paths", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+MARKER_SUBDIR = "verify-pass"
+
+
+def validate_task_id(task_id):
+    """`task_id` as a safe filename component, or SafePathError (a ValueError).
+
+    Task ids come out of a kit's TASKS.md and are turned DIRECTLY into marker filenames, so an
+    id containing a separator or `..` moved the read, the write, and -- worst -- the DELETE in
+    `run_precheck` outside the kit entirely. `marker_path('.claude/kits/k', '../../x')` used to
+    resolve wherever it was pointed.
+
+    A trusted kit can already contain an executable verify command, so this is defence in
+    depth rather than a claim about untrusted kits: the point is that a malformed id should
+    fail loudly instead of silently operating on a path nobody intended.
+    """
+    return _sp().validate_id(task_id, what="task id")
+
+
 def marker_dir(kit_dir):
-    return Path(kit_dir) / "verify-pass"
+    return Path(kit_dir) / MARKER_SUBDIR
 
 
 def marker_path(kit_dir, task_id):
-    return marker_dir(kit_dir) / task_id
+    return marker_dir(kit_dir) / validate_task_id(task_id)
 
 
 def _precheck_path(kit_dir, task_id):
-    return marker_dir(kit_dir) / f"{task_id}.precheck.json"
+    return marker_dir(kit_dir) / f"{validate_task_id(task_id)}.precheck.json"
 
 
 def write_marker(kit_dir, task_id, verify_cmd, now=None):
@@ -304,7 +332,40 @@ def marker_exists(kit_dir, task_id):
 
 # ---- (a2) precheck -----------------------------------------------------------------------
 
-def run_precheck(kit_dir, task_id, verify_cmd, runner, now=None):
+#: What a task's verify command has to DEMONSTRATE. Declared per task by an optional
+#: `- evidence:` line in TASKS.md; absent means `red-green`, which is exactly today's rule.
+#:
+#: The blanket rule this replaces treated EVERY pre-task pass as a `tautological-verify`
+#: defect. That is right for a bug fix -- a reproducer that passes before the fix reproduces
+#: nothing -- and wrong for the several honest task shapes where passing beforehand is the
+#: entire point: a refactor that must not change behaviour, a docs drift guard, a layout
+#: assertion, a regression fence around code that already works. Those tasks were being told
+#: to invent a failing test in order to prove something that is true by construction.
+EVIDENCE_KINDS = ("red-green", "regression", "precondition")
+DEFAULT_EVIDENCE = "red-green"
+
+#: Kinds for which a pre-task PASS is expected rather than disqualifying.
+PRE_PASS_EXPECTED = ("regression", "precondition")
+
+
+def normalize_evidence(value):
+    """`value` as a known evidence kind. None/empty -> the default; unknown -> ValueError.
+
+    Unknown fails loudly rather than falling back to the default: a typo in `- evidence:` that
+    silently became `red-green` would reinstate the blanket rule for a task that explicitly
+    asked not to have it.
+    """
+    if value is None or str(value).strip() == "":
+        return DEFAULT_EVIDENCE
+    kind = str(value).strip()
+    if kind not in EVIDENCE_KINDS:
+        raise ValueError(
+            f"unknown evidence kind {kind!r}; valid: {' | '.join(EVIDENCE_KINDS)}"
+        )
+    return kind
+
+
+def run_precheck(kit_dir, task_id, verify_cmd, runner, now=None, evidence=None):
     """Run `verify_cmd` (via the injectable `runner(cmd) -> (rc, output)`) against the
     PRE-TASK tree and persist the result under `<kit_dir>/verify-pass/<task_id>.precheck.json`.
 
@@ -315,9 +376,14 @@ def run_precheck(kit_dir, task_id, verify_cmd, runner, now=None):
     exactly "`record` ran after THIS precheck". Prints one line noting what it invalidated
     (via `read_marker_time`) when a prior marker existed.
 
+    `evidence` is the task's declared evidence kind (`EVIDENCE_KINDS`; absent -> `red-green`).
+    It decides what a pre-task PASS means: a required-proof failure for a red-green task, and
+    the expected result for a regression or precondition one.
+
     Returns the precheck record dict. Prints an in-grammar
-    `defect: <task-id> kind=tautological-verify ...` line to stdout when the command already
-    exits 0 pre-task (PLAN D10) -- field order is load-bearing, see the comment at the print."""
+    `defect: <task-id> kind=tautological-verify ...` line to stdout when a RED-GREEN command
+    already exits 0 pre-task (PLAN D10) -- field order is load-bearing, see the comment at the
+    print."""
     invalidated_at = read_marker_time(kit_dir, task_id)
     if marker_exists(kit_dir, task_id):
         marker_path(kit_dir, task_id).unlink()
@@ -333,13 +399,17 @@ def run_precheck(kit_dir, task_id, verify_cmd, runner, now=None):
             f"(PLAN D3 freshness)"
         )
 
+    evidence = normalize_evidence(evidence)
     rc, _output = runner(verify_cmd)
     now = now or datetime.now(timezone.utc)
     record = {
         "task_id": task_id,
         "verify_cmd": verify_cmd,
         "rc": rc,
-        "tautological": rc == 0,
+        # A pre-task pass only disqualifies a RED-GREEN task. For a regression or precondition
+        # task it is the expected result, and calling it tautological was the bug.
+        "tautological": rc == 0 and evidence not in PRE_PASS_EXPECTED,
+        "evidence": evidence,
         "checked_at": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
     }
     d = marker_dir(kit_dir)
@@ -393,18 +463,24 @@ def run_record(kit_dir, task_id, verify_cmd, now=None):
 
 # ---- (b) hook -----------------------------------------------------------------------------
 
-def detect_done_flip(event):
-    """Given a parsed PostToolUse event dict, return (kit_dir: Path, task_id: str) if this
-    event flips a task's `- status:` line to `done` inside a kit TASKS.md, else None.
+def detect_done_flips(event):
+    """Every `(kit_dir, task_id)` this PostToolUse event flips to `done`, in order.
+
+    PLURAL deliberately. One Edit call carries a LIST of edits, and a run that finishes a
+    phase flips several tasks at once. Returning only the first meant the remaining tasks were
+    never checked for a pass marker -- an unsupported event SHAPE quietly establishing success
+    for every task after the first one.
 
     Only the Edit tool is supported -- see the module docstring's PAYLOAD PROVENANCE note for
     why a Write cannot be diff-checked from its PostToolUse payload alone."""
+    flips = []
+    seen = set()
     if event.get("tool_name") != "Edit":
-        return None
+        return flips
     tool_input = event.get("tool_input") or {}
     file_path = tool_input.get("file_path")
     if not file_path or not is_kit_tasks_md(file_path):
-        return None
+        return flips
 
     cwd = event.get("cwd") or "."
     abs_path = Path(file_path)
@@ -435,9 +511,16 @@ def detect_done_flip(event):
                 line_index = current_text.count("\n", 0, idx)
                 task_id = _task_id_for_line(current_text, line_index)
 
-        if task_id:
-            return abs_path.parent, task_id
-    return None
+        if task_id and task_id not in seen:
+            seen.add(task_id)
+            flips.append((abs_path.parent, task_id))
+    return flips
+
+
+def detect_done_flip(event):
+    """The FIRST done-flip in `event`, or None. Back-compat wrapper over `detect_done_flips`."""
+    flips = detect_done_flips(event)
+    return flips[0] if flips else None
 
 
 def evaluate_hook_event(event):
@@ -453,11 +536,18 @@ def evaluate_hook_event(event):
          `**Verify:**` fenced block; see DIALECT COVERAGE in the module docstring). If the task
          id or its verify command can't be parsed at all, this check is skipped -- fail-open on
          an unparsable format, same posture as the rest of this module."""
-    found = detect_done_flip(event)
-    if found is None:
-        return True, ""
-    kit_dir, task_id = found
+    problems = []
+    for kit_dir, task_id in detect_done_flips(event):
+        allow, message = _evaluate_one_flip(kit_dir, task_id)
+        if not allow:
+            problems.append(message)
+    if problems:
+        return False, "\n".join(problems)
+    return True, ""
 
+
+def _evaluate_one_flip(kit_dir, task_id):
+    """The marker checks for ONE task flipped to done -> `(allow, message)`."""
     marker = read_marker(kit_dir, task_id)
     if marker is None:
         return False, (
@@ -483,13 +573,26 @@ def evaluate_hook_event(event):
 
 # ---- default runner (injectable everywhere; NEVER the real claude/copilot/codex CLI) --------
 
-def default_runner(cmd):
-    """Real-run verify runner: shell out (verify commands are repo-authored shell lines --
-    same trust model as codex_execute.default_verify_runner / copilot_execute's equivalent).
+def _ep():
+    """Lazy-load bin/exec_policy.py -- the OS execution boundary (step 05)."""
+    import importlib.util
+    path = Path(__file__).resolve().parent / "exec_policy.py"
+    spec = importlib.util.spec_from_file_location("exec_policy", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def default_runner(cmd, workspace=None, mode="enforced"):
+    """Real-run verify runner -- the task's own shell verify line, INSIDE the boundary.
+
     Only ever invoked on a TASK'S OWN verify command (e.g. `python3 -m unittest ...`), never a
-    claude/copilot/codex dispatch."""
-    proc = subprocess.run(cmd, shell=True, capture_output=True, text=True)
-    return proc.returncode, (proc.stdout or "") + (proc.stderr or "")
+    claude/copilot/codex dispatch. Confined exactly like the drivers' own verify path: this
+    hook runs the same worker-written code, so it cannot be the one place that runs it with
+    the parent's privileges (step 05).
+    """
+    ep = _ep()
+    return ep.verify_runner(workspace or Path.cwd(), mode=mode)(cmd)
 
 
 # ---- CLI ------------------------------------------------------------------------------------

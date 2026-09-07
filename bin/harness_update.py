@@ -631,9 +631,11 @@ def cmd_check(args):
 
 APPLY_TARGETS = ("claude", "copilot", "codex", "mirrors")
 
-_COPILOT_OVERWRITE_NOTE = (
-    "copilot installs overwrite in place -- inherited, documented install_copilot behavior "
-    "(the bundle's own files are replaced; files the bundle does not know about are untouched)"
+_COPILOT_OWNERSHIP_NOTE = (
+    "copilot refreshes only destinations this installer owns and nobody has edited since -- a "
+    "file it does not own, or one you changed after install, is PRESERVED and listed under "
+    "preserved: below (rerun harness_select install --harness copilot --adopt-existing to "
+    "overwrite those, keeping a backup of each)"
 )
 
 # Codex updates preserve every unknown or edited destination.
@@ -719,14 +721,20 @@ def apply_copilot_target(repo_root, copilot_home, dry_run=False):
         }
 
     harness_select_mod = _load_sibling("harness_select")
-    destinations = harness_select_mod.install_copilot(copilot_home, repo_root=repo_root, dry_run=dry_run)
+    result = harness_select_mod.install_copilot(copilot_home, repo_root=repo_root, dry_run=dry_run)
     return {
         "target": "copilot",
         "action": "would-install" if dry_run else "installed",
         "wrote": not dry_run,
-        "note": _COPILOT_OVERWRITE_NOTE,
-        "count": len(destinations),
-        "destinations": [str(dest) for dest in destinations],
+        "note": _COPILOT_OWNERSHIP_NOTE,
+        "count": len(result),
+        "destinations": [str(dest) for dest in result],
+        # Destinations the installer declined to write, each with the reason. Reporting them
+        # is the point: a refresh that silently left files alone would read as a clean apply.
+        "preserved": [
+            {"destination": action["destination"], "reason": action["reason"]}
+            for action in getattr(result, "conflicts", [])
+        ],
     }
 
 
@@ -906,6 +914,11 @@ def _render_apply_copilot(entry):
     lines.append(f"destinations: {entry['count']}")
     for dest in entry["destinations"]:
         lines.append(f"  {dest}")
+    preserved = entry.get("preserved") or []
+    if preserved:
+        lines.append(f"preserved: {len(preserved)} -- not written, left exactly as found")
+        for item in preserved:
+            lines.append(f"  {item['destination']} -- {item['reason']}")
     return "\n".join(lines)
 
 

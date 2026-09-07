@@ -1,0 +1,148 @@
+{
+  "schema": "polytropos-harness-capabilities/v1",
+  "purpose": "The OPERATIONAL view: what a driver may rely on, right now, on this host. Kept separate from primitives/harness-matrix.json, which is aesop's historical PRODUCT-support matrix pinned at a stated commit and is not rewritten here. Each capability carries three independent answers -- does the product support it, has polytropos implemented it, has anyone verified it by running it -- because collapsing them into one boolean is how a driver comes to believe it holds a control it does not.",
+  "unknown_is_valid": "A capability nobody has run reports verified=unknown, and a caller needing certainty must treat that as no. Filling these in optimistically would make the file worse than not having it.",
+  "harnesses": {
+    "claude-code": {
+      "client_mode": "cli (claude -p)",
+      "pricing_file": "data/pricing.json",
+      "capabilities": {
+        "dispatch": {
+          "product": "supported",
+          "implemented": "supported",
+          "verified": "supported",
+          "source": "vendor CLI documentation",
+          "verified_on": "2026-09-06",
+          "note": "one authorized live invocation, scoped to validating flag handling; tests never invoke the real CLI"
+        },
+        "tool_pin": {
+          "product": "supported",
+          "implemented": "supported",
+          "verified": "supported",
+          "source": "vendor CLI documentation (--allowedTools)",
+          "verified_on": "2026-09-06",
+          "note": "the `--allowedTools=<space-joined>` form is REQUIRED: the variadic form swallows the following positional, which silently consumed the prompt on every review dispatch. This row is why the registry has a verified column"
+        },
+        "confined_verify": {
+          "product": "not-applicable",
+          "implemented": "supported",
+          "verified": "supported",
+          "source": "bin/exec_policy.py, macOS sandbox-exec",
+          "verified_on": "2026-09-06",
+          "note": "polytropos capability, not a product one: verify commands run under an OS boundary. macOS only -- enforced mode refuses on Linux and Windows rather than downgrading"
+        },
+        "confined_dispatch": {
+          "product": "unsupported",
+          "implemented": "unsupported",
+          "verified": "unsupported",
+          "source": "measured on macOS",
+          "verified_on": "2026-09-06",
+          "note": "sandbox-exec blocks Keychain access and subscription credentials live there, so a confined dispatch reports 'Not logged in'. Keychain access is gated by entitlements, not profile rules; granting mach-lookup and keychain writes does not change it"
+        },
+        "status": {
+          "product": "unknown",
+          "implemented": "unsupported",
+          "verified": "unknown",
+          "note": "no run-status query is implemented here, and whether the CLI exposes one has not been checked"
+        },
+        "cancel": {
+          "product": "unknown",
+          "implemented": "supported",
+          "verified": "unknown",
+          "source": "bin/proc_runner.py",
+          "note": "the process tree can be terminated; that says nothing about whether the model call it made was already billed"
+        }
+      }
+    },
+    "codex": {
+      "client_mode": "cli (codex exec --json)",
+      "pricing_file": "data/pricing.codex.json",
+      "capabilities": {
+        "dispatch": {
+          "product": "supported",
+          "implemented": "supported",
+          "verified": "unknown",
+          "source": "vendor CLI documentation",
+          "note": "never invoked live from this repository -- tests stub every dispatch"
+        },
+        "sandbox_read_only": {
+          "product": "supported",
+          "implemented": "supported",
+          "verified": "unknown",
+          "source": "vendor CLI documentation (--sandbox read-only)",
+          "note": "review and acceptance are pinned read-only and extra arguments cannot override it. The flag's runtime effect has not been verified here"
+        },
+        "structured_events": {
+          "product": "supported",
+          "implemented": "supported",
+          "verified": "unknown",
+          "source": "vendor CLI documentation (exec --json)",
+          "note": "thread.started / item.completed / turn.completed are parsed; model attestation falls back to unknown when no correlated record appears"
+        },
+        "status": {"product": "unknown", "implemented": "unsupported", "verified": "unknown"},
+        "cancel": {
+          "product": "unknown",
+          "implemented": "supported",
+          "verified": "unknown",
+          "source": "bin/proc_runner.py",
+          "note": "process-tree termination only; see the claude-code row"
+        }
+      }
+    },
+    "copilot": {
+      "client_mode": "cli (copilot -p)",
+      "pricing_file": "data/pricing.copilot.json",
+      "capabilities": {
+        "dispatch": {
+          "product": "supported",
+          "implemented": "supported",
+          "verified": "unknown",
+          "source": "vendor CLI documentation",
+          "note": "never invoked live from this repository, by invariant: a real call spends the user's AI Credits"
+        },
+        "tool_pin": {
+          "product": "unknown",
+          "implemented": "unsupported",
+          "verified": "unknown",
+          "note": "no per-tool flag was found that could be cited, and inventing one would have produced a control that reads as enforced and is not. Review dispatch therefore carries a full permission grant -- stated in SECURITY.md rather than papered over"
+        },
+        "status": {"product": "unknown", "implemented": "unsupported", "verified": "unknown"},
+        "cancel": {
+          "product": "unknown",
+          "implemented": "supported",
+          "verified": "unknown",
+          "source": "bin/proc_runner.py",
+          "note": "process-tree termination only; see the claude-code row"
+        }
+      }
+    },
+    "stub": {
+      "client_mode": "none",
+      "pricing_file": null,
+      "capabilities": {
+        "dispatch": {
+          "product": "supported",
+          "implemented": "supported",
+          "verified": "supported",
+          "source": "bin/harness_adapter.py",
+          "verified_on": "2026-09-06",
+          "note": "conformance target: returns a canned result and spawns nothing"
+        },
+        "status": {"product": "unsupported", "implemented": "unsupported", "verified": "unsupported"},
+        "cancel": {"product": "unsupported", "implemented": "unsupported", "verified": "unsupported"}
+      }
+    },
+    "cursor": {
+      "client_mode": "unknown",
+      "pricing_file": null,
+      "capabilities": {
+        "dispatch": {
+          "product": "unknown",
+          "implemented": "unsupported",
+          "verified": "unknown",
+          "note": "step 23 delivers this adapter. The row exists so the registry says 'not built yet' rather than being silent, which reads the same as 'not applicable'"
+        }
+      }
+    }
+  }
+}

@@ -51,7 +51,12 @@ For callers migrating from the earlier driver, `status --json` now returns an ob
 `tasks` key contains the task list alongside orchestration and acceptance state. Phase review
 and acceptance require a Git workspace and a fingerprint of the current plan, phase, attempts,
 commit, and working tree. Existing free-form review notes are not accepted as evidence; run a
-fresh Sol review before requesting Astra acceptance.
+fresh Sol review before requesting Astra acceptance. Review and acceptance records are written
+as typed JSON lines to `<kit>/role-use.jsonl`, which the gates read; `NOTES.md` remains the
+human-readable view and is no longer consulted for evidence. Final acceptance is read only from
+a correlated terminal assistant message in a completed turn on stdout -- a tool event, a
+diagnostic on stderr, an interrupted turn, or a message naming both verdicts yields no verdict
+and the run stops with the reason.
 
 ## Application configuration
 

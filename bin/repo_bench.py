@@ -72,6 +72,7 @@ import os
 import re
 import secrets
 import shutil
+import stat
 import subprocess
 import sys
 import tarfile
@@ -79,12 +80,27 @@ import tempfile
 import time
 import weakref
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 # ---------------------------------------------------------------------------------------------
 # Reuse, never re-implement (the `_load` importlib pattern from bin/bench_routing.py).
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
+
+def _store_default(name):
+    """Default location for a runtime store, via `bin/runtime_data.py` (step 13).
+
+    Outside the plugin tree unless a store already exists in it, in which case that one keeps
+    being used. Per-command `--*-dir` flags override this and are unchanged.
+    """
+    import importlib.util
+    module_path = Path(__file__).resolve().parent / "runtime_data.py"
+    spec = importlib.util.spec_from_file_location("runtime_data", module_path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.store_path(name, PLUGIN_ROOT)
+
+
 
 
 def _load(name):
@@ -161,7 +177,7 @@ def _rs():
 
 STORE_SCHEMA_VERSION = 1
 
-DEFAULT_STORE_DIR = PLUGIN_ROOT / "benchruns"
+DEFAULT_STORE_DIR = _store_default("benchruns")
 
 #: PLAN D9: the ONE routing-state writer in this module. `/prefs/` is already gitignored
 #: (root-anchored, same line the `copilot_prefs` precedent uses) -- this file never re-adds
@@ -169,7 +185,7 @@ DEFAULT_STORE_DIR = PLUGIN_ROOT / "benchruns"
 #: store and the applied-prefs file are different artifacts with different writers and no
 #: reason to version together.
 PREFS_SCHEMA_VERSION = 1
-DEFAULT_PREFS_PATH = PLUGIN_ROOT / "prefs" / "repo-bench.json"
+DEFAULT_PREFS_PATH = _store_default("prefs") / "repo-bench.json"
 
 #: Evidence floor (PLAN D7): objectively-scored tasks per candidate a routing-grade verdict
 #: needs. Defined ONCE, here, module-level -- T4/T8 (and `choose_mode` below) all consume
@@ -233,10 +249,120 @@ SANDBOX_INIT_MESSAGE = "repo-bench sandbox base"
 # git seams
 
 
-def default_git_runner(argv):
-    """Local `git` runner -> (rc, stdout+stderr). Free, offline, no model, no network."""
-    proc = subprocess.run(argv, capture_output=True, text=True)
-    return proc.returncode, (proc.stdout or "") + (proc.stderr or "")
+#: Environment variables that redirect git at another repository, another config, or a helper
+#: program. Removed before every real git invocation: a target repo is untrusted input, and the
+#: ambient environment is not part of what we agreed to read.
+_GIT_ENV_STRIP_PREFIXES = ("GIT_", "GIT_CONFIG")
+_GIT_ENV_KEEP = ("GIT_EXEC_PATH",)  # locating git's own helpers, not redirecting the work
+
+#: Wall-time and captured-output ceilings for one git invocation. A target repository is
+#: untrusted, so neither its history size nor a wedged helper may hang or exhaust the run.
+GIT_TIMEOUT_SECONDS = 600
+
+#: Wall clocks for the other things this engine starts. A benchmark measures how a model does
+#: on a task; a candidate whose test command never returns has to be a measured failure rather
+#: than a stalled run.
+TEST_TIMEOUT_SECONDS = 900
+DISPATCH_TIMEOUT_SECONDS = 1800
+GH_TIMEOUT_SECONDS = 60
+GIT_OUTPUT_LIMIT = 32 * 1024 * 1024
+
+#: Config pinned onto every TARGET-repo call, overriding the repo's own `.git/config`, the
+#: user's global config, and the system config alike -- `-c` beats all three. Each entry
+#: disables a way a *configured* helper program can be executed by a nominally read-only verb:
+#: `core.fsmonitor` runs a monitor binary; `diff.external` replaces the diff machinery outright.
+#: `--no-ext-diff`/`--no-textconv` (added per verb below) close the same door from the other
+#: side. What is deliberately PRESERVED: everything else in the user's own configuration --
+#: this suppresses helper EXECUTION, not the user's git.
+TARGET_GIT_CONFIG = (
+    "-c", "core.fsmonitor=",
+    "-c", "diff.external=",
+)
+
+#: Read-only verbs that accept each suppression flag. Applied per verb because `git archive`
+#: and `git cat-file` reject flags `git diff` requires -- one blanket list would break them.
+_NO_EXT_DIFF_VERBS = frozenset({"diff", "log", "show"})
+_NO_TEXTCONV_VERBS = frozenset({"diff", "log", "show"})
+
+#: A canonical git object id: SHA-1 (40) or SHA-256 (64) lowercase hex, whole string. Anything
+#: else -- a ref name, a `--flag`, a truncated id, a fragment of a commit message -- is refused
+#: before it can reach an argv position where git would interpret it.
+_OBJECT_ID_RE = re.compile(r"\A(?:[0-9a-f]{40}|[0-9a-f]{64})\Z")
+
+
+def _sanitized_git_env():
+    env = {k: v for k, v in os.environ.items()
+           if not k.startswith(_GIT_ENV_STRIP_PREFIXES) or k in _GIT_ENV_KEEP}
+    env["GIT_CONFIG_NOSYSTEM"] = "1"
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    env["GIT_OPTIONAL_LOCKS"] = "0"
+    env["GIT_PAGER"] = "cat"
+    return env
+
+
+def default_git_runner(argv, cwd=None):
+    """Local `git` runner -> (rc, stdout+stderr). Free, offline, no model, no network.
+
+    argv-based (never `shell=True`), with a sanitized environment, a wall-time ceiling, and a
+    captured-output ceiling. `cwd` is passed through explicitly rather than inherited from
+    wherever the operator happened to launch the driver.
+    """
+    pr = _pr()
+    result = pr.run(
+        argv,
+        # `git -C <path>` carries its own directory, so the process cwd does not select the
+        # repository -- but it still has to be a validated directory rather than whatever the
+        # operator was standing in.
+        cwd=cwd if cwd is not None else Path.cwd(),
+        env=_sanitized_git_env(),
+        timeout=GIT_TIMEOUT_SECONDS,
+        output_limit=GIT_OUTPUT_LIMIT,
+        name="git",
+        # BYTES, decoded HERE and strictly. Undecodable output must RAISE so callers skip the
+        # offending file deliberately -- see `NonUtf8FileTests`. Letting the runner decode
+        # leniently would hand back silently corrupted text, and those bytes become the test
+        # blobs written into grade copies.
+        text=False,
+    )
+    if result["outcome"] == pr.OUTCOME_TIMEOUT:
+        return 124, f"git timed out after {GIT_TIMEOUT_SECONDS}s: {' '.join(argv[:6])}"
+    output = result["output"].decode("utf-8")
+    if not result["terminal"] and result["detail"]:
+        output = f"{output}\n{result['detail']}" if output else result["detail"]
+    return result["rc"], output
+
+
+def require_object_id(value, what):
+    """`value` as a canonical object id, or ValueError naming `what`.
+
+    Every identifier mined out of git output passes through here BEFORE it is used to build
+    another git command. Commit metadata is attacker-influenced text; an id that is not
+    40 or 64 lowercase hex characters is not an id, and in particular cannot be a `--flag`.
+    """
+    text = value.strip() if isinstance(value, str) else ""
+    if not _OBJECT_ID_RE.match(text):
+        raise ValueError(
+            f"{what}: {value!r} is not a canonical git object id (40 hex for SHA-1, 64 for "
+            f"SHA-256); refusing to pass mined metadata to git as a revision"
+        )
+    return text
+
+
+def require_commit(repo, object_id, what, git_runner=None):
+    """Confirm `object_id` (already canonical) actually names a COMMIT in `repo`.
+
+    A well-formed id is not yet a commit: a blob's id is equally well-formed, and a tree's
+    equally so. `diff`/`archive` behave differently on each, so the type is checked once here
+    rather than inferred from whether a later command happened to succeed.
+    """
+    rc, out = git_target(repo, "cat-file", "-t", object_id, git_runner=git_runner)
+    kind = (out or "").strip()
+    if rc != 0 or kind != "commit":
+        raise ValueError(
+            f"{what}: {object_id} does not name a commit in {repo} "
+            f"(git cat-file -t said {kind or 'nothing'!r}, rc={rc})"
+        )
+    return object_id
 
 
 def git_target(repo, *args, git_runner=None):
@@ -244,6 +370,12 @@ def git_target(repo, *args, git_runner=None):
 
     Raises ValueError naming the allowlist for anything else -- including a bare call with
     no verb. Returns (rc, output); callers decide what a non-zero rc means.
+
+    Beyond the verb allowlist this pins `TARGET_GIT_CONFIG` and, for the verbs that accept
+    them, `--no-ext-diff`/`--no-textconv`. A read-only VERB is not the same property as a
+    read-only OPERATION: `.gitattributes` plus a `diff.<driver>.textconv` entry makes `git
+    diff` run a configured program, and `--no-ext-diff` alone does not stop it. Both doors are
+    closed here, at the choke point, rather than at each call site that might forget one.
     """
     verb = args[0] if args else None
     if verb not in READ_ONLY_GIT:
@@ -252,8 +384,13 @@ def git_target(repo, *args, git_runner=None):
             f"is {', '.join(READ_ONLY_GIT)} (PLAN D3 -- target repos are read-only by "
             f"construction; never widen this)"
         )
+    rest = list(args[1:])
+    if verb in _NO_TEXTCONV_VERBS and "--no-textconv" not in rest:
+        rest.insert(0, "--no-textconv")
+    if verb in _NO_EXT_DIFF_VERBS and "--no-ext-diff" not in rest:
+        rest.insert(0, "--no-ext-diff")
     runner = git_runner or default_git_runner
-    return runner(["git", "-C", str(repo), *args])
+    return runner(["git", "-C", str(repo), *TARGET_GIT_CONFIG, verb, *rest])
 
 
 def git_sandbox(sandbox, *args, git_runner=None):
@@ -303,8 +440,16 @@ def make_sandbox(target_repo, commit, dest, git_runner=None):
         with tarfile.open(tar_path) as tf:
             try:
                 tf.extractall(dest, filter="data")
-            except TypeError:  # pragma: no cover - git-dependent stdlib age
-                tf.extractall(dest)
+            except TypeError as exc:
+                # The old fallback here was a bare `extractall(dest)` -- the unfiltered
+                # extraction, which honours absolute members, `..` members and device
+                # entries from the archive. Falling back to the unsafe call when the safe
+                # one is unavailable turns a missing guarantee into a silent absence of one.
+                raise ValueError(
+                    "this runtime's tarfile has no extraction filter (Python 3.12+ / PEP 706 "
+                    "'data'), so a git archive cannot be extracted safely; refusing rather "
+                    "than falling back to unfiltered extraction"
+                ) from exc
 
     rc, out = git_sandbox(dest, "init", "-q", git_runner=git_runner)
     _require_ok(rc, out, f"git init in sandbox {dest}")
@@ -493,9 +638,22 @@ SQUASH_MERGE_RE = re.compile(r"\(#(\d+)\)\s*$")
 #: keys -- data-driven, checked against the loaded pricing dict below, never hardcoded prices.
 SIZE_THRESHOLDS = ((10, "XS"), (60, "S"), (250, "M"))
 
-_LOG_FIELD_SEP = "\x1f"
-_LOG_RECORD_SEP = "\x1e"
-_ISSUE_LOG_FORMAT = f"%H{_LOG_FIELD_SEP}%s{_LOG_FIELD_SEP}%b{_LOG_RECORD_SEP}"
+def log_record_protocol():
+    """A per-invocation `(field_sep, record_sep, format)` triple for mining `git log`.
+
+    The separators used to be the fixed control characters \x1f/\x1e. A commit message can
+    CARRY those: git messages are byte strings and `git commit -m $'a\x1eb'` is accepted, so a
+    crafted message split one record into two and shifted a fragment of attacker-authored text
+    into the field the parser reads as a commit id -- which then went on to build another git
+    command. The separator is now 32 random hex characters chosen per invocation and never
+    written anywhere the target repository can read, so forging a boundary means guessing a
+    token.
+
+    Defence in depth, not the only defence: every id parsed out of these records still passes
+    `require_object_id` and `require_commit` before it reaches git as a revision.
+    """
+    token = secrets.token_hex(16)
+    return f"<F{token}>", f"<R{token}>", f"%H<F{token}>%s<F{token}>%b<R{token}>"
 
 PROMPT_INSTRUCTIONS = (
     "Instructions:\n"
@@ -618,11 +776,14 @@ def default_gh_runner(argv):
     unset invocation can reach a real `gh` (T14; PLAN D4 -- "OPTIONAL, behind a flag, through
     an injectable runner, and never invoked by any test").
     """
-    try:
-        proc = subprocess.run(argv, capture_output=True, text=True)
-    except FileNotFoundError:
+    pr = _pr()
+    result = pr.run(argv, cwd=Path.cwd(), timeout=GH_TIMEOUT_SECONDS, name="gh")
+    if result["outcome"] == pr.OUTCOME_MISSING_EXECUTABLE:
         return 127, "gh: command not found -- is the GitHub CLI installed and on PATH?"
-    return proc.returncode, (proc.stdout or "") + (proc.stderr or "")
+    output = result["output"]
+    if not result["terminal"] and result["detail"]:
+        output = f"{output}\n{result['detail']}" if output else result["detail"]
+    return result["rc"], output
 
 
 def _classify_gh_failure(gh_rc, gh_out):
@@ -754,8 +915,9 @@ def mine_issue_tasks(
 
     _require_size_profile_labels()
 
+    field_sep, record_sep, log_format = log_record_protocol()
     rc, log_out = git_target(
-        target_repo, "log", "--no-merges", f"--format={_ISSUE_LOG_FORMAT}", git_runner=git_runner
+        target_repo, "log", "--no-merges", f"--format={log_format}", git_runner=git_runner
     )
     _require_ok(rc, log_out, f"git log in {target_repo}")
 
@@ -770,16 +932,22 @@ def mine_issue_tasks(
     # met, further exclusions are real (the walk still passes over them) but not REPORTED: the
     # count stays honest about what mining the planned tasks actually required.
     quota_met = False
-    for record in log_out.split(_LOG_RECORD_SEP):
+    for record in log_out.split(record_sep):
         record = record.strip("\n")
         if not record.strip():
             continue
-        parts = record.split(_LOG_FIELD_SEP)
-        sha = parts[0].strip() if parts else ""
-        subject = parts[1] if len(parts) > 1 else ""
-        body = parts[2] if len(parts) > 2 else ""
-        if not sha:
+        parts = record.split(field_sep)
+        if len(parts) != 3:
+            notes.append(
+                f"skipped a malformed git log record ({len(parts)} field(s), expected 3)"
+            )
             continue
+        try:
+            sha = require_object_id(parts[0], "git log record commit id")
+        except ValueError as exc:
+            notes.append(f"skipped a git log record with an unusable commit id: {exc}")
+            continue
+        subject, body = parts[1], parts[2]
 
         issue = _extract_issue_number(subject, body)
         if issue is None:
@@ -805,13 +973,21 @@ def mine_issue_tasks(
                 f"root commit {sha[:7]} ({subject.strip()!r}) skipped -- no parent to diff against"
             )
             continue
-        base = parent_out.strip()
+        # rev-parse OUTPUT is untrusted until validated too: it is what the next git command
+        # will be built from, and "it came from git" is not the same as "it is an object id".
+        try:
+            base = require_object_id(parent_out, f"parent of {sha[:7]}")
+            require_commit(target_repo, base, f"parent of {sha[:7]}", git_runner=git_runner)
+            require_commit(target_repo, sha, "mined fix commit", git_runner=git_runner)
+        except ValueError as exc:
+            notes.append(f"commit {sha[:7]} skipped -- {exc}")
+            continue
         task_notes = []
 
         # Paths first (always ASCII-safe), so a non-UTF-8 payload in the diff itself can
         # still be reported against the files that caused it.
         rc, names_out = git_target(
-            target_repo, "diff", "--no-color", "--no-ext-diff", "--name-only", base, sha,
+            target_repo, "diff", "--no-color", "--no-ext-diff", "--name-only", base, sha, "--",
             git_runner=git_runner,
         )
         _require_ok(rc, names_out, f"git diff --name-only {base}..{sha} in {target_repo}")
@@ -827,7 +1003,8 @@ def mine_issue_tasks(
         # (`diff.external`) would replace the format outright. Neither is exotic; both are
         # somebody's normal config.
         rc, patch, undecodable = _git_target_text(
-            target_repo, "diff", "--no-color", "--no-ext-diff", base, sha, git_runner=git_runner
+            target_repo, "diff", "--no-color", "--no-ext-diff", base, sha, "--",
+            git_runner=git_runner
         )
         if undecodable:
             notes.append(
@@ -1026,11 +1203,16 @@ def default_test_runner(cmd, cwd):
     sandbox -- but only ever with a local, offline, harmless command they construct themselves
     (a `sys.executable` invocation), never a PATH-resolved name and never a real test suite.
     """
-    if isinstance(cmd, (list, tuple)):
-        proc = subprocess.run(cmd, cwd=str(cwd), capture_output=True, text=True)
-    else:
-        proc = subprocess.run(cmd, cwd=str(cwd), capture_output=True, text=True, shell=True)
-    return proc.returncode, (proc.stdout or "") + (proc.stderr or "")
+    pr = _pr()
+    argv = list(cmd) if isinstance(cmd, (list, tuple)) else ["/bin/sh", "-c", cmd]
+    # Bounded since step 12. This runs a test suite a MODEL wrote, in a sandbox: an infinite
+    # loop in it used to stall the benchmark run with no ceiling at all, and a background
+    # process it started outlived the measurement.
+    result = pr.run(argv, cwd=cwd, timeout=TEST_TIMEOUT_SECONDS, name="candidate test")
+    output = result["output"]
+    if not result["terminal"] and result["detail"]:
+        output = f"{output}\n{result['detail']}" if output else result["detail"]
+    return result["rc"], output
 
 
 def _first_matching_operator(line):
@@ -1909,8 +2091,13 @@ def default_dispatch_runner(argv, cwd):
     command in this repo takes this path: they all inject a stub, so an accidental real
     dispatch is not something a test can do by forgetting a flag.
     """
-    proc = subprocess.run(argv, cwd=str(cwd), capture_output=True, text=True)
-    return proc.returncode, (proc.stdout or "") + (proc.stderr or "")
+    pr = _pr()
+    result = pr.run(argv, cwd=cwd, env=pr.dispatch_env("claude"),
+                    timeout=DISPATCH_TIMEOUT_SECONDS, name="benchmark dispatch")
+    output = result["output"]
+    if not result["terminal"] and result["detail"]:
+        output = f"{output}\n{result['detail']}" if output else result["detail"]
+    return result["rc"], output
 
 
 def build_claude_argv(claude_bin, model_id, prompt):
@@ -1921,6 +2108,27 @@ def build_claude_argv(claude_bin, model_id, prompt):
     the output format it needs in order to read token counts back.
     """
     return _ce().build_dispatch(claude_bin, model_id, prompt, extra_args=OUTPUT_FORMAT_ARGS)
+
+
+def build_judge_argv(claude_bin, model_id, prompt):
+    """The JUDGE's dispatch argv: the candidate shape minus the blanket permission grant.
+
+    A judge compares two patches that are already IN its prompt. It is not doing engineering,
+    it opens no files, and it has nothing to install -- so dispatching it as a coding agent
+    with approval for every tool grants reach its task never needed (step 06). The grant is
+    removed here; no narrower per-tool flag is invented to replace it, because this module
+    pins only the flags `claude_execute` pins.
+
+    What this does NOT claim: that the judge is incapable of tool use. It is a permission
+    posture, not an OS boundary.
+    """
+    ce = _ce()
+    return ce.build_dispatch(
+        claude_bin, model_id, prompt, extra_args=OUTPUT_FORMAT_ARGS,
+        permissions=ce.permission_profile(
+            tools=None, bypass=False, source="judge: comparison only, no blanket grant"
+        ),
+    )
 
 
 def argv_carries_output_format(argv):
@@ -1982,9 +2190,21 @@ def extract_usage(output):
         value = usage.get(key)
         if value is None:
             continue
+        # These counts come out of HARNESS OUTPUT and are then priced and charged against
+        # `--max-usd`, so they are untrusted input to a spending control. A boolean is not a
+        # count (JSON `true` is an `int` subclass). A NEGATIVE count prices to negative dollars
+        # and REFUNDS the ceiling. `NaN` defeats the ceiling outright, because every comparison
+        # against it is false -- `spent + NaN > max_usd` does not trip. `Infinity` does trip it,
+        # which is the safe direction, but it is still not a token count. A fractional count is
+        # not a count either. Reject the whole usage record rather than repairing one field:
+        # a record with an impossible number in it is not a record we can price honestly.
         if isinstance(value, bool) or not isinstance(value, (int, float)):
             return None
-        extracted[key] = value
+        if not math.isfinite(value) or value < 0:
+            return None
+        if isinstance(value, float) and not value.is_integer():
+            return None
+        extracted[key] = int(value)
     if "input_tokens" not in extracted or "output_tokens" not in extracted:
         return None
     return extracted
@@ -2058,9 +2278,32 @@ def claude_pricing_loader():
 CLAUDE_ADAPTER = {
     "name": "claude",
     "build_argv": build_claude_argv,
+    # The judge's argv is a SEPARATE adapter member so a stub adapter that only supplies
+    # `build_argv` keeps working -- `oracle_judge` falls back to it when this is absent.
+    "build_judge_argv": build_judge_argv,
     "extract_usage": extract_usage,
     "load_pricing": claude_pricing_loader,
 }
+
+
+def accrue_spend(spent_usd, amount):
+    """Add `amount` to `spent_usd`, never letting the running total go DOWN.
+
+    Consumption is not reversible. An attempt that timed out, failed, or produced an
+    unpriceable result has still spent whatever it spent, so a later record cannot hand the
+    allowance back. Combined with the validation in `extract_usage`, this is the second half of
+    "no reported number can refund the ceiling": the first half refuses impossible inputs, this
+    one refuses impossible arithmetic on inputs that got through.
+    """
+    if amount is None:
+        return spent_usd
+    try:
+        amount = float(amount)
+    except (TypeError, ValueError):
+        return spent_usd
+    if not math.isfinite(amount) or amount < 0:
+        return spent_usd
+    return spent_usd + amount
 
 
 def would_exceed_ceiling(spent_usd, next_estimate_usd, max_usd):
@@ -2406,9 +2649,13 @@ def _artifact_digest(path):
 
     The cost is one sequential read of the artifact set per grading, which is bounded by the same
     disk the install just wrote and is nothing beside the test command it precedes. Symlinks are
-    hashed by their target and never followed (a `node_modules/.bin` cycle must not walk
-    forever), which also means a symlink RE-POINTED at a candidate's file is caught here as
-    surely as an edited file.
+    hashed by their target TEXT and never followed (a `node_modules/.bin` cycle must not walk
+    forever), which catches a link RE-POINTED somewhere else -- the text changes -- but NOT a
+    change to the bytes the referent holds, which the text says nothing about. That gap is why
+    `external_symlink_reason` refuses to capture a link leaving the tree at all: for the links
+    that remain, the referent is inside the captured set and hashed on its own, so the digest
+    does cover the bytes a test later reads. Read this docstring as scoped to that policy --
+    without it, "hashed by their target" and "integrity" are not the same claim.
     """
     path = Path(path)
     h = hashlib.sha256()
@@ -2452,6 +2699,35 @@ def _artifact_digest(path):
             except OSError:  # pragma: no cover - a file that vanished mid-walk
                 h.update(b"unreadable\0" + (prefix + name).encode("utf-8") + b"\0")
     return h.hexdigest()
+
+
+def external_symlink_reason(root, rel):
+    """Why a captured path cannot be vouched for, or None if it can.
+
+    A symlink is hashed by its link TEXT -- the only stable thing about it -- but the bytes a
+    test later reads are the REFERENT's, and those live wherever the link points. When that is
+    outside the captured tree the digest and the consumed bytes measure different things: the
+    referent's content can change completely while the recorded digest stays byte-identical and
+    `verify()` reports the template untampered. Rather than hash something outside our control
+    and call it integrity, such an artifact is not captured at all.
+
+    A link that stays INSIDE the tree is kept. Its referent is part of the tree we built and
+    overlay, so the artifact set's digests do cover the bytes that get consumed.
+    """
+    path = Path(root) / rel
+    if not path.is_symlink():
+        return None
+    target = os.readlink(path)
+    if os.path.isabs(target):
+        return f"symlink to an absolute path outside the captured tree ({target})"
+    try:
+        resolved = (path.parent / target).resolve()
+        root_resolved = Path(root).resolve()
+    except OSError:
+        return f"symlink whose target could not be resolved ({target})"
+    if resolved != root_resolved and root_resolved not in resolved.parents:
+        return f"symlink escaping the captured tree ({target})"
+    return None
 
 
 def _copy_artifact(src, dst):
@@ -2714,6 +2990,9 @@ class GradeTemplates:
             # T17R/F1: `rel -> sha256 of the captured bytes`, taken here and re-checked before
             # every overlay. Empty on a failed template (nothing was captured).
             "artifact_digests": {},
+            # Paths the setup produced that we refuse to vouch for -- never silently dropped:
+            # a template that installed something we could not hash says so.
+            "skipped_artifacts": [],
             "shareable": True,
             "share_verified": False,
             "tampered": [],
@@ -2725,6 +3004,10 @@ class GradeTemplates:
         if record["ok"]:
             store.mkdir(parents=True, exist_ok=True)
             for rel in _setup_artifact_paths(before, _tree_index(build)):
+                reason = external_symlink_reason(build, rel)
+                if reason is not None:
+                    record["skipped_artifacts"].append({"path": rel, "reason": reason})
+                    continue
                 dst = store / rel
                 dst.parent.mkdir(parents=True, exist_ok=True)
                 shutil.move(str(build / rel), str(dst))
@@ -3059,7 +3342,8 @@ def oracle_judge(
 
     stripped_reference = _strip_test_hunks(reference_patch or "", test_patterns)
     prompt, slots = build_judge_prompt(task, stripped_reference, candidate_patch or "", slot_seed)
-    argv = adapter["build_argv"](claude_bin, judge_model, prompt)
+    build = adapter.get("build_judge_argv") or adapter["build_argv"]
+    argv = build(claude_bin, judge_model, prompt)
 
     dispatch = runner or default_dispatch_runner
     with tempfile.TemporaryDirectory(prefix="repo-bench-judge-") as cwd:
@@ -3187,7 +3471,7 @@ def grade_cells(
         grade["estimated_usd"] = estimate
         grade["skipped"] = None
         grades.append(grade)
-        spent_usd += grade["usd"] or 0.0
+        spent_usd = accrue_spend(spent_usd, grade["usd"])
 
     return grades, spent_usd, stopped
 
@@ -3349,6 +3633,12 @@ SUBSTRATE_UNAVAILABLE_NOTE = (
 #: reconstructed base state (a binary hunk, a patch this module could not parse cleanly). The
 #: oracle refuses rather than grading an unpatched substrate, which would read `not solved`
 #: for a reason that has nothing to do with the candidate's work.
+SUBSTRATE_HYDRATION_BLOCKED_NOTE = (
+    "a reference-test path in the constructed substrate could not be written without leaving "
+    "it — the tests oracle is unavailable for this cell rather than grading a tree the "
+    "withheld tests never reached"
+)
+
 SUBSTRATE_APPLY_FAILED_NOTE = (
     "the candidate's in-scope patch did not apply to the reconstructed base state — the tests "
     "oracle is unavailable for this cell rather than reporting a failure it did not measure"
@@ -3681,6 +3971,42 @@ def _apply_diff_slice(substrate, diff_text, git_runner=None):
     return rc == 0, (out or "").strip()
 
 
+def _pr():
+    """Lazy-load bin/proc_runner.py -- the repo's ONE process-lifecycle helper (step 12)."""
+    import importlib.util
+    path = Path(__file__).resolve().parent / "proc_runner.py"
+    spec = importlib.util.spec_from_file_location("proc_runner", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def _sp():
+    """Lazy-load bin/safe_paths.py -- the repo's ONE path-containment helper."""
+    import importlib.util
+    path = Path(__file__).resolve().parent / "safe_paths.py"
+    spec = importlib.util.spec_from_file_location("safe_paths", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def confined_write_bytes(root, rel_path, data, what="confined write"):
+    """Write `data` at `rel_path` under `root`, refusing to leave `root` by any route.
+
+    THE CANDIDATE OWNS THE TREE THIS WRITES INTO. Its patch has already been applied when the
+    reference tests are hydrated, so every component of the destination is something it may
+    have replaced -- including with a symlink pointing outside the substrate.
+
+    Delegates to `bin/safe_paths.py`, which is the one place in this repo that decides whether
+    a path is safe to write: directory-relative, no-follow at every component, refusing rather
+    than falling back where that is unavailable. This function stays as the name the grading
+    code calls, and adds nothing of its own -- a second implementation of this check is a
+    second thing to get wrong.
+    """
+    return _sp().confined_write_bytes(root, rel_path, data, what=what, mode=0o644)
+
+
 def _write_reference_test_blobs(substrate, task):
     """The withheld `test_blobs`, written LAST into a grade substrate -> the paths written.
 
@@ -3692,9 +4018,10 @@ def _write_reference_test_blobs(substrate, task):
     """
     written = []
     for rel_path, blob in (task.get("test_blobs") or {}).items():
-        target = Path(substrate) / rel_path
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(blob)
+        confined_write_bytes(
+            substrate, rel_path, blob,
+            what=f"reference test hydration into {substrate}",
+        )
         written.append(rel_path)
     return sorted(written)
 
@@ -3752,14 +4079,25 @@ def build_grade_substrate(task, candidate_patch, dest, target_repo, git_runner=N
     in_scope_diff, out_of_scope = _split_patch_by_scope(candidate_patch, scope)
 
     applied, apply_out = _apply_diff_slice(substrate, in_scope_diff, git_runner=git_runner)
+    hydrated = False
     if not applied:
         notes.append(f"{SUBSTRATE_APPLY_FAILED_NOTE}: {apply_out}")
     else:
-        _write_reference_test_blobs(substrate, task)
+        try:
+            _write_reference_test_blobs(substrate, task)
+            hydrated = True
+        except ValueError as exc:
+            # A candidate that turned a reference-test path into a link does not get graded
+            # WITHOUT that test -- it makes the cell unavailable, exactly as a failed apply
+            # does. Silently continuing here would grade a tree the withheld tests never
+            # reached and score it as a pass.
+            notes.append(f"{SUBSTRATE_HYDRATION_BLOCKED_NOTE}: {exc}")
+            applied = False
 
     return {
         "path": str(substrate),
         "in_scope_applied": applied,
+        "hydrated": hydrated,
         "out_of_scope": out_of_scope,
         "notes": notes,
     }
@@ -3978,7 +4316,11 @@ def build_full_patch_substrate(task, candidate_patch, dest, target_repo, git_run
     if not applied:
         notes.append(f"{FULL_PATCH_APPLY_FAILED_NOTE}: {apply_out}")
     else:
-        _write_reference_test_blobs(substrate, task)
+        try:
+            _write_reference_test_blobs(substrate, task)
+        except ValueError as exc:
+            notes.append(f"{SUBSTRATE_HYDRATION_BLOCKED_NOTE}: {exc}")
+            applied = False
 
     return {
         "path": str(substrate),
@@ -6803,7 +7145,7 @@ def cmd_run(args, runner=None, adapter=None, git_runner=None, test_runner=None):
                 pending_writes.append(
                     (Path("dispatches") / f"{task['task_id']}__{cid}.json", record)
                 )
-                spent_usd += record["usd"] or 0.0
+                spent_usd = accrue_spend(spent_usd, record["usd"])
 
                 # T6/D5: graded AFTER patch capture (`record["patch"]` above), while
                 # `info["path"]` -- the candidate's OWN sandbox -- still exists and BEFORE it
