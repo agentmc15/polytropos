@@ -65,7 +65,11 @@ changelog.
   dispatch.
 - **Never touch `~/.claude/` or anything outside this repo.** Do not re-install or refresh the
   plugin.
-- **Do not commit or push** unless the user explicitly asks.
+- **Commit at every green boundary; never push, merge, or commit on `main` unless the user
+  explicitly asks.** A boundary is one logical change with the full suite passing and both doc
+  mirrors rebuilt. Commit on the working branch in the convention from the user's global
+  CLAUDE.md. A session never ends with a dirty tree: if it must end red, commit as `wip(...)`
+  with the body stating exactly what is red and unrun.
 - **Every local store is personal data, written by its own engine ONLY, and lives outside the
   plugin tree.** `memory/` is gitignored user data; so are `telemetry/`, `benchruns/`,
   `journal/`, `prefs/`, `trends/`. Their default location comes from `bin/runtime_data.py` — a

@@ -11,8 +11,8 @@ half-migrated driver is worse than one that lands on a green boundary.
 Source of work: `/Users/michaelcave/Downloads/polytropos-master-implementation-roadmap.md` — an
 outside audit consolidated into 26 ordered implementation steps.
 
-**Committed on top of `dc67555` on 2026-09-12**, as its own commit, with the full suite green
-and both doc generators' `check` clean first:
+**Committed on top of `dc67555` on 2026-09-12** as `097b84e`, then the commit rule below as
+its own commit, each with the full suite green and both doc generators' `check` clean first:
 
 - `primitives/harness-capabilities.json` — three codex rows for API primitives a circulated
   "graph engineering" note leans on (`async_tools`, `mid_turn_steering`, `effort_per_turn`),
@@ -136,7 +136,10 @@ These cost real time to discover. All are still live.
 3. **Never invoke a real `claude` / `copilot` / `codex` CLI** from tests, verify commands, or
    kit execution. One live invocation was authorized in step 06, scoped to that single test, and
    was never wired into the suite.
-4. **Do not commit or push** without being asked.
+4. **Commit at every green boundary; never push, merge, or commit on `main` without being
+   asked** (rule adopted 2026-09-12, replacing "do not commit unless asked"). A dirty tree at
+   session end is now a defect, not an expected state. `tests/test_guardrails_layout.py` pins
+   the sentence.
 5. **Byte-stability and key-set guards exist** on ledgers, budget result keys, demo output and
    docs. When one fires it is usually correct — update it deliberately with a comment saying
    why, never loosen it to make a run pass.

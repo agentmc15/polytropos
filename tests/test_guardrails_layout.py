@@ -19,7 +19,9 @@ GLOBAL_SENTINELS = (
     "Python is stdlib-only",
     "pending | in-progress | done | blocked",
     "Never touch `~/.claude/`",
-    "Do not commit or push",
+    # 2026-09-12: the commit rule moved from "never unless asked" to "commit at every green
+    # boundary"; push and merge stay explicit, and that is the part this sentinel now pins.
+    "never push, merge, or commit on `main`",
     "gitignored user data",
     "${CLAUDE_PLUGIN_ROOT}",
 )
