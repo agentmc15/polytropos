@@ -183,8 +183,9 @@ Each is recorded in `SECURITY.md` rather than hidden. None is a surprise; all ar
   current bundle. `harness_select install --harness copilot --adopt-existing` clears it in one
   run, keeping a `.polytropos-bak` of each. That is the honest cost of no longer overwriting
   silently, but it is visible and worth expecting.
-- **Review, if you want it.** The change set is on a branch rather than straight on `main`, so
-  it can be read as a diff before it becomes history. Merging it is a fast-forward.
+- **Merged.** `harden/roadmap-steps-01-15` was fast-forwarded into `main` and pushed on
+  2026-09-12. Step 16 starts on a fresh branch off `main`; the commit rule forbids committing on
+  `main` directly.
 
 ---
 
