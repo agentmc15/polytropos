@@ -79,6 +79,24 @@
           "source": "vendor CLI documentation (exec --json)",
           "note": "thread.started / item.completed / turn.completed are parsed; model attestation falls back to unknown when no correlated record appears"
         },
+        "async_tools": {
+          "product": "unknown",
+          "implemented": "unsupported",
+          "verified": "unknown",
+          "note": "tool calls the model does not block on, returned later under the original call id. Reported for the vendor's API and not checked here against vendor documentation; whether `codex exec` exposes it has not been checked either, and nothing in this repo uses it. Recorded so a scheduler cannot assume it"
+        },
+        "mid_turn_steering": {
+          "product": "unknown",
+          "implemented": "unsupported",
+          "verified": "unknown",
+          "note": "new user instructions injected into a running turn with finished work kept. Reported for a persistent API connection; the driver runs `codex exec` to completion and has no channel to steer through, so this is unsupported here whatever the product does"
+        },
+        "effort_per_turn": {
+          "product": "unknown",
+          "implemented": "unsupported",
+          "verified": "unknown",
+          "note": "changing reasoning effort between turns of one session with the cached prefix intact. Distinct from per-dispatch effort, which the driver sets once on the command line before the run starts and never changes afterwards"
+        },
         "status": {"product": "unknown", "implemented": "unsupported", "verified": "unknown"},
         "cancel": {
           "product": "unknown",
@@ -104,7 +122,7 @@
           "product": "unknown",
           "implemented": "unsupported",
           "verified": "unknown",
-          "note": "no per-tool flag was found that could be cited, and inventing one would have produced a control that reads as enforced and is not. Review dispatch therefore carries a full permission grant -- stated in SECURITY.md rather than papered over"
+          "note": "no per-tool flag was found that could be cited, and inventing one would have produced a control that reads as enforced and is not. Restricted review therefore means only the absence of the blanket `--allow-all-tools` grant (the default since step 06; `--review-permissions bypass` restores it and says so) -- there is no narrower pin to fall back to, and SECURITY.md states that rather than papering over it"
         },
         "status": {"product": "unknown", "implemented": "unsupported", "verified": "unknown"},
         "cancel": {

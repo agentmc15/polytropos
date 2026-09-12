@@ -11,6 +11,24 @@ half-migrated driver is worse than one that lands on a green boundary.
 Source of work: `/Users/michaelcave/Downloads/polytropos-master-implementation-roadmap.md` — an
 outside audit consolidated into 26 ordered implementation steps.
 
+**Committed on top of `dc67555` on 2026-09-12**, as its own commit, with the full suite green
+and both doc generators' `check` clean first:
+
+- `primitives/harness-capabilities.json` — three codex rows for API primitives a circulated
+  "graph engineering" note leans on (`async_tools`, `mid_turn_steering`, `effort_per_turn`),
+  all `product=unknown` / `implemented=unsupported` / `verified=unknown`, so steps 19 and 24
+  cannot assume them. The copilot `tool_pin` note was corrected: it still said review carries a
+  full grant, which step 06 made false.
+- `SECURITY.md` — new section "Where the approval line sits" naming the reversible /
+  consequential / irreversible lanes against the flags that enforce them. Also corrected the
+  "Role names are not permissions" bullet, which still claimed Claude and Copilot review carry a
+  blanket grant; both default to `restricted` since step 06.
+- `HANDOFF.md` — the step-24 amendment below.
+
+The note's "operator block" was deliberately **not** brought into the plugin: it is per-user
+model tuning, and three of its lines contradict repo invariants (skip tests on small changes;
+user instructions outrank rule files; delegate in parallel by default).
+
 ---
 
 ## Where things stand
@@ -66,14 +84,52 @@ release matrix.
 
 ---
 
+## Roadmap amendments recorded here
+
+The roadmap file lives outside the repo and is the user's document; amendments agreed in a
+session are recorded here so the implementer of the affected step sees them without depending
+on that file having been edited. Paste-ready text for the roadmap is in each entry.
+
+### Step 24 — bound the integration step by the model's own long-context threshold
+
+Agreed 2026-09-11, from reading a circulated engineering note on running agents as a graph:
+its one idea polytropos had as principle but not as data was "workers write files, the root
+reads a manifest, because the merging root hits the long-context cliff first." Add to step 24's
+implementation prompt:
+
+~~~text
+The central integration step reads a manifest, not the corpus: artifact paths, verdicts, and
+bounded diagnostics, never worker transcripts or evidence dumps. Size that manifest under the
+long-context threshold of the model dispatched to integrate, read at run time from the
+integrating harness's own pricing file under that file's own field name:
+`long_context.threshold_input_tokens` in data/pricing.codex.json,
+`long_context.threshold_tokens` in data/pricing.copilot.json, and `context_window` in
+data/pricing.json, which carries no separate long-context tier. Do not introduce a shared
+schema across the three files to do this; they never merge. Estimate the manifest's size with
+the repo's one estimator (`EST_CHARS_PER_TOKEN` in bin/context_weight.py), label the figure
+est., and do not add a second estimator. When the model carries no threshold, the manifest is
+unbounded and the run's report says so rather than assuming one.
+
+Test a manifest that exceeds the threshold (the run refuses, or trims with a recorded note;
+never silent truncation), a model with no threshold, and that no worker output reaches the
+integrator except through the manifest.
+~~~
+
+Not added to step 16: its "bounded diagnostics" are verifier output sized for the next attempt's
+prompt, orders of magnitude below any long-context threshold, so that bound belongs to the
+threshold's own scale, not this one.
+
+---
+
 ## Traps this work hit — read before editing
 
 These cost real time to discover. All are still live.
 
 1. **Generated doc mirrors fail the suite on drift.** `README.md`, `SECURITY.md`, `docs/*.md`
    and every `SKILL.md` feed generators. After editing any of them run **both**:
-   `python3 bin/copilot_docs.py build` and `python3 bin/docs_build.py build`. `SECURITY.md`
-   feeding `copilot-docs/` caught me twice.
+   `python3 bin/copilot_docs.py build` and `python3 bin/docs_build.py build`. Drift here caught
+   me twice. (Measured 2026-09-11: a `SECURITY.md`-only edit rebuilt both mirrors byte-identical,
+   so that file is not currently a mirror source — run both builds anyway; it is cheap.)
 2. **`CLAUDE.md` has a 16,000-byte ceiling** (`tests/test_guardrails_layout.py`). It is at
    **15,061** — about 900 bytes of headroom. It was rebalanced from 15,849 by consolidating
    repeated rules; do not add to it casually.

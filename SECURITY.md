@@ -105,9 +105,12 @@ Do not rely on any of the following. Each is a known gap, not a subtlety:
   dispatch does not yet run under `exec_policy`. Its setup and test commands run with the
   driver's privileges.
 - **Role names are not permissions.** A prompt that says "read-only reviewer" does not make a
-  reviewer read-only. On Claude and Copilot the review dispatch currently carries a full
-  permission grant, and agent-file tool pins are not preserved through dispatch. Codex is the
-  exception; see above.
+  reviewer read-only. Review dispatch no longer carries a blanket permission grant by default on
+  any harness (`--review-permissions bypass` is the named opt-out on Claude and Copilot, and
+  reports itself), and Claude translates the reviewer's declared tool pin to `--allowedTools`.
+  But a pin that includes `Bash` reaches everything a shell reaches; Copilot has no citable
+  per-tool flag, so its restricted mode is only the absence of the grant; and only Codex pins
+  review to a read-only sandbox. The OS boundary above covers verification, not review.
 - **Execution state is not tamper-resistant.** Run records, budgets, and acceptance evidence live
   in files the worker can write. They are bookkeeping, not an authority a lower-trust process is
   prevented from forging.
@@ -135,6 +138,37 @@ Do not rely on any of the following. Each is a known gap, not a subtlety:
   yet; a timeout tells you this engine stopped waiting, not that nothing happened.
 - **Kits are trusted input.** A `PLAN.md`/`TASKS.md` kit contains executable verify commands.
   Running a kit you did not write is equivalent to running its scripts.
+
+## Where the approval line sits
+
+The line between what runs unasked and what waits for you is reversibility, not task size.
+Each lane below describes code paths, not a policy a model is asked to follow:
+
+- **Reversible work runs without asking.** Reading, planning, checking, rehearsing: every
+  engine's `demo` / `--demo` / `--dry-run` path is synthetic or spawns nothing and spends
+  nothing; `bin/harness_update.py check`, `bin/exec_policy.py check`, and the two docs
+  generators' `check` compare and write nothing; `bin/runtime_data.py export --to` copies a store
+  to a directory you name and changes nothing else.
+- **Consequential actions are prepared in full, then gated on one named switch.** The switch is
+  a flag in code, never a judgement made at run time. Spending needs `--live` together with an
+  explicit `--max-usd` (`bin/repo_bench.py`). Writing into a harness home happens only through
+  `bin/harness_select.py`'s writers, reached by its own `install` and by `bin/harness_update.py
+  apply`, both of them your commands, and overwriting a file it does not own takes
+  `--adopt-existing`, which keeps the prior bytes. Restoring a blanket tool grant to a reviewer
+  is `--review-permissions bypass`; leaving the OS boundary is `--exec-mode trusted-host`; both
+  report themselves as the opt-out they are. Copying a store out of the tree is
+  `bin/runtime_data.py migrate --apply`, and it copies without removing the original.
+- **Irreversible actions are never taken on the engine's own initiative.** Nothing here
+  relocates a store, and the one deletion, `bin/runtime_data.py forget`, is a dry run by
+  default, scoped by age, and deletes only with `--apply`. Installation never overwrites what it
+  does not own, and rollback takes back only the bytes that run wrote. Target repositories are
+  reached through a read-only verb allowlist. `bin/harness_update.py apply` never writes
+  `~/.claude`: the remedy is printed, not executed.
+
+Model dispatch sits in the middle lane by design. A kit run is your explicit action and the
+point of the tool; what the drivers add is that the run's own consequential steps (spend,
+escalation, a permission or boundary opt-out) are each gated and named, so a run that took an
+opt-out cannot read afterwards like one that did not.
 
 ## Supported use
 
