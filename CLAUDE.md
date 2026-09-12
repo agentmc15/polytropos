@@ -46,11 +46,10 @@ changelog.
   as the stated fallback (resolve to absolute before shelling out — bash cwd is not the skill
   dir). The one exception: commands written into `~/.claude/settings.json` (statusline) must be
   literal absolute paths — that env var doesn't exist outside plugin context.
-- **One kit contract, one place: `bin/kit_contract.py`.** Task parsing, readiness, status
-  writing, budget admission, run ids, and the outcome vocabulary are defined there ONCE and
-  re-exported by the drivers. Never add a second copy to a driver — the three had 27 shared
-  names, and extracting them surfaced three divergences nobody had noticed, including two
-  drivers dispatching tasks whose dependencies were unfinished.
+- **One kit contract, one place: `bin/kit_contract.py`.** Task parsing, graph validation,
+  readiness, status transitions, budget admission, run ids, and the outcome vocabulary are
+  defined there ONCE and re-exported by the drivers. Never add a second copy to a driver — the
+  three had 27 shared names, and extracting them surfaced three divergences nobody had noticed.
   `tests/test_kit_contract.py` fails if any implementation reappears in two drivers. What stays
   per-harness is what must: dispatch argv, the host's own loop, its escalation ladder, and its
   pricing file. A capability is only relied on when `primitives/harness-capabilities.json`
@@ -178,6 +177,7 @@ python3 bin/harness_update.py check                  # all-harness freshness car
 python3 bin/exec_policy.py check                     # what OS execution boundary this host enforces (exit 3 if none)
 python3 bin/attempt_ledger.py demo                   # crash/resume walkthrough in a temp dir
 python3 bin/attempt_history.py demo                  # every dispatch, joined across sources
+python3 bin/kit_contract.py graph --kit DIR          # DAG validity + ready frontier; also `demo`
 python3 bin/graph_brief.py demo                      # architect-grounding brief from a graphify graph.json
 python3 bin/docs_build.py check                      # docs-site freshness (exit 1 on drift); `build` regenerates
 python3 bin/copilot_docs.py check                    # Copilot doc center freshness; `build` regenerates

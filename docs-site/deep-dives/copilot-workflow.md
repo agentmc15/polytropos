@@ -53,9 +53,14 @@ python3 bin/copilot_execute.py run --kit tasks/kits/<slug>            # dispatch
 python3 bin/copilot_execute.py review --kit tasks/kits/<slug> --phase 1
 ```
 
-`status` prints each task's state; `run` dispatches the next eligible task (or `--task ID`) to
-an agent and reruns its verify command; `review` dispatches the `reviewer` agent at a phase
-boundary. One dispatch has this anatomy:
+`status` prints each task's state and ends with the graph's verdict; `run` dispatches the next
+eligible task (or `--task ID`) to an agent and reruns its verify command; `review` dispatches
+the `reviewer` agent at a phase boundary. Before either selection, the whole task graph is
+validated by the shared kit contract: a duplicate id, a dependency on no task, a task that
+depends on itself, or a cycle exits 2 with every finding and its fix, and nothing is dispatched
+or written. While any task is `in-progress`, `run` without `--task` refuses and names the task
+to resume; naming a task is the deliberate way to resume, retry, or (with `--rerun`) repeat it.
+One dispatch has this anatomy:
 
 ```
 copilot --agent implementer --model <id> --allow-all-tools -p "<brief>"

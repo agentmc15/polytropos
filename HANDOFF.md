@@ -1,4 +1,4 @@
-# Handoff — roadmap implementation, steps 01–17
+# Handoff — roadmap implementation, steps 01–18
 
 **As of 2026-09-07.** Steps 01–15 are committed as a single change set on top of `fb40925`:
 66 files modified, 17 added, +5,485 / −1,860 lines. Full suite green: **3,727 tests, OK
@@ -33,10 +33,10 @@ user instructions outrank rule files; delegate in parallel by default).
 
 ## Where things stand
 
-**Steps 01–17 are done.** That is all of Phase A (input/artifact/acceptance boundaries), all of
-Phase B (the execution boundary and the P0/P1 security remediation), and the first three steps
-of Phase C (the shared runtime). Steps 16 and 17 landed on 2026-09-12 on branch
-`harden/roadmap-steps-16-26`, one commit each.
+**Steps 01–18 are done.** That is all of Phase A (input/artifact/acceptance boundaries), all of
+Phase B (the execution boundary and the P0/P1 security remediation), and all of Phase C (the
+shared runtime: durable attempts, cross-harness evidence, the validated execution DAG). Steps
+16, 17 and 18 landed on 2026-09-12 on branch `harden/roadmap-steps-16-26`, one commit each.
 
 | Step | What it closed |
 |---|---|
@@ -57,6 +57,7 @@ of Phase C (the shared runtime). Steps 16 and 17 landed on 2026-09-12 on branch
 | 15 | One kit contract (`bin/kit_contract.py`) + adapter seam + capability registry |
 | 16 | Durable attempts (`bin/attempt_ledger.py`): recorded before/after every dispatch, resume without replay, budget carried across runs, failure classes, real progress detection, task claims, fresh-read projection |
 | 17 | Cross-harness evidence (`bin/attempt_history.py` + `bin/model_registry.py`): one record per attempt over ledger + NOTES.md + role-use, unknowns kept, history never collapsed, failed consults keep lineage, cost per basis; reviews recorded on all three drivers; concrete ids resolve to tiers; telemetry `attempts` source |
+| 18 | Validated execution DAG (`kit_contract.validate_graph` / `graph_state` / `readiness`): duplicate ids, self and unknown dependencies, cycles refuse with zero dispatches and zero writes on all three drivers; one readiness rule with `fresh | retry | resume | rerun` modes; automatic selection refuses while a task is in-progress; the task state machine (`TRANSITIONS`) checked at every status write; worker edits to a task block detected as `plan.drift`; `status` ends with the graph verdict; `kit_contract.py graph` / `demo` |
 
 ### New modules, and what each is the *one place* for
 
@@ -67,7 +68,9 @@ of Phase C (the shared runtime). Steps 16 and 17 landed on 2026-09-12 on branch
   cwd, own process group, named outcome for every failure mode.
 - `bin/redact.py` — what may not leave the machine in plain text.
 - `bin/runtime_data.py` — where personal stores live (outside the plugin tree).
-- `bin/kit_contract.py` — parsing, readiness, budget admission, outcome vocabulary.
+- `bin/kit_contract.py` — parsing, graph validation, readiness, status transitions, budget
+  admission, outcome vocabulary. Since step 18 it also has its own command line: `graph --kit
+  DIR [--json]` (exit 2 on an invalid graph) and `demo`.
 - `bin/harness_adapter.py` + `primitives/harness-capabilities.json` — what a host can actually
   do, with `unknown` as a first-class answer.
 - `bin/attempt_ledger.py` — what a run did, recorded before and after it did it, outside the
@@ -85,17 +88,58 @@ of Phase C (the shared runtime). Steps 16 and 17 landed on 2026-09-12 on branch
 
 ---
 
-## Next: step 18 — validate the execution DAG and centralize sequential readiness
+## Next: step 19 — route workflow, model, effort, and assurance independently
 
-`kit_contract.select_task` already holds the one readiness rule (step 07/15). Step 18 adds a
-pure DAG validator (duplicate ids, missing dependencies, cycles, self-dependencies, invalid
-transitions) that runs BEFORE any dispatch or mutation, a ready-frontier selector for a diamond
-DAG, and actionable diagnostics for an invalid graph. It is explicitly NOT parallel dispatch;
-that is step 24. The three drivers' `cmd_run` call `select_task` from the same place, so the
-validator slots in beside it.
+Codex first (`bin/codex_policy.py`, `data/pricing.codex.json`), then the same logical contract
+exposed to the other adapters. The reserved-orchestrator behaviour (Astra held back for
+orchestration and recovery; escalation only after a failed cheaper attempt) becomes a NAMED
+policy that stays the default; an opt-in adaptive policy may pick an eligible capable model for
+direct implementation without a failed cheaper attempt first. Workflow shape (direct /
+independently reviewed / task graph), model, initial effort, and required assurance are
+represented separately; preference never overrides availability, permissions, explicit pins,
+or budgets; decisions are explainable without invented success probabilities. Installed
+defaults are not changed silently. Consumes step 18's graph states for the "task graph" shape
+and step 17's registry for model identity. Exit gate: legacy routing unchanged; direct routing
+works with the orchestrator unavailable; pins, privacy, capabilities, permissions, budgets
+always prevail.
 
-Remaining after that: **19–24** routing / roles / graph context / skills / the Cursor adapter /
+Remaining after that: **20–24** roles / graph context / skills / the Cursor adapter /
 scheduling, **25–26** evaluation and the release matrix.
+
+### Step 18's own deliberate limits
+
+- **An invalid graph refuses the whole kit, not the broken tasks.** A cycle between T3 and T4
+  stops T1 too. This is the strict reading of the roadmap's "zero dispatches" and it is on
+  purpose: dispatching around a self-contradicting plan mutates state on a plan nobody has
+  confirmed. The cost is that a typo in one `depends:` line halts a kit until it is fixed; the
+  findings say exactly which line.
+- **Automatic selection now refuses while any task is `in-progress`** (`graph: interrupted`),
+  where it used to walk past and dispatch the next pending task. Naming a task (`--task`) is
+  the way past it, for the interrupted task (resume) or another ready one (deliberate). This
+  is the sequential default the roadmap asks for; two tasks at once is step 24's scheduler.
+  The interactive execute skill, which parallelises `independent:` tasks through the Agent
+  tool, is prose and unaffected.
+- **`interrupted` cannot say whether the run is alive.** `graph_state` is pure and reads only
+  the file; the claim taken at dispatch (step 16) is what knows the pid. The reason text says
+  both possibilities.
+- **Plan drift is reported, not reverted.** A worker's edit to its own brief, verify command,
+  or dependencies is named on stderr, recorded as a `plan.drift` ledger event, and carried in
+  `result["plan_drift"]`; the file keeps the worker's version for the architect to judge, and
+  no NOTES.md line is written for it (a new bullet family would need the history reader to
+  learn it; deferred until something reads it).
+- **Two finished legacy kits are invalid by this validator**: `aesop-bridge` and
+  `context-rules` carry prose in `- depends:` lines (`(none within this kit)`, `T1–T8
+  (documents their output)`). Both are complete, so nothing changes for them; the test pins
+  that the invalid set is a subset of those two and that every kit with work left is valid.
+  Fixing the lines removes them from the set.
+- **The `status --json` shape is unchanged** (still the task list); the structured graph is
+  `kit_contract.py graph --json`, not a new key in the drivers' JSON.
+- **No `harness-capabilities.json` row.** Graph validation is the coordinator's, not a host
+  capability; the Cursor seam is the same `select_task`/`readiness` call every driver makes.
+- **The architect and execute skill ceilings were re-frozen** (`tests/test_docs_skill_dispositions.py`,
+  2866 and 6132 words) because the `depends:` rules are a kit-contract change both skills must
+  state. The "may only shrink" rule resumes from there; the next contract change re-freezes
+  again with its own dated comment, never by loosening.
 
 ### Step 17's own deliberate limits
 
@@ -205,6 +249,14 @@ These cost real time to discover. All are still live.
    opened by one load raising past an `except` naming another load's class was an uncaught
    exception where a refusal was meant. Tests loading `attempt_ledger` themselves hold a
    third copy; they never compare its classes with the contract's.
+10. **A kit fixture with an `in-progress` task no longer auto-selects the next pending one**
+   (step 18). A test that sets a task in-progress and then runs a driver without `--task`
+   gets exit 2 and "is in-progress"; name the task. No existing test relied on the old walk-past,
+   but the next one written from memory will. `NOTES.md` outcome lines are `- outcome: …`
+   bullets (leading dash), which the first version of `test_kit_graph.py` forgot.
+11. **`project_status` now refuses an edge `TRANSITIONS` lacks** (`pending -> done`, say) with
+   `InvalidTransition`, a `ValueError` that `run_cli` turns into exit 2. A test that writes a
+   verdict straight over `pending` must go through `in-progress` first, as the drivers do.
 
 ---
 
@@ -257,14 +309,15 @@ Each is recorded in `SECURITY.md` rather than hidden. None is a surprise; all ar
 
 ```bash
 cd /Users/michaelcave/Developer/reposV2/polytropos
-python3 -m unittest discover -s tests          # expect 3727 OK, ~3 min
-git log --oneline -2                           # the roadmap commit sits on fb40925
+python3 -m unittest discover -s tests          # expect OK (2 skipped), ~4 min; the count is in the last commit that changed it
+git log --oneline -4                           # steps 16, 17, 18 on top of the merged 01–15
 python3 bin/runtime_data.py where              # where your stores resolved to
 python3 bin/harness_adapter.py                 # what each harness can actually do
 python3 bin/attempt_ledger.py demo             # crash / resume / progress walkthrough, temp dir only
 python3 bin/attempt_history.py demo            # the cross-harness join, temp dir only
+python3 bin/kit_contract.py demo               # a diamond DAG walked, an interrupted kit, four invalid graphs
 ```
 
-Then read step 18 in the roadmap and continue. The pattern that has worked: verify the step's
+Then read step 19 in the roadmap and continue. The pattern that has worked: verify the step's
 claims against HEAD first, implement, run the affected suites, then the full suite, then update
 `SECURITY.md` / `CLAUDE.md` / the doc mirrors together.

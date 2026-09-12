@@ -108,6 +108,8 @@ NOTES.md state current.
 
 ### The loop
 
+Before the first dispatch, run `python3 ${CLAUDE_PLUGIN_ROOT}/bin/kit_contract.py graph --kit .claude/kits/<slug>` (absolute path first; fall back to relative to this SKILL.md). Exit 2 means a duplicate id, unknown or self dependency, or cycle, each named with its fix: fix TASKS.md and report the defect; never route around an invalid plan. Exit 0 reports the state (`ready` + frontier, `interrupted` + the task to resume, `waiting` + the blocked task, `complete`).
+
 For each task in order (skip `done`, stop at `blocked` deps):
 
 1. **Mark** it `in-progress` in TASKS.md.

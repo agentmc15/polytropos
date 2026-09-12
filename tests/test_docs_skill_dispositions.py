@@ -411,13 +411,20 @@ def cost_report_parser():
 # new exact counts, re-frozen at the smallest wording that states the field and
 # its consequence; the "may only shrink" rule resumes from here. `repo-bench`
 # was not touched and keeps its original number.
+#
+# RE-FROZEN AGAIN by roadmap step 18 (2026-09-12, the validated execution DAG).
+# `depends:` acquired rules the drivers now enforce -- ids of blocks in this kit
+# only, unique, no self-dependency, no cycle, or nothing dispatches -- and the
+# architect (who writes the field) and execute (who runs the validator before
+# the first dispatch) each state the rule once, in the smallest wording that
+# names the consequence. Architect +47 words, execute +69; `repo-bench` untouched.
 # ---------------------------------------------------------------------------
 
 
 class CeilingSkillsTests(unittest.TestCase):
     CEILINGS = {
-        "architect": 2819,
-        "execute": 6063,
+        "architect": 2866,
+        "execute": 6132,
         "repo-bench": 6567,
     }
 

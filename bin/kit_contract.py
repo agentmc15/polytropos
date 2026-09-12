@@ -216,6 +216,380 @@ def _read_tasks_text(kit_dir):
         raise FileNotFoundError(f"no TASKS.md under kit dir {kit_dir}")
     return path.read_text()
 
+# ---- the execution DAG (step 18) ----------------------------------------------------------------
+#
+# A `depends:` list is a graph, and until this section existed nothing looked at the graph --
+# only at one task's own edges, at the moment that task was picked. Measured against the tree
+# before this section was written:
+#
+#   - a duplicate id gave THREE answers: explicit `--task T2` took the last block (dict
+#     last-wins), automatic selection took the first (list order), and `set_status` wrote the
+#     first -- so a driver could dispatch one block's brief and mark the other block done;
+#   - a cycle between T1 and T2 refused each with "depends on T2, which is 'pending'", a true
+#     sentence that can never become false, and let an unrelated T3 dispatch;
+#   - a self-dependency reported "no pending task has all dependencies done", the message for
+#     a kit that is waiting, not for one that is wrong;
+#   - a typo in one task's `depends:` let every other task run and left that task unreachable
+#     without a word.
+#
+# Those are one defect: the graph was never validated, so an invalid one behaved like a valid
+# one with odd luck. Now the graph is checked FIRST, as a whole, and an invalid graph selects
+# nothing -- zero dispatches, zero writes -- with every finding named and the edit that clears
+# it beside it. That is deliberately stricter than skipping the broken tasks: a kit with a
+# cycle in it is an architect defect, and dispatching around it would mutate state on a plan
+# nobody has confirmed is the plan.
+#
+# NOT parallel dispatch. `ready_frontier` returns every task that COULD run; sequential
+# selection takes the first, and the set is what step 24's scheduler will take. Nothing here
+# runs two tasks.
+
+GRAPH_STATES = ("invalid", "complete", "ready", "interrupted", "waiting")
+
+FINDING_KINDS = ("duplicate-id", "self-dependency", "unknown-dependency", "cycle")
+
+#: The task state machine: from each status, the statuses a driver may write over it. A task
+#: is dispatched (-> in-progress) before it is judged (-> done | blocked); nothing skips the
+#: dispatch, and nothing un-judges a task except a deliberate rerun or retry, which dispatches
+#: it again. `in-progress -> in-progress` is a resume: the claim decides whether the run that
+#: left it there is alive. `set_status` stays the surgical text writer; `project_status` is
+#: where the edge is checked, before any temporary file exists.
+TRANSITIONS = {
+    "pending": ("in-progress",),
+    "in-progress": ("in-progress", "done", "blocked"),
+    "done": ("in-progress",),
+    "blocked": ("in-progress",),
+}
+
+#: How a selected task's status reads as an operation. Automatic selection only ever takes a
+#: `pending` task; the other three are deliberate, explicit gestures.
+SELECTION_MODES = {"pending": "fresh", "blocked": "retry", "in-progress": "resume",
+                   "done": "rerun"}
+
+#: What a task's block says beyond its status: the fields a worker's mid-run edit to TASKS.md
+#: may not change silently. The driver dispatched the snapshot's brief and ran the snapshot's
+#: verify command; when the file says something else at projection time, the difference is
+#: reported and recorded. The status itself is `project_status`'s business.
+PLAN_FIELDS = ("title", "model", "depends", "independent", "evidence", "brief", "verify")
+
+
+class GraphInvalid(ValueError):
+    """The task graph has structural findings; `.findings` carries them."""
+
+    def __init__(self, findings):
+        self.findings = list(findings)
+        super().__init__(render_findings(self.findings))
+
+
+class InvalidTransition(ValueError):
+    """A status write the task state machine has no edge for."""
+
+
+def _finding(kind, task, detail, fix):
+    return {"kind": kind, "task": task, "detail": detail, "fix": fix}
+
+
+def validate_graph(tasks):
+    """Every structural defect in the task graph -> a list of findings, empty when valid.
+
+    Pure: reads the task dicts and nothing else. Each finding is `{kind, task, detail, fix}`
+    with `kind` from `FINDING_KINDS`, `detail` the sentence, and `fix` the edit that clears
+    it. Every finding is reported, not just the first, so a kit is fixed in one pass.
+    """
+    findings = []
+    ids = [t["id"] for t in tasks]
+    positions = {}
+    for pos, task_id in enumerate(ids, start=1):
+        positions.setdefault(task_id, []).append(pos)
+    for task_id, where in positions.items():
+        if len(where) > 1:
+            findings.append(_finding(
+                "duplicate-id", task_id,
+                f"task id {task_id!r} heads {len(where)} blocks "
+                f"(blocks #{', #'.join(str(p) for p in where)} in file order)",
+                "give every `### <id> — <title>` heading its own id; the drivers select, write "
+                "status, and record outcomes by id and cannot tell the blocks apart",
+            ))
+    known = set(ids)
+    for t in tasks:
+        for dep in t["depends"]:
+            if dep == t["id"]:
+                findings.append(_finding(
+                    "self-dependency", t["id"],
+                    f"task {t['id']} depends on itself",
+                    "remove the task's own id from its `- depends:` line",
+                ))
+            elif dep not in known:
+                findings.append(_finding(
+                    "unknown-dependency", t["id"],
+                    f"task {t['id']} depends on unknown task {dep!r}",
+                    "name only ids that head a task block in this kit, comma-separated, or "
+                    "write `(none)`; prose belongs in the brief, not in `- depends:`",
+                ))
+    edges = {}
+    for t in tasks:
+        edges.setdefault(t["id"], []).extend(
+            d for d in t["depends"] if d in known and d != t["id"]
+        )
+    for cycle in _cycles(list(positions), edges):
+        findings.append(_finding(
+            "cycle", cycle[0],
+            "dependency cycle: " + " -> ".join(cycle),
+            "remove one of these `- depends:` edges; a task cannot wait on work that waits "
+            "on it",
+        ))
+    return findings
+
+
+def _cycles(order, edges):
+    """Every dependency cycle reachable in `edges`, each as a closed id path, in file order.
+
+    Depth-first with the usual three colours: an edge into a node still on the stack closes a
+    cycle, and the cycle is the stack from that node down plus the node again.
+    """
+    WHITE, GREY, BLACK = 0, 1, 2
+    colour = {n: WHITE for n in order}
+    found = []
+    stack = []
+
+    def visit(node):
+        colour[node] = GREY
+        stack.append(node)
+        for dep in edges.get(node, ()):
+            if colour[dep] == GREY:
+                found.append(stack[stack.index(dep):] + [dep])
+            elif colour[dep] == WHITE:
+                visit(dep)
+        stack.pop()
+        colour[node] = BLACK
+
+    for node in order:
+        if colour[node] == WHITE:
+            visit(node)
+    return found
+
+
+def render_findings(findings):
+    """The findings as the operator sees them: one line each, the fix indented under it."""
+    lines = [
+        f"graph: invalid -- {len(findings)} finding(s); nothing is dispatched and nothing is "
+        f"written until TASKS.md is fixed:"
+    ]
+    for f in findings:
+        lines.append(f"  {f['kind']} [{f['task']}]: {f['detail']}")
+        lines.append(f"    fix: {f['fix']}")
+    return "\n".join(lines)
+
+
+def ready_frontier(tasks):
+    """Every pending task whose dependencies are all done, in file order.
+
+    Assumes a valid graph (`validate_graph` returned nothing). Sequential selection takes the
+    first id; the whole list is what a scheduler would take, and none exists yet.
+    """
+    status = {t["id"]: t["status"] for t in tasks}
+    return [
+        t["id"] for t in tasks
+        if t["status"] == "pending" and all(status.get(d) == "done" for d in t["depends"])
+    ]
+
+
+def graph_state(tasks, findings=None):
+    """Where the kit stands as a whole -> a dict whose `state` is one of `GRAPH_STATES`.
+
+      invalid      findings exist; nothing is selectable until they are fixed.
+      complete     every task is done (an empty kit counts).
+      interrupted  a task is in-progress: a run holds it, or died on it. Sequential execution
+                   dispatches nothing else on its own; naming the task resumes it.
+      ready        a pending task has all its dependencies done and nothing is in-progress.
+      waiting      pending or blocked tasks remain, none is ready, nothing is in-progress:
+                   every pending task waits, through its chain, on a blocked one.
+
+    `frontier` is the ready set (empty unless the graph is valid), `waiting_on` maps each
+    pending-but-not-ready task to the `(dependency, status)` pairs holding it, and the four
+    status lists say which tasks are where. Pure; the ledger is not consulted, so
+    `interrupted` cannot say whether the run is alive -- the claim taken at dispatch can.
+    """
+    if findings is None:
+        findings = validate_graph(tasks)
+    status = {t["id"]: t["status"] for t in tasks}
+    by_status = {s: [t["id"] for t in tasks if t["status"] == s] for s in STATUSES}
+    frontier = ready_frontier(tasks) if not findings else []
+    waiting_on = {
+        t["id"]: [(d, status.get(d)) for d in t["depends"] if status.get(d) != "done"]
+        for t in tasks if t["status"] == "pending" and t["id"] not in frontier
+    }
+    if findings:
+        state = "invalid"
+    elif all(t["status"] == "done" for t in tasks):
+        state = "complete"
+    elif by_status["in-progress"]:
+        state = "interrupted"
+    elif frontier:
+        state = "ready"
+    else:
+        state = "waiting"
+    return {
+        "state": state,
+        "frontier": frontier,
+        "pending": by_status["pending"],
+        "in_progress": by_status["in-progress"],
+        "done": by_status["done"],
+        "blocked": by_status["blocked"],
+        "waiting_on": waiting_on,
+        "findings": findings,
+    }
+
+
+def render_graph_state(graph):
+    """One `graph:` line (or the findings block) for `cmd_status` and the `graph` command."""
+    state = graph["state"]
+    if state == "invalid":
+        return render_findings(graph["findings"])
+    if state == "complete":
+        return "graph: complete -- every task is done"
+    if state == "ready":
+        return (
+            f"graph: ready -- frontier: {', '.join(graph['frontier'])} "
+            f"(sequential: {graph['frontier'][0]} runs next)"
+        )
+    if state == "interrupted":
+        line = (
+            f"graph: interrupted -- in-progress: {', '.join(graph['in_progress'])}; resume "
+            f"with --task <id>"
+        )
+        if graph["frontier"]:
+            line += f" (also ready, by explicit --task only: {', '.join(graph['frontier'])})"
+        return line
+    holds = "; ".join(
+        f"{tid} waits on " + ", ".join(f"{d} [{s}]" for d, s in deps)
+        for tid, deps in graph["waiting_on"].items()
+    )
+    line = "graph: waiting -- nothing is ready"
+    if holds:
+        line += f": {holds}"
+    if graph["blocked"]:
+        line += f"; retry a blocked task with --task <id> (blocked: {', '.join(graph['blocked'])})"
+    return line
+
+
+def check_transition(previous, new_status):
+    """Refuse a status write the task state machine has no edge for.
+
+    `previous` is the status the DRIVER holds the task in -- what it wrote last, or what it
+    read when nothing has been written yet. A worker's edit to the file is not a transition
+    the driver made; `project_status` reports that separately and the driver's verdict wins.
+    """
+    if new_status not in STATUSES:
+        raise ValueError(
+            f"invalid status {new_status!r}; valid: {' | '.join(STATUSES)}"
+        )
+    if previous is None:
+        return
+    allowed = TRANSITIONS.get(previous, ())
+    if new_status not in allowed:
+        raise InvalidTransition(
+            f"task status {previous!r} -> {new_status!r} is not a transition the driver makes; "
+            f"{previous!r} may only become {' | '.join(allowed)}. A task is dispatched "
+            f"(-> in-progress) before it is judged (-> done | blocked); nothing skips the "
+            f"dispatch, and a finished task is only reopened by a deliberate --rerun or retry."
+        )
+
+
+def plan_drift(before, after):
+    """The `PLAN_FIELDS` on which a fresh read of a task differs from the driver's snapshot."""
+    return [f for f in PLAN_FIELDS if before.get(f) != after.get(f)]
+
+
+def readiness(tasks, task_id=None, allow_rerun=False):
+    """ONE readiness rule for explicit and automatic selection -> a dict.
+
+      task    the task to run, or None
+      reason  the sentence naming what stopped the run (None when `task` is set)
+      mode    fresh | retry | resume | rerun, from `SELECTION_MODES` (None when `task` is None)
+      graph   `graph_state(tasks)`, so the caller can report where the kit stands
+
+    Order of checks: the graph as a whole (an invalid graph selects nothing, whatever was
+    named), then the named task's existence and prerequisites, then its status. Automatic
+    selection takes the first of the ready frontier and refuses while any task is in-progress,
+    because two tasks running at once is scheduling, which nothing here does; naming a task
+    is the deliberate way past that, and past `blocked` and (with `allow_rerun`) `done`.
+
+    The defect this rule replaced was that naming a task skipped the dependency check
+    entirely: `--task T5` ran while T4 was still pending and T5's brief assumed T4's output
+    existed. Explicit and automatic selection now ask the same questions of the same graph.
+    """
+    graph = graph_state(tasks)
+
+    def answer(task=None, reason=None, mode=None):
+        return {"task": task, "reason": reason, "mode": mode, "graph": graph}
+
+    if graph["state"] == "invalid":
+        return answer(reason=render_findings(graph["findings"]))
+
+    by_id = {t["id"]: t for t in tasks}
+    status = {t["id"]: t["status"] for t in tasks}
+
+    if task_id is not None:
+        task = by_id.get(task_id)
+        if task is None:
+            return answer(reason=f"no task with id {task_id!r} in this kit")
+        for dep in task["depends"]:
+            if status.get(dep) != "done":
+                return answer(reason=(
+                    f"task {task_id} depends on {dep}, which is {status.get(dep)!r} rather "
+                    f"than done"
+                ))
+        if task["status"] == "done" and not allow_rerun:
+            return answer(reason=(
+                f"task {task_id} is already done -- pass --rerun to repeat it deliberately "
+                f"rather than silently redoing completed work"
+            ))
+        return answer(task=task, mode=SELECTION_MODES[task["status"]])
+
+    if graph["state"] == "ready":
+        return answer(task=by_id[graph["frontier"][0]], mode="fresh")
+    if graph["state"] == "interrupted":
+        held = graph["in_progress"]
+        reason = (
+            f"task {held[0]} is in-progress -- a run holds it or died on it. Resume it with "
+            f"--task {held[0]} (a dead run's attempts are settled from the ledger; nothing is "
+            f"replayed), or wait for the live run; sequential execution dispatches nothing "
+            f"else on its own"
+        )
+        if len(held) > 1:
+            reason += f" (also in-progress: {', '.join(held[1:])})"
+        if graph["frontier"]:
+            reason += f". Ready, by explicit --task only: {', '.join(graph['frontier'])}"
+        return answer(reason=reason)
+    if graph["state"] == "complete":
+        return answer(reason="no pending task in this kit")
+    hint = ""
+    if graph["blocked"]:
+        hint = (
+            f"; retry a blocked task with --task <id> (blocked: "
+            f"{', '.join(graph['blocked'])})"
+        )
+    if not graph["pending"]:
+        return answer(reason=f"no pending task in this kit{hint}")
+    return answer(reason=(
+        f"no pending task has all dependencies done (pending: "
+        f"{', '.join(graph['pending'])}){hint}"
+    ))
+
+
+def exit_if_invalid_graph(tasks, tasks_path):
+    """Print the findings and exit 2 when the graph is invalid; return the findings otherwise.
+
+    For the one driver path that previews without selecting (`--dry-run` with no `--task`
+    lists every pending task): a preview of a run that would refuse should refuse the same way.
+    """
+    findings = validate_graph(tasks)
+    if findings:
+        print(f"{render_findings(findings)} ({tasks_path})", file=sys.stderr)
+        sys.exit(2)
+    return findings
+
+
 def _select_task(tasks, task_id=None):
     """`select_task`'s answer without the reason -> the task, or None.
 
@@ -236,49 +610,14 @@ def _select_task(tasks, task_id=None):
 def select_task(tasks, task_id=None, allow_rerun=False):
     """The task to run -> `(task, reason)`, exactly one of which is None.
 
-    ONE readiness rule for BOTH explicit and automatic selection. The defect this replaces was
-    that naming a task skipped the dependency check entirely: `--task T5` ran while T4 was
-    still pending, and T5's brief assumed T4's output existed. Automatic selection had always
-    checked; naming a task was simply the way around it.
-
-    `reason` is a sentence naming the rule that stopped the run. "No eligible task" covers five
-    different situations -- unknown id, unknown dependency, unfinished dependency, already
-    done, nothing pending -- and an operator has to know which one they are looking at.
+    The driver-facing shape of `readiness`, which holds the rule; see it for the order of
+    checks. `reason` is a sentence naming what stopped the run. "No eligible task" covers
+    seven situations -- invalid graph, unknown id, unfinished dependency, already done, a task
+    in-progress, nothing pending, everything waiting on a blocked task -- and an operator has
+    to know which one they are looking at.
     """
-    by_id = {t["id"]: t for t in tasks}
-    status_by_id = {t["id"]: t["status"] for t in tasks}
-
-    def unmet(task):
-        for dep in task["depends"]:
-            if dep not in by_id:
-                return f"depends on unknown task {dep!r}"
-            if status_by_id.get(dep) != "done":
-                return f"depends on {dep}, which is {status_by_id.get(dep)!r} rather than done"
-        return None
-
-    if task_id is not None:
-        task = by_id.get(task_id)
-        if task is None:
-            return None, f"no task with id {task_id!r} in this kit"
-        blocker = unmet(task)
-        if blocker is not None:
-            return None, f"task {task_id} {blocker}"
-        if task["status"] == "done" and not allow_rerun:
-            return None, (
-                f"task {task_id} is already done -- pass --rerun to repeat it deliberately "
-                f"rather than silently redoing completed work"
-            )
-        return task, None
-
-    for task in tasks:
-        if task["status"] == "pending" and unmet(task) is None:
-            return task, None
-    pending = [t["id"] for t in tasks if t["status"] == "pending"]
-    if not pending:
-        return None, "no pending task in this kit"
-    return None, (
-        f"no pending task has all dependencies done (pending: {', '.join(pending)})"
-    )
+    r = readiness(tasks, task_id=task_id, allow_rerun=allow_rerun)
+    return r["task"], r["reason"]
 
 def set_status(text, task_id, new_status):
     """Return `text` with exactly one change: the `- status:` line inside `task_id`'s block.
@@ -674,6 +1013,9 @@ def cmd_status(args):
         f"{counts['pending']} pending / {counts['in-progress']} in-progress / "
         f"{counts['done']} done / {counts['blocked']} blocked"
     )
+    # Step 18: the same graph verdict `run` will reach, so an operator sees an invalid kit or
+    # an interrupted task from `status` rather than from a refused run.
+    print(render_graph_state(graph_state(tasks)))
 
 
 def _budget_stop(task, model_used, escalations, kind, reason):
@@ -863,10 +1205,16 @@ def project_status(tasks_path, task_id, new_status, expected=None):
     `expected` -- a worker flipped its own task to `done`, say -- the DRIVER's verdict still
     wins, because the driver holds the claim and ran the check; the caller reports the
     discrepancy rather than silently accepting either side.
+
+    The write is a transition of the task state machine (`TRANSITIONS`) and is checked as
+    one, from the status the driver holds the task in: `expected` when given, else what the
+    file says. An edge the machine lacks (`pending -> done`, a verdict with no dispatch) is
+    refused before the temporary file exists, so nothing is mutated.
     """
     tasks_path = Path(tasks_path)
     text = tasks_path.read_text()
     previous = next((t["status"] for t in parse_tasks(text) if t["id"] == task_id), None)
+    check_transition(expected if expected is not None else previous, new_status)
     text = set_status(text, task_id, new_status)
     tmp = tasks_path.with_name(f"{tasks_path.name}.{os.getpid()}.tmp")
     tmp.write_text(text)
@@ -1100,4 +1448,121 @@ def finish_task_projection(lifecycle, tasks_path, task, result):
             f"({result['status']}) was written over it, and this line is the record of that",
             file=sys.stderr,
         )
+    # PLAN DRIFT (step 18). The driver dispatched the snapshot's brief and ran the snapshot's
+    # verify command; a worker with write access may have changed the block underneath it.
+    # Neither the verdict nor the file is changed here -- the verdict is about the work the
+    # check judged, and the file is the architect's to restore -- but the edit is named on
+    # stderr, recorded in the ledger, and carried in `result`, so a plan that changed under a
+    # run never reads as the plan the run was judged against.
+    fresh = next((t for t in parse_tasks(text) if t["id"] == task["id"]), None)
+    drift = plan_drift(task, fresh) if fresh is not None else []
+    result["plan_drift"] = drift
+    if drift:
+        lifecycle.ledger.append("plan.drift", run=lifecycle.run, task=task["id"],
+                                fields=drift)
+        print(
+            f"plan-drift: task {task['id']}'s TASKS.md block changed while this run held it "
+            f"({', '.join(drift)}); the verdict ({result['status']}) is for the brief and "
+            f"verify command the run started with, not for what the file says now. A worker "
+            f"may not rewrite its own acceptance; restore the block or re-plan it deliberately",
+            file=sys.stderr,
+        )
     return text
+
+
+# ---- command line: the graph, and a demo of it --------------------------------------------------
+
+def _demo_task(task_id, status="pending", depends=()):
+    return {
+        "id": task_id, "title": f"demo task {task_id}", "status": status, "model": None,
+        "depends": list(depends), "independent": not depends, "evidence": None,
+        "brief": f"do {task_id}", "verify": "true",
+    }
+
+
+def _demo(out=None):
+    """A diamond DAG walked to completion, an interrupted kit, then four invalid graphs and a
+    refused transition. Synthetic tasks in memory: no files, no store, no process."""
+    out = out or sys.stdout
+
+    def say(line=""):
+        print(line, file=out)
+
+    say("== a diamond: T1 -> {T2, T3} -> T4, walked sequentially ==")
+    diamond = [_demo_task("T1"), _demo_task("T2", depends=["T1"]),
+               _demo_task("T3", depends=["T1"]), _demo_task("T4", depends=["T2", "T3"])]
+    while True:
+        r = readiness(diamond)
+        say(f"  {render_graph_state(r['graph'])}")
+        if r["task"] is None:
+            say(f"  selection: {r['reason']}")
+            break
+        say(f"  selection: {r['task']['id']} ({r['mode']}) -> done")
+        r["task"]["status"] = "done"
+
+    say()
+    say("== interrupted: T2 is in-progress, T3 is ready ==")
+    kit = [_demo_task("T1", "done"), _demo_task("T2", "in-progress", ["T1"]),
+           _demo_task("T3", depends=["T1"]), _demo_task("T4", depends=["T2", "T3"])]
+    r = readiness(kit)
+    say(f"  {render_graph_state(r['graph'])}")
+    say(f"  automatic: {r['reason']}")
+    r = readiness(kit, "T2")
+    say(f"  --task T2: {r['task']['id']} ({r['mode']})")
+    r = readiness(kit, "T4")
+    say(f"  --task T4: {r['reason']}")
+
+    say()
+    say("== invalid graphs: each selects nothing and names its fix ==")
+    invalid = {
+        "duplicate id": [_demo_task("T1"), _demo_task("T1")],
+        "self-dependency": [_demo_task("T1", depends=["T1"])],
+        "unknown dependency": [_demo_task("T1"), _demo_task("T2", depends=["T9"])],
+        "cycle": [_demo_task("T1", depends=["T2"]), _demo_task("T2", depends=["T3"]),
+                  _demo_task("T3", depends=["T1"]), _demo_task("T4")],
+    }
+    for label, tasks in invalid.items():
+        r = readiness(tasks)
+        say(f"  [{label}] task selected: {r['task']}")
+        for line in r["reason"].splitlines():
+            say(f"    {line}")
+
+    say()
+    say("== a status write with no edge is refused before anything is written ==")
+    for previous, new in (("pending", "done"), ("done", "blocked"), ("in-progress", "done")):
+        try:
+            check_transition(previous, new)
+            say(f"  {previous} -> {new}: allowed")
+        except InvalidTransition as exc:
+            say(f"  {previous} -> {new}: REFUSED -- {str(exc).split(';')[0]}")
+
+
+def _cli(argv=None):
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        prog="kit_contract.py",
+        description="The one kit contract. `graph` validates a kit's execution DAG and reports "
+                    "its ready frontier; `demo` walks synthetic graphs and spends nothing.",
+    )
+    sub = parser.add_subparsers(dest="cmd", required=True)
+    p_graph = sub.add_parser("graph", help="validate TASKS.md's DAG; exit 2 when invalid")
+    p_graph.add_argument("--kit", required=True, help="kit directory holding TASKS.md")
+    p_graph.add_argument("--json", action="store_true", help="the graph_state dict as JSON")
+    sub.add_parser("demo", help="a diamond DAG walked to completion, then invalid graphs")
+    args = parser.parse_args(argv)
+
+    if args.cmd == "demo":
+        _demo()
+        return 0
+    tasks = parse_tasks(_read_tasks_text(args.kit))
+    graph = graph_state(tasks)
+    if args.json:
+        print(json.dumps(graph, indent=2, sort_keys=True))
+    else:
+        print(render_graph_state(graph))
+    return 2 if graph["state"] == "invalid" else 0
+
+
+if __name__ == "__main__":
+    sys.exit(_cli())

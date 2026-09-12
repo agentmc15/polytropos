@@ -220,6 +220,7 @@ parse_tasks = _CONTRACT.parse_tasks
 plan_budget_exhausted = _CONTRACT.plan_budget_exhausted
 recorded_outcome_result = _CONTRACT.recorded_outcome_result
 select_task = _CONTRACT.select_task
+exit_if_invalid_graph = _CONTRACT.exit_if_invalid_graph
 set_status = _CONTRACT.set_status
 # The attempt lifecycle (step 16) -- claim, resume, record, project -- is the contract's.
 start_task_lifecycle = _CONTRACT.start_task_lifecycle
@@ -839,6 +840,8 @@ def cmd_run(args):
         # `--dry-run --task ID` still previews only that one task, same as the sibling
         # drivers. Nothing is spawned or written either way.
         if args.task is None:
+            # The preview of a run that would refuse refuses the same way (step 18).
+            exit_if_invalid_graph(tasks, tasks_path)
             pending = [t for t in tasks if t["status"] == "pending"]
             for t in pending:
                 model_id = resolve_model(pricing, t["model"])

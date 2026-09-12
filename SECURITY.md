@@ -124,7 +124,14 @@ Do not rely on any of the following. Each is a known gap, not a subtlety:
   never carries it. But a dispatch is not confined (above), and a worker running with the user's
   own privileges can write anywhere the user can. `TASKS.md`, `NOTES.md`, and the verify-pass
   markers are still in the tree a worker edits; the driver writes its verdict over a status the
-  worker changed, and says so, which is a report, not a prevention.
+  worker changed, and says so, which is a report, not a prevention. The same holds for the rest
+  of a task's block: a worker that rewrites its own brief, verify command, or dependencies
+  mid-run is detected at projection time from a fresh read, reported, and recorded in the
+  ledger as `plan.drift`, and the verdict stays the one for the plan the run started with. The
+  file is not restored; the edit is named for the architect to judge. The task graph itself is
+  validated before any dispatch, so a plan with a cycle, a duplicate id, or a dependency on no
+  task runs nothing rather than something — but that is validation of structure, not
+  authentication of who wrote it.
 - **Estimated spend is not a provider-enforced cap.** Budget dials and `--max-usd` stop
   *polytropos* from dispatching. They cannot stop a provider from billing, and they do not bound
   spend that has already been incurred.
