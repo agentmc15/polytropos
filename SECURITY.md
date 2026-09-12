@@ -29,6 +29,14 @@ These are properties with code behind them, not conventions:
 - **Codex review and acceptance are pinned read-only.** `bin/codex_execute.py` forces
   `--sandbox read-only` on both and rejects any attempt to override it through extra arguments.
   It also refuses extra arguments that would displace the policy-selected model or profile.
+- **Routing policy is an explicit selection, never a learned one.** Which policy routes a
+  Codex task (`reserved`, the default, or the opt-in `adaptive`) comes only from a `--policy`
+  flag or a kit's PLAN.md `routing:` line, both validated before anything is dispatched.
+  `bin/routing_policy.py` decides from the pricing catalog, the task's own fields, the attempt
+  ledger's count of prior failures, and the capability registry — never from memory facts,
+  lessons, usage claims, or model output — and hard filters (availability, an explicit pin, an
+  exclusion, an unsupported effort, the budget) apply before any preference is weighed. No
+  observation promotes a new default; installed defaults change only by an explicit edit.
 - **Benchmark spending is ceiling-gated.** No dispatch happens without an explicit `--max-usd`,
   validated finite and non-negative on every check; `plan` and `demo` spend nothing.
 - **Personal data stays local and gitignored.** The memory, telemetry, journal, and benchmark

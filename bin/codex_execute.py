@@ -220,6 +220,25 @@ PolicyError = _POLICY.PolicyError
 resolve_assignment = _POLICY.resolve_assignment
 resolve_orchestrator = _POLICY.resolve_orchestrator
 worker_ladder = _POLICY.worker_ladder
+# Step 19: named routing policies. `route` keeps the reserved behaviour above under its own
+# name and adds the opt-in adaptive one; the decision shape and its vocabulary come from
+# `bin/routing_policy.py`, reached through the policy module so this driver loads one thing.
+route = _POLICY.route
+request_for = _POLICY.request_for
+_ROUTING = _POLICY._rp()
+POLICIES = _ROUTING.POLICIES
+PREFERENCES = _ROUTING.PREFERENCES
+DEFAULT_POLICY = _ROUTING.DEFAULT_POLICY
+DEFAULT_PREFERENCE = _ROUTING.DEFAULT_PREFERENCE
+explain_routing = _ROUTING.explain
+parse_plan_routing = _CONTRACT.parse_plan_routing
+
+#: Dispatch-failure classes (step 16's vocabulary) that stop the ladder instead of climbing
+#: it: a logged-out, misconfigured, permission-denied, or unreachable process fails the same
+#: way on a pricier model. `unknown` is NOT here on purpose -- a bare non-zero exit with no
+#: recognisable cause has always been treated as the model's failure and escalated, and the
+#: recovery evidence kind `lower_tier_correction_failed` depends on that path staying open.
+NO_ESCALATION_CLASSES = ("infrastructure", "auth", "config", "permission")
 
 
 def load_pricing():
@@ -413,7 +432,7 @@ class _BudgetRefused(Exception):
 def run_task(task, pricing, runner, verify_runner, prompt=None, role="implementer",
              max_escalations=None, codex_bin="codex", effort=None, extra_args=(),
              allow_recovery=True, admission=None, consult=False, lifecycle=None,
-             resume=False):
+             resume=False, policy=None, preference=None, profile=None, decision=None):
     """Orchestrate one task: dispatch, verify, escalate up the tier ladder on failure.
 
     `runner(argv) -> (returncode, output)` and `verify_runner(cmd) -> (returncode, output)`
@@ -426,8 +445,22 @@ def run_task(task, pricing, runner, verify_runner, prompt=None, role="implemente
     structured driver-observed evidence unlocks one reserved orchestrator recovery attempt.
     Verification roles never enter implementation escalation or recovery.
 
+    ROUTING POLICY (step 19). `policy=None` or `"reserved"` is every rule above, unchanged:
+    the model from `resolve_assignment`, the ladder from `worker_ladder`, the reserved
+    orchestrator as the evidence-gated last resort, one command-line effort for every rung.
+    `"adaptive"` takes the model, ladder, and initial effort from the routing decision
+    instead: the frontier is an ordinary rung there, so there is no separate recovery step; a
+    rung that cannot take the chosen effort runs at its own default and the attempt says so.
+    A caller may pass the `decision` it already computed (the driver does, so the one it
+    printed is the one that ran); otherwise one is made here from the task's own signals.
+
+    A dispatch that failed for a reason a pricier model shares (`NO_ESCALATION_CLASSES`)
+    stops the ladder under both policies and names the class; a bare non-zero exit still
+    climbs, as it always has.
+
     Returns status plus planned assignment, per-attempt dispatched/observed usage, worker
-    escalations, verification result, and the recovery audit when recovery occurred.
+    escalations, verification result, the recovery audit when recovery occurred, and the
+    routing decision.
     """
     if prompt is None:
         prompt = task["brief"]
@@ -436,26 +469,48 @@ def run_task(task, pricing, runner, verify_runner, prompt=None, role="implemente
         raise PolicyError(f"task {task.get('id')!r} has no runnable verify command")
     if max_escalations is not None and max_escalations < 0:
         raise PolicyError("max_escalations must be non-negative")
-    assignment = resolve_assignment(pricing, task.get("model"), role=role)
+    if decision is None:
+        decision = route(
+            pricing,
+            request_for(task, role=role, effort=effort, profile=profile,
+                        in_kit=lifecycle is not None, pricing=pricing),
+            policy=policy, preference=preference,
+        )
+    policy = decision["policy"]
+    assignment = decision["assignment"]
+    if assignment["model_id"] is None:
+        raise PolicyError(f"routing selected no model: {decision['refusal']}")
     model_id = assignment["model_id"]
+    adaptive = policy == "adaptive" and assignment["resolved_role"] == "implementer"
+    if adaptive:
+        allow_recovery = False
+        if effort is None:
+            effort = decision["effort"]
     escalations = []
     model_used = model_id
     attempts = []
 
-    def validate_model_effort(chosen_model):
+    def effort_for(chosen_model):
+        """The effort `chosen_model` dispatches at, or a refusal when it cannot take it."""
         supported = pricing.get("models", {}).get(chosen_model, {}).get(
             "supported_reasoning_efforts"
         )
-        if effort is not None and supported is not None and effort not in supported:
-            raise PolicyError(
-                f"model {chosen_model!r} does not support effort {effort!r}; valid: "
-                f"{', '.join(supported)}"
-            )
+        if effort is None or supported is None or effort in supported:
+            return effort
+        if adaptive:
+            return pricing["models"][chosen_model].get("default_reasoning_effort")
+        raise PolicyError(
+            f"model {chosen_model!r} does not support effort {effort!r}; valid: "
+            f"{', '.join(supported)}"
+        )
 
-    candidate_ladder = (
-        worker_ladder(pricing, model_id)
-        if assignment["resolved_role"] == "implementer" else []
-    )
+    if adaptive:
+        candidate_ladder = list(decision["ladder"])
+    else:
+        candidate_ladder = (
+            worker_ladder(pricing, model_id)
+            if assignment["resolved_role"] == "implementer" else []
+        )
     if max_escalations is not None:
         candidate_ladder = candidate_ladder[:max_escalations]
     preflight_models = [model_id, *candidate_ladder]
@@ -463,7 +518,7 @@ def run_task(task, pricing, runner, verify_runner, prompt=None, role="implemente
     if assignment["resolved_role"] == "implementer" and allow_recovery and recovery_allowed_by_cap:
         preflight_models.append(resolve_orchestrator(pricing))
     for candidate in preflight_models:
-        validate_model_effort(candidate)
+        effort_for(candidate)
 
     def dispatch_and_verify(chosen_model, chosen_role, dispatch_prompt, kind="initial"):
         # THE choke point: every codex dispatch passes through here, so admission asks here
@@ -473,9 +528,9 @@ def run_task(task, pricing, runner, verify_runner, prompt=None, role="implemente
             ok, reason = admission.admit(kind)
             if not ok:
                 raise _BudgetRefused(kind, reason)
-        validate_model_effort(chosen_model)
+        used_effort = effort_for(chosen_model)
         argv = build_dispatch(
-            codex_bin, chosen_model, dispatch_prompt, effort=effort, extra_args=extra_args
+            codex_bin, chosen_model, dispatch_prompt, effort=used_effort, extra_args=extra_args
         )
         # Recorded before and after every dispatch (step 16), so the ledger knows a call was
         # made even when the process never reports back; `lifecycle=None` records nothing.
@@ -531,8 +586,21 @@ def run_task(task, pricing, runner, verify_runner, prompt=None, role="implemente
             "result": attempt_result,
             "failure_class": failure_class,
             "failure_digest": " ".join((verify_output or "").split())[-500:],
+            "effort": used_effort,
         })
         return effective_rc, verify_output
+
+    def stops_ladder(output):
+        """Classify the last attempt's dispatch failure; True when a pricier rung would
+        fail the same way. Records the class on the attempt either way."""
+        last = attempts[-1]
+        if last["result"] != "dispatch-failed":
+            return False
+        cls = last["failure_class"] or _CONTRACT._al().classify_dispatch(
+            last["dispatch_exit_code"], output
+        )
+        last["failure_class"] = cls
+        return cls in NO_ESCALATION_CLASSES
 
     def history_context():
         # The ledger's bounded account of prior attempts, beside the immediate evidence.
@@ -545,7 +613,9 @@ def run_task(task, pricing, runner, verify_runner, prompt=None, role="implemente
     )
 
     policy_violation = attempts[-1]["result"] == "policy-mismatch"
-    if rc != 0 and assignment["resolved_role"] == "implementer" and not policy_violation:
+    stopped = stops_ladder(output)
+    if (rc != 0 and assignment["resolved_role"] == "implementer" and not policy_violation
+            and not stopped):
         ladder = candidate_ladder
         for rung in ladder:
             escalated_prompt = prompt + _evidence(verify_cmd, rc, output) + history_context()
@@ -556,12 +626,13 @@ def run_task(task, pricing, runner, verify_runner, prompt=None, role="implemente
             if attempts[-1]["result"] == "policy-mismatch":
                 policy_violation = True
                 break
-            if rc == 0:
+            if rc == 0 or stops_ladder(output):
+                stopped = rc != 0
                 break
 
     recovery = None
     if (rc != 0 and assignment["resolved_role"] == "implementer" and allow_recovery
-            and recovery_allowed_by_cap and not policy_violation):
+            and recovery_allowed_by_cap and not policy_violation and not stopped):
         evidence_kind = (
             "lower_tier_correction_failed"
             if attempts[-1]["verify_exit_code"] is None else "verify_failure"
@@ -624,6 +695,9 @@ def run_task(task, pricing, runner, verify_runner, prompt=None, role="implemente
         "recovery": recovery,
         # Step 16: the last attempt's dispatch failure class, when its process failed.
         "class": attempts[-1].get("failure_class") if attempts else None,
+        # Step 19: the routing decision this run was made under, for the record and the note.
+        "policy": policy,
+        "decision": decision,
     }
 
 
@@ -695,6 +769,16 @@ def append_note(notes_path, result, task, run_id=None, parent=None):
     # Step 16: why a dispatch failed, and whether a resume settled the task without one.
     if result.get("class"):
         block_lines.append(f"- failure-class: {result['class']}")
+    # Step 19: which routing policy chose the model, so a later reader can tell a reserved
+    # run from an adaptive one without re-deriving it from the model id.
+    decision = result.get("decision")
+    if decision:
+        block_lines.append(
+            f"- routing: policy={decision['policy']} preference={decision['preference']} "
+            f"shape={decision['shape']} assurance={'+'.join(decision['assurance'])} "
+            f"effort={decision['effort'] or 'host-default'} "
+            f"uncertainty={decision['uncertainty']}"
+        )
     if result.get("reconciled"):
         block_lines.append(
             f"- reconciled: {result['reconciled']} earlier attempt(s) settled by re-running "
@@ -1292,6 +1376,27 @@ def cmd_run(args):
             )
             sys.exit(2)
 
+    # ROUTING POLICY (step 19): the command line outranks PLAN.md's `routing:` line, and
+    # neither given means the reserved default. Checked here so an unknown word stops the run
+    # before anything is dispatched or written.
+    plan_text = (kit / "PLAN.md").read_text() if (kit / "PLAN.md").exists() else ""
+    plan_routing = parse_plan_routing(plan_text) or {}
+    policy = args.policy or plan_routing.get("policy") or DEFAULT_POLICY
+    preference = args.preference or plan_routing.get("preference") or DEFAULT_PREFERENCE
+    profile = args.profile or plan_routing.get("profile")
+    for value, allowed, what in ((policy, POLICIES, "routing policy"),
+                                 (preference, PREFERENCES, "routing preference")):
+        if value not in allowed:
+            print(f"unknown {what} {value!r}; valid: {', '.join(allowed)}", file=sys.stderr)
+            sys.exit(2)
+    if profile and profile not in pricing.get("task_profiles", {}):
+        print(
+            f"unknown task profile {profile!r}; valid: "
+            f"{', '.join(sorted(pricing.get('task_profiles', {})))}",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+
     extra_args = tuple(args.extra_arg or ())
     preamble = load_preamble(args.role, REPO_ROOT)
     prompt = preamble + "\n\n---\n\n" + task["brief"]
@@ -1303,17 +1408,36 @@ def cmd_run(args):
     id_preamble = build_id_preamble(kit=slug, run_id=run_id, task_id=task["id"])
     if id_preamble:
         prompt = f"{id_preamble}\n\n{prompt}"
-    assignment = resolve_assignment(pricing, task["model"], role="implementer")
+    # The decision a preview shows is made from the task alone; the real run below remakes it
+    # once the ledger can say how many attempts a dead run left, because that raises the floor.
+    request = request_for(task, role="implementer", effort=args.effort, profile=profile,
+                          in_kit=True, pricing=pricing)
+    decision = route(pricing, request, policy=policy, preference=preference)
+    if decision["model"] is None:
+        print(explain_routing(decision), file=sys.stderr)
+        sys.exit(2)
+    assignment = decision["assignment"]
     model_id = assignment["model_id"]
+    preview_effort = args.effort if args.effort is not None else (
+        decision["effort"] if policy == "adaptive" else None
+    )
 
     if args.dry_run:
         argv = build_dispatch(
-            args.codex_bin, model_id, prompt, effort=args.effort, extra_args=extra_args
+            args.codex_bin, model_id, prompt, effort=preview_effort, extra_args=extra_args
         )
         print(f"task: {task['id']}")
         print(f"policy: role={assignment['resolved_role']} planned={task['model'] or 'unpinned'} "
               f"dispatched={model_id} migration={assignment['migration'] or 'none'}")
-        print(f"orchestrator: {resolve_orchestrator(pricing)} (reserved recovery target)")
+        if policy == "reserved":
+            print(f"orchestrator: {resolve_orchestrator(pricing)} (reserved recovery target)")
+        else:
+            print(
+                f"orchestrator: none reserved under the adaptive policy (the frontier is an "
+                f"ordinary rung); acceptance model: "
+                f"{request['acceptance_model'] or 'unavailable'}"
+            )
+        print(explain_routing(decision))
         print(f"dispatch: {shlex.join(argv)}")
         print(f"verify: {task['verify']}")
         return
@@ -1395,6 +1519,25 @@ def cmd_run(args):
             lifecycle.end("budget-stop", reason=f"{exhausted_key}={cap} reached")
             sys.exit(1)
 
+    # ROUTING, remade with what only the ledger knows (step 19): attempts a dead run left
+    # behind raise the floor, and admission is asked before the choice rather than after it.
+    # The decision printed here is the one `run_task` runs under.
+    budget_state = None
+    if admission is not None:
+        ok, reason = admission.check("initial")
+        budget_state = {"ok": ok, "reason": reason}
+    request = request_for(
+        task, role="implementer", effort=args.effort, profile=profile,
+        prior_failures=len(begin_info.get("unprojected") or []), in_kit=True,
+        budget=budget_state, pricing=pricing,
+    )
+    decision = route(pricing, request, policy=policy, preference=preference)
+    if decision["model"] is None:
+        print(explain_routing(decision), file=sys.stderr)
+        lifecycle.end("routing-refused", reason=decision["refusal"] or "")
+        sys.exit(2)
+    print(explain_routing(decision), file=sys.stderr)
+
     # From a FRESH read, replaced atomically (step 16): the in-memory `text` is a snapshot.
     text, _previous = project_status(tasks_path, task["id"], "in-progress")
 
@@ -1432,6 +1575,7 @@ def cmd_run(args):
                 codex_bin=args.codex_bin, effort=args.effort, extra_args=extra_args,
                 admission=admission, consult=bool(args.parent),
                 lifecycle=lifecycle, resume=(recon["mode"] == "retry"),
+                policy=policy, preference=preference, profile=profile, decision=decision,
             )
     except _BudgetRefused as refusal:
         # Refused MID-RUN, after earlier operations in this same invocation spent their
@@ -1611,12 +1755,25 @@ def cmd_prepare(args):
             "interactive prepare cannot unlock recovery from caller-supplied evidence; "
             "use kit run so the driver observes and records the failed attempts"
         )
-    evidence = json.loads(args.evidence_json) if args.evidence_json else None
-    assignment = resolve_assignment(
-        pricing, planned_model=args.model, role=args.role, evidence=evidence
-    )
-    print(json.dumps({**assignment, "pool_mode": "reserved",
-                      "actual_model": "unknown", "actual_role": "unknown"}, indent=2))
+    # Parsed for the same validation as before; no non-recovery role reads it.
+    json.loads(args.evidence_json) if args.evidence_json else None
+    policy = args.policy or DEFAULT_POLICY
+    preference = args.preference or DEFAULT_PREFERENCE
+    task = {"id": None, "model": args.model, "brief": "", "evidence": None}
+    request = request_for(task, role=args.role, effort=args.effort, profile=args.profile,
+                          in_kit=False, pricing=pricing)
+    decision = route(pricing, request, policy=policy, preference=preference)
+    if decision["model"] is None:
+        # Nothing is dispatchable under this request; say why and exit as `run` would.
+        print(explain_routing(decision), file=sys.stderr)
+        sys.exit(2)
+    if args.explain:
+        print(explain_routing(decision))
+        return
+    assignment = decision["assignment"]
+    print(json.dumps({**assignment, "pool_mode": "reserved" if policy == "reserved" else policy,
+                      "actual_model": "unknown", "actual_role": "unknown",
+                      "decision": decision}, indent=2))
 
 
 def build_parser():
@@ -1644,6 +1801,19 @@ def build_parser():
     p_run.add_argument("--codex-bin", default="codex", help="Codex CLI binary to invoke")
     p_run.add_argument("--effort", default=None,
                        help="reasoning effort (validated against pricing knobs at run time)")
+    p_run.add_argument("--policy", default=None, choices=POLICIES,
+                       help="routing policy (step 19). `reserved` is today's behaviour and the "
+                            "default: workers implement, Astra is held for acceptance and "
+                            "evidence-gated recovery. `adaptive` may send a hard task straight "
+                            "to an eligible capable model, the frontier included. Outranks a "
+                            "PLAN.md `routing:` line.")
+    p_run.add_argument("--preference", default=None, choices=PREFERENCES,
+                       help="what the routing policy weighs among eligible models (default: "
+                            "balanced). Never overrides a pin, availability, permission, "
+                            "effort support, or a budget.")
+    p_run.add_argument("--profile", default=None,
+                       help="task profile (XS..XL from the pricing file) for the decision's "
+                            "est. API-equivalent workflow figure; omitted means unpriced")
     p_run.add_argument("--max-escalations", type=int, default=None,
                        help="cap the number of escalation rungs")
     p_run.add_argument("--extra-arg", action="append",
@@ -1707,6 +1877,16 @@ def build_parser():
     p_prepare.add_argument("--model", default=None, help="planned tier or model id")
     p_prepare.add_argument("--evidence-json", default=None,
                            help="structured recovery evidence JSON (recovery role only)")
+    p_prepare.add_argument("--policy", default=None, choices=POLICIES,
+                           help="routing policy (step 19); default reserved")
+    p_prepare.add_argument("--preference", default=None, choices=PREFERENCES,
+                           help="what the policy weighs among eligible models")
+    p_prepare.add_argument("--profile", default=None,
+                           help="task profile for the est. workflow figure; omitted = unpriced")
+    p_prepare.add_argument("--effort", default=None,
+                           help="explicit reasoning effort; refused when the model cannot take it")
+    p_prepare.add_argument("--explain", action="store_true",
+                           help="print the decision as prose instead of JSON")
     p_prepare.set_defaults(func=cmd_prepare)
 
     return ap

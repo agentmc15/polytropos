@@ -1,4 +1,4 @@
-# Handoff — roadmap implementation, steps 01–18
+# Handoff — roadmap implementation, steps 01–19
 
 **As of 2026-09-07.** Steps 01–15 are committed as a single change set on top of `fb40925`:
 66 files modified, 17 added, +5,485 / −1,860 lines. Full suite green: **3,727 tests, OK
@@ -33,10 +33,11 @@ user instructions outrank rule files; delegate in parallel by default).
 
 ## Where things stand
 
-**Steps 01–18 are done.** That is all of Phase A (input/artifact/acceptance boundaries), all of
-Phase B (the execution boundary and the P0/P1 security remediation), and all of Phase C (the
-shared runtime: durable attempts, cross-harness evidence, the validated execution DAG). Steps
-16, 17 and 18 landed on 2026-09-12 on branch `harden/roadmap-steps-16-26`, one commit each.
+**Steps 01–19 are done.** That is all of Phase A (input/artifact/acceptance boundaries), all of
+Phase B (the execution boundary and the P0/P1 security remediation), all of Phase C (the
+shared runtime: durable attempts, cross-harness evidence, the validated execution DAG), and
+the first step of Phase D (named routing policies). Steps 16–19 landed on 2026-09-12 on
+branch `harden/roadmap-steps-16-26`, one commit each.
 
 | Step | What it closed |
 |---|---|
@@ -58,6 +59,7 @@ shared runtime: durable attempts, cross-harness evidence, the validated executio
 | 16 | Durable attempts (`bin/attempt_ledger.py`): recorded before/after every dispatch, resume without replay, budget carried across runs, failure classes, real progress detection, task claims, fresh-read projection |
 | 17 | Cross-harness evidence (`bin/attempt_history.py` + `bin/model_registry.py`): one record per attempt over ledger + NOTES.md + role-use, unknowns kept, history never collapsed, failed consults keep lineage, cost per basis; reviews recorded on all three drivers; concrete ids resolve to tiers; telemetry `attempts` source |
 | 18 | Validated execution DAG (`kit_contract.validate_graph` / `graph_state` / `readiness`): duplicate ids, self and unknown dependencies, cycles refuse with zero dispatches and zero writes on all three drivers; one readiness rule with `fresh | retry | resume | rerun` modes; automatic selection refuses while a task is in-progress; the task state machine (`TRANSITIONS`) checked at every status write; worker edits to a task block detected as `plan.drift`; `status` ends with the graph verdict; `kit_contract.py graph` / `demo` |
+| 19 | Named routing policies (`bin/routing_policy.py` + `codex_policy.route`): `reserved` is the legacy behaviour under its own name and the default, `adaptive` is opt-in (`--policy`, PLAN.md `routing:`); shape, model, initial effort, and assurance decided separately; hard filters before any preference; pins and unsupported efforts refused, never substituted; an unavailable orchestrator disables nothing a worker path does not need; auth/config/permission/infrastructure dispatch failures stop the ladder on Codex; every decision explainable with its alternatives and an `est.` workflow figure; the same contract routes Claude/Copilot-shaped rosters by rank |
 
 ### New modules, and what each is the *one place* for
 
@@ -85,26 +87,64 @@ shared runtime: durable attempts, cross-harness evidence, the validated executio
   and Codex `role-use.jsonl`; unknowns kept and counted; latest state a separate projection;
   lineage including failed consults; cost per basis. Captured daily as telemetry's `attempts`
   source.
+- `bin/routing_policy.py` — the harness-neutral routing decision: workflow shape, model,
+  initial effort, and assurance as four separate answers, under a named policy (`reserved` |
+  `adaptive`) and a preference that never outranks a hard filter. Compares tier RANKS in each
+  harness's own order, never tier names; never reads a pricing file itself (each harness
+  builds a catalog from its own). `codex_policy.catalog` / `request_for` / `route` are the
+  Codex side; the Codex driver is the only one dispatching under it so far.
 
 ---
 
-## Next: step 19 — route workflow, model, effort, and assurance independently
+## Next: step 20 — make roles portable, assurance-driven, and consistently executed
 
-Codex first (`bin/codex_policy.py`, `data/pricing.codex.json`), then the same logical contract
-exposed to the other adapters. The reserved-orchestrator behaviour (Astra held back for
-orchestration and recovery; escalation only after a failed cheaper attempt) becomes a NAMED
-policy that stays the default; an opt-in adaptive policy may pick an eligible capable model for
-direct implementation without a failed cheaper attempt first. Workflow shape (direct /
-independently reviewed / task graph), model, initial effort, and required assurance are
-represented separately; preference never overrides availability, permissions, explicit pins,
-or budgets; decisions are explainable without invented success probabilities. Installed
-defaults are not changed silently. Consumes step 18's graph states for the "task graph" shape
-and step 17's registry for model identity. Exit gate: legacy routing unchanged; direct routing
-works with the orchestrator unavailable; pins, privacy, capabilities, permissions, budgets
-always prevail.
+Across the shared role policy, the role templates (`skills/architect/references/roles`), the
+execute skills, the drivers' role dispatches, and the scorecard. Separate a RESPONSIBILITY
+from a mandatory extra agent: direct implementation with deterministic checks, implementation
+plus independent review, and explicitly requested extended roles are three workflows with
+explicit assurance and role contracts (scope, required artifacts, allowed capabilities, result
+schema). Roles are selected from task risk and a stated purpose, never spawned because a name
+exists; a role a headless adapter cannot execute is detected BEFORE spending, and the run
+stops or discloses a supported alternative. Consumer templates lose hardcoded polytropos
+paths and development-only constraints. Every role dispatch is recorded with its phase/task
+scope; marginal catches stay labelled order-dependent. Fixtures for direct/reviewed/extended
+workflows and a test plan comparing the baseline trio against simpler workflows, with no live
+spend. Step 19's `shape` (`direct` | `reviewed` | `graph`) and `assurance` vocabulary is the
+seam this step should consume rather than re-derive; independent review stays binding when
+requested even where the adaptive policy would prefer fewer agents. Exit gate: explicit
+assurance and role contracts per workflow; adapters execute the requested supported roster
+or reject/disclose the gap before dispatch.
 
-Remaining after that: **20–24** roles / graph context / skills / the Cursor adapter /
-scheduling, **25–26** evaluation and the release matrix.
+Remaining after that: **21–24** graph context / skills / the Cursor adapter / scheduling,
+**25–26** evaluation and the release matrix.
+
+### Step 19's own deliberate limits
+
+- **Only the Codex driver dispatches under a routing decision.** `bin/routing_policy.py`
+  routes a Claude- or Copilot-shaped catalog by rank (tested, and `routing_policy.py decide
+  --harness claude` previews it), but `claude_execute` and `copilot_execute` still resolve
+  models exactly as before. The roadmap said "Codex first"; wiring the other two is a
+  behaviour change to their installed defaults and was not taken silently.
+- **Nothing in the capability registry is verified, so the shape filter treats `unknown` as
+  offered-and-named-unverified**, not as unsupported. Reading `unknown` strictly would exclude
+  the default `direct` path too, since `dispatch` itself is unverified (nothing is run live
+  from this repository). `unsupported` rows do drop a shape to a simpler one.
+- **`latency` is a preference the catalog has no data for.** It routes as `balanced` and the
+  decision says so; adding latency data is a pricing-file change, not a router change.
+- **The estimate needs a profile.** Without `--profile`/`routing: profile=`, every stage reads
+  `unpriced`; a size assumption is not invented. With one, the figure is `codex_pricing`'s
+  own `usd_api`, labelled est. and API-equivalent — never a bill.
+- **`unknown`-class dispatch failures still climb the ladder on Codex** (a bare non-zero exit
+  with no recognisable cause), because two existing tests and the `lower_tier_correction_failed`
+  recovery kind depend on that path. Only `auth` / `config` / `permission` / `infrastructure`
+  stop it. Claude's driver stops on ANY failed dispatch; the two are not yet the same rule.
+- **Adaptive removes the separate recovery step** (the frontier is an ordinary rung), so an
+  adaptive run never writes `recovery evidence` lines to NOTES.md. The ledger still records
+  every attempt.
+- **`bench_routing` roles card is unchanged** and still reflects the reserved eligibility;
+  it does not take a `--policy`.
+- **`prepare` output grew two keys** (`policy` inside the assignment, `decision` beside it);
+  no consumer in the repo read the old keys by set.
 
 ### Step 18's own deliberate limits
 
@@ -316,8 +356,10 @@ python3 bin/harness_adapter.py                 # what each harness can actually 
 python3 bin/attempt_ledger.py demo             # crash / resume / progress walkthrough, temp dir only
 python3 bin/attempt_history.py demo            # the cross-harness join, temp dir only
 python3 bin/kit_contract.py demo               # a diamond DAG walked, an interrupted kit, four invalid graphs
+python3 bin/routing_policy.py demo             # both routing policies over two synthetic rosters
+python3 bin/codex_execute.py prepare --model strong --policy adaptive --explain   # the real roster, no dispatch
 ```
 
-Then read step 19 in the roadmap and continue. The pattern that has worked: verify the step's
+Then read step 20 in the roadmap and continue. The pattern that has worked: verify the step's
 claims against HEAD first, implement, run the affected suites, then the full suite, then update
 `SECURITY.md` / `CLAUDE.md` / the doc mirrors together.

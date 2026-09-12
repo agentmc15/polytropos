@@ -27,7 +27,7 @@ and a Copilot display word never stands in for a Codex flag value.
 
 | Harness | Mechanism | Status |
 |---|---|---|
-| Codex | `-c model_reasoning_effort=<level>` on `codex exec`, and `codex_execute.py run --effort <level>` (validated against `knobs.reasoning_efforts` at run time — an unknown level errors before dispatch) | Confirmed |
+| Codex | `-c model_reasoning_effort=<level>` on `codex exec`, and `codex_execute.py run --effort <level>` (validated against `knobs.reasoning_efforts` at run time — an unknown level errors before dispatch; under the opt-in `adaptive` routing policy an omitted effort is the model's own default, raised one step for a difficult task when the model reports that step, and a rung that cannot take the chosen level runs at its own default with the attempt saying so) | Confirmed |
 | Copilot | Interactive `/model` picker; ←/→ arrow keys adjust the "Reasoning" column on the selected row. Per-model: rows showing `—` (Auto, Claude Sonnet 4.5, Claude Haiku 4.5, Claude Opus 4.5, Kimi K2.7 Code) have no dial; every other row defaults to "Medium" | Interactive mechanism confirmed; headless surface UNCONFIRMED — no `copilot -p` flag or settings key is known to exist |
 | Claude Code | — | Out of scope here; effort is managed in-model, not by a CLI dial |
 

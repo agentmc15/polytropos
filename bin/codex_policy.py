@@ -243,3 +243,183 @@ def worker_ladder(pricing, model_id):
             if "no available Codex worker" not in str(exc):
                 raise
     return ladder
+
+
+# ---- named routing policies (step 19) -------------------------------------------------------------
+#
+# Everything above is the RESERVED policy: Astra held back for orchestration, acceptance, and
+# evidence-gated recovery; workers for implementation; a frontier plan migrated down; and --
+# measured before this section existed -- every worker assignment coupled to the orchestrator
+# resolving, so `resolve_assignment(pricing, "mid")` raised "execution is disabled" when Astra
+# was marked unavailable, though the mid worker needed nothing from Astra. That behaviour keeps
+# its name and stays the default. `route` puts a second, opt-in policy beside it, ADAPTIVE,
+# which reads the roster directly (never through `resolve_orchestrator`) and may send a hard
+# task straight to an eligible capable model, the frontier included, without a failed cheaper
+# attempt first. The decision shape, filters, and explanation live in `bin/routing_policy.py`
+# and are harness-neutral; this section is the Codex catalog and the Codex request.
+
+_ROUTING = None
+_CAPABILITIES = None
+_PRICING_ENGINE = None
+
+
+def _sibling(name):
+    import importlib.util
+    from pathlib import Path
+    path = Path(__file__).resolve().with_name(f"{name}.py")
+    spec = importlib.util.spec_from_file_location(f"polytropos_{name}", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _rp():
+    global _ROUTING
+    if _ROUTING is None:
+        _ROUTING = _sibling("routing_policy")
+    return _ROUTING
+
+
+def catalog(pricing, estimator=None):
+    """The Codex roster as harness-neutral catalog rows, straight from the pricing dict.
+
+    Never calls `resolve_orchestrator`: the reserved model is a ROW with `reserved=True`, and
+    whether that row may implement is the policy's decision, not the catalog's. Cost-only and
+    non-routing entries are present and marked not routable, so an explanation can name them.
+    """
+    policy = pricing.get("orchestration_policy") or {}
+    return _rp().catalog_from_pricing(
+        pricing, "codex", TIER_ORDER, reserved_model=policy.get("orchestrator_model"),
+        estimator=estimator,
+    )
+
+
+def default_estimator(pricing, profile):
+    """The pricing engine's own per-model estimate for `profile`, or None with no profile.
+
+    `codex_pricing.est_cost` is the ONE source of Codex dollar figures; this only adapts its
+    return shape. A subscription run has no bill, so the figure is API-equivalent and the
+    decision labels it so. No profile, no estimate: a size assumption is not something to
+    invent silently.
+    """
+    if not profile:
+        return None
+    global _PRICING_ENGINE
+    if _PRICING_ENGINE is None:
+        _PRICING_ENGINE = _sibling("codex_pricing")
+    if profile not in (pricing.get("task_profiles") or {}):
+        raise PolicyError(
+            f"unknown task profile {profile!r}; valid: {sorted(pricing.get('task_profiles') or {})}"
+        )
+
+    def estimate(model_id):
+        cost = _PRICING_ENGINE.est_cost(pricing, profile, model_id)
+        return {"api_equivalent_usd": cost["usd_api"], "profile": profile}
+
+    return estimate
+
+
+def capability_states():
+    """`{name: effective state}` for the Codex adapter from the shared registry, or `{}`."""
+    global _CAPABILITIES
+    if _CAPABILITIES is None:
+        try:
+            ha = _sibling("harness_adapter")
+            rows = ha.registry_capabilities("codex")
+            _CAPABILITIES = {name: ha.effective(row) for name, row in rows.items()}
+        except (OSError, ValueError, KeyError, AttributeError):
+            _CAPABILITIES = {}
+    return dict(_CAPABILITIES)
+
+
+def _first_available(pricing, tier, exclude=()):
+    for model_id, info in pricing.get("models", {}).items():
+        if model_id not in exclude and info.get("tier") == tier and _available(info):
+            return model_id
+    return None
+
+
+def request_for(task, role="implementer", effort=None, profile=None, prior_failures=0,
+                in_kit=True, budget=None, shape=None, pricing=None):
+    """The routing request for one task: its signals, plus what the Codex catalog needs.
+
+    `pricing` fills the harness facts (tier order, default worker tier, the review and
+    acceptance models when available). Nothing here is a decision; it is what the decision
+    is made from, and it is recorded beside the decision so the explanation is complete.
+    """
+    policy = (pricing or {}).get("orchestration_policy") or {}
+    orchestrator = policy.get("orchestrator_model")
+    orch_info = (pricing or {}).get("models", {}).get(orchestrator) if orchestrator else None
+    return {
+        "harness": "codex",
+        "task_id": task.get("id"),
+        "planned": task.get("model"),
+        "role": role,
+        "effort": effort,
+        "profile": profile,
+        "prior_failures": int(prior_failures or 0),
+        "evidence": task.get("evidence"),
+        "brief_chars": len(task.get("brief") or ""),
+        "excludes": [],
+        "budget": budget,
+        "capabilities": capability_states(),
+        "tiers": TIER_ORDER,
+        "default_tier": policy.get("default_worker_tier"),
+        "in_kit": bool(in_kit),
+        "shape": shape,
+        "review_model": _first_available(pricing or {}, policy.get("verification_tier"),
+                                         exclude=(orchestrator,) if orchestrator else ()),
+        "acceptance_model": orchestrator if (orch_info and _available(orch_info)) else None,
+    }
+
+
+def route(pricing, request, policy=None, preference=None, estimator=None):
+    """Route one request under a named policy -> a `routing_policy` decision.
+
+    `reserved` (the default) keeps every existing rule by delegating the model to
+    `resolve_assignment` and the ladder to `worker_ladder`, then records and explains that
+    pick; it still fails closed when the orchestrator is unavailable, exactly as before.
+    `adaptive` routes from the catalog: hard filters, then the preference; the reserved row is
+    an ordinary candidate; an unavailable orchestrator disables nothing a worker path does not
+    need. Roles other than implementer route as reserved under both policies -- verification
+    and acceptance assignments are the policy's, not the task's.
+    """
+    rp = _rp()
+    policy = policy or rp.DEFAULT_POLICY
+    preference = preference or rp.DEFAULT_PREFERENCE
+    if policy not in rp.POLICIES:
+        raise PolicyError(f"unknown routing policy {policy!r}; valid: {', '.join(rp.POLICIES)}")
+    if preference not in rp.PREFERENCES:
+        raise PolicyError(
+            f"unknown routing preference {preference!r}; valid: {', '.join(rp.PREFERENCES)}"
+        )
+    if estimator is None and request.get("profile"):
+        estimator = default_estimator(pricing, request["profile"])
+    rows = catalog(pricing, estimator=estimator)
+    role = request.get("role", "implementer")
+    if policy == "reserved" or role != "implementer":
+        assignment = resolve_assignment(pricing, request.get("planned"), role=role)
+        ladder = (worker_ladder(pricing, assignment["model_id"])
+                  if assignment["resolved_role"] == "implementer" else [])
+        decision = rp.decide(rows, request, policy="reserved", preference=preference,
+                             chosen=assignment["model_id"], ladder=ladder)
+        decision["assignment"] = {**assignment, "policy": "reserved"}
+        if policy != "reserved":
+            decision["shape_notes"] = list(decision["shape_notes"]) + [
+                f"role {role} routes as reserved under every policy"
+            ]
+        return decision
+    try:
+        decision = rp.decide(rows, request, policy="adaptive", preference=preference)
+    except rp.RoutingError as exc:
+        raise PolicyError(str(exc)) from exc
+    decision["assignment"] = {
+        "requested": request.get("planned"),
+        "planned": request.get("planned"),
+        "resolved_role": "implementer",
+        "model_id": decision["model"],
+        "migration": None,
+        "recovery_evidence": None,
+        "policy": "adaptive",
+    }
+    return decision

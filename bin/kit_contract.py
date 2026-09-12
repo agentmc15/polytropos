@@ -771,6 +771,36 @@ def parse_plan_budget(text):
     budget = dict(re.findall(rf"({keys})=(\d+)", m.group(1)))
     return {k: int(v) for k, v in budget.items()} or None
 
+
+# ---- PLAN.md routing line (step 19) ----------------------------------------------------------------
+#
+# `routing: policy=adaptive preference=cost profile=M` is an OPTIONAL PLAN.md line family in
+# the same shape as `budget:` -- never a task field, so the TASKS.md contract is untouched.
+# It names which routing policy a kit opts into; a driver's own `--policy` flag outranks it,
+# and neither being given means the harness's default, which is the reserved policy on Codex.
+# Values are words; which words are valid is `bin/routing_policy.py`'s vocabulary, checked by
+# the driver at run time so an unknown word stops the run before anything is dispatched.
+PLAN_ROUTING_RE = re.compile(r"^\s*routing:\s*(.+)$", re.MULTILINE)
+
+PLAN_ROUTING_KEYS = ("policy", "preference", "profile")
+
+
+def parse_plan_routing(text):
+    """Read the kit's optional PLAN.md `routing:` line -> dict or `None`.
+
+    Any subset of `PLAN_ROUTING_KEYS` as `key=word`; no line, no recognised key, or no
+    PLAN.md -> `None` (the harness default, unchanged). Unrecognised tokens are ignored, as
+    the budget line's are.
+    """
+    if not text:
+        return None
+    m = PLAN_ROUTING_RE.search(text)
+    if not m:
+        return None
+    keys = "|".join(re.escape(k) for k in PLAN_ROUTING_KEYS)
+    found = dict(re.findall(rf"({keys})=([A-Za-z0-9_.-]+)", m.group(1)))
+    return found or None
+
 def count_plan_budget_usage(notes_text):
     """Count dispatches/escalations/consults already recorded in a kit's NOTES.md ledger.
 

@@ -48,8 +48,7 @@ changelog.
   literal absolute paths — that env var doesn't exist outside plugin context.
 - **One kit contract, one place: `bin/kit_contract.py`.** Task parsing, graph validation,
   readiness, status transitions, budget admission, run ids, and the outcome vocabulary are
-  defined there ONCE and re-exported by the drivers. Never add a second copy to a driver — the
-  three had 27 shared names, and extracting them surfaced three divergences nobody had noticed.
+  defined there ONCE and re-exported by the drivers. Never add a second copy to a driver;
   `tests/test_kit_contract.py` fails if any implementation reappears in two drivers. What stays
   per-harness is what must: dispatch argv, the host's own loop, its escalation ladder, and its
   pricing file. A capability is only relied on when `primitives/harness-capabilities.json`
@@ -157,6 +156,7 @@ echo '{"model":{"id":"claude-fable-5","display_name":"Fable 5"},"cost":{"total_c
 # per-harness pricing and usage
 python3 bin/copilot_pricing.py est M claude-fable-5  # Copilot estimate (USD + AIC); also `knobs`, `prefs`
 python3 bin/codex_pricing.py models --profile M      # Codex roster + burn index vs cheapest; also `knobs`
+python3 bin/routing_policy.py demo                   # shape/model/effort/assurance under both policies
 python3 bin/copilot_usage.py --days 30               # reads ~/.copilot read-only
 python3 bin/codex_usage.py --days 30                 # reads ~/.codex read-only; honest unpriced fallback
 python3 bin/copilot_ralph.py --demo                  # Ralph goal-loop mock (no model, no network, no AIC)
