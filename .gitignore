@@ -15,6 +15,10 @@ __pycache__/
 # repo-bench measurement store (run artifacts, sandboxes, dollar data — never committed)
 /benchruns/
 
+# attempt ledger (per-run dispatch/verify records with bounded output tails — never committed;
+# its default home is the per-user data root, this entry covers a legacy in-tree store only)
+/attempts/
+
 # conversation summaries (transcript-derived: home-dir paths, session ids — never committed)
 /conv-summaries/
 

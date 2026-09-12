@@ -221,6 +221,13 @@ plan_budget_exhausted = _CONTRACT.plan_budget_exhausted
 recorded_outcome_result = _CONTRACT.recorded_outcome_result
 select_task = _CONTRACT.select_task
 set_status = _CONTRACT.set_status
+# The attempt lifecycle (step 16) -- claim, resume, record, project -- is the contract's.
+start_task_lifecycle = _CONTRACT.start_task_lifecycle
+reconcile_task = _CONTRACT.reconcile_task
+finish_task_projection = _CONTRACT.finish_task_projection
+combined_usage = _CONTRACT.combined_usage
+append_block = _CONTRACT.append_block
+project_status = _CONTRACT.project_status
 
 DEFAULT_ESCALATION_START = "sonnet"  # matches journal_summarize.DEFAULT_START_TIER
 
@@ -508,13 +515,17 @@ def main(argv=None):
 
 
 
-def _dispatch_failure(task, model_used, escalations, dispatch_rc, dispatch_out):
+def _dispatch_failure(task, model_used, escalations, dispatch_rc, dispatch_out, cls=None):
     """The record for a task whose MODEL PROCESS failed.
 
     `status` is blocked and `verify_rc` is None -- not zero, and not the verdict of a check
     that ran against a tree this attempt never touched. Dispatch and verification are separate
     facts, and the whole point of this record is that it does not let one stand in for the
     other: a failed process followed by an already-passing check used to read as `done`.
+
+    `cls` (step 16) names WHY the process failed -- `auth`, `config`, `infrastructure`,
+    `permission`, or `unknown` -- so the NOTES.md block can say "logged out" rather than
+    leaving a reader to infer it from an exit code.
     """
     evidence = " ".join((dispatch_out or "").split())[-DISPATCH_EVIDENCE_LIMIT:]
     return {
@@ -525,13 +536,15 @@ def _dispatch_failure(task, model_used, escalations, dispatch_rc, dispatch_out):
         "verify_rc": None,
         "dispatch_rc": dispatch_rc,
         "failure": "dispatch",
+        "class": cls,
         "dispatch_evidence": evidence or "(no output)",
     }
 
 
 def run_task(task, pricing, runner, verify_runner, prompt=None, role="implementer",
              permissions=None, admission=None, consult=False,
-             max_escalations=None, claude_bin="claude", extra_args=()):
+             max_escalations=None, claude_bin="claude", extra_args=(),
+             lifecycle=None, resume=False):
     """Orchestrate one task: dispatch, verify, escalate up the tier ladder on failure.
 
     Ported verbatim in shape from `codex_execute.run_task` (PLAN D2/T5's pinned template) --
@@ -561,6 +574,13 @@ def run_task(task, pricing, runner, verify_runner, prompt=None, role="implemente
     Returns {"id", "status", "model_used", "escalations", "verify_rc"}. This function does
     NOT call `kit_verify_hook.py` -- `cmd_run` wraps precheck/record around it (module
     docstring, "Verify integration").
+
+    `lifecycle` (step 16) is the task's `kit_contract.TaskRun`: every dispatch is recorded
+    before it is made and after it returns, every verify against the attempt it judged, and
+    each escalation rung's prompt carries the ledger's bounded account of prior attempts
+    beside the immediate verify evidence. `None` (a direct caller, every pre-16 test) records
+    nothing and behaves exactly as before. `resume=True` makes the first operation a `retry`
+    rather than an `initial`, because attempts already exist and the caps must count it so.
     """
     if prompt is None:
         prompt = task["brief"]
@@ -569,21 +589,27 @@ def run_task(task, pricing, runner, verify_runner, prompt=None, role="implemente
     escalations = []
     model_used = model_id
 
-    initial_kind = "consult" if consult else "initial"
+    initial_kind = "consult" if consult else ("retry" if resume else "initial")
     if admission is not None:
         ok, reason = admission.admit(initial_kind)
         if not ok:
             return _budget_stop(task, model_used, escalations, initial_kind, reason)
     argv = build_dispatch(claude_bin, model_id, prompt, extra_args=extra_args,
                           permissions=permissions)
+    attempt = (lifecycle.attempt_started(initial_kind, model_id, prompt, verify_cmd)
+               if lifecycle else None)
     dispatch_rc, dispatch_out = dispatch_status(runner(argv))
+    cls = lifecycle.attempt_finished(attempt, dispatch_rc, dispatch_out) if lifecycle else None
     if dispatch_rc is not None and dispatch_rc != 0:
         # A FAILED dispatch is not an implementation failure, so it does not climb the ladder:
         # a crashed, unauthenticated or permission-denied process fails the same way on a more
         # expensive model, and the verify command's verdict describes the tree as it was left,
         # not work this attempt did. Stop, and say which fact stopped it.
-        return _dispatch_failure(task, model_used, escalations, dispatch_rc, dispatch_out)
+        return _dispatch_failure(task, model_used, escalations, dispatch_rc, dispatch_out,
+                                 cls=cls)
     rc, output = verify_runner(verify_cmd)
+    if lifecycle:
+        lifecycle.verify_finished(attempt, rc, output)
 
     if rc != 0:
         ladder = escalation_ladder(pricing, model_id)
@@ -597,16 +623,25 @@ def run_task(task, pricing, runner, verify_runner, prompt=None, role="implemente
                 if not ok:
                     return _budget_stop(task, model_used, escalations, "escalation", reason)
             escalated_prompt = prompt + _evidence(verify_cmd, rc, output)
+            if lifecycle:
+                escalated_prompt += lifecycle.retry_context(verify_cmd, include_tail=False)
             # The SAME profile as the initial attempt: an escalation is a bigger model, not
             # a wider grant. Permissions that change on retry are permissions nobody declared.
             argv = build_dispatch(claude_bin, rung, escalated_prompt, extra_args=extra_args,
                                   permissions=permissions)
+            attempt = (lifecycle.attempt_started("escalation", rung, escalated_prompt,
+                                                 verify_cmd) if lifecycle else None)
             dispatch_rc, dispatch_out = dispatch_status(runner(argv))
+            cls = (lifecycle.attempt_finished(attempt, dispatch_rc, dispatch_out)
+                   if lifecycle else None)
             escalations.append(rung)
             model_used = rung
             if dispatch_rc is not None and dispatch_rc != 0:
-                return _dispatch_failure(task, model_used, escalations, dispatch_rc, dispatch_out)
+                return _dispatch_failure(task, model_used, escalations, dispatch_rc,
+                                         dispatch_out, cls=cls)
             rc, output = verify_runner(verify_cmd)
+            if lifecycle:
+                lifecycle.verify_finished(attempt, rc, output)
             if rc == 0:
                 break
 
@@ -723,6 +758,14 @@ def append_note(notes_path, result, task, run_id=None, parent=None, defect_kind=
         f"- escalations: {chain}",
         f"- verify: exit {rc}",
     ]
+    # Step 16: why a dispatch failed, and whether a resume settled the task without one.
+    if result.get("class"):
+        block_lines.append(f"- failure-class: {result['class']}")
+    if result.get("reconciled"):
+        block_lines.append(
+            f"- reconciled: {result['reconciled']} earlier attempt(s) settled by re-running "
+            f"the check; nothing was re-dispatched"
+        )
     if escalations:
         pinned = task.get("model") or "claude default"
         block_lines.append(
@@ -730,7 +773,9 @@ def append_note(notes_path, result, task, run_id=None, parent=None, defect_kind=
             f"{model_used_label} — record via the lessons-loop skill."
         )
 
-    attempts = 1 + len(escalations)
+    # Every attempt since the task's last outcome line, across resumed runs (step 16); the
+    # in-process count is the fallback for a caller that ran without the ledger.
+    attempts = result.get("ledger_attempts") or (1 + len(escalations))
     outcome_model = model_used if model_used else "unpinned"
     result_word = outcome_result(result.get("status"), escalations, parent)
     line_parent = parent if result_word in PARENT_RESULTS else None
@@ -743,13 +788,7 @@ def append_note(notes_path, result, task, run_id=None, parent=None, defect_kind=
         block_lines.append("- " + build_defect_line(task_id, defect_kind))
 
     block = "\n".join(block_lines) + "\n"
-
-    existing = notes_path.read_text() if notes_path.exists() else ""
-    if existing and not existing.endswith("\n"):
-        existing += "\n"
-    separator = "\n" if existing.strip() else ""
-    notes_path.parent.mkdir(parents=True, exist_ok=True)
-    notes_path.write_text(existing + separator + block)
+    append_block(notes_path, block)
 
 
 # ---- default runners (module level, injectable everywhere) ------------------------------------
@@ -840,6 +879,13 @@ def cmd_run(args):
 
     run_id = generate_run_id()
 
+    # The attempt ledger (step 16): claim the task and close any attempt a dead run left open
+    # BEFORE anything else is decided. Exits 2 if another live run holds this task.
+    lifecycle, begin_info = start_task_lifecycle(
+        kit, task, run_id, actor="claude-code", store=args.attempt_store,
+        break_claim=args.break_claim, workspace=Path.cwd(),
+    )
+
     # PLAN.md budget dial (T9) -- checked against the kit's OWN recorded history before
     # anything is dispatched or written. `--dry-run` never reaches here (it returned above);
     # this gate only ever stops a REAL run. See the module's "PLAN.md budget dial" section.
@@ -849,7 +895,10 @@ def cmd_run(args):
     if plan_budget:
         notes_path = kit / "NOTES.md"
         notes_text = notes_path.read_text() if notes_path.exists() else ""
-        used = count_plan_budget_usage(notes_text)
+        # NOTES.md counts finished tasks; the ledger counts the attempts nothing has written
+        # an outcome line for. An interrupted ladder used to resume with a budget that had
+        # never heard of it.
+        used = combined_usage(notes_text, lifecycle.ledger)
         # The entry gate below still stops a run before it writes `in-progress`. This carries
         # the same numbers INTO the run, so every escalation rung asks again instead of the
         # ladder spending freely on one entry-time grant.
@@ -887,10 +936,11 @@ def cmd_run(args):
                     notes_path, task, run_id, exhausted_key, cap, used[exhausted_key],
                     remaining, role=args.role,
                 )
+            lifecycle.end("budget-stop", reason=f"{exhausted_key}={cap} reached")
             sys.exit(1)
 
-    text = set_status(text, task["id"], "in-progress")
-    tasks_path.write_text(text)
+    # From a FRESH read, replaced atomically (step 16): the in-memory `text` is a snapshot.
+    text, _previous = project_status(tasks_path, task["id"], "in-progress")
 
     verify_cmd = task.get("verify")
     # One confined runner for BOTH the precheck and the task's own verification: the precheck
@@ -900,17 +950,53 @@ def cmd_run(args):
     verify_runner = _ep().verify_runner(Path.cwd(), mode=args.exec_mode)
 
     vh = _load_verify_hook_module()
-    precheck = vh.run_precheck(
-        str(kit), task["id"], verify_cmd, verify_runner, evidence=task.get("evidence")
-    )
 
-    result = run_task(
-        task, pricing, default_runner, verify_runner,
-        prompt=prompt, role=args.role, permissions=permissions,
-        admission=admission, consult=bool(args.parent),
-        max_escalations=args.max_escalations,
-        claude_bin=args.claude_bin, extra_args=extra_args,
-    )
+    # RESUME (step 16). If earlier attempts of this task exist that no outcome line covers,
+    # the check runs now, because the tree is the only evidence there is of what they did. A
+    # pass settles the task without a dispatch; a failure means one more attempt, told what
+    # was tried. Nothing is replayed.
+    recon = reconcile_task(lifecycle, begin_info, verify_runner, verify_cmd)
+    if recon["mode"] == "resolved":
+        result = recon["result"]
+        precheck = {"tautological": recon["tautological"]}
+        print(
+            f"resume: task {task['id']}'s check passes on the tree that "
+            f"{result['reconciled']} earlier attempt(s) left; nothing was re-dispatched",
+            file=sys.stderr,
+        )
+        if recon["tautological"]:
+            # The first run's precheck found the command passing BEFORE any work; a pass now
+            # proves nothing, and the verdict is the one that run would have reached.
+            print(
+                f"required-evidence: task {task['id']}'s verify command already passed on the "
+                f"pre-task tree (recorded by the first run's precheck), so today's pass "
+                f"demonstrates nothing about the work. Status is blocked, NOT done.",
+                file=sys.stderr,
+            )
+    else:
+        if recon["mode"] == "retry":
+            # The precheck belongs to the FIRST attempt; the tree is no longer pre-task.
+            precheck = lifecycle.recorded_precheck() or {"tautological": False}
+            prompt = prompt + recon["context"]
+            print(
+                f"resume: task {task['id']} has earlier attempts and its check still fails "
+                f"(exit {recon['verify_rc']}); dispatching once more with their evidence",
+                file=sys.stderr,
+            )
+        else:
+            precheck = vh.run_precheck(
+                str(kit), task["id"], verify_cmd, verify_runner, evidence=task.get("evidence")
+            )
+            lifecycle.precheck(precheck.get("tautological"), rc=precheck.get("rc"))
+
+        result = run_task(
+            task, pricing, default_runner, verify_runner,
+            prompt=prompt, role=args.role, permissions=permissions,
+            admission=admission, consult=bool(args.parent),
+            max_escalations=args.max_escalations,
+            claude_bin=args.claude_bin, extra_args=extra_args,
+            lifecycle=lifecycle, resume=(recon["mode"] == "retry"),
+        )
 
     # THE DRIVER AND THE MARKER MUST AGREE (step 09). Both facts are still recorded: the
     # refusal rides into NOTES.md as an in-grammar `defect:` line, goes to stderr, and makes
@@ -954,14 +1040,21 @@ def cmd_run(args):
 
     defect_kind = "tautological-verify" if (tautological or refused) else None
 
-    text = set_status(text, task["id"], result["status"])
-    tasks_path.write_text(text)
+    # PROJECTION (step 16): status from a fresh read, attempts counted from the ledger, and
+    # the ledger told that the Markdown now agrees with it. The outcome line is the projection
+    # the budget reads, so the ledger stops counting these attempts only once it exists.
+    text = finish_task_projection(lifecycle, tasks_path, task, result)
 
     result["role"] = args.role
     append_note(
         kit / "NOTES.md", result, task, run_id=run_id, parent=args.parent,
         defect_kind=defect_kind,
     )
+    lifecycle.project(
+        result["status"], outcome_result(result["status"], result["escalations"], args.parent),
+        outcome_line=True,
+    )
+    lifecycle.end()
 
     escalations = result["escalations"] or "(none)"
     print(
@@ -1047,6 +1140,14 @@ def build_parser():
                        help="allow selecting a task already marked done (step 07). Without it, "
                             "naming a completed task is refused rather than silently repeating "
                             "finished work.")
+    p_run.add_argument("--attempt-store", default=None,
+                       help="root of the attempt ledger (step 16). Default: the per-user data "
+                            "root from bin/runtime_data.py, namespaced to this checkout -- never "
+                            "inside the tree a worker edits. Tests pass a temp dir.")
+    p_run.add_argument("--break-claim", action="store_true",
+                       help="clear a claim another run holds on this task before starting. An "
+                            "operator's deliberate act, recorded in the ledger; by default a "
+                            "task another live run holds is refused, not run twice.")
     p_run.add_argument("--dry-run", action="store_true",
                        help="print the dispatch argv and verify command; spawn/write nothing")
     p_run.set_defaults(func=cmd_run)

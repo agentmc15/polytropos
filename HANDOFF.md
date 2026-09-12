@@ -1,4 +1,4 @@
-# Handoff — roadmap implementation, steps 01–15
+# Handoff — roadmap implementation, steps 01–16
 
 **As of 2026-09-07.** Steps 01–15 are committed as a single change set on top of `fb40925`:
 66 files modified, 17 added, +5,485 / −1,860 lines. Full suite green: **3,727 tests, OK
@@ -33,9 +33,10 @@ user instructions outrank rule files; delegate in parallel by default).
 
 ## Where things stand
 
-**Steps 01–15 are done.** That is all of Phase A (input/artifact/acceptance boundaries), all of
-Phase B (the execution boundary and the P0/P1 security remediation), and the first step of
-Phase C (the shared runtime).
+**Steps 01–16 are done.** That is all of Phase A (input/artifact/acceptance boundaries), all of
+Phase B (the execution boundary and the P0/P1 security remediation), and the first two steps of
+Phase C (the shared runtime). Step 16 landed on 2026-09-12 on branch
+`harden/roadmap-steps-16-26`, as its own commit.
 
 | Step | What it closed |
 |---|---|
@@ -54,6 +55,7 @@ Phase C (the shared runtime).
 | 13 | Private-data scope, redaction, isolated summaries, memory provenance |
 | 14 | Build supply chain pinned; deploy credentials scoped; unsafe link schemes rejected |
 | 15 | One kit contract (`bin/kit_contract.py`) + adapter seam + capability registry |
+| 16 | Durable attempts (`bin/attempt_ledger.py`): recorded before/after every dispatch, resume without replay, budget carried across runs, failure classes, real progress detection, task claims, fresh-read projection |
 
 ### New modules, and what each is the *one place* for
 
@@ -67,20 +69,40 @@ Phase C (the shared runtime).
 - `bin/kit_contract.py` — parsing, readiness, budget admission, outcome vocabulary.
 - `bin/harness_adapter.py` + `primitives/harness-capabilities.json` — what a host can actually
   do, with `unknown` as a first-class answer.
+- `bin/attempt_ledger.py` — what a run did, recorded before and after it did it, outside the
+  tree. Claims, failure classes, normalized progress signatures, bounded retry context. The
+  drivers reach it only through `kit_contract.TaskRun` / `start_task_lifecycle` /
+  `reconcile_task` / `finish_task_projection`; Ralph reaches it directly.
 
 ---
 
-## Next: step 16 — durable, resumable attempts
+## Next: step 17 — join cross-harness execution, role, model, and cost evidence
 
-Chosen as the stopping point boundary because it is the natural continuation of step 12: that
-step can stop a process tree, and stopping one says nothing about whether the model call it made
-was already billed. Step 12 deliberately left that reconciliation alone and named step 16 as
-where it belongs. `SECURITY.md` already records the gap ("Bounding a process is not exactly-once
-execution"), so the next session starts from a written statement of the problem.
+Step 16 left three things for 17 on purpose, and they are the shape of its first task:
 
-Remaining after that: **17** cross-harness evidence, **18** DAG validation, **19–24** routing /
-roles / graph context / skills / the Cursor adapter / scheduling, **25–26** evaluation and the
-release matrix.
+- An **infrastructure-class dispatch failure still writes `result=blocked`** to the outcome line.
+  The class is in NOTES.md (`- failure-class: auth`) and in the ledger, but the scorecard's
+  `failure=` vocabulary (`execution | coherence | verification`) has no slot for "the model never
+  ran". Deciding how the scorecard reads the class is an evidence-join decision, so it was not
+  made here by inventing a fourth value the reader would have to ignore.
+- The ledger records **per-attempt model, op, class, cost (Ralph), duration and artifact
+  identity** that nothing joins yet. `python3 bin/attempt_ledger.py show` renders one task.
+- Codex's `role-use.jsonl` and the attempt ledger are two typed records of overlapping events.
+  Step 17 should decide whether role-use folds in or stays the acceptance-specific one.
+
+Remaining after that: **18** DAG validation, **19–24** routing / roles / graph context /
+skills / the Cursor adapter / scheduling, **25–26** evaluation and the release matrix.
+
+### Step 16's own deliberate limits
+
+- A resume **restarts the ladder at the task's pinned model**, not at the rung the dead run had
+  reached. The retry context tells the model what rungs were tried; the driver does not skip them.
+- Automatic task selection picks `pending` tasks, so **resuming an `in-progress` task means
+  naming it** (`--task E1`). The status says which one.
+- Copilot and Codex have no precheck, so their resume never has to distinguish a tautological
+  pass; Claude's does, from the precheck the first run recorded in the ledger.
+- The claim uses the pid: a recycled pid reads as alive and the run refuses. `--break-claim` is
+  the deliberate way past it, recorded as such.
 
 ---
 
@@ -130,9 +152,10 @@ These cost real time to discover. All are still live.
    `python3 bin/copilot_docs.py build` and `python3 bin/docs_build.py build`. Drift here caught
    me twice. (Measured 2026-09-11: a `SECURITY.md`-only edit rebuilt both mirrors byte-identical,
    so that file is not currently a mirror source — run both builds anyway; it is cheap.)
-2. **`CLAUDE.md` has a 16,000-byte ceiling** (`tests/test_guardrails_layout.py`). It is at
-   **15,061** — about 900 bytes of headroom. It was rebalanced from 15,849 by consolidating
-   repeated rules; do not add to it casually.
+2. **`CLAUDE.md` has a 16,000-byte ceiling** (`tests/test_guardrails_layout.py`). Measure it
+   with `wc -c CLAUDE.md`; after step 16 the headroom is under 200 bytes. The next rule that
+   needs adding has to displace words, not join them. It was rebalanced once already by
+   consolidating repeated rules; that is the move to repeat.
 3. **Never invoke a real `claude` / `copilot` / `codex` CLI** from tests, verify commands, or
    kit execution. One live invocation was authorized in step 06, scoped to that single test, and
    was never wired into the suite.
@@ -145,6 +168,15 @@ These cost real time to discover. All are still live.
    why, never loosen it to make a run pass.
 6. **`tests/test_kit_contract.py` fails if two drivers share an implementation** above 85%
    similarity. If you add a function to one driver, it probably belongs in `kit_contract.py`.
+7. **Every test module that drives a real `cmd_run`/`main` path patches `POLYTROPOS_DATA_HOME`**
+   to a temp dir at module level (`setUpModule` in the three driver tests, the Ralph tests, and
+   `test_attempt_ledger.py`). The drivers default the attempt ledger to the per-user data root;
+   a new test file that forgets the patch writes into the real store. Copy the block.
+8. **`kit_contract._al()` caches the loaded module, and must.** The other lazy loaders reload
+   per call; this one cannot, because `ClaimHeld` is caught by class identity, and a ledger
+   opened by one load raising past an `except` naming another load's class was an uncaught
+   exception where a refusal was meant. Tests loading `attempt_ledger` themselves hold a
+   third copy; they never compare its classes with the contract's.
 
 ---
 
@@ -161,8 +193,12 @@ Each is recorded in `SECURITY.md` rather than hidden. None is a surprise; all ar
   sandboxes and withholds reference tests structurally, but dispatch runs with driver privileges.
 - **Role names are not permissions on Claude and Copilot.** Review dispatch carries a full
   permission grant; no citable per-tool flag was found for Copilot and inventing one was refused.
-- **Execution state is not tamper-resistant.** Run records, budgets and evidence live in files
-  the worker can write. Step 16 territory.
+- **Execution state is not tamper-proof.** The attempt ledger is outside the workspace, so the
+  confined verify path cannot reach it; a dispatch is unconfined and a worker with the user's
+  privileges can write anywhere the user can. `TASKS.md`/`NOTES.md`/markers stay in the tree; a
+  worker's own status flip is overwritten by the driver's verdict and reported, not prevented.
+- **The ledger is not exactly-once.** It knows a call was made, closes a resultless one as
+  unknown, never replays it, and cannot know whether the provider billed it.
 - **`evidence:` gating is wired into Claude's driver only.** Copilot and Codex parse the field
   but do not gate on it.
 - **`mkdocs build --strict` was never run locally.** The lock targets Linux and the toolchain is
@@ -197,8 +233,9 @@ python3 -m unittest discover -s tests          # expect 3727 OK, ~3 min
 git log --oneline -2                           # the roadmap commit sits on fb40925
 python3 bin/runtime_data.py where              # where your stores resolved to
 python3 bin/harness_adapter.py                 # what each harness can actually do
+python3 bin/attempt_ledger.py demo             # crash / resume / progress walkthrough, temp dir only
 ```
 
-Then read step 16 in the roadmap and continue. The pattern that has worked: verify the step's
+Then read step 17 in the roadmap and continue. The pattern that has worked: verify the step's
 claims against HEAD first, implement, run the affected suites, then the full suite, then update
 `SECURITY.md` / `CLAUDE.md` / the doc mirrors together.

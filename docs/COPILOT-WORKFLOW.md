@@ -87,7 +87,7 @@ python3 bin/copilot_ralph.py --goal "..." --verify-cmd "..." --model <id> --stop
 ```
 
 Three hard stops bound every run: an iteration ceiling, a no-progress window (consecutive ticks
-with no reported progress), and a budget cap in USD. They come in three named profiles — pinned
+that made no progress), and a budget cap in USD. They come in three named profiles — pinned
 from aesop commit `5506617`'s Ralph guardrails, loop knobs rather than prices:
 
 | profile | max iterations | no-progress stop | budget cap |
@@ -97,7 +97,24 @@ from aesop commit `5506617`'s Ralph guardrails, loop knobs rather than prices:
 | accuracy-max | 80 | 4 | $100 |
 
 Any of the three can be overridden per run with `--max-iterations` / `--no-progress-stop` /
-`--budget-usd`. Per-tick cost is parsed straight out of that tick's output when the CLI reports a
+`--budget-usd`, and `--max-elapsed-seconds` adds an optional wall-clock cap.
+
+"Progress" is not "the log changed". The loop reads the verify runner's own failure tally where
+it prints one (`FAILED (failures=3)`, `2 failed`, `--- FAIL:`): fewer failures is progress, the
+same count is not, whatever else the output says. Without a tally it hashes the output with
+timestamps, durations, temp paths and addresses stripped, and a changed hash counts only if the
+tree changed too. So a test runner's changing timings no longer defeat the detector, and a
+genuine fix with a similar log no longer trips it.
+
+Every tick is recorded before and after it runs in the attempt ledger (`bin/attempt_ledger.py`,
+under the per-user data root, `--attempt-store` to point elsewhere), keyed by goal and verify
+command. Rerunning the same goal RESUMES: the iteration count, spend, elapsed time, no-progress
+streak and the last verify diagnostics carry over, and the anchor prompt's state summary tells
+the model what earlier ticks tried, what the check said, and whether the tree changed. A tick
+whose process died with no result is closed as unknown, never replayed. A tick that fails
+because the CLI is logged out, missing, or given an unknown flag halts the loop with that class
+named (`halt: environment`) rather than spending the next tick the same way, and two loops on
+one goal cannot run at once. Per-tick cost is parsed straight out of that tick's output when the CLI reports a
 `total_cost_usd`/`cost_usd` JSON line; otherwise it falls back to an estimate from
 `bin/copilot_pricing.py`'s cost math for the run's `--tick-profile` size against the pinned
 model. Either way, the loop prints a runway line each tick — remaining budget divided by the

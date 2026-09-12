@@ -67,6 +67,14 @@ These are properties with code behind them, not conventions:
   a noisy process cannot deadlock the engine by filling a pipe nobody is reading. Each runs in
   its own session, so termination reaches the whole process group and a command's children do
   not survive it. A run ends when the command ends, not when its pipes close.
+- **Every dispatch is recorded before it is made and after it returns, outside the tree.**
+  `bin/attempt_ledger.py` is an append-only record under the per-user data root, one per kit or
+  Ralph goal. An attempt with no result is closed as unknown by the next run, never as success,
+  and never replayed; prior attempts count against the kit's budget before `NOTES.md` has
+  summarised them; a task is claimed with `O_EXCL` so two runs cannot hold it; and the final
+  status is written from a fresh read of `TASKS.md`, never from the snapshot taken before a
+  model spent minutes editing the tree. A logged-out CLI, a missing binary, or an unknown flag
+  is classified as such and stops the run rather than escalating to a costlier model.
 - **A dispatch carries only its own provider's credentials.** The environment handed to a
   harness CLI is a base set plus that provider's own variables. The machine's other providers'
   keys, and its unrelated credentials, are not forwarded to a coding agent.
@@ -111,9 +119,12 @@ Do not rely on any of the following. Each is a known gap, not a subtlety:
   But a pin that includes `Bash` reaches everything a shell reaches; Copilot has no citable
   per-tool flag, so its restricted mode is only the absence of the grant; and only Codex pins
   review to a read-only sandbox. The OS boundary above covers verification, not review.
-- **Execution state is not tamper-resistant.** Run records, budgets, and acceptance evidence live
-  in files the worker can write. They are bookkeeping, not an authority a lower-trust process is
-  prevented from forging.
+- **Execution state is not tamper-proof.** The attempt ledger lives outside the workspace, so a
+  verify command confined by `bin/exec_policy.py` cannot reach it and a committed or synced tree
+  never carries it. But a dispatch is not confined (above), and a worker running with the user's
+  own privileges can write anywhere the user can. `TASKS.md`, `NOTES.md`, and the verify-pass
+  markers are still in the tree a worker edits; the driver writes its verdict over a status the
+  worker changed, and says so, which is a report, not a prevention.
 - **Estimated spend is not a provider-enforced cap.** Budget dials and `--max-usd` stop
   *polytropos* from dispatching. They cannot stop a provider from billing, and they do not bound
   spend that has already been incurred.
@@ -132,10 +143,11 @@ Do not rely on any of the following. Each is a known gap, not a subtlety:
   was placed. No tool-restricting flag is passed: this repo pins CLI flags as best-effort and
   not live-verified, and guessing at one on the daily path would risk breaking it to gain a
   control that could not be confirmed.
-- **Bounding a process is not exactly-once execution.** A process terminated at its limit may
-  already have had its external effect — a model call billed, a file written. After a crash,
-  nothing here knows what ran. Reconciling that is durable-lifecycle work that does not exist
-  yet; a timeout tells you this engine stopped waiting, not that nothing happened.
+- **Recording an attempt is not exactly-once execution.** A process terminated at its limit, or
+  killed after dispatch, may already have had its external effect — a model call billed, a file
+  written. The ledger knows the call was MADE, closes it as `unknown` when no result came back,
+  and never replays it. It does not know whether the provider billed it, and a resumed run's
+  only evidence of what the tree now holds is the check it re-runs.
 - **Kits are trusted input.** A `PLAN.md`/`TASKS.md` kit contains executable verify commands.
   Running a kit you did not write is equivalent to running its scripts.
 

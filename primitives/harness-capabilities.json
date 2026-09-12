@@ -15,6 +15,13 @@
           "verified_on": "2026-09-06",
           "note": "one authorized live invocation, scoped to validating flag handling; tests never invoke the real CLI"
         },
+        "durable_attempts": {
+          "product": "not-applicable",
+          "implemented": "supported",
+          "verified": "unknown",
+          "source": "bin/attempt_ledger.py, bin/kit_contract.py TaskRun",
+          "note": "polytropos capability, not a product one: every dispatch is recorded before and after it runs, a dead run's open attempt is closed as unknown and reconciled by re-running the check, budget usage carries across runs, tasks are claimed with O_EXCL. Exercised with stub executables and temp stores only; never run against the live CLI, so verified stays unknown"
+        },
         "tool_pin": {
           "product": "supported",
           "implemented": "supported",
@@ -65,6 +72,13 @@
           "source": "vendor CLI documentation",
           "note": "never invoked live from this repository -- tests stub every dispatch"
         },
+        "durable_attempts": {
+          "product": "not-applicable",
+          "implemented": "supported",
+          "verified": "unknown",
+          "source": "bin/attempt_ledger.py, bin/kit_contract.py TaskRun",
+          "note": "polytropos capability, not a product one: every dispatch is recorded before and after it runs, a dead run's open attempt is closed as unknown and reconciled by re-running the check, budget usage carries across runs, tasks are claimed with O_EXCL. Exercised with stub executables and temp stores only; never run against the live CLI, so verified stays unknown"
+        },
         "sandbox_read_only": {
           "product": "supported",
           "implemented": "supported",
@@ -97,7 +111,11 @@
           "verified": "unknown",
           "note": "changing reasoning effort between turns of one session with the cached prefix intact. Distinct from per-dispatch effort, which the driver sets once on the command line before the run starts and never changes afterwards"
         },
-        "status": {"product": "unknown", "implemented": "unsupported", "verified": "unknown"},
+        "status": {
+          "product": "unknown",
+          "implemented": "unsupported",
+          "verified": "unknown"
+        },
         "cancel": {
           "product": "unknown",
           "implemented": "supported",
@@ -118,13 +136,24 @@
           "source": "vendor CLI documentation",
           "note": "never invoked live from this repository, by invariant: a real call spends the user's AI Credits"
         },
+        "durable_attempts": {
+          "product": "not-applicable",
+          "implemented": "supported",
+          "verified": "unknown",
+          "source": "bin/attempt_ledger.py, bin/kit_contract.py TaskRun",
+          "note": "polytropos capability, not a product one: every dispatch is recorded before and after it runs, a dead run's open attempt is closed as unknown and reconciled by re-running the check, budget usage carries across runs, tasks are claimed with O_EXCL. Exercised with stub executables and temp stores only; never run against the live CLI, so verified stays unknown"
+        },
         "tool_pin": {
           "product": "unknown",
           "implemented": "unsupported",
           "verified": "unknown",
           "note": "no per-tool flag was found that could be cited, and inventing one would have produced a control that reads as enforced and is not. Restricted review therefore means only the absence of the blanket `--allow-all-tools` grant (the default since step 06; `--review-permissions bypass` restores it and says so) -- there is no narrower pin to fall back to, and SECURITY.md states that rather than papering over it"
         },
-        "status": {"product": "unknown", "implemented": "unsupported", "verified": "unknown"},
+        "status": {
+          "product": "unknown",
+          "implemented": "unsupported",
+          "verified": "unknown"
+        },
         "cancel": {
           "product": "unknown",
           "implemented": "supported",
@@ -146,8 +175,16 @@
           "verified_on": "2026-09-06",
           "note": "conformance target: returns a canned result and spawns nothing"
         },
-        "status": {"product": "unsupported", "implemented": "unsupported", "verified": "unsupported"},
-        "cancel": {"product": "unsupported", "implemented": "unsupported", "verified": "unsupported"}
+        "status": {
+          "product": "unsupported",
+          "implemented": "unsupported",
+          "verified": "unsupported"
+        },
+        "cancel": {
+          "product": "unsupported",
+          "implemented": "unsupported",
+          "verified": "unsupported"
+        }
       }
     },
     "cursor": {

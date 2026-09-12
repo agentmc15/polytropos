@@ -27,7 +27,6 @@ Usage:
 """
 
 import argparse
-import hashlib
 import importlib.util
 import json
 import math
@@ -36,6 +35,7 @@ import shlex
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 
@@ -172,49 +172,173 @@ def _write_state(state_path, goal, iteration, cost_usd, verified):
     path.write_text(json.dumps(data, indent=2) + "\n")
 
 
+#: The ledger "task" a Ralph loop records against: one goal, one namespace, one claim.
+GOAL_TASK_ID = "goal"
+
+#: Dispatch failure classes on which the loop STOPS rather than ticking again. A logged-out
+#: CLI, an unknown flag, a missing binary, a refused network: the next tick fails the same way
+#: and costs the same, so the loop hands the operator the class and halts.
+ENVIRONMENT_CLASSES = ("auth", "config", "infrastructure", "permission")
+
+
+def _al():
+    """Lazy-load bin/attempt_ledger.py -- the one record of attempts (step 16)."""
+    path = Path(__file__).resolve().parent / "attempt_ledger.py"
+    spec = importlib.util.spec_from_file_location("attempt_ledger", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def _kc():
+    """Lazy-load bin/kit_contract.py -- for the admission seam and content-free run ids."""
+    path = Path(__file__).resolve().parent / "kit_contract.py"
+    spec = importlib.util.spec_from_file_location("kit_contract", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def _tick_result(value):
+    """Normalise what `run_tick` returned -> `(rc, output, proc_outcome)`.
+
+    A plain string is the historical contract and means "no exit status reported": it is not
+    classified as a failure. A 2- or 3-tuple carries the process's exit code, and optionally
+    `proc_runner`'s named outcome, which is how a real tick says "the CLI is missing".
+    """
+    if isinstance(value, tuple):
+        if len(value) == 3:
+            return value[0], value[1] or "", value[2]
+        return value[0], value[1] or "", None
+    return None, value or "", None
+
+
+def _prior_state(ledger, al):
+    """What an earlier run of this goal left in the ledger -> resume facts, or zeroes."""
+    history = ledger.task_history(GOAL_TASK_ID) if ledger is not None else []
+    ticks = len(history)
+    cost = 0.0
+    elapsed = 0.0
+    prev = None
+    streak = 0
+    for h in history:
+        fin = h.get("finished") or {}
+        cost += float(fin.get("cost_usd") or 0.0)
+        elapsed += float(fin.get("duration_s") or 0.0)
+        ver = h.get("verify")
+        if ver:
+            cur = {"rc": ver.get("rc"), "signature": ver.get("signature"),
+                   "failures": ver.get("failures"), "artifact": ver.get("artifact")}
+            if prev is not None:
+                streak = 0 if al.progress(prev, cur)["progress"] else streak + 1
+            prev = cur
+    return {"ticks": ticks, "cost_usd": cost, "elapsed_s": elapsed, "prev": prev,
+            "streak": streak, "history": history}
+
+
 def run_ralph(goal, run_tick, run_verify, stops, est_per_tick_usd,
-              prompt_template=DEFAULT_PROMPT, state_path=None, on_tick=None):
+              prompt_template=DEFAULT_PROMPT, state_path=None, on_tick=None,
+              ledger=None, model=None, workspace=None, run_id=None, now=None):
     """Run the Ralph loop with INJECTED dispatch/verify callables (semantics: aesop@5506617
-    src/loops/ralph.ts).
+    src/loops/ralph.ts, extended by step 16 with a durable ledger).
 
-    `run_tick(iteration, prompt) -> str` dispatches one tick and returns its raw output.
-    `run_verify() -> (rc, output)` runs the verify command. Neither is constructed here — the
-    caller supplies them, which is the AIC-safety seam (tests never build a real command).
+    `run_tick(iteration, prompt) -> str | (rc, str) | (rc, str, proc_outcome)` dispatches one
+    tick. `run_verify() -> (rc, output)` runs the verify command. Neither is constructed here
+    -- the caller supplies them, which is the AIC-safety seam (tests never build a real
+    command).
 
-    `stops` is a dict with `max_iterations`, `no_progress_stop`, `budget_usd`.
+    `stops` carries `max_iterations`, `no_progress_stop`, `budget_usd`, and optionally
+    `max_elapsed_seconds` (absent: no wall-clock cap).
+
+    `ledger` (an `attempt_ledger.AttemptLedger`, or None) makes the loop DURABLE: each tick
+    is recorded before dispatch and after, each verify with its normalized signature, and a
+    later run of the same goal RESUMES -- iteration count, spend, elapsed time, the
+    no-progress streak and the last verify diagnostics all carry over, and the next prompt
+    says what was tried. With `ledger=None` nothing is recorded and the loop behaves as it
+    always did, which is what every pre-16 caller gets.
 
     Semantics, exactly:
       1. Verify first: if verify passes before any tick, return
          {"status": "verified", "iterations": 0, "cost_usd": 0.0} and spend nothing.
-      2. Per tick i = 1..max_iterations: (a) render the anchor prompt; (b) run_tick;
-         (c) cost += parse_cost(output), falling back to `est_per_tick_usd` when None;
-         (d) run_verify; (e) write the state file; (f) call `on_tick`; then stop checks in
-         order verified -> budget -> no-progress. No-progress compares the last
-         `no_progress_stop` sha256 signatures of (verify output + rc); all identical -> halt.
-      3. Loop exhausted -> "max_iterations".
+      2. Per tick i (from the prior count + 1, up to max_iterations): (a) render the anchor
+         prompt with the state summary and, when there is history, the bounded retry context;
+         (b) admission BEFORE dispatch -- money, iteration cap through the shared admission
+         seam, elapsed cap; (c) run_tick, recorded before and after; (d) an environment-class
+         failure (`ENVIRONMENT_CLASSES`) halts with status "environment" -- the next tick
+         would fail the same way; (e) cost += parse_cost(output), else `est_per_tick_usd`;
+         (f) run_verify, recorded with its signature; (g) write the state file; (h) call
+         `on_tick`; then stop checks in order verified -> budget -> no-progress.
+      3. No-progress is `attempt_ledger.progress`: exit code, then the runner's own failure
+         tally, then the normalized signature (and only if the tree changed too). A
+         timestamp is not progress and neither is a reshuffled log; fewer failures is.
+         `no_progress_stop` consecutive non-progress ticks -> halt.
+      4. Loop exhausted -> "max_iterations".
     The returned dict always carries `status`, `iterations`, `cost_usd`.
     """
+    al = _al()
     max_iterations = stops["max_iterations"]
     no_progress_stop = stops["no_progress_stop"]
     budget_usd = stops["budget_usd"]
+    max_elapsed = stops.get("max_elapsed_seconds")
+    clock = now or time.monotonic
 
     # 1. Verify first — spend nothing if the goal is already met.
-    rc, _vout = run_verify()
+    rc, vout = run_verify()
     if rc == 0:
         return {"status": "verified", "iterations": 0, "cost_usd": 0.0}
 
-    cost_usd = 0.0
-    last_verify_rc = None
-    history = []
+    prior = _prior_state(ledger, al)
+    fingerprint = (lambda: al.workspace_fingerprint(workspace)) if workspace else (lambda: None)
+    prev = prior["prev"] or al.observation(rc, vout, fingerprint())
+    streak = prior["streak"]
+    cost_usd = prior["cost_usd"]
+    started_at = clock()
+    last_verify_rc = prev.get("rc") if prior["prev"] else rc
+    run = run_id
+    admission = None
+    if ledger is not None:
+        kc = _kc()
+        run = run or kc.generate_run_id()
+        ledger.claim(GOAL_TASK_ID, run)
+        ledger.append("run.started", run=run, task=GOAL_TASK_ID, actor="ralph",
+                      pid=os.getpid(), resumed_ticks=prior["ticks"])
+        closed = ledger.reconcile_open(
+            run, GOAL_TASK_ID, "closed by a later run: the process that started this tick "
+            "recorded no result",
+        )
+        if closed:
+            print(f"resume: {len(closed)} earlier tick(s) had no recorded result and were "
+                  f"closed as unknown", file=sys.stderr)
+        # The shared admission seam bounds the ITERATION count across resumes: a loop that
+        # already spent 18 of 20 ticks in an earlier run has 2 left, not 20.
+        admission = kc.BudgetAdmission({"max-dispatches": max_iterations},
+                                       used={"max-dispatches": prior["ticks"]})
+        if prior["ticks"]:
+            print(f"resume: continuing after {prior['ticks']} earlier tick(s), "
+                  f"${cost_usd:.4f} already spent", file=sys.stderr)
 
-    for i in range(1, max_iterations + 1):
-        # (a) render the anchor prompt with the current state summary.
+    def finish(status, iterations, **extra):
+        if ledger is not None:
+            ledger.append("run.finished", run=run, task=GOAL_TASK_ID, status=status)
+            ledger.release(GOAL_TASK_ID, run)
+        result = {"status": status, "iterations": iterations, "cost_usd": cost_usd}
+        result.update(extra)
+        return result
+
+    i = prior["ticks"]
+    while i < max_iterations:
+        i += 1
+        # (a) render the anchor prompt with the current state summary, plus the bounded
+        # account of prior ticks when there are any -- what failed, whether the tree changed,
+        # how the failure count is trending. `last_verify_rc=1` alone told the model nothing.
         runway = runway_ticks(budget_usd, cost_usd, est_per_tick_usd)
         last_rc_text = "n/a" if last_verify_rc is None else str(last_verify_rc)
         state_summary = (
             f"iteration={i} cost_usd={cost_usd:.4f} budget_usd={budget_usd} "
             f"runway={runway} ticks last_verify_rc={last_rc_text}"
         )
+        if ledger is not None:
+            state_summary += al.retry_context(ledger.task_history(GOAL_TASK_ID))
         prompt = prompt_template.replace("{{goal}}", goal).replace(
             "{{state_summary}}", state_summary
         )
@@ -223,10 +347,23 @@ def run_ralph(goal, run_tick, run_verify, stops, est_per_tick_usd,
         # a loop started with no remaining budget still made one paid call before noticing --
         # and `budget_usd=0` bought a whole tick. A tick that cannot be afforded is not made.
         if cost_usd >= budget_usd:
-            return {"status": "budget", "iterations": i - 1, "cost_usd": cost_usd}
-        output = run_tick(i, prompt)
+            return finish("budget", i - 1)
+        if max_elapsed is not None and prior["elapsed_s"] + (clock() - started_at) >= max_elapsed:
+            return finish("elapsed", i - 1)
+        if admission is not None:
+            ok, reason = admission.admit("initial" if i == 1 else "retry")
+            if not ok:
+                return finish("max_iterations", i - 1, reason=reason)
 
-        # (c) cost accrual: parsed cost wins, else the data-driven estimate.
+        # (c) the tick, recorded before and after.
+        attempt = None
+        tick_started = clock()
+        if ledger is not None:
+            attempt = ledger.record_started(run, GOAL_TASK_ID, "tick", model,
+                                            prompt=prompt, artifact=fingerprint())
+        tick_rc, output, proc_outcome = _tick_result(run_tick(i, prompt))
+
+        # (e) cost accrual: parsed cost wins, else the data-driven estimate.
         parsed = parse_cost(output)
         if parsed is None:
             tick_cost = est_per_tick_usd
@@ -236,16 +373,35 @@ def run_ralph(goal, run_tick, run_verify, stops, est_per_tick_usd,
             cost_source = "parsed"
         cost_usd += tick_cost
 
-        # (d) verify.
+        cls = None
+        if tick_rc is not None or proc_outcome is not None:
+            cls = al.classify_dispatch(tick_rc, output, proc_outcome=proc_outcome)
+        if ledger is not None:
+            outcome = proc_outcome or ("unreported" if tick_rc is None
+                                       else "ok" if tick_rc == 0 else "failed")
+            ledger.record_finished(run, GOAL_TASK_ID, attempt, outcome, tick_rc, output,
+                                   cls=cls, duration_s=round(clock() - tick_started, 3),
+                                   cost_usd=tick_cost, cost_source=cost_source)
+
+        # (d) an environment failure stops the loop: the next tick fails the same way.
+        if cls in ENVIRONMENT_CLASSES:
+            if state_path is not None:
+                _write_state(state_path, goal, i, cost_usd, False)
+            return finish("environment", i, **{"class": cls})
+
+        # (f) verify, recorded with its signature and the tree it judged.
         rc, vout = run_verify()
         last_verify_rc = rc
         verified = rc == 0
+        artifact = fingerprint()
+        if ledger is not None:
+            ledger.record_verify(run, GOAL_TASK_ID, attempt, rc, vout, artifact=artifact)
 
-        # (e) persist state.
+        # (g) persist state.
         if state_path is not None:
             _write_state(state_path, goal, i, cost_usd, verified)
 
-        # (f) observer hook.
+        # (h) observer hook.
         if on_tick is not None:
             on_tick({
                 "iteration": i,
@@ -258,15 +414,17 @@ def run_ralph(goal, run_tick, run_verify, stops, est_per_tick_usd,
 
         # stop checks, IN ORDER: verified -> budget -> no-progress.
         if verified:
-            return {"status": "verified", "iterations": i, "cost_usd": cost_usd}
+            return finish("verified", i)
         if cost_usd >= budget_usd:
-            return {"status": "budget", "iterations": i, "cost_usd": cost_usd}
-        sig = hashlib.sha256((vout + "\x00" + str(rc)).encode("utf-8")).hexdigest()
-        history.append(sig)
-        if len(history) >= no_progress_stop and len(set(history[-no_progress_stop:])) == 1:
-            return {"status": "no_progress", "iterations": i, "cost_usd": cost_usd}
+            return finish("budget", i)
+        cur = al.observation(rc, vout, artifact)
+        step = al.progress(prev, cur)
+        prev = cur
+        streak = 0 if step["progress"] else streak + 1
+        if streak >= no_progress_stop:
+            return finish("no_progress", i, reason=step["reason"])
 
-    return {"status": "max_iterations", "iterations": max_iterations, "cost_usd": cost_usd}
+    return finish("max_iterations", max_iterations)
 
 
 # ---- CLI helpers -------------------------------------------------------------------------------
@@ -384,6 +542,12 @@ def build_parser():
     ap.add_argument("--dry-run", action="store_true", help="print stops/estimate/runway/argv; spawn nothing")
     ap.add_argument("--exec-mode", choices=("enforced", "trusted-host"), default="enforced",
                     help="OS boundary for --verify-cmd; 'enforced' refuses where none exists")
+    ap.add_argument("--max-elapsed-seconds", type=float, default=None,
+                    help="wall-clock cap across resumed runs of this goal (default: none)")
+    ap.add_argument("--attempt-store", default=None,
+                    help="root of the attempt ledger (step 16). Default: the per-user data "
+                         "root from bin/runtime_data.py for the current directory; the same "
+                         "goal and verify command resume the same ledger. Tests pass a temp dir.")
     return ap
 
 
@@ -411,6 +575,8 @@ def main(argv=None):
             sys.exit(2)
 
     stops = _resolve_stops(args)
+    if args.max_elapsed_seconds is not None:
+        stops["max_elapsed_seconds"] = args.max_elapsed_seconds
 
     try:
         est = tick_estimate(pricing, args.tick_profile, model, cache_hit=args.cache_hit)
@@ -472,19 +638,30 @@ def main(argv=None):
 
         def demo_verify():
             rc = 0 if remaining["failures"] <= 0 else 1
-            return (rc, f"demo verify: remaining_failures={remaining['failures']}")
+            # A runner-style tally, so the demo exercises the failure-count progress rule.
+            return (rc, f"demo verify\n\nFAILED (failures={remaining['failures']})")
 
-        result = run_ralph(
-            goal=(args.goal or "demo goal: make the mocked verify pass"),
-            run_tick=demo_tick,
-            run_verify=demo_verify,
-            stops=stops,
-            est_per_tick_usd=est_per_tick_usd,
-            prompt_template=prompt_template,
-            state_path=state_path,
-            on_tick=_print_tick,
-        )
-        print(_halt_line(result))
+        # The demo's ledger lives in a temp dir too: it records every tick the way a real run
+        # would, and is discarded with the state file.
+        with tempfile.TemporaryDirectory(prefix="ralph-demo-ledger-") as ledger_dir:
+            al = _al()
+            goal = args.goal or "demo goal: make the mocked verify pass"
+            ledger = al.AttemptLedger(ledger_dir, al.namespace_for_goal(goal, "demo verify"))
+            result = run_ralph(
+                goal=goal,
+                run_tick=demo_tick,
+                run_verify=demo_verify,
+                stops=stops,
+                est_per_tick_usd=est_per_tick_usd,
+                prompt_template=prompt_template,
+                state_path=state_path,
+                on_tick=_print_tick,
+                ledger=ledger,
+                model=model,
+            )
+            print(_halt_line(result))
+            print(f"ledger: {len(ledger.task_history(GOAL_TASK_ID))} tick(s) recorded "
+                  f"(demo ledger discarded)")
         return 0
 
     # ---- real run: builds the ONLY real `copilot` invocation in this file ---------------
@@ -492,13 +669,16 @@ def main(argv=None):
     def real_run_tick(iteration, prompt):
         # Bounded like every other dispatch in this repo: wall clock, output ceiling, validated
         # working directory, own process group. A tick that stalls stops the tick, not the loop.
+        # Returns the exit code and the runner's named outcome beside the output, so the loop
+        # can tell "the model did not finish" from "the CLI is missing" (step 16).
         pr = _pr()
         cmd = _build_tick_argv(args.copilot_bin, model, extra_args, prompt)
         result = pr.run(cmd, cwd=Path.cwd(), env=pr.dispatch_env("copilot"),
                         name="copilot tick")
+        output = result["output"]
         if not result["terminal"] and result["detail"]:
-            return f"{result['output']}\n{result['detail']}".strip()
-        return result["output"]
+            output = f"{output}\n{result['detail']}".strip()
+        return (result["rc"], output, result["outcome"])
 
     def real_run_verify():
         # Inside the OS boundary, like the three kit drivers: this line runs code a model just
@@ -509,17 +689,32 @@ def main(argv=None):
         runner = _ep().verify_runner(Path.cwd(), mode=args.exec_mode)
         return runner(args.verify_cmd)
 
-    result = run_ralph(
-        goal=(args.goal or ""),
-        run_tick=real_run_tick,
-        run_verify=real_run_verify,
-        stops=stops,
-        est_per_tick_usd=est_per_tick_usd,
-        prompt_template=prompt_template,
-        state_path=args.state,
-        on_tick=_print_tick,
-    )
+    # The ledger (step 16): outside the tree, namespaced by goal + verify command so the same
+    # goal resumes, and claimed so two loops on one goal cannot run at once.
+    al = _al()
+    store = Path(args.attempt_store) if args.attempt_store else al.default_store(Path.cwd())
+    ledger = al.AttemptLedger(store, al.namespace_for_goal(args.goal or "", args.verify_cmd))
+    try:
+        result = run_ralph(
+            goal=(args.goal or ""),
+            run_tick=real_run_tick,
+            run_verify=real_run_verify,
+            stops=stops,
+            est_per_tick_usd=est_per_tick_usd,
+            prompt_template=prompt_template,
+            state_path=args.state,
+            on_tick=_print_tick,
+            ledger=ledger,
+            model=model,
+            workspace=Path.cwd(),
+        )
+    except al.ClaimHeld as exc:
+        print(f"claim: {exc}", file=sys.stderr)
+        return 2
     print(_halt_line(result))
+    if result["status"] == "environment":
+        print(f"stopped: the tick failed with a {result['class']} problem, which the next tick "
+              f"would hit the same way -- fix it, then rerun to resume", file=sys.stderr)
     return 0 if result["status"] == "verified" else 1
 
 

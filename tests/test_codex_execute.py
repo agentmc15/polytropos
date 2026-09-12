@@ -31,6 +31,7 @@ never written.
 import contextlib
 import importlib.util
 import io
+import os
 import re
 import shlex
 import socket
@@ -50,6 +51,25 @@ def _load(name):
 
 
 ce = _load("codex_execute")
+
+# Step 16: the drivers open the attempt ledger under the per-user data root by default. Every
+# test in this module runs with that root pointed at a temp dir, so nothing here can touch the
+# real store -- the same rule every other personal store already follows.
+_DATA_HOME = None
+_DATA_HOME_PATCH = None
+
+
+def setUpModule():
+    global _DATA_HOME, _DATA_HOME_PATCH
+    _DATA_HOME = tempfile.TemporaryDirectory(prefix="polytropos-test-data-")
+    _DATA_HOME_PATCH = mock.patch.dict(os.environ, {"POLYTROPOS_DATA_HOME": _DATA_HOME.name})
+    _DATA_HOME_PATCH.start()
+
+
+def tearDownModule():
+    _DATA_HOME_PATCH.stop()
+    _DATA_HOME.cleanup()
+
 
 
 # ---- fixtures ---------------------------------------------------------------------------------

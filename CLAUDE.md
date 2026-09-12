@@ -72,7 +72,7 @@ changelog.
   with the body stating exactly what is red and unrun.
 - **Every local store is personal data, written by its own engine ONLY, and lives outside the
   plugin tree.** `memory/` is gitignored user data; so are `telemetry/`, `benchruns/`,
-  `journal/`, `prefs/`, `trends/`. Their default location comes from `bin/runtime_data.py` — a
+  `journal/`, `prefs/`, `trends/`, `attempts/`. Their default location comes from `bin/runtime_data.py` — a
   per-user application-data dir, per checkout, `0700`/`0600` — never a hardcoded path under the
   repo, because this tree is distributed, cached, and often cloud-synced. An in-tree store that
   already exists keeps being used; nothing is ever relocated or deleted automatically. Runtime
@@ -108,7 +108,10 @@ changelog.
   remedy is printed, never executed), never pricing numbers or docs tables.** Codex prompts are
   plugin-generated mirrors, overwritten with every differing rewrite listed. Tests use temp
   fixture homes only.
-- **One path helper, one execution boundary, one process runner.** Every write, read, or delete
+- **One path helper, one execution boundary, one process runner, one attempt ledger.** Every
+  dispatch a driver or Ralph makes is recorded in `bin/attempt_ledger.py` before and after it
+  runs, outside the tree; a resumed run reads it, closes what died as unknown, never replays,
+  and writes status from a fresh read of TASKS.md. Every write, read, or delete
   into a caller-selected root goes through `bin/safe_paths.py` — never a hand-composed
   destination path. Verify commands run under `bin/exec_policy.py`, whose `--exec-mode
   trusted-host` is the sole opt-out and reports itself as one. Every external process is started
@@ -172,6 +175,7 @@ python3 bin/context_weight.py session                # what filled this window (
 # freshness, boundaries, generated docs  (installing is the user's action, not a dev command)
 python3 bin/harness_update.py check                  # all-harness freshness card (exit 3 on drift); also `demo`
 python3 bin/exec_policy.py check                     # what OS execution boundary this host enforces (exit 3 if none)
+python3 bin/attempt_ledger.py demo                   # crash/resume walkthrough in a temp dir; `show` inspects a store
 python3 bin/graph_brief.py demo                      # architect-grounding brief from a graphify graph.json
 python3 bin/docs_build.py check                      # docs-site freshness (exit 1 on drift); `build` regenerates
 python3 bin/copilot_docs.py check                    # Copilot doc center freshness; `build` regenerates

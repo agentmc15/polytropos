@@ -215,6 +215,60 @@ def confined_create_bytes(root, rel_path, data, what="confined create", mode=0o6
         os.close(dir_fd)
 
 
+def confined_append_bytes(root, rel_path, data, what="confined append", mode=0o600,
+                          create_parents=True):
+    """Append `data` to `rel_path` under `root` in one `write`, creating the file if absent.
+
+    The third verb beside write-whole and create-if-free: an append-only record (the attempt
+    ledger) must never be rewritten from an in-memory copy, because the copy is exactly the
+    stale snapshot a concurrent run would clobber. `O_APPEND` positions every write at the
+    current end in the kernel, so two processes appending lines do not overwrite each other's.
+
+    What is NOT promised: POSIX does not make a single `write` to a regular file atomic
+    against a concurrent writer, so an interleaved line is possible in principle. A caller
+    keeps lines bounded and its reader treats an unparseable line as absent rather than as
+    evidence; that is the same rule `codex_execute` applies to its role-use ledger.
+
+    The leaf must be a regular file or missing. Anything else -- a link, a FIFO, a directory --
+    is refused rather than removed, because appending is the one operation where silently
+    replacing the target would discard the record it was supposed to extend.
+    """
+    parts = safe_parts(rel_path, what)
+    _require_dir_fd(what)
+    if isinstance(data, str):
+        data = data.encode()
+    dir_fd = _descend(root, parts, what, create=create_parents)
+    try:
+        leaf = parts[-1]
+        try:
+            st = os.stat(leaf, dir_fd=dir_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            st = None
+        except OSError as exc:
+            raise SafePathError(f"{what}: cannot inspect {rel_path!r}: {exc}") from exc
+        if st is not None and not stat.S_ISREG(st.st_mode):
+            raise SafePathError(f"{what}: {rel_path!r} is not a regular file")
+        try:
+            fd = os.open(
+                leaf, os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW, mode,
+                dir_fd=dir_fd,
+            )
+        except OSError as exc:
+            raise SafePathError(
+                f"{what}: cannot open {rel_path!r} for append without following a link: {exc}"
+            ) from exc
+        try:
+            view = memoryview(data)
+            while view:
+                written = os.write(fd, view)
+                view = view[written:]
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+    finally:
+        os.close(dir_fd)
+
+
 def confined_read_bytes(root, rel_path, what="confined read", missing_ok=False):
     """Read `rel_path` under `root` without following a link at any component.
 

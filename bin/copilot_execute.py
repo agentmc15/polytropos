@@ -154,6 +154,13 @@ append_plan_budget_stop_note = _CONTRACT.append_plan_budget_stop_note
 blocking_cap = _CONTRACT.blocking_cap
 build_outcome_line = _CONTRACT.build_outcome_line
 count_plan_budget_usage = _CONTRACT.count_plan_budget_usage
+# The attempt lifecycle (step 16) -- claim, resume, record, project -- is the contract's.
+start_task_lifecycle = _CONTRACT.start_task_lifecycle
+reconcile_task = _CONTRACT.reconcile_task
+finish_task_projection = _CONTRACT.finish_task_projection
+combined_usage = _CONTRACT.combined_usage
+append_block = _CONTRACT.append_block
+project_status = _CONTRACT.project_status
 default_verify_runner = _CONTRACT.default_verify_runner
 dispatch_status = _CONTRACT.dispatch_status
 generate_run_id = _CONTRACT.generate_run_id
@@ -594,13 +601,16 @@ DISPATCH_EVIDENCE_LIMIT = 2000
 
 
 def _dispatch_failure(task, model_used, escalations, dispatch_rc, dispatch_out,
-                      prefs=None, prefs_notes=None, budget=None, binfo=None):
+                      prefs=None, prefs_notes=None, budget=None, binfo=None, cls=None):
     """The record for a task whose MODEL PROCESS failed.
 
     `status` is blocked and `verify_rc` is None -- not zero, and not the verdict of a check
     that ran against a tree this attempt never touched. Dispatch and verification are separate
     facts, and this record exists so neither can stand in for the other: a failed process
     followed by an already-passing check used to read as `done`.
+
+    `cls` (step 16) names WHY: `auth`, `config`, `infrastructure`, `permission` or `unknown`,
+    so the NOTES.md block says "logged out" rather than leaving it to an exit code.
     """
     evidence = " ".join((dispatch_out or "").split())[-DISPATCH_EVIDENCE_LIMIT:]
     result = {
@@ -611,6 +621,7 @@ def _dispatch_failure(task, model_used, escalations, dispatch_rc, dispatch_out,
         "verify_rc": None,
         "dispatch_rc": dispatch_rc,
         "failure": "dispatch",
+        "class": cls,
         "dispatch_evidence": evidence or "(no output)",
     }
     if prefs is not None:
@@ -623,7 +634,7 @@ def _dispatch_failure(task, model_used, escalations, dispatch_rc, dispatch_out,
 def run_task(task, pricing, runner, verify_runner, agent="implementer",
              admission=None, consult=False,
              max_escalations=None, copilot_bin="copilot", extra_args=(), prefs=None,
-             budget=False, kit=None, run_id=None):
+             budget=False, kit=None, run_id=None, lifecycle=None, resume=False):
     """Orchestrate one task: dispatch, verify, escalate up the tier ladder on failure.
     Strictly SEQUENTIAL (PLAN D5) — one dispatch in flight at a time, never fanned out.
 
@@ -688,12 +699,18 @@ def run_task(task, pricing, runner, verify_runner, agent="implementer",
         agent, brief, model, copilot_bin=copilot_bin, extra_args=extra_args,
         kit=kit, run_id=run_id, task_id=task_id,
     )
-    initial_kind = "consult" if consult else "initial"
+    # `resume` (step 16): attempts already exist, so the caps count this one as a retry.
+    initial_kind = "consult" if consult else ("retry" if resume else "initial")
     if admission is not None:
         ok, reason = admission.admit(initial_kind)
         if not ok:
             return _budget_stop(task, model_used, escalations, initial_kind, reason)
+    # Recorded before and after every dispatch (step 16), so the ledger knows a call was made
+    # even when the process never reports back; `lifecycle=None` records nothing.
+    attempt = (lifecycle.attempt_started(initial_kind, model, brief, verify_cmd)
+               if lifecycle else None)
     dispatch_rc, dispatch_out = dispatch_status(runner(argv))
+    cls = lifecycle.attempt_finished(attempt, dispatch_rc, dispatch_out) if lifecycle else None
     if dispatch_rc is not None and dispatch_rc != 0:
         # A FAILED dispatch is not an implementation failure, so it does not climb the ladder:
         # a crashed, unauthenticated or permission-denied process fails the same way on a more
@@ -701,8 +718,10 @@ def run_task(task, pricing, runner, verify_runner, agent="implementer",
         # not work this attempt did. Stop, and say which fact stopped it.
         return _dispatch_failure(task, model_used, escalations, dispatch_rc, dispatch_out,
                                  prefs=prefs, prefs_notes=prefs_notes,
-                                 budget=budget, binfo=binfo)
+                                 budget=budget, binfo=binfo, cls=cls)
     rc, output = verify_runner(verify_cmd)
+    if lifecycle:
+        lifecycle.verify_finished(attempt, rc, output)
 
     if rc != 0:
         if budget and binfo["standard_model"] is not None and binfo["standard_model"] != model:
@@ -729,18 +748,26 @@ def run_task(task, pricing, runner, verify_runner, agent="implementer",
                 if not ok:
                     return _budget_stop(task, model_used, escalations, "escalation", reason)
             escalated_brief = brief + _evidence(verify_cmd, rc, output)
+            if lifecycle:
+                escalated_brief += lifecycle.retry_context(verify_cmd, include_tail=False)
             argv = build_dispatch(
                 agent, escalated_brief, rung, copilot_bin=copilot_bin, extra_args=extra_args,
                 kit=kit, run_id=run_id, task_id=task_id,
             )
+            attempt = (lifecycle.attempt_started("escalation", rung, escalated_brief,
+                                                 verify_cmd) if lifecycle else None)
             dispatch_rc, dispatch_out = dispatch_status(runner(argv))
+            cls = (lifecycle.attempt_finished(attempt, dispatch_rc, dispatch_out)
+                   if lifecycle else None)
             escalations.append(rung)
             model_used = rung
             if dispatch_rc is not None and dispatch_rc != 0:
                 return _dispatch_failure(task, model_used, escalations, dispatch_rc,
                                          dispatch_out, prefs=prefs, prefs_notes=prefs_notes,
-                                         budget=budget, binfo=binfo)
+                                         budget=budget, binfo=binfo, cls=cls)
             rc, output = verify_runner(verify_cmd)
+            if lifecycle:
+                lifecycle.verify_finished(attempt, rc, output)
             if rc == 0:
                 break
 
@@ -874,6 +901,14 @@ def append_note(notes_path, result, task, run_id=None, parent=None):
                 f"profile={profile} est_standard_usd=unpriced est_actual_usd=unpriced "
                 f"delta_usd=unpriced status={status_token}"
             )
+    # Step 16: why a dispatch failed, and whether a resume settled the task without one.
+    if result.get("class"):
+        block_lines.append(f"- failure-class: {result['class']}")
+    if result.get("reconciled"):
+        block_lines.append(
+            f"- reconciled: {result['reconciled']} earlier attempt(s) settled by re-running "
+            f"the check; nothing was re-dispatched"
+        )
     if escalations:
         pinned = task.get("model") or "agent default"
         block_lines.append(
@@ -881,7 +916,9 @@ def append_note(notes_path, result, task, run_id=None, parent=None):
             f"{model_used_label} — record via the lessons-loop skill."
         )
 
-    attempts = 1 + len(escalations)
+    # Every attempt since the task's last outcome line, across resumed runs (step 16); the
+    # in-process count is the fallback for a caller that ran without the ledger.
+    attempts = result.get("ledger_attempts") or (1 + len(escalations))
     outcome_model = model_used if model_used else "unpinned"
     result_word = outcome_result(result.get("status"), escalations, parent)
     line_parent = parent if result_word in PARENT_RESULTS else None
@@ -892,13 +929,7 @@ def append_note(notes_path, result, task, run_id=None, parent=None):
     )
 
     block = "\n".join(block_lines) + "\n"
-
-    existing = notes_path.read_text() if notes_path.exists() else ""
-    if existing and not existing.endswith("\n"):
-        existing += "\n"
-    separator = "\n" if existing.strip() else ""
-    notes_path.parent.mkdir(parents=True, exist_ok=True)
-    notes_path.write_text(existing + separator + block)
+    append_block(notes_path, block)
 
 
 # ---- default runners (module level, injectable everywhere) ----------------------------------
@@ -1066,13 +1097,22 @@ def cmd_run(args):
     # anything is dispatched or written. `--dry-run` never reaches here (it returned above);
     # this gate only ever stops a REAL run. See the module's "PLAN.md budget dial" section
     # (NOT the same as this driver's own `--budget` dollar-savings mode).
+    #
+    # First, the attempt ledger (step 16): claim the task and close any attempt a dead run
+    # left open BEFORE anything else is decided. Exits 2 if another live run holds the task.
+    lifecycle, begin_info = start_task_lifecycle(
+        kit, task, run_id, actor="copilot", store=args.attempt_store,
+        break_claim=args.break_claim, workspace=Path.cwd(),
+    )
     plan_path = kit / "PLAN.md"
     plan_budget = parse_plan_budget(plan_path.read_text()) if plan_path.exists() else None
     admission = None
     if plan_budget:
         notes_path = kit / "NOTES.md"
         notes_text = notes_path.read_text() if notes_path.exists() else ""
-        used = count_plan_budget_usage(notes_text)
+        # NOTES.md counts finished tasks; the ledger counts the attempts nothing has written
+        # an outcome line for, so an interrupted ladder cannot resume with a fresh budget.
+        used = combined_usage(notes_text, lifecycle.ledger)
         # The entry gate below still stops a run before it writes `in-progress`. This carries
         # the same numbers INTO the run, so every escalation rung asks again instead of the
         # ladder spending freely on one entry-time grant.
@@ -1110,10 +1150,11 @@ def cmd_run(args):
                     notes_path, task, run_id, exhausted_key, cap, used[exhausted_key],
                     remaining, agent=args.agent,
                 )
+            lifecycle.end("budget-stop", reason=f"{exhausted_key}={cap} reached")
             sys.exit(1)
 
-    text = set_status(text, task["id"], "in-progress")
-    tasks_path.write_text(text)
+    # From a FRESH read, replaced atomically (step 16): the in-memory `text` is a snapshot.
+    text, _previous = project_status(tasks_path, task["id"], "in-progress")
 
     if pricing is None:
         pricing = load_pricing()
@@ -1124,16 +1165,37 @@ def cmd_run(args):
     # quietly running it with the parent's privileges.
     verify_runner = _ep().verify_runner(Path.cwd(), mode=args.exec_mode)
 
-    result = run_task(
-        task, pricing, default_runner, verify_runner,
-        agent=args.agent, max_escalations=args.max_escalations,
-        admission=admission, consult=bool(args.parent),
-        copilot_bin=args.copilot_bin, extra_args=extra_args, prefs=prefs,
-        budget=args.budget, kit=slug, run_id=run_id,
-    )
+    # RESUME (step 16): earlier attempts no outcome line covers are settled by running the
+    # check now -- a pass needs no dispatch, a failure gets one more attempt that knows what
+    # was tried. Nothing is replayed. (This driver has no precheck; the brief carries the
+    # history on a retry the same way a rung's brief carries the verify evidence.)
+    recon = reconcile_task(lifecycle, begin_info, verify_runner, task.get("verify"))
+    if recon["mode"] == "resolved":
+        result = recon["result"]
+        print(
+            f"resume: task {task['id']}'s check passes on the tree that "
+            f"{result['reconciled']} earlier attempt(s) left; nothing was re-dispatched",
+            file=sys.stderr,
+        )
+    else:
+        if recon["mode"] == "retry":
+            task = dict(task, brief=task["brief"] + recon["context"])
+            print(
+                f"resume: task {task['id']} has earlier attempts and its check still fails "
+                f"(exit {recon['verify_rc']}); dispatching once more with their evidence",
+                file=sys.stderr,
+            )
+        result = run_task(
+            task, pricing, default_runner, verify_runner,
+            agent=args.agent, max_escalations=args.max_escalations,
+            admission=admission, consult=bool(args.parent),
+            copilot_bin=args.copilot_bin, extra_args=extra_args, prefs=prefs,
+            budget=args.budget, kit=slug, run_id=run_id,
+            lifecycle=lifecycle, resume=(recon["mode"] == "retry"),
+        )
 
-    text = set_status(text, task["id"], result["status"])
-    tasks_path.write_text(text)
+    # PROJECTION (step 16): status from a fresh read, attempts counted from the ledger.
+    text = finish_task_projection(lifecycle, tasks_path, task, result)
 
     result["agent"] = args.agent
 
@@ -1147,6 +1209,11 @@ def cmd_run(args):
         result["budget_report"] = report
 
     append_note(kit / "NOTES.md", result, task, run_id=run_id, parent=args.parent)
+    lifecycle.project(
+        result["status"], outcome_result(result["status"], result["escalations"], args.parent),
+        outcome_line=True,
+    )
+    lifecycle.end()
 
     escalations = result["escalations"] or "(none)"
     print(
@@ -1430,6 +1497,14 @@ def build_parser():
                        help="allow selecting a task already marked done (step 07). Without it, "
                             "naming a completed task is refused rather than silently repeating "
                             "finished work.")
+    p_run.add_argument("--attempt-store", default=None,
+                       help="root of the attempt ledger (step 16). Default: the per-user data "
+                            "root from bin/runtime_data.py, namespaced to this checkout -- never "
+                            "inside the tree a worker edits. Tests pass a temp dir.")
+    p_run.add_argument("--break-claim", action="store_true",
+                       help="clear a claim another run holds on this task before starting. An "
+                            "operator's deliberate act, recorded in the ledger; by default a "
+                            "task another live run holds is refused, not run twice.")
     p_run.add_argument("--dry-run", action="store_true",
                        help="print the dispatch argv and verify command; spawn/write nothing")
     p_run.add_argument("--budget", action="store_true",

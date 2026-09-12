@@ -28,6 +28,7 @@ elsewhere would recreate the problem this file exists to end.
 """
 
 import json
+import os
 import re
 import secrets
 import shlex
@@ -762,3 +763,302 @@ def run_cli(build_parser, argv=None):
     except (ValueError, FileNotFoundError, KeyError) as exc:
         print(str(exc), file=sys.stderr)
         sys.exit(2)
+
+
+# ---- the attempt lifecycle (step 16) --------------------------------------------------------
+#
+# WHAT A RUN LEFT BEHIND, BEFORE. `TASKS.md` said `in-progress`; `NOTES.md` said nothing until
+# the task finished; the kit's budget was recomputed from `NOTES.md`, so a ladder interrupted
+# after three paid escalations resumed with a budget that had never heard of them; and the
+# driver wrote its final status from a copy of `TASKS.md` read before a model spent minutes
+# editing the tree. Every piece of that is a snapshot standing in for a record.
+#
+# The record is `bin/attempt_ledger.py`. What lives HERE is the part that must mean the same
+# thing whichever driver is running: when a task is claimed, what counts as an attempt, how
+# usage from the ledger and from `NOTES.md` add up, and how a status is projected back into
+# `TASKS.md` from a fresh read. A driver contributes its argv and its loop, as before.
+
+
+_ATTEMPT_LEDGER = None
+
+
+def _al():
+    """Lazy-load bin/attempt_ledger.py -- the one record of attempts (step 16).
+
+    Loaded ONCE and cached, unlike the other lazy loaders here, because this module's
+    exception classes are compared by identity: a ledger opened by one load raising
+    `ClaimHeld` past an `except` that names another load's `ClaimHeld` is an uncaught
+    exception, not a refusal. That is exactly what happened before the cache.
+    """
+    global _ATTEMPT_LEDGER
+    if _ATTEMPT_LEDGER is None:
+        import importlib.util
+        path = Path(__file__).resolve().parent / "attempt_ledger.py"
+        spec = importlib.util.spec_from_file_location("attempt_ledger", path)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        _ATTEMPT_LEDGER = mod
+    return _ATTEMPT_LEDGER
+
+
+def open_ledger(kit_dir, store=None, env=None):
+    """The kit's attempt ledger.
+
+    `store` is a driver's `--attempt-store` and overrides everything, which is how every test
+    points at a temp dir. Otherwise the ledger lives in the per-user data root, namespaced to
+    the checkout that holds the kit (`attempt_ledger.kit_repo_root`), never inside the tree a
+    worker edits. The namespace within the store is the kit's directory name.
+    """
+    al = _al()
+    kit_dir = Path(kit_dir)
+    root = Path(store) if store else al.default_store(al.kit_repo_root(kit_dir), env=env)
+    return al.AttemptLedger(root, kit_dir.name)
+
+
+def combined_usage(notes_text, ledger):
+    """`NOTES.md` usage plus the ledger's not-yet-projected attempts -> one `used` dict.
+
+    `NOTES.md` counts finished tasks; the ledger counts what nothing has written an outcome
+    line for -- an interrupted ladder, a run that died after dispatch. Neither double-counts
+    the other: once a task's outcome line exists, the ledger stops counting its attempts.
+    """
+    used = count_plan_budget_usage(notes_text)
+    for key, n in ledger.usage().items():
+        used[key] = used.get(key, 0) + n
+    return used
+
+
+def append_block(notes_path, block):
+    """Append one Markdown block to a kit's NOTES.md, separated from what is there.
+
+    Appends with the file opened for append, so a concurrent writer's block is not lost the
+    way a read-then-`write_text` loses it. The only read is one byte, to decide whether a
+    newline is owed before the separator.
+    """
+    notes_path = Path(notes_path)
+    notes_path.parent.mkdir(parents=True, exist_ok=True)
+    prefix = ""
+    try:
+        with open(notes_path, "rb") as fh:
+            fh.seek(0, os.SEEK_END)
+            if fh.tell():
+                fh.seek(-1, os.SEEK_END)
+                prefix = ("" if fh.read(1) == b"\n" else "\n") + "\n"
+    except FileNotFoundError:
+        pass
+    with open(notes_path, "a", encoding="utf-8") as fh:
+        fh.write(prefix + block)
+
+
+def project_status(tasks_path, task_id, new_status, expected=None):
+    """Write `task_id`'s status from a FRESH read of TASKS.md -> `(text, previous_status)`.
+
+    The driver's in-memory copy of TASKS.md was read before a model spent minutes with write
+    access to the tree. Writing that copy back would erase whatever changed in between, which
+    is the stale-snapshot defect. So the file is re-read, exactly one line is changed, and
+    the whole file is replaced in one `os.replace` so a crash mid-write cannot leave half a
+    TASKS.md.
+
+    `previous_status` is what the file said just before the write. When it differs from
+    `expected` -- a worker flipped its own task to `done`, say -- the DRIVER's verdict still
+    wins, because the driver holds the claim and ran the check; the caller reports the
+    discrepancy rather than silently accepting either side.
+    """
+    tasks_path = Path(tasks_path)
+    text = tasks_path.read_text()
+    previous = next((t["status"] for t in parse_tasks(text) if t["id"] == task_id), None)
+    text = set_status(text, task_id, new_status)
+    tmp = tasks_path.with_name(f"{tasks_path.name}.{os.getpid()}.tmp")
+    tmp.write_text(text)
+    os.replace(tmp, tasks_path)
+    return text, previous
+
+
+class TaskRun:
+    """One task's lifecycle in the ledger: claim, reconcile, record, project, release.
+
+    Every consuming call a driver makes is bracketed by `attempt_started` (before) and
+    `attempt_finished` (after), so the ledger always knows a call was made even when nothing
+    came back. `verify_finished` records the check's verdict against the attempt it judged.
+    """
+
+    def __init__(self, ledger, run_id, task, workspace=None, actor="driver"):
+        self.ledger = ledger
+        self.run = run_id
+        self.task = task
+        self.task_id = task["id"]
+        self.workspace = Path(workspace) if workspace is not None else Path.cwd()
+        self.actor = actor
+        self._al = _al()
+
+    def begin(self, break_claim=False):
+        """Claim the task and close whatever a dead run left open -> what was found."""
+        if break_claim:
+            self.ledger.break_claim(self.task_id, reason=f"--break-claim by run {self.run}")
+        info = self.ledger.claim(self.task_id, self.run)
+        self.ledger.append("run.started", run=self.run, task=self.task_id, actor=self.actor,
+                           pid=os.getpid())
+        closed = self.ledger.reconcile_open(
+            self.run, self.task_id,
+            note="closed by a later run: the process that started this attempt recorded no "
+                 "result, so whether it ran, what it changed, and whether it was billed are "
+                 "all unknown",
+        )
+        return {
+            "stale_from": info.get("stale_from"),
+            "closed_unknown": closed,
+            "unprojected": self.ledger.unprojected(self.task_id),
+        }
+
+    def fingerprint(self):
+        return self._al.workspace_fingerprint(self.workspace)
+
+    def precheck(self, tautological, rc=None):
+        """Record the pre-task verify verdict, so a resume can tell a real pass from a
+        command that passed before any work was done."""
+        self.ledger.append("verify.precheck", run=self.run, task=self.task_id,
+                           tautological=bool(tautological), rc=rc)
+
+    def recorded_precheck(self):
+        found = None
+        for ev in self.ledger.events():
+            if ev.get("kind") == "verify.precheck" and ev.get("task") == self.task_id:
+                found = ev
+        return found
+
+    def attempt_started(self, op, model, prompt=None, verify_cmd=None):
+        return self.ledger.record_started(
+            self.run, self.task_id, op, model, prompt=prompt, verify_cmd=verify_cmd,
+            artifact=self.fingerprint(),
+        )
+
+    def attempt_finished(self, attempt, rc, output, proc_outcome=None, duration_s=None):
+        """Record the process result -> its failure class (None when it did not fail).
+
+        `rc is None` is the injected-fixture shape, a runner that declined to report; that is
+        unknown, not failure, and is not classified as one.
+        """
+        if rc is None and proc_outcome is None:
+            cls = None
+            outcome = "unreported"
+        else:
+            cls = self._al.classify_dispatch(rc, output, proc_outcome=proc_outcome)
+            outcome = proc_outcome or ("ok" if rc == 0 else "failed")
+        self.ledger.record_finished(self.run, self.task_id, attempt, outcome, rc, output,
+                                    cls=cls, duration_s=duration_s)
+        return cls
+
+    def verify_finished(self, attempt, rc, output):
+        return self.ledger.record_verify(self.run, self.task_id, attempt, rc, output,
+                                         artifact=self.fingerprint())
+
+    def history(self):
+        return self.ledger.task_history(self.task_id)
+
+    def retry_context(self, verify_cmd=None, include_tail=True):
+        return self._al.retry_context(self.history(), verify_cmd=verify_cmd,
+                                      include_tail=include_tail)
+
+    def project(self, status, result=None, outcome_line=False, note=""):
+        self.ledger.record_projected(self.run, self.task_id, status, result=result,
+                                     outcome_line=outcome_line, note=note)
+
+    def end(self, status="finished", reason=""):
+        """Record the run's end and release the claim. Idempotent: a driver calls it on
+        every exit path, and only the first call writes anything."""
+        if getattr(self, "_ended", False):
+            return
+        self._ended = True
+        self.ledger.append("run.finished", run=self.run, task=self.task_id, status=status,
+                           reason=reason)
+        self.ledger.release(self.task_id, self.run)
+
+
+def start_task_lifecycle(kit_dir, task, run_id, actor, store=None, break_claim=False,
+                         workspace=None):
+    """Open the ledger, claim the task, close what a dead run left -> `(lifecycle, info)`.
+
+    Exits 2 on a claim another live run holds, naming it: two drivers on one task is the one
+    situation where refusing is always right. A stale claim (its process gone) is taken over
+    and said so on stderr.
+    """
+    ledger = open_ledger(kit_dir, store=store)
+    lifecycle = TaskRun(ledger, run_id, task, workspace=workspace, actor=actor)
+    try:
+        info = lifecycle.begin(break_claim=break_claim)
+    except _al().ClaimHeld as exc:
+        print(f"claim: {exc}", file=sys.stderr)
+        sys.exit(2)
+    stale = info.get("stale_from")
+    if stale:
+        print(
+            f"claim: took over a stale claim on task {task['id']} left by run "
+            f"{stale.get('run')} (pid {stale.get('pid')} is gone)",
+            file=sys.stderr,
+        )
+    closed = info.get("closed_unknown") or []
+    if closed:
+        print(
+            f"resume: {len(closed)} attempt(s) of task {task['id']} had no recorded result and "
+            f"were closed as unknown -- the tree may carry their changes and the provider may "
+            f"have billed them; the check runs before anything else is decided",
+            file=sys.stderr,
+        )
+    return lifecycle, info
+
+
+def reconcile_task(lifecycle, info, verify_runner, verify_cmd):
+    """Do prior, unprojected attempts already settle this task? -> a decision dict.
+
+    `{"mode": "fresh"}` when nothing is pending. Otherwise the check is run NOW, because the
+    tree is the only host evidence there is: `{"mode": "resolved", "result": ...}` when it
+    passes and the recorded precheck says a pass means something (a red-green task whose
+    command already passed before any work is `blocked` with `required-evidence`, exactly as
+    the first run would have concluded); `{"mode": "retry", "context": ...}` when it fails,
+    carrying the bounded account of what was tried for the next prompt.
+
+    Nothing is re-dispatched here. A resume never replays an attempt; it either recognises
+    finished work or asks for one more attempt that knows what came before.
+    """
+    pending = info.get("unprojected") or []
+    if not pending:
+        return {"mode": "fresh"}
+    rc, output = verify_runner(verify_cmd)
+    lifecycle.verify_finished(pending[-1]["attempt"], rc, output)
+    if rc != 0:
+        return {"mode": "retry", "context": lifecycle.retry_context(verify_cmd),
+                "verify_rc": rc}
+    pre = lifecycle.recorded_precheck()
+    tautological = bool(pre and pre.get("tautological"))
+    escalations = [ev.get("model") for ev in pending if ev.get("op") == "escalation"]
+    result = {
+        "id": lifecycle.task_id,
+        "status": "blocked" if tautological else "done",
+        "model_used": pending[-1].get("model"),
+        "escalations": escalations,
+        "verify_rc": 0,
+        "dispatch_rc": None,
+        "failure": "required-evidence" if tautological else None,
+        "reconciled": len(pending),
+    }
+    return {"mode": "resolved", "result": result, "tautological": tautological}
+
+
+def finish_task_projection(lifecycle, tasks_path, task, result):
+    """Write the final status from a fresh read and count attempts from the ledger -> text.
+
+    `result["ledger_attempts"]` becomes every attempt since the task's last outcome line,
+    across runs, so a resumed ladder's outcome line says how many calls the task really cost.
+    (Its own key: the Codex driver's `result["attempts"]` is a list of per-attempt records.)
+    """
+    result["ledger_attempts"] = max(1, len(lifecycle.ledger.unprojected(task["id"])))
+    text, previous = project_status(tasks_path, task["id"], result["status"],
+                                    expected="in-progress")
+    if previous != "in-progress":
+        print(
+            f"projection: TASKS.md said task {task['id']} was {previous!r} rather than "
+            f"in-progress when this run finished; the driver's verdict "
+            f"({result['status']}) was written over it, and this line is the record of that",
+            file=sys.stderr,
+        )
+    return text
