@@ -102,6 +102,7 @@ SOURCES = (
     "copilot_usage",
     "context_overview",
     "routing_history",
+    "attempts",
 )
 
 # The three harnesses' section names inside a context_weight overview, in the order
@@ -130,6 +131,7 @@ _DOLLARS_EVAPORATED_LABEL = (
 _DOLLARS_UNEXPLAINED_LABEL = "dollars n/a (no coverage note emitted)"
 
 _ROUTING_PERIOD_DESCRIPTION = "cumulative kit ledger as of capture"
+_ATTEMPTS_PERIOD_DESCRIPTION = "cumulative attempt history as of capture"
 
 ENVELOPE_KEYS = (
     "store_schema_version",
@@ -209,6 +211,9 @@ def resolve_opts(opts=None):
                          else _default_copilot_home()),
         "kits_dir": (Path(opts["kits_dir"]) if opts.get("kits_dir") is not None
                      else _default_kits_dir()),
+        # None means each kit's own default (the per-user data root for its checkout).
+        "attempt_store": (Path(opts["attempt_store"]) if opts.get("attempt_store") is not None
+                          else None),
     }
     return resolved
 
@@ -228,6 +233,8 @@ def _period_days(source, opts):
     error envelope still says which window was attempted."""
     if source == "routing_history":
         return {"description": _ROUTING_PERIOD_DESCRIPTION}
+    if source == "attempts":
+        return {"description": _ATTEMPTS_PERIOD_DESCRIPTION}
     if source == "context_overview":
         return {"days": opts["overview_days"]}
     return {"days": opts["days"]}
@@ -344,6 +351,23 @@ def collect_routing_history(opts):
     card = rs.assemble_history_card(
         [str(kits_dir)] if kits_dir else [], projects_dir=str(opts["projects_dir"]))
     return card, _period_days("routing_history", opts), _routing_dollars_labels(card), []
+
+
+def collect_attempts(opts):
+    """The joined attempt history (step 17): every recorded dispatch across the attempt
+    ledger, NOTES.md outcome lines and Codex role-use records, with unknowns counted rather
+    than filled. Labels restate the card's own coverage facts mechanically; a missing kits
+    dir raises like ``routing_history`` and lands as an error envelope."""
+    ah = _mod("attempt_history")
+    records, notes, coverage = ah.join_kits(str(opts["kits_dir"]),
+                                            store=opts.get("attempt_store"))
+    card = ah.summarize(records, notes, coverage)
+    labels = [
+        f"{coverage['kits_with_ledger']} of {coverage['kits']} kit(s) carry an attempt ledger",
+        f"unknown tier on {card['unknown']['tier']} of {card['records']} record(s)",
+        card["cost"]["note"],
+    ]
+    return card, _period_days("attempts", opts), labels, []
 
 
 def _collector(source):
@@ -738,6 +762,7 @@ def run_demo(as_json):
             "codex_home": codex,
             "copilot_home": copilot,
             "kits_dir": kits,
+            "attempt_store": tmp / "attempts",
             "days": 30,
             "overview_days": 7,
         }
@@ -805,6 +830,9 @@ def main(argv=None):
                     help="window in days for the usage/cost sources (default: 30)")
     ap.add_argument("--overview-days", type=int, default=7,
                     help="window in days for the context overview (default: 7)")
+    ap.add_argument("--attempt-store", default=None,
+                    help="attempt ledger root for the `attempts` source (default: each kit's "
+                         "own per-user data root)")
     ap.add_argument("--json", action="store_true", help="emit the summary as JSON")
     ap.add_argument("--list", action="store_true",
                     help="list what the store holds per source, instead of capturing")
@@ -834,6 +862,7 @@ def main(argv=None):
         "codex_home": args.codex_home,
         "copilot_home": args.copilot_home,
         "kits_dir": args.kits_dir,
+        "attempt_store": args.attempt_store,
         "days": args.days,
         "overview_days": args.overview_days,
     }

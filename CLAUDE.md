@@ -21,6 +21,7 @@ changelog.
   skill; a standalone literal is not. Generated mirrors under
   `skills/{route,fable-check}/references/` are never hand-edited — regenerate with
   `python3 bin/sync_pricing_refs.py` (`tests/test_pricing_refs.py` fails on drift).
+  `bin/model_registry.py` is the ONE cross-harness reader of ids and tiers, never prices.
 - **A subscription run is usage-limited, not token-billed.** Every dollar figure for a
   ChatGPT-plan Codex run is a labeled API-equivalent relative-burn proxy, never a bill:
   `billed_usd` stays null, the source stays `priced: false` / `usd: null`, and proxy dollars
@@ -110,8 +111,8 @@ changelog.
   fixture homes only.
 - **One path helper, one execution boundary, one process runner, one attempt ledger.** Every
   dispatch a driver or Ralph makes is recorded in `bin/attempt_ledger.py` before and after it
-  runs, outside the tree; a resumed run reads it, closes what died as unknown, never replays,
-  and writes status from a fresh read of TASKS.md. Every write, read, or delete
+  runs, outside the tree; a resumed run reads it, closes what died as unknown, and never
+  replays. Every write, read, or delete
   into a caller-selected root goes through `bin/safe_paths.py` — never a hand-composed
   destination path. Verify commands run under `bin/exec_policy.py`, whose `--exec-mode
   trusted-host` is the sole opt-out and reports itself as one. Every external process is started
@@ -175,7 +176,8 @@ python3 bin/context_weight.py session                # what filled this window (
 # freshness, boundaries, generated docs  (installing is the user's action, not a dev command)
 python3 bin/harness_update.py check                  # all-harness freshness card (exit 3 on drift); also `demo`
 python3 bin/exec_policy.py check                     # what OS execution boundary this host enforces (exit 3 if none)
-python3 bin/attempt_ledger.py demo                   # crash/resume walkthrough in a temp dir; `show` inspects a store
+python3 bin/attempt_ledger.py demo                   # crash/resume walkthrough in a temp dir
+python3 bin/attempt_history.py demo                  # every dispatch, joined across sources
 python3 bin/graph_brief.py demo                      # architect-grounding brief from a graphify graph.json
 python3 bin/docs_build.py check                      # docs-site freshness (exit 1 on drift); `build` regenerates
 python3 bin/copilot_docs.py check                    # Copilot doc center freshness; `build` regenerates

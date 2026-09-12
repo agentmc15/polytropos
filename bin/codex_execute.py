@@ -190,6 +190,7 @@ build_outcome_line = _CONTRACT.build_outcome_line
 count_plan_budget_usage = _CONTRACT.count_plan_budget_usage
 # The attempt lifecycle (step 16) -- claim, resume, record, project -- is the contract's.
 start_task_lifecycle = _CONTRACT.start_task_lifecycle
+record_role_dispatch = _CONTRACT.record_role_dispatch
 reconcile_task = _CONTRACT.reconcile_task
 finish_task_projection = _CONTRACT.finish_task_projection
 combined_usage = _CONTRACT.combined_usage
@@ -491,10 +492,11 @@ def run_task(task, pricing, runner, verify_runner, prompt=None, role="implemente
         else:
             dispatch_rc, dispatch_output = raw
             telemetry = {}
-        failure_class = (lifecycle.attempt_finished(attempt, dispatch_rc, dispatch_output)
-                         if lifecycle else None)
         observed_model = telemetry.get("actual_model") if isinstance(telemetry, dict) else None
         observed_role = telemetry.get("actual_role") if isinstance(telemetry, dict) else None
+        failure_class = (lifecycle.attempt_finished(attempt, dispatch_rc, dispatch_output,
+                                                    observed_model=observed_model)
+                         if lifecycle else None)
         observed_provenance = telemetry.get("provenance") if isinstance(telemetry, dict) else None
         mismatch = ((observed_model is not None and observed_model != chosen_model) or
                     (observed_role is not None and observed_role != chosen_role))
@@ -1341,7 +1343,8 @@ def cmd_run(args):
     # left open BEFORE anything else is decided. Exits 2 if another live run holds the task.
     lifecycle, begin_info = start_task_lifecycle(
         kit, task, run_id, actor="codex", store=args.attempt_store,
-        break_claim=args.break_claim, workspace=Path.cwd(),
+        break_claim=args.break_claim, workspace=Path.cwd(), role=args.role,
+        parent=args.parent,
     )
     plan_path = kit / "PLAN.md"
     plan_budget = parse_plan_budget(plan_path.read_text()) if plan_path.exists() else None
@@ -1498,10 +1501,15 @@ def cmd_review(args):
     rc, output = enforce_attested_assignment(
         rc, output, telemetry, assignment["model_id"], "verifier"
     )
+    run_id = generate_run_id()
     append_role_use(args.kit, args.phase, "verifier", None,
                     assignment["model_id"], rc, telemetry.get("actual_model"),
                     telemetry.get("actual_role"), evidence_fingerprint=evidence_fingerprint,
-                    report=output, run_id=generate_run_id())
+                    report=output, run_id=run_id)
+    # Step 17: the same run id in both records, so the history joins them as one dispatch.
+    record_role_dispatch(Path(args.kit), run_id, "verifier", args.phase,
+                         assignment["model_id"], rc, output, actor="codex",
+                         store=args.attempt_store, observed_model=telemetry.get("actual_model"))
     print(output)
     if rc != 0:
         sys.exit(1)
@@ -1578,11 +1586,16 @@ def cmd_accept(args):
             "\nfinal acceptance did not provide the required machine verdict: "
             f"{result['reason']}\n"
         )
+    run_id = generate_run_id()
     append_role_use(args.kit, args.phase, "orchestrator", None,
                     assignment["model_id"], rc, telemetry.get("actual_model"),
                     telemetry.get("actual_role"), result=verdict or "failed",
                     evidence_fingerprint=evidence_fingerprint, report=output,
-                    run_id=generate_run_id())
+                    run_id=run_id)
+    record_role_dispatch(Path(args.kit), run_id, "orchestrator", args.phase,
+                         assignment["model_id"], rc, output, actor="codex",
+                         store=args.attempt_store, observed_model=telemetry.get("actual_model"),
+                         result=verdict or "failed")
     print(output)
     if verdict == "rejected" and rc == 0:
         rc = 1
@@ -1669,6 +1682,9 @@ def build_parser():
     p_review.add_argument("--codex-bin", default="codex", help="Codex CLI binary")
     p_review.add_argument("--extra-arg", action="append",
                           help="extra dispatch flag (repeatable)")
+    p_review.add_argument("--attempt-store", default=None,
+                          help="root of the attempt ledger the review is recorded in (step 17); "
+                               "default: the per-user data root, namespaced to this checkout")
     p_review.add_argument("--dry-run", action="store_true",
                           help="print the dispatch argv; spawn nothing")
     p_review.set_defaults(func=cmd_review)
@@ -1678,6 +1694,9 @@ def build_parser():
     p_accept.add_argument("--phase", required=True, help="phase number to accept")
     p_accept.add_argument("--codex-bin", default="codex", help="Codex CLI binary")
     p_accept.add_argument("--extra-arg", action="append", help="extra dispatch flag")
+    p_accept.add_argument("--attempt-store", default=None,
+                          help="root of the attempt ledger the acceptance is recorded in "
+                               "(step 17); default: the per-user data root for this checkout")
     p_accept.add_argument("--dry-run", action="store_true", help="print argv; spawn nothing")
     p_accept.set_defaults(func=cmd_accept)
 

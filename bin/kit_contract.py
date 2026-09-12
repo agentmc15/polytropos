@@ -882,13 +882,19 @@ class TaskRun:
     came back. `verify_finished` records the check's verdict against the attempt it judged.
     """
 
-    def __init__(self, ledger, run_id, task, workspace=None, actor="driver"):
+    def __init__(self, ledger, run_id, task, workspace=None, actor="driver", role=None,
+                 parent=None):
         self.ledger = ledger
         self.run = run_id
         self.task = task
         self.task_id = task["id"]
         self.workspace = Path(workspace) if workspace is not None else Path.cwd()
         self.actor = actor
+        # Step 17: the role this run dispatches as, and the task it was spawned to rescue.
+        # Recorded on every attempt, whatever the result -- a FAILED consult keeps its parent
+        # here even though the NOTES.md grammar only carries `parent=` on a success.
+        self.role = role
+        self.parent = parent
         self._al = _al()
 
     def begin(self, break_claim=False):
@@ -926,17 +932,21 @@ class TaskRun:
                 found = ev
         return found
 
-    def attempt_started(self, op, model, prompt=None, verify_cmd=None):
+    def attempt_started(self, op, model, prompt=None, verify_cmd=None, effort=None):
         return self.ledger.record_started(
             self.run, self.task_id, op, model, prompt=prompt, verify_cmd=verify_cmd,
-            artifact=self.fingerprint(),
+            artifact=self.fingerprint(), role=self.role, parent=self.parent,
+            requested_model=self.task.get("model"), effort=effort, actor=self.actor,
         )
 
-    def attempt_finished(self, attempt, rc, output, proc_outcome=None, duration_s=None):
+    def attempt_finished(self, attempt, rc, output, proc_outcome=None, duration_s=None,
+                         observed_model=None):
         """Record the process result -> its failure class (None when it did not fail).
 
         `rc is None` is the injected-fixture shape, a runner that declined to report; that is
-        unknown, not failure, and is not classified as one.
+        unknown, not failure, and is not classified as one. `observed_model` is what the host
+        attested it actually ran (Codex correlates a rollout); None means nobody observed it,
+        which is recorded as exactly that.
         """
         if rc is None and proc_outcome is None:
             cls = None
@@ -945,7 +955,8 @@ class TaskRun:
             cls = self._al.classify_dispatch(rc, output, proc_outcome=proc_outcome)
             outcome = proc_outcome or ("ok" if rc == 0 else "failed")
         self.ledger.record_finished(self.run, self.task_id, attempt, outcome, rc, output,
-                                    cls=cls, duration_s=duration_s)
+                                    cls=cls, duration_s=duration_s,
+                                    observed_model=observed_model)
         return cls
 
     def verify_finished(self, attempt, rc, output):
@@ -975,7 +986,7 @@ class TaskRun:
 
 
 def start_task_lifecycle(kit_dir, task, run_id, actor, store=None, break_claim=False,
-                         workspace=None):
+                         workspace=None, role=None, parent=None):
     """Open the ledger, claim the task, close what a dead run left -> `(lifecycle, info)`.
 
     Exits 2 on a claim another live run holds, naming it: two drivers on one task is the one
@@ -983,7 +994,8 @@ def start_task_lifecycle(kit_dir, task, run_id, actor, store=None, break_claim=F
     and said so on stderr.
     """
     ledger = open_ledger(kit_dir, store=store)
-    lifecycle = TaskRun(ledger, run_id, task, workspace=workspace, actor=actor)
+    lifecycle = TaskRun(ledger, run_id, task, workspace=workspace, actor=actor, role=role,
+                        parent=parent)
     try:
         info = lifecycle.begin(break_claim=break_claim)
     except _al().ClaimHeld as exc:
@@ -1005,6 +1017,33 @@ def start_task_lifecycle(kit_dir, task, run_id, actor, store=None, break_claim=F
             file=sys.stderr,
         )
     return lifecycle, info
+
+
+def record_role_dispatch(kit_dir, run_id, role, phase, model, rc, output, actor,
+                         store=None, observed_model=None, result=None, proc_outcome=None):
+    """Record a phase review or acceptance dispatch in the attempt ledger -> attempt id.
+
+    Reviews are not tasks: nothing is claimed and nothing is projected. What was missing (step
+    17) is that on Claude and Copilot a review left NOTHING behind but stdout, so a role
+    dispatch never appeared in any history at all. It is recorded against the task id
+    `phase-<n>` with op `review` (or `acceptance` for the orchestrator's verdict), the same
+    shape as every other attempt, so the cross-harness history can join it with Codex's typed
+    role-use record for the same run.
+    """
+    ledger = open_ledger(kit_dir, store=store)
+    task_id = f"phase-{phase}"
+    op = "acceptance" if role == "orchestrator" else "review"
+    attempt = ledger.record_started(run_id, task_id, op, model, role=role, actor=actor,
+                                    phase=str(phase))
+    al = _al()
+    if rc is None and proc_outcome is None:
+        cls, outcome = None, "unreported"
+    else:
+        cls = al.classify_dispatch(rc, output, proc_outcome=proc_outcome)
+        outcome = proc_outcome or ("ok" if rc == 0 else "failed")
+    ledger.record_finished(run_id, task_id, attempt, outcome, rc, output, cls=cls,
+                           observed_model=observed_model, result=result)
+    return attempt
 
 
 def reconcile_task(lifecycle, info, verify_runner, verify_cmd):

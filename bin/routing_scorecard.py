@@ -691,6 +691,16 @@ DEMO_ALARM_BLIND_TASKS_MD = """# TASKS — driver-blind (synthetic, P34-F1 hones
 """
 
 
+DEMO_ALARM_UNKNOWN_TASKS_MD = """# TASKS — pin-unknown (synthetic, no-evidence demo)
+
+## Phase 1 — driver dispatch on an id no pricing file knows
+
+### DU1 — dispatched on a model outside every roster
+- status: done
+- model: driver-only-model-x
+"""
+
+
 def _alarm_demo_steady_kit_md(prefix, n_pass=9):
     """One STEADY kit for the ``--demo --alarm`` fixture: ``n_pass`` clean sonnet passes
     plus one sonnet task escalated to fable (rescued in place, no ``parent=``) -- a LOW,
@@ -992,9 +1002,39 @@ def parse_outcomes(text):
     return outcomes, notes
 
 
+_MODEL_REGISTRY = None
+
+
+def _registry():
+    """``bin/model_registry.py`` over the repo's pricing files, loaded once (step 17)."""
+    global _MODEL_REGISTRY
+    if _MODEL_REGISTRY is None:
+        _MODEL_REGISTRY = _load("model_registry").Registry()
+    return _MODEL_REGISTRY
+
+
 def tier_for(alias):
-    """The pricing.json tier for an Agent-tool model alias (identity except ``fable``)."""
-    return TASK_MODEL_TIERS.get(alias, alias)
+    """The tier for an Agent-tool alias OR a concrete model id.
+
+    Alias words behave as they always have (identity, ``fable`` -> ``frontier``). A concrete
+    id used to fall straight off the ladder -- ``claude-opus-5`` resolved to the "tier"
+    ``claude-opus-5`` and every outcome carrying it was skipped with a note, so a valid pass
+    on a concrete pin contributed nothing (step 17). Concrete ids now resolve through the
+    versioned registry: Claude's own file first, then any harness that knows the id
+    unambiguously. An id no file knows returns unchanged, which keeps every "outside the
+    tier ladder" note exactly where it was.
+    """
+    if alias is None:
+        return None
+    if alias in TASK_MODEL_TIERS:
+        return TASK_MODEL_TIERS[alias]
+    if alias in LIVE_TIER_ORDER:
+        return alias
+    reg = _registry()
+    hit = reg.resolve(alias, harness="claude") or reg.resolve(alias)
+    if hit and hit.get("tier"):
+        return hit["tier"]
+    return alias
 
 
 def is_cheap(alias, expensive_tiers):
@@ -3512,14 +3552,18 @@ def run_alarm_demo(as_json, trend=True):
         each 1/10 escalated (10%) -- pooled baseline mean 10%, stdev 0.
       * day 2 (the current reading): the same two steady kits UNCHANGED (still 10% —
         AT the threshold, never over it, proving a stable kit does not trip), PLUS
-        ``spike-3`` (4/6 escalated — a drifting verify command, tripping the alarm) and
+        ``spike-3`` (4/6 escalated — a drifting verify command, tripping the alarm),
         ``driver-blind`` (one outcome line carrying a CONCRETE pricing model id, exactly
-        what a driver harness writes per P34-F1 — structurally invisible to
-        ``tier_for``, reported as "no evidence", never a fabricated 0%).
+        what a driver harness writes per P34-F1 — which used to be structurally invisible
+        to ``tier_for`` and, since step 17, resolves through the model registry to its
+        tier and COUNTS: 1 outcome, 0% escalated, never tripping), and ``pin-unknown``
+        (an outcome line naming an id NO pricing file knows — still invisible, reported
+        as "no evidence", never a fabricated 0%).
 
     Both days scan the SAME two ``--kits-dir`` roots (a steady dir + an initially-empty
     "extra" dir) so kit names stay consistently namespaced across both snapshots —
-    ``spike-3``/``driver-blind`` are simply absent from the extra dir on day 1.
+    ``spike-3``/``driver-blind``/``pin-unknown`` are simply absent from the extra dir on
+    day 1.
 
     ``trend=True`` (default) prints the ``--history --trend`` view — the tripped D11
     alarm plus its evidence, dated as of day 2. ``trend=False`` prints day 2's plain
@@ -3567,11 +3611,24 @@ def run_alarm_demo(as_json, trend=True):
         (blind / "NOTES.md").write_text(
             "# NOTES — driver-blind (synthetic, P34-F1 honesty demo)\n\n"
             "This kit's outcome line carries a concrete pricing model id, exactly what a "
-            "driver harness writes (P34-F1) -- tier_for cannot resolve it, so it is "
-            "structurally invisible to the alarm's per-kit rate, reported as 'no "
-            "evidence', never a fabricated 0%.\n\n"
+            "driver harness writes (P34-F1). tier_for could not resolve it until step 17; "
+            "it now resolves through bin/model_registry.py to the id's own tier, so this "
+            "kit has one outcome at 0% escalated and is evaluated like any other.\n\n"
             "## Outcome ledger\n"
             f"outcome: DR1 model={concrete_id} attempts=1 result=pass review=clean\n")
+
+        # What is STILL invisible: an id no pricing file knows. tier_for returns it
+        # unchanged, it sits outside the ladder, and the alarm reports "no evidence" for
+        # the kit rather than a fabricated 0%.
+        unknown = extra_dir / "pin-unknown"
+        unknown.mkdir(parents=True)
+        (unknown / "TASKS.md").write_text(DEMO_ALARM_UNKNOWN_TASKS_MD)
+        (unknown / "NOTES.md").write_text(
+            "# NOTES — pin-unknown (synthetic, no-evidence demo)\n\n"
+            "This kit's outcome line names a model id that is in no pricing file, so no "
+            "tier can be attributed and the alarm says so.\n\n"
+            "## Outcome ledger\n"
+            "outcome: DU1 model=driver-only-model-x attempts=1 result=pass review=clean\n")
 
         buf2 = io.StringIO()
         with contextlib.redirect_stdout(buf2):

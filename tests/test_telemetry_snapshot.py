@@ -22,6 +22,7 @@ import contextlib
 import importlib.util
 import io
 import json
+import os
 import tempfile
 import unittest
 from datetime import datetime, timezone
@@ -39,6 +40,24 @@ def _load(name):
 
 
 ts = _load("telemetry_snapshot")
+
+# Step 17: the `attempts` source resolves each kit's attempt ledger under the per-user data
+# root unless told otherwise. Every test here runs with that root pointed at a temp dir.
+_DATA_HOME = None
+_DATA_HOME_PATCH = None
+
+
+def setUpModule():
+    global _DATA_HOME, _DATA_HOME_PATCH
+    _DATA_HOME = tempfile.TemporaryDirectory(prefix="polytropos-test-data-")
+    _DATA_HOME_PATCH = mock.patch.dict(os.environ, {"POLYTROPOS_DATA_HOME": _DATA_HOME.name})
+    _DATA_HOME_PATCH.start()
+
+
+def tearDownModule():
+    _DATA_HOME_PATCH.stop()
+    _DATA_HOME.cleanup()
+
 
 PINNED_ENVELOPE_KEYS = {
     "store_schema_version",
@@ -142,10 +161,11 @@ class CaptureTests(unittest.TestCase):
         self.world = _TempWorld()
         self.addCleanup(self.world.cleanup)
 
-    def test_five_envelopes_written_all_ok(self):
+    def test_every_registered_source_is_written_ok(self):
+        # Step 17 added `attempts`; the count is the registry's, never a literal.
         summary = ts.capture(self.world.store, date="2026-03-04", opts=self.world.opts())
-        self.assertEqual(summary["written"], 5)
-        self.assertEqual(summary["ok"], 5)
+        self.assertEqual(summary["written"], len(ts.SOURCES))
+        self.assertEqual(summary["ok"], len(ts.SOURCES))
         self.assertEqual(summary["errors"], 0)
         files = sorted(p.relative_to(self.world.store).as_posix()
                        for p in self.world.store.rglob("*.json"))
@@ -155,17 +175,17 @@ class CaptureTests(unittest.TestCase):
                 self.assertEqual(env["status"], "ok", source)
                 self.assertIsInstance(env["payload"], dict)
 
-    def test_registry_is_the_five_pinned_sources(self):
+    def test_registry_is_the_pinned_sources(self):
         self.assertEqual(
             set(ts.SOURCES),
             {"cost_report", "codex_usage", "copilot_usage", "context_overview",
-             "routing_history"},
+             "routing_history", "attempts"},
         )
 
     def test_envelope_key_set_is_exactly_the_ten_pinned_keys(self):
         ts.capture(self.world.store, date="2026-03-04", opts=self.world.opts())
         envs = self.world.envelopes()
-        self.assertEqual(len(envs), 5)
+        self.assertEqual(len(envs), len(ts.SOURCES))
         for source, env in envs.items():
             with self.subTest(source=source):
                 self.assertEqual(set(env), PINNED_ENVELOPE_KEYS)
@@ -300,7 +320,7 @@ class HonestyLabelTests(unittest.TestCase):
 
     def test_labels_are_never_empty_for_an_absent_source(self):
         for source in ("cost_report", "codex_usage", "copilot_usage", "context_overview",
-                       "routing_history"):
+                       "routing_history", "attempts"):
             with self.subTest(source=source):
                 self.assertTrue(self.envs[source]["labels"], source)
 
@@ -576,7 +596,7 @@ class OverwriteTests(unittest.TestCase):
         stamp_after = self.world.envelopes()["cost_report"]["captured_at"]
 
         self.assertEqual(before, after)
-        self.assertEqual(len(after), 5)
+        self.assertEqual(len(after), len(ts.SOURCES))
         self.assertEqual(stamp_before, "2030-01-02T03:04:05+00:00")
         self.assertEqual(stamp_after, "2030-01-02T08:09:10+00:00")
         self.assertNotEqual(stamp_before, stamp_after)
@@ -623,7 +643,7 @@ class ErrorNeverReplacesOkTests(unittest.TestCase):
         self.assertEqual(kept, good)
         # The failure is recorded in the summary, never in place of the evidence.
         self.assertEqual(summary["kept"], 1)
-        self.assertEqual(summary["written"], 4)
+        self.assertEqual(summary["written"], len(ts.SOURCES) - 1)
         self.assertEqual(summary["errors"], 1)
         self.assertTrue(
             any(n.startswith("kept existing ok envelope for codex_usage; "
@@ -654,7 +674,7 @@ class ErrorNeverReplacesOkTests(unittest.TestCase):
         self.assertEqual(env["status"], "ok")
         self.assertEqual(env["captured_at"], "2030-01-02T08:09:10+00:00")
         self.assertEqual(summary["kept"], 0)
-        self.assertEqual(summary["written"], 5)
+        self.assertEqual(summary["written"], len(ts.SOURCES))
 
     def test_error_then_error_overwrites(self):
         first = datetime(2030, 1, 2, 3, 4, 5, tzinfo=timezone.utc)
@@ -683,7 +703,7 @@ class ErrorNeverReplacesOkTests(unittest.TestCase):
         env = self._codex_envelope()
         self.assertEqual(env["status"], "error")
         self.assertEqual(summary["kept"], 0)
-        self.assertEqual(summary["written"], 5)
+        self.assertEqual(summary["written"], len(ts.SOURCES))
         self.assertTrue(
             any("replaced unreadable/corrupt existing envelope for codex_usage" in n
                 for n in env["notes"]),
@@ -733,17 +753,17 @@ class CollectorFailureTests(unittest.TestCase):
         self.world = _TempWorld()
         self.addCleanup(self.world.cleanup)
 
-    def test_one_failing_collector_still_leaves_five_envelopes(self):
+    def test_one_failing_collector_still_leaves_every_envelope(self):
         boom = mock.Mock(side_effect=RuntimeError("synthetic collector explosion"))
         with mock.patch.object(ts, "collect_codex_usage", boom):
             summary = ts.capture(self.world.store, date="2026-03-04",
                                  opts=self.world.opts())
-        self.assertEqual(summary["written"], 5)
-        self.assertEqual(summary["ok"], 4)
+        self.assertEqual(summary["written"], len(ts.SOURCES))
+        self.assertEqual(summary["ok"], len(ts.SOURCES) - 1)
         self.assertEqual(summary["errors"], 1)
 
         envs = self.world.envelopes()
-        self.assertEqual(len(envs), 5)
+        self.assertEqual(len(envs), len(ts.SOURCES))
         bad = envs["codex_usage"]
         self.assertEqual(bad["status"], "error")
         self.assertIsNone(bad["payload"])
@@ -754,19 +774,26 @@ class CollectorFailureTests(unittest.TestCase):
         self.assertEqual(set(bad), PINNED_ENVELOPE_KEYS)
         # The error envelope still records which window was attempted.
         self.assertEqual(bad["period"], {"days": 30})
-        for source in ("cost_report", "copilot_usage", "context_overview", "routing_history"):
+        for source in ("cost_report", "copilot_usage", "context_overview", "routing_history",
+                       "attempts"):
             self.assertEqual(envs[source]["status"], "ok", source)
 
     def test_missing_kits_dir_becomes_an_error_envelope_not_an_empty_ledger(self):
         summary = ts.capture(self.world.store, date="2026-03-04",
                              opts=self.world.opts(kits_dir=self.world.root / "nope"))
-        self.assertEqual(summary["errors"], 1)
+        # Both kit-reading sources fail the same way on a missing kits dir (step 17 added
+        # `attempts`, which joins the kits under it); neither becomes an empty ledger.
+        self.assertEqual(summary["errors"], 2)
         env = self.world.envelopes()["routing_history"]
         self.assertEqual(env["status"], "error")
         self.assertIsNone(env["payload"])
         self.assertTrue(any("kits dir not found" in n for n in env["notes"]), env["notes"])
+        attempts = self.world.envelopes()["attempts"]
+        self.assertEqual(attempts["status"], "error")
+        self.assertIsNone(attempts["payload"])
+        self.assertTrue(any("no kits dir" in n for n in attempts["notes"]), attempts["notes"])
 
-    def test_all_five_failing_still_writes_five_envelopes(self):
+    def test_every_collector_failing_still_writes_every_envelope(self):
         boom = mock.Mock(side_effect=RuntimeError("all down"))
         patches = [mock.patch.object(ts, f"collect_{s}", boom) for s in ts.SOURCES]
         with contextlib.ExitStack() as stack:
@@ -774,10 +801,10 @@ class CollectorFailureTests(unittest.TestCase):
                 stack.enter_context(p)
             summary = ts.capture(self.world.store, date="2026-03-04",
                                  opts=self.world.opts())
-        self.assertEqual(summary["written"], 5)
+        self.assertEqual(summary["written"], len(ts.SOURCES))
         self.assertEqual(summary["ok"], 0)
-        self.assertEqual(summary["errors"], 5)
-        self.assertEqual(len(self.world.envelopes()), 5)
+        self.assertEqual(summary["errors"], len(ts.SOURCES))
+        self.assertEqual(len(self.world.envelopes()), len(ts.SOURCES))
 
 
 class MainTests(unittest.TestCase):
@@ -796,8 +823,8 @@ class MainTests(unittest.TestCase):
         self.assertEqual(rc, 0)
         for source in ts.SOURCES:
             self.assertIn(source, out)
-        self.assertIn("5 envelope(s) written — 5 ok, 0 error.", out)
-        self.assertEqual(len(list(self.world.store.rglob("*.json"))), 5)
+        self.assertIn(f"{len(ts.SOURCES)} envelope(s) written — {len(ts.SOURCES)} ok, 0 error.", out)
+        self.assertEqual(len(list(self.world.store.rglob("*.json"))), len(ts.SOURCES))
 
     def test_summary_prints_metadata_only_never_payload_contents(self):
         rc, out, _ = self._run(self.world.argv())
@@ -813,7 +840,7 @@ class MainTests(unittest.TestCase):
         summary = json.loads(out)
         self.assertEqual(summary["store_schema_version"], ts.STORE_SCHEMA_VERSION)
         self.assertEqual([r["source"] for r in summary["sources"]], list(ts.SOURCES))
-        self.assertEqual(summary["ok"], 5)
+        self.assertEqual(summary["ok"], len(ts.SOURCES))
         for row in summary["sources"]:
             self.assertEqual(set(row), {"source", "status", "labels", "notes", "path"})
             self.assertTrue(Path(row["path"]).is_file())
@@ -834,8 +861,8 @@ class MainTests(unittest.TestCase):
                 stack.enter_context(mock.patch.object(ts, f"collect_{source}", boom))
             rc, out, _ = self._run(self.world.argv())
         self.assertEqual(rc, 1)
-        self.assertIn("0 ok, 5 error", out)
-        self.assertEqual(len(self.world.envelopes()), 5)
+        self.assertIn(f"0 ok, {len(ts.SOURCES)} error", out)
+        self.assertEqual(len(self.world.envelopes()), len(ts.SOURCES))
 
     def test_exit_zero_when_only_some_sources_errored(self):
         boom = mock.Mock(side_effect=RuntimeError("one down"))
@@ -1152,14 +1179,14 @@ class DemoTests(unittest.TestCase):
             rc = ts.main(argv)
         return rc, buf.getvalue(), err.getvalue()
 
-    def test_demo_exits_zero_and_names_all_five_sources(self):
+    def test_demo_exits_zero_and_names_every_source(self):
         rc, out, err = self._run(["--demo"])
         self.assertEqual(rc, 0)
         self.assertEqual(err, "")
         for source in ts.SOURCES:
             self.assertIn(source, out)
 
-    def test_demo_json_names_all_five_sources_and_is_valid_json(self):
+    def test_demo_json_names_every_source_and_is_valid_json(self):
         rc, out, _ = self._run(["--demo", "--json"])
         self.assertEqual(rc, 0)
         payload = json.loads(out)
@@ -1205,7 +1232,7 @@ class DemoTests(unittest.TestCase):
             self.assertFalse(Path(row["path"]).exists(), row["path"])
         self.assertFalse(Path(payload["list"]["store_dir"]).exists())
 
-    def test_demo_all_five_sources_ok_and_labelled(self):
+    def test_demo_every_source_ok_and_labelled(self):
         rc, out, _ = self._run(["--demo", "--json"])
         self.assertEqual(rc, 0)
         payload = json.loads(out)

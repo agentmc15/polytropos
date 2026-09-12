@@ -1,4 +1,4 @@
-# Handoff — roadmap implementation, steps 01–16
+# Handoff — roadmap implementation, steps 01–17
 
 **As of 2026-09-07.** Steps 01–15 are committed as a single change set on top of `fb40925`:
 66 files modified, 17 added, +5,485 / −1,860 lines. Full suite green: **3,727 tests, OK
@@ -33,10 +33,10 @@ user instructions outrank rule files; delegate in parallel by default).
 
 ## Where things stand
 
-**Steps 01–16 are done.** That is all of Phase A (input/artifact/acceptance boundaries), all of
-Phase B (the execution boundary and the P0/P1 security remediation), and the first two steps of
-Phase C (the shared runtime). Step 16 landed on 2026-09-12 on branch
-`harden/roadmap-steps-16-26`, as its own commit.
+**Steps 01–17 are done.** That is all of Phase A (input/artifact/acceptance boundaries), all of
+Phase B (the execution boundary and the P0/P1 security remediation), and the first three steps
+of Phase C (the shared runtime). Steps 16 and 17 landed on 2026-09-12 on branch
+`harden/roadmap-steps-16-26`, one commit each.
 
 | Step | What it closed |
 |---|---|
@@ -56,6 +56,7 @@ Phase C (the shared runtime). Step 16 landed on 2026-09-12 on branch
 | 14 | Build supply chain pinned; deploy credentials scoped; unsafe link schemes rejected |
 | 15 | One kit contract (`bin/kit_contract.py`) + adapter seam + capability registry |
 | 16 | Durable attempts (`bin/attempt_ledger.py`): recorded before/after every dispatch, resume without replay, budget carried across runs, failure classes, real progress detection, task claims, fresh-read projection |
+| 17 | Cross-harness evidence (`bin/attempt_history.py` + `bin/model_registry.py`): one record per attempt over ledger + NOTES.md + role-use, unknowns kept, history never collapsed, failed consults keep lineage, cost per basis; reviews recorded on all three drivers; concrete ids resolve to tiers; telemetry `attempts` source |
 
 ### New modules, and what each is the *one place* for
 
@@ -72,26 +73,50 @@ Phase C (the shared runtime). Step 16 landed on 2026-09-12 on branch
 - `bin/attempt_ledger.py` — what a run did, recorded before and after it did it, outside the
   tree. Claims, failure classes, normalized progress signatures, bounded retry context. The
   drivers reach it only through `kit_contract.TaskRun` / `start_task_lifecycle` /
-  `reconcile_task` / `finish_task_projection`; Ralph reaches it directly.
+  `reconcile_task` / `finish_task_projection` / `record_role_dispatch`; Ralph reaches it
+  directly.
+- `bin/model_registry.py` — which harness knows a model id and what tier it sits in there.
+  Reads ids and tiers from the three pricing files, never a price; refuses to guess between
+  harnesses that disagree. `routing_scorecard.tier_for` and `bench_routing` resolve through it.
+- `bin/attempt_history.py` — one record per attempt over the ledger, `NOTES.md` outcome lines
+  and Codex `role-use.jsonl`; unknowns kept and counted; latest state a separate projection;
+  lineage including failed consults; cost per basis. Captured daily as telemetry's `attempts`
+  source.
 
 ---
 
-## Next: step 17 — join cross-harness execution, role, model, and cost evidence
+## Next: step 18 — validate the execution DAG and centralize sequential readiness
 
-Step 16 left three things for 17 on purpose, and they are the shape of its first task:
+`kit_contract.select_task` already holds the one readiness rule (step 07/15). Step 18 adds a
+pure DAG validator (duplicate ids, missing dependencies, cycles, self-dependencies, invalid
+transitions) that runs BEFORE any dispatch or mutation, a ready-frontier selector for a diamond
+DAG, and actionable diagnostics for an invalid graph. It is explicitly NOT parallel dispatch;
+that is step 24. The three drivers' `cmd_run` call `select_task` from the same place, so the
+validator slots in beside it.
 
-- An **infrastructure-class dispatch failure still writes `result=blocked`** to the outcome line.
-  The class is in NOTES.md (`- failure-class: auth`) and in the ledger, but the scorecard's
-  `failure=` vocabulary (`execution | coherence | verification`) has no slot for "the model never
-  ran". Deciding how the scorecard reads the class is an evidence-join decision, so it was not
-  made here by inventing a fourth value the reader would have to ignore.
-- The ledger records **per-attempt model, op, class, cost (Ralph), duration and artifact
-  identity** that nothing joins yet. `python3 bin/attempt_ledger.py show` renders one task.
-- Codex's `role-use.jsonl` and the attempt ledger are two typed records of overlapping events.
-  Step 17 should decide whether role-use folds in or stays the acceptance-specific one.
+Remaining after that: **19–24** routing / roles / graph context / skills / the Cursor adapter /
+scheduling, **25–26** evaluation and the release matrix.
 
-Remaining after that: **18** DAG validation, **19–24** routing / roles / graph context /
-skills / the Cursor adapter / scheduling, **25–26** evaluation and the release matrix.
+### Step 17's own deliberate limits
+
+- **`billed` cost is never populated by the history.** Pricing a Claude session needs its
+  transcript, which stays `routing_scorecard --history`'s job through `session:` lines. The
+  history carries what the records themselves held: Copilot `- budget:` estimates and Ralph
+  ticks (`estimated`, or `model-reported` when the model wrote the number). Codex subscription
+  proxies appear in no per-attempt record yet, so they are absent, not zero.
+- **An infrastructure-class dispatch failure still writes `result=blocked`** to the outcome
+  line; the class rides beside it (`- failure-class:`) and in the ledger, and the history's
+  `failure_classes` counts it. The scorecard's `failure=` vocabulary was left alone: adding a
+  value the reader drops would be a line the reader has to ignore.
+- **A chain's `attempts` mixes granularities**: ledger records count one each, a `NOTES.md`
+  line without ledger twins counts its own `attempts=`. Stated in the field's docstring.
+- **The scorecard's Claude-oriented per-tier stats now count a Codex `frontier` pass under
+  `frontier`** because the tier word is the same; `mid`/`strong`/`cheap` still fall outside
+  `LIVE_TIER_ORDER` with the existing note. Per-harness tier stats live in the history card,
+  not the scorecard.
+- **`--demo --alarm` changed meaning deliberately**: `driver-blind` now HAS evidence (its
+  concrete id resolves) and a new `pin-unknown` kit carries the no-evidence path. The test says
+  so in a comment.
 
 ### Step 16's own deliberate limits
 
@@ -172,6 +197,9 @@ These cost real time to discover. All are still live.
    to a temp dir at module level (`setUpModule` in the three driver tests, the Ralph tests, and
    `test_attempt_ledger.py`). The drivers default the attempt ledger to the per-user data root;
    a new test file that forgets the patch writes into the real store. Copy the block.
+9. **`tests/test_telemetry_snapshot.py` counts sources as `len(ts.SOURCES)`**, not a literal,
+   since step 17 added the sixth. Its `--days 5` assertion is a literal 5 that has nothing to
+   do with the count; a blanket replace there is the mistake this line exists to prevent.
 8. **`kit_contract._al()` caches the loaded module, and must.** The other lazy loaders reload
    per call; this one cannot, because `ClaimHeld` is caught by class identity, and a ledger
    opened by one load raising past an `except` naming another load's class was an uncaught
@@ -234,8 +262,9 @@ git log --oneline -2                           # the roadmap commit sits on fb40
 python3 bin/runtime_data.py where              # where your stores resolved to
 python3 bin/harness_adapter.py                 # what each harness can actually do
 python3 bin/attempt_ledger.py demo             # crash / resume / progress walkthrough, temp dir only
+python3 bin/attempt_history.py demo            # the cross-harness join, temp dir only
 ```
 
-Then read step 17 in the roadmap and continue. The pattern that has worked: verify the step's
+Then read step 18 in the roadmap and continue. The pattern that has worked: verify the step's
 claims against HEAD first, implement, run the affected suites, then the full suite, then update
 `SECURITY.md` / `CLAUDE.md` / the doc mirrors together.

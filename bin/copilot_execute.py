@@ -156,6 +156,7 @@ build_outcome_line = _CONTRACT.build_outcome_line
 count_plan_budget_usage = _CONTRACT.count_plan_budget_usage
 # The attempt lifecycle (step 16) -- claim, resume, record, project -- is the contract's.
 start_task_lifecycle = _CONTRACT.start_task_lifecycle
+record_role_dispatch = _CONTRACT.record_role_dispatch
 reconcile_task = _CONTRACT.reconcile_task
 finish_task_projection = _CONTRACT.finish_task_projection
 combined_usage = _CONTRACT.combined_usage
@@ -1102,7 +1103,8 @@ def cmd_run(args):
     # left open BEFORE anything else is decided. Exits 2 if another live run holds the task.
     lifecycle, begin_info = start_task_lifecycle(
         kit, task, run_id, actor="copilot", store=args.attempt_store,
-        break_claim=args.break_claim, workspace=Path.cwd(),
+        break_claim=args.break_claim, workspace=Path.cwd(), role=args.agent,
+        parent=args.parent,
     )
     plan_path = kit / "PLAN.md"
     plan_budget = parse_plan_budget(plan_path.read_text()) if plan_path.exists() else None
@@ -1443,6 +1445,9 @@ def cmd_review(args):
         print(f"dispatch: {shlex.join(argv)}")
         return
     rc, output = default_runner(argv)
+    # Step 17: a review used to leave nothing behind but stdout. Recorded like any dispatch.
+    record_role_dispatch(Path(args.kit), generate_run_id(), "reviewer", args.phase, None, rc,
+                         output, actor="copilot", store=args.attempt_store)
     print(output)
     if rc != 0:
         sys.exit(1)
@@ -1526,6 +1531,9 @@ def build_parser():
                           help="review dispatch permissions (step 06). `restricted` omits the "
                                "blanket --allow-all-tools grant; `bypass` is the named opt-out "
                                "that restores it and is reported as such.")
+    p_review.add_argument("--attempt-store", default=None,
+                          help="root of the attempt ledger the review is recorded in (step 17); "
+                               "default: the per-user data root, namespaced to this checkout")
     p_review.add_argument("--dry-run", action="store_true",
                           help="print the dispatch argv; spawn nothing")
     p_review.set_defaults(func=cmd_review)

@@ -262,12 +262,11 @@ def unavailable_entries(entries, available_ids):
 
 def claude_tier_for_model(model_id, claude_pricing):
     """The ``data/pricing.json`` tier (haiku/sonnet/opus/frontier) for ``model_id`` — joined by
-    normalized id, never a hardcoded model->tier table. ``None`` when no pricing key matches."""
-    norm = normalize_id(model_id)
-    for key, meta in (claude_pricing.get("models") or {}).items():
-        if normalize_id(key) == norm:
-            return meta.get("tier")
-    return None
+    normalized id through ``bin/model_registry.py`` (step 17: one join rule for every
+    cross-harness reader), never a hardcoded model->tier table. ``None`` when no pricing key
+    matches. The caller's own pricing dict is used, so a fixture stays a fixture."""
+    return _load("model_registry").Registry(
+        pricing_bundle={"claude": claude_pricing}).tier_of(model_id, harness="claude")
 
 
 # ---------------------------------------------------------------------------------------------

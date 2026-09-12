@@ -223,6 +223,7 @@ select_task = _CONTRACT.select_task
 set_status = _CONTRACT.set_status
 # The attempt lifecycle (step 16) -- claim, resume, record, project -- is the contract's.
 start_task_lifecycle = _CONTRACT.start_task_lifecycle
+record_role_dispatch = _CONTRACT.record_role_dispatch
 reconcile_task = _CONTRACT.reconcile_task
 finish_task_projection = _CONTRACT.finish_task_projection
 combined_usage = _CONTRACT.combined_usage
@@ -883,7 +884,8 @@ def cmd_run(args):
     # BEFORE anything else is decided. Exits 2 if another live run holds this task.
     lifecycle, begin_info = start_task_lifecycle(
         kit, task, run_id, actor="claude-code", store=args.attempt_store,
-        break_claim=args.break_claim, workspace=Path.cwd(),
+        break_claim=args.break_claim, workspace=Path.cwd(), role=args.role,
+        parent=args.parent,
     )
 
     # PLAN.md budget dial (T9) -- checked against the kit's OWN recorded history before
@@ -1089,6 +1091,9 @@ def cmd_review(args):
         print(f"dispatch: {shlex.join(argv)}")
         return
     rc, output = default_runner(argv)
+    # Step 17: a review used to leave nothing behind but stdout. Recorded like any dispatch.
+    record_role_dispatch(kit, generate_run_id(), "reviewer", args.phase, None, rc, output,
+                         actor="claude-code", store=args.attempt_store)
     print(output)
     if rc != 0:
         sys.exit(1)
@@ -1165,6 +1170,9 @@ def build_parser():
                                "grant. `bypass` is the named opt-out that restores the historical "
                                "blanket grant, and is recorded as such — a tool pin is a CLI "
                                "control, not an OS boundary.")
+    p_review.add_argument("--attempt-store", default=None,
+                          help="root of the attempt ledger the review is recorded in (step 17); "
+                               "default: the per-user data root, namespaced to this checkout")
     p_review.add_argument("--dry-run", action="store_true",
                           help="print the dispatch argv; spawn nothing")
     p_review.set_defaults(func=cmd_review)

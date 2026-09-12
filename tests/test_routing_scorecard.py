@@ -1388,7 +1388,12 @@ class DemoAlarmTests(unittest.TestCase):
         self.assertTrue(alarm["evaluated"])
         tripped_kits = [t["kit"] for t in alarm["tripped"]]
         self.assertTrue(any("spike-3" in k for k in tripped_kits))
-        self.assertTrue(any("driver-blind" in k for k in alarm["no_evidence"]))
+        # Step 17: a concrete pricing id now resolves through the model registry, so the
+        # driver-blind kit HAS evidence and is no longer in no_evidence. What remains
+        # invisible is an id no pricing file knows, which the demo carries as pin-unknown.
+        self.assertFalse(any("driver-blind" in k for k in alarm["no_evidence"]))
+        self.assertFalse(any("driver-blind" in k for k in tripped_kits))
+        self.assertTrue(any("pin-unknown" in k for k in alarm["no_evidence"]))
 
     def test_demo_alarm_history_shows_lineage_and_failure_sections(self):
         result = _run_cli(["--demo", "--alarm", "--history"])
