@@ -71,7 +71,7 @@ changelog.
   with the body stating exactly what is red and unrun.
 - **Every local store is personal data, written by its own engine ONLY, and lives outside the
   plugin tree.** `memory/` is gitignored user data; so are `telemetry/`, `benchruns/`,
-  `journal/`, `prefs/`, `trends/`, `attempts/`. Their default location comes from `bin/runtime_data.py` — a
+  `journal/`, `prefs/`, `trends/`, `attempts/`, `evals/`. Their default location comes from `bin/runtime_data.py` — a
   per-user application-data dir, per checkout, `0700`/`0600` — never a hardcoded path under the
   repo, because this tree is distributed, cached, and often cloud-synced. An in-tree store that
   already exists keeps being used; nothing is ever relocated or deleted automatically. Runtime
@@ -149,9 +149,10 @@ python3 -m unittest discover -s tests -v   # FULL SUITE — run before claiming 
 python3 bin/cost_report.py --days 30                 # transcript cost report (markdown to stdout)
 python3 bin/session_cost.py                          # one session's cost + all-Fable counterfactual
 python3 bin/routing_scorecard.py --demo              # routing quality; also --live/--history/--by-task/--trend/--roles
-python3 bin/repo_bench.py demo                       # benchmark pipeline: fixture repo, stub dispatch, all four oracles
+python3 bin/repo_bench.py demo                       # benchmark pipeline: fixture repo, stub dispatch, four oracles
 python3 bin/repo_bench.py plan --repo . --models sonnet,haiku   # priced matrix + ceiling; only `run --live --max-usd` spends
-echo '{"model":{"id":"claude-fable-5","display_name":"Fable 5"},"cost":{"total_cost_usd":1.23},"context_window":{"used_percentage":42}}' | python3 bin/statusline.py
+python3 bin/workflow_eval.py demo                    # workflows compared offline; policy propose/apply/rollback
+echo '{"model":{"id":"claude-fable-5"},"cost":{"total_cost_usd":1.23},"context_window":{"used_percentage":42}}' | python3 bin/statusline.py
 
 # per-harness pricing and usage
 python3 bin/copilot_pricing.py est M claude-fable-5  # Copilot estimate (USD + AIC); also `knobs`, `prefs`
@@ -172,13 +173,13 @@ python3 bin/telemetry_snapshot.py                    # capture today's snapshots
 python3 bin/runtime_data.py where                    # where each store resolves; also `migrate`/`export`/`forget`
 python3 bin/context_weight.py session                # what filled this window (--harness codex|copilot); also `demo`
 
-# freshness, boundaries, generated docs  (installing is the user's action, not a dev command)
+# freshness, boundaries, generated docs
 python3 bin/harness_update.py check                  # all-harness freshness card (exit 3 on drift); also `demo`
 python3 bin/exec_policy.py check                     # what OS execution boundary this host enforces (exit 3 if none)
 python3 bin/attempt_ledger.py demo                   # crash/resume walkthrough in a temp dir
 python3 bin/attempt_history.py demo                  # every dispatch, joined across sources
 python3 bin/kit_contract.py graph --kit DIR          # DAG, frontier, stale evidence; also roster/refresh/demo
-python3 bin/graph_ground.py demo                     # freshness, impact, search fallback; brief: graph_brief.py demo
+python3 bin/graph_ground.py demo                     # freshness, impact, search fallback
 python3 bin/kit_scheduler.py demo                    # opt-in batches: copies, integrate, verify the merged tree
 python3 bin/docs_build.py check                      # docs-site freshness (exit 1 on drift); `build` regenerates
 python3 bin/copilot_docs.py check                    # Copilot doc center freshness; `build` regenerates

@@ -1685,66 +1685,21 @@ def build_calibration(store_dir):
     }
 
 
-def build_plan(
-    target_repo, models, mode="auto", limit=8, test_cmd=None, judge=None, pricing=None,
-    commit=None, scratch_dir=None, git_runner=None, test_runner=None, gh_runner=None,
-    use_gh=False, tasks_out=None, exclude_subject=(), gh_repo=None, setup_cmd=None,
-    store_dir=None,
+def mine_tasks(
+    target_repo, mode="auto", limit=8, test_cmd=None, commit=None, scratch_dir=None,
+    git_runner=None, test_runner=None, gh_runner=None, use_gh=False, exclude_subject=(),
+    gh_repo=None, setup_cmd=None,
 ):
-    """Price the whole models x tasks matrix (PLAN D1) -> a JSON-serializable plan card.
+    """The mining half of `build_plan` -> `{base_commit, mode, mode_reason, tasks, labels,
+    notes, oracle_available}`.
 
-    Candidates are resolved (deduped, order-preserving) via `ce.resolve_model` -- an unknown
-    id or tier propagates its own KeyError listing message, unchanged. The judge resolves per
-    D6 (`_default_judge_id`) unless `judge` is given; a judge that is also a candidate is a
-    hard refusal (`ValueError`). Mining always runs the issue-replay miner first (needed for
-    `auto`'s decision AND for F9's oracle-available count in the mode reason); general mode
-    additionally mines mutation-repair tasks through `scratch_dir` (F11b -- the caller is
-    responsible for pointing this at `<run-dir>/work` when a run dir exists; PLAN D3/D11 say
-    mutation only ever happens under it).
-
-    `tasks_out`, when given a list, is extended with the FULL mined task records the card only
-    summarises. `run` needs them (a prompt, a `setup_patch`, a reference patch) and must not
-    re-mine to get them: general-mode mining is stochastic in the sense that matters -- a
-    second pass builds new scratch sandboxes and could admit a different task set than the one
-    the user was just quoted a price for. The card itself stays summary-only on purpose: it is
-    what gets printed, and `reference_patch`/`test_blobs` are exactly what must never be shown.
-
-    `store_dir` (T18), when given, is read ONLY to build the calibration line -- how wrong
-    `task_profiles` estimates have measured against prior runs' own recorded actuals
-    (`build_calibration`). It is never written here (`plan` never touches the store) and
-    `None` degrades to the same honest "no calibration data" shape an absent/empty store
-    does -- never a silent omission.
+    Step 25 lifted this out of `build_plan` unchanged so `bin/workflow_eval.py` can mine
+    the SAME held-out tasks the same way (mode choice, exclusions, `gh` enrichment, the
+    general-mode red check) without a second miner. It prices nothing and never reads a
+    pricing file: everything about models stays in `build_plan`. `labels` starts with
+    `ESTIMATE_CAVEAT_LABEL` exactly as the plan card always has.
     """
-    if pricing is None:
-        pricing = _cr().load_pricing()
-    ce = _ce()
     target_repo = Path(target_repo)
-
-    candidate_ids = []
-    seen = set()
-    for m in models:
-        resolved = ce.resolve_model(pricing, m)
-        if resolved not in seen:
-            seen.add(resolved)
-            candidate_ids.append(resolved)
-
-    if judge is not None:
-        judge_id = ce.resolve_model(pricing, judge)
-        if judge_id in candidate_ids:
-            raise ValueError(
-                f"repo_bench refuses judge {judge_id!r}: it is also a candidate in this run "
-                f"(PLAN D6 -- a judge grading its own patches is a hard refusal); candidates: "
-                f"{', '.join(candidate_ids)}"
-            )
-    else:
-        judge_id = _default_judge_id(pricing, candidate_ids)
-        if judge_id is None:
-            raise ValueError(
-                "repo_bench cannot resolve a default judge (PLAN D6): every model in "
-                f"data/pricing.json is already a candidate ({', '.join(candidate_ids)}) -- "
-                f"pass --judge explicitly"
-            )
-
     if commit is not None:
         base_commit = str(commit)
     else:
@@ -1849,6 +1804,86 @@ def build_plan(
     # it" is never the way a user finds out.
     if setup_cmd:
         mining_notes.append(SETUP_WITHOUT_TEST_CMD_NOTE if not test_cmd else SETUP_PLAN_NOTE)
+    return {
+        "base_commit": base_commit,
+        "mode": resolved_mode,
+        "mode_reason": reason,
+        "tasks": tasks,
+        "labels": labels,
+        "notes": mining_notes,
+        "oracle_available": oracle_available,
+    }
+
+
+def build_plan(
+    target_repo, models, mode="auto", limit=8, test_cmd=None, judge=None, pricing=None,
+    commit=None, scratch_dir=None, git_runner=None, test_runner=None, gh_runner=None,
+    use_gh=False, tasks_out=None, exclude_subject=(), gh_repo=None, setup_cmd=None,
+    store_dir=None,
+):
+    """Price the whole models x tasks matrix (PLAN D1) -> a JSON-serializable plan card.
+
+    Candidates are resolved (deduped, order-preserving) via `ce.resolve_model` -- an unknown
+    id or tier propagates its own KeyError listing message, unchanged. The judge resolves per
+    D6 (`_default_judge_id`) unless `judge` is given; a judge that is also a candidate is a
+    hard refusal (`ValueError`). Mining always runs the issue-replay miner first (needed for
+    `auto`'s decision AND for F9's oracle-available count in the mode reason); general mode
+    additionally mines mutation-repair tasks through `scratch_dir` (F11b -- the caller is
+    responsible for pointing this at `<run-dir>/work` when a run dir exists; PLAN D3/D11 say
+    mutation only ever happens under it).
+
+    `tasks_out`, when given a list, is extended with the FULL mined task records the card only
+    summarises. `run` needs them (a prompt, a `setup_patch`, a reference patch) and must not
+    re-mine to get them: general-mode mining is stochastic in the sense that matters -- a
+    second pass builds new scratch sandboxes and could admit a different task set than the one
+    the user was just quoted a price for. The card itself stays summary-only on purpose: it is
+    what gets printed, and `reference_patch`/`test_blobs` are exactly what must never be shown.
+
+    `store_dir` (T18), when given, is read ONLY to build the calibration line -- how wrong
+    `task_profiles` estimates have measured against prior runs' own recorded actuals
+    (`build_calibration`). It is never written here (`plan` never touches the store) and
+    `None` degrades to the same honest "no calibration data" shape an absent/empty store
+    does -- never a silent omission.
+    """
+    if pricing is None:
+        pricing = _cr().load_pricing()
+    ce = _ce()
+    target_repo = Path(target_repo)
+
+    candidate_ids = []
+    seen = set()
+    for m in models:
+        resolved = ce.resolve_model(pricing, m)
+        if resolved not in seen:
+            seen.add(resolved)
+            candidate_ids.append(resolved)
+
+    if judge is not None:
+        judge_id = ce.resolve_model(pricing, judge)
+        if judge_id in candidate_ids:
+            raise ValueError(
+                f"repo_bench refuses judge {judge_id!r}: it is also a candidate in this run "
+                f"(PLAN D6 -- a judge grading its own patches is a hard refusal); candidates: "
+                f"{', '.join(candidate_ids)}"
+            )
+    else:
+        judge_id = _default_judge_id(pricing, candidate_ids)
+        if judge_id is None:
+            raise ValueError(
+                "repo_bench cannot resolve a default judge (PLAN D6): every model in "
+                f"data/pricing.json is already a candidate ({', '.join(candidate_ids)}) -- "
+                f"pass --judge explicitly"
+            )
+
+    mined = mine_tasks(
+        target_repo, mode=mode, limit=limit, test_cmd=test_cmd, commit=commit,
+        scratch_dir=scratch_dir, git_runner=git_runner, test_runner=test_runner,
+        gh_runner=gh_runner, use_gh=use_gh, exclude_subject=exclude_subject, gh_repo=gh_repo,
+        setup_cmd=setup_cmd,
+    )
+    base_commit = mined["base_commit"]
+    resolved_mode, reason = mined["mode"], mined["mode_reason"]
+    tasks, labels, mining_notes = mined["tasks"], mined["labels"], mined["notes"]
 
     if tasks_out is not None:
         tasks_out.extend(tasks)

@@ -80,6 +80,13 @@
           "source": "bin/kit_scheduler.py (step 24)",
           "verified_on": null,
           "note": "no adapter yet: bin/claude_execute.py keeps its own sequential loop; bin/kit_scheduler.py dispatches through harness adapters (stub, cursor) only"
+        },
+        "workflow_evaluation": {
+          "product": "not-applicable",
+          "implemented": "supported",
+          "verified": "unknown",
+          "source": "bin/workflow_eval.py (step 25)",
+          "note": "bin/workflow_eval.py claude adapter: repo_bench's claude argv for implement, a restricted-permission dispatch for review, dollars from data/pricing.json; never run live from this repository"
         }
       }
     },
@@ -166,6 +173,13 @@
           "source": "bin/kit_scheduler.py (step 24)",
           "verified_on": null,
           "note": "no adapter yet: bin/codex_execute.py keeps its own sequential loop; bin/kit_scheduler.py dispatches through harness adapters (stub, cursor) only"
+        },
+        "workflow_evaluation": {
+          "product": "not-applicable",
+          "implemented": "supported",
+          "verified": "unknown",
+          "source": "bin/workflow_eval.py (step 25)",
+          "note": "bin/workflow_eval.py codex adapter: `codex exec --json` for implement, `--sandbox read-only` for review, an API-equivalent proxy from data/pricing.codex.json (never a bill); never run live from this repository"
         }
       }
     },
@@ -226,6 +240,13 @@
           "source": "bin/kit_scheduler.py (step 24)",
           "verified_on": null,
           "note": "no adapter yet: bin/copilot_execute.py keeps its own sequential loop; bin/kit_scheduler.py dispatches through harness adapters (stub, cursor) only"
+        },
+        "workflow_evaluation": {
+          "product": "not-applicable",
+          "implemented": "supported",
+          "verified": "unknown",
+          "source": "bin/workflow_eval.py (step 25)",
+          "note": "bin/workflow_eval.py copilot adapter: the implementer agent for implement, the reviewer agent without --allow-all-tools for review, USD + AIC estimates from data/pricing.copilot.json; never run live from this repository"
         }
       }
     },
@@ -258,6 +279,14 @@
           "source": "bin/kit_scheduler.py (step 24)",
           "verified_on": "2026-09-13",
           "note": "the scheduler's conformance executor; tests/test_kit_scheduler.py drives batches, conflicts, admission, cancellation, and resume through it"
+        },
+        "workflow_evaluation": {
+          "product": "not-applicable",
+          "implemented": "supported",
+          "verified": "supported",
+          "source": "bin/workflow_eval.py (step 25)",
+          "note": "the evaluator's conformance harness; tests/test_workflow_eval.py drives direct, reviewed, and kit workflows, ceilings, caps, routing, resume, and the policy process through it",
+          "verified_on": "2026-09-13"
         }
       }
     },
@@ -392,6 +421,13 @@
           "source": "bin/kit_scheduler.py (step 24)",
           "verified_on": null,
           "note": "bin/kit_scheduler.py run --harness cursor --max-parallel N: each task in its own copy of the tree, one admission per batch, write sets integrated then verified on the merged tree; never run live from this repository, so verified stays unknown"
+        },
+        "workflow_evaluation": {
+          "product": "not-applicable",
+          "implemented": "supported",
+          "verified": "unknown",
+          "source": "bin/workflow_eval.py (step 25)",
+          "note": "bin/workflow_eval.py cursor adapter: `agent -p --force` for implement, `--mode ask` for review, unpriced; never run live from this repository"
         }
       }
     }

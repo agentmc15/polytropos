@@ -1,4 +1,4 @@
-# Handoff — roadmap implementation, steps 01–24
+# Handoff — roadmap implementation, steps 01–25
 
 **As of 2026-09-07.** Steps 01–15 are committed as a single change set on top of `fb40925`:
 66 files modified, 17 added, +5,485 / −1,860 lines. Full suite green: **3,727 tests, OK
@@ -33,13 +33,14 @@ user instructions outrank rule files; delegate in parallel by default).
 
 ## Where things stand
 
-**Steps 01–24 are done.** That is all of Phase A (input/artifact/acceptance boundaries), all of
+**Steps 01–25 are done.** That is all of Phase A (input/artifact/acceptance boundaries), all of
 Phase B (the execution boundary and the P0/P1 security remediation), all of Phase C (the
 shared runtime: durable attempts, cross-harness evidence, the validated execution DAG), and
 all of Phase D (named routing policies; the role contract; fresh, bounded code-graph
 grounding; lean entry points and scoped lessons; the Cursor adapter; artifact-aware
-scheduling with opt-in bounded concurrency). Steps 16–24 landed on 2026-09-12/13 on branch
-`harden/roadmap-steps-16-26`, one commit each. Phase E (25–26) remains.
+scheduling with opt-in bounded concurrency), and the first half of Phase E (workflow
+evaluation with a reviewed, versioned, reversible policy process). Steps 16–25 landed on
+2026-09-12/13 on branch `harden/roadmap-steps-16-26`, one commit each. Step 26 remains.
 
 | Step | What it closed |
 |---|---|
@@ -67,6 +68,7 @@ scheduling with opt-in bounded concurrency). Steps 16–24 landed on 2026-09-12/
 | 22 | Lean entry points and scoped lessons: the architect, execute, and repo-bench skills split into a mandatory core plus verbatim references with a "read when" trigger each (3060/6267/6677 words to 2311/2690/1353; thirteen reference files), descriptions with positive and negative triggers, a "what binds, what adapts" rule with bounded adaptation, the exact word-count and 200-byte guards replaced by ceilings and contract checks; `bin/lessons_store.py` replaces automatic lessons with observations carrying provenance, scope, and expiry, rules only by recurrence across distinct sources or by explicit ask, contests, eligibility-gated and budgeted recall (step 13's rule reused), legacy entries as candidates never rules; the Copilot lessons-loop skill and route agent read through it |
 | 23 | A real Cursor adapter on the shared runtime (`bin/cursor_adapter.py` + `bin/cursor_execute.py`): the generically named `agent` binary identified before any dispatch (`--version`, then `about --format json`; unknown or absent fails closed before a claim or a write); `agent -p --output-format json --trust --workspace … [--model …] --force` for implementation and `--mode ask` for review, with overriding extra flags refused; IDE, CLI, and cloud modes reported separately (product / implemented / verified, all `verified: unknown`); a project-scoped `.cursor/` bundle (skill, implementer, read-only verifier) with an ownership-aware, manifest-backed, no-clobber installer (`harness_select install --harness cursor --project`) and a `doctor` that diagnoses ambient files carrying another harness's commands; `data/pricing.cursor.json` as Cursor's own empty roster, usage unknown, `usd: null` on every block; no ladder; the shared conformance (ready, dispatch failure, verify failure, budget stop, resume, roster gap, review) through a stub; `kit_contract.budget_gate` and `append_run_note` extracted for adapters; the anti-triplication guard now spans four drivers |
 | 24 | Artifact-aware scheduling and opt-in bounded concurrency (`bin/kit_scheduler.py` + step-24 additions to `bin/kit_contract.py` / `bin/attempt_ledger.py`): every acceptance records the artifact version accepted and the upstream versions it rested on (`task.projected` carries `artifact` and `upstream`); `evidence_freshness` names a done task `stale` when a dependency was re-accepted with a different artifact (`unknown` for legacy or non-git, disclosed, never rounded); `graph_state`/`readiness` keep dependents of a stale acceptance out of the frontier, every driver's selection sees it, `status`/`graph` print the stale clause, `kit_contract.py freshness` reports and `refresh` re-verifies in place with zero attempts; the scheduler (sequential by default, `--max-parallel` ≤ 8 opt-in) claims a batch atomically, admits it in ONE budget decision, runs each task in its own copy of the tree under the store, measures write sets, integrates from a manifest (paths, verdicts, bounded diagnostics; never a transcript), keeps and names conflicts (two writers, or a user change during the batch) without applying or resetting, verifies every integrated task again on the merged tree, records kit edits from a worker as `security.violation`, refuses proposals that touch acceptance, records dependency proposals and applies them only under `--accept-revisions` after revalidation, sizes the manifest against the integrating model's own long-context field (the recorded amendment), cancels what has not started with zero-attempt `result=cancelled` lines and settles dead runs first; `stub` and `cursor` are the dispatchers; `ROLE_SUPPORT["stub"]` and `concurrent_dispatch` registry rows added |
+| 25 | Workflow evaluation (`bin/workflow_eval.py` on the repo-bench seam; `repo_bench.mine_tasks` lifted out of `build_plan` unchanged): complete workflows compared on the same held-out tasks from the same clean snapshots — `direct`, `reviewed` (an independent read-only review whose verdict is recorded beside the grade), `kit` (the task as a one-task kit on the contract: claim, admission, the repository's own check under the execution boundary, projection, resume) — under pinned or routed (`reserved` / `adaptive`, decision recorded) models and instruction versions, counterbalanced repeats; five adapters (claude, codex, copilot, cursor, stub) each built from its own driver's argv and its own pricing file, with a read-only review form; every dispatch in the attempt ledger and joined through `attempt_history` with registry tiers; `solved` from the tests oracle alone; accepted completion with Wilson intervals, incorrect acceptances, interventions, wall-clock, coverage, stability, strata, usage per basis never summed (reported / estimated / proxy / credits / unpriced; only priced bases count against `--max-usd`); security outcomes recorded (incorrect acceptance, tampering, policy violation, capability refusal, budget overshoot, resume, privacy redaction by kind); a priced plan naming hard caps that is never dispatched; `prefs/routing-policy.json` changed only through `propose` (refused below floor, single repeat, or on reserved tasks) → named `review` → `apply` (refused unreviewed or stale) with every version kept and `rollback`; the `evals` store; `workflow_evaluation` registry rows |
 
 ### New modules, and what each is the *one place* for
 
@@ -141,39 +143,67 @@ scheduling with opt-in bounded concurrency). Steps 16–24 landed on 2026-09-12/
   `kit_freshness`, `refresh_task`, `render_stale`, and the `freshness=` parameter on
   `graph_state` / `readiness` / `select_task`; `attempt_ledger.py` gained
   `latest_acceptance` / `latest_artifact` and the `artifact` / `upstream` projection fields.
+- `bin/workflow_eval.py` — the one place workflows are compared and routing defaults are
+  changed: the five adapters on the repo-bench seam (`claude_adapter` … `stub_adapter`,
+  `make_adapter`), variants and counterbalanced trials (`build_variants`, `trial_matrix`),
+  prompts (`build_stage_prompt`, `build_review_prompt`, `redacted_statement`), costs per
+  basis (`stage_cost`, `add_cost`, `priced_usd`), routing (`route_stage`), the plan
+  (`build_plan`, `render_plan_markdown`), the run (`Evaluation`: `_dispatch`, `_grade`,
+  `_review_stage`, `_kit_stage`), the card (`build_card`, `render_card_markdown`,
+  `wilson`), store readers (`read_envelope`, `list_runs`, `history_records`,
+  `adjudicate`), and the policy process (`build_proposal`, `review_proposal`,
+  `apply_proposal`, `rollback_policy`, `policy_report`). `repo_bench.mine_tasks` is the
+  miner it calls; it forks none of repo_bench's oracles, sandboxes, or ceilings.
 
 ---
 
-## Next: step 25 — evaluate complete workflows; promote policy only from defensible evidence
+## Next: step 26 — validate the supported release matrix; publish only measured guarantees
 
-P2 performance and routing quality, across Claude, Codex, Copilot, and Cursor. Extend the
-existing `bin/repo_bench.py` adapter seam and the cross-harness events (`attempt_history`,
-`model_registry`) -- never a second benchmark framework. Compare COMPLETE workflows on the
-same held-out tasks from equivalent clean snapshots with fixed acceptance evidence, controlled
-budgets, and recorded model/effort/host versions: direct model execution, direct plus
-independent review, the kit orchestration as it is, and selected adaptive graph/role policies
-(step 19's `routing_policy`, step 20's workflows). Repeat or counterbalance runs; one
-stochastic result is not a ranking. Measure accepted completion, escaped defects, human
-interventions, wall-clock, TOTAL workflow usage (planning, review, recovery), and evidence
-coverage; keep provider bills and subscription proxies separate; repricing an observed trace
-is a hypothetical price comparison, never proof another model would have produced the same
-result. Stratify by task class, repository, risk, workflow, and instruction version; reserve
-evaluation tasks from any tuning feedback; report uncertainty and sample limits. Support an
-explicit proposal / apply / rollback process for routing-policy updates (repo_bench's `apply`
-step is the seam) -- sparse observations never silently change defaults. Deterministic offline
-fixtures and adapter conformance FIRST; then a priced live plan with a bounded task set and an
-explicit ceiling that is NOT dispatched. Include security and robustness outcomes: incorrect
-acceptance, evidence tampering, policy/capability violations, budget overshoot, resume
-correctness, privacy eligibility; candidates and judges in the isolated environments already
-built; test/reference separation and artifact identity retained; oracle uncertainty and human
-adjudication tracked rather than a model judge assumed as ground truth. A live plan names its
-hard operation caps and distinguishes estimated spend from provider-side guarantees. Document
-which universal claims remain untested.
+The release gate. Run the focused suites each change affects and the repository's own
+integration and docs gates. Confirm every advertised adapter / client / OS mode passes its
+applicable shared contracts: dispatch failure, dependency readiness, verification isolation, role
+permissions, protected state, verdict provenance, budget admission, interruption and resume,
+filesystem confinement, installation ownership, privacy eligibility. Distinguish STUB conformance
+from installed-client verification -- an argv fixture is not a verified OS sandbox, and
+`primitives/harness-capabilities.json` already says which is which; keep it that way. Regenerate
+the owned mirrors. Preserve the historical primitive matrix (`primitives/harness-matrix.json`)
+and publish the current operational support separately: versions, evidence dates, known gaps,
+migration and rollback instructions. Review packaging so private runtime stores and unintended
+artifacts stay out. Retain no-clobber upgrades and compatibility with legacy kits. Produce a
+release checklist with the evidence behind each guarantee and the unresolved limits. Prepare the
+optional bounded installed-client smoke and live workflow-evaluation commands (step 23's
+`doctor` smoke; step 25's `plan … --live --max-usd --max-dispatches`) WITHOUT running them,
+installing into real homes, pushing, publishing, or changing account settings. Record how a
+future harness or model release triggers targeted capability and workflow re-evaluation. Never
+add a permanent instruction after a failure and never promote a routing default automatically.
 
-Exit gate: offline adapters and metrics comparable; a bounded live plan exists unexecuted;
-policy updates require evidence review, versioning, and rollback.
+Exit gate: release claims match demonstrated behaviour; unknown host capabilities, unrun live
+checks, and unimplemented modes stay visible rather than presented as parity.
 
-Remaining after that: **26** the release matrix.
+### Step 25's own deliberate limits
+
+- **Nothing ran live.** Every adapter's argv is its driver's documented shape and every dollar
+  figure is an estimate at the harness's own rates; the registry's `workflow_evaluation` rows
+  are `verified: unknown` for all four real harnesses and `supported` only for the stub. The
+  bounded plan in `docs/WORKFLOW-EVAL.md` is a command, not a result.
+- **`solved` is the tests oracle and only that.** The full-patch diagnostic and the blind
+  judge stay repo_bench's; the evaluator does not dispatch a judge. A reviewer's verdict, the
+  kit's own check, and an adjudication are recorded beside `solved`, never in it.
+- **The reviewer's read-only mode is a CLI flag.** Only the kit workflow's check runs under
+  `exec_policy`; a review dispatch runs in a throwaway directory outside the run dir with the
+  harness's documented read-only form and nothing more.
+- **Usage extraction is Claude's only.** The other adapters return no usage from stdout (their
+  drivers never parsed it either), so their trials are `estimated` / `proxy` / `unpriced`.
+- **Grounding and lessons are not variant axes.** Instruction versions are; graph-grounded
+  versus search-grounded prompts, and lesson versions, are listed as untested on every card.
+- **The policy file has no reader.** `prefs/routing-policy.json` is pull-only by design; the
+  drivers keep reading PLAN.md. `repo_bench apply` (the tier map) is not versioned by this
+  process and keeps its own refusals.
+- **One repository per run.** Strata carry a `repository` bucket, but a run mines one target;
+  cross-repository comparison is a reader's job over several cards, not a single ranking.
+- **Cost of a dead attempt is the contract's.** The eval kit admits two dispatches (one plus
+  one recovery) because a dead attempt closed as unknown still counts; a third is refused and
+  recorded as the budget outcome.
 
 ### Step 24's own deliberate limits
 
@@ -505,7 +535,7 @@ These cost real time to discover. All are still live.
    `--cursor-bin`/`--attempt-store` to every command breaks on `status`.
 14. **Adding a `docs/*.md` page moves six census pins.** `tests/test_docs_build_adversarial.py`
    (27 sources / 29 page-map keys / 71 pages, and the "one more" targets 28 / 30 / 72),
-   `tests/test_docs_build_cli.py` (71), and `tests/test_primitives_doc_adversarial.py` mirror
+   `tests/test_docs_build_cli.py` (71 then), and `tests/test_primitives_doc_adversarial.py` mirror
    each other by design: `CensusBumpTripwireTests` exists to prove the other two are real
    tripwires. Move all of them in the same edit, with the date and the file that moved them.
 
@@ -523,6 +553,25 @@ These cost real time to discover. All are still live.
    reads `combined_usage`, not `ledger.usage()`.
 17. **`Scheduler._record(ledger, kind, **fields)` reserves `kind`.** A ledger field named
    `kind` collides with the event kind; the violation event's field is `violation`.
+18. **A same-size rewrite within one second reuses a stale `.pyc`.** A fixture check that
+   `import`s the module the candidate edits judged the pre-fix bytecode: pyc headers keep
+   the source mtime in whole seconds and `return 1` / `return 2` have the same size. The
+   strict fixture in `tests/test_workflow_eval.py` `exec`s the source instead. Any test
+   whose stub rewrites a Python file and then imports it is exposed.
+19. **`routing_policy.catalog_from_pricing`'s `estimator` must return a dict.** It is
+   `codex_policy.default_estimator`'s shape (`{"api_equivalent_usd", "profile"}`), and
+   `decide` reads `.get` on it; a bare float raises inside `_estimate`.
+20. **`kit_contract.budget_gate` and `start_task_lifecycle` call `sys.exit`.** They are
+   driver entry points. A loop that runs many kits (the evaluator) uses the primitives
+   underneath (`parse_plan_budget` + `combined_usage` + `BudgetAdmission`; `open_ledger`
+   + `TaskRun.begin`) so one kit's refusal is a record, not the end of the process.
+21. **The census pins moved again**: 28 sources / 30 page-map keys / 72 pages, and the
+   "one more" targets 29 / 31 / 73 (step 25, `docs/WORKFLOW-EVAL.md`).
+22. **Patch `POLYTROPOS_DATA_HOME` in `setUpModule`, never at import.** Discovery imports
+   every test module before any test runs, so an import-time `os.environ[...] = ...` leaks
+   into every other module and every subprocess they spawn: the first full run of step 25
+   moved `test_lessons_promote`'s default `journal/promotions` path out of the tree and
+   failed a test that had nothing to do with the change. Trap 7's block is the pattern.
 
 ---
 
@@ -576,7 +625,7 @@ Each is recorded in `SECURITY.md` rather than hidden. None is a surprise; all ar
 ```bash
 cd /Users/michaelcave/Developer/reposV2/polytropos
 python3 -m unittest discover -s tests          # expect OK (2 skipped), ~4 min; the count is in the last commit that changed it
-git log --oneline -9                           # steps 16–23 on top of the merged 01–15
+git log --oneline -11                          # steps 16–25 on top of the merged 01–15
 python3 bin/runtime_data.py where              # where your stores resolved to
 python3 bin/harness_adapter.py                 # what each harness can actually do
 python3 bin/attempt_ledger.py demo             # crash / resume / progress walkthrough, temp dir only
@@ -591,8 +640,10 @@ python3 bin/cursor_adapter.py demo             # identity accept/refuse, argv, i
 python3 bin/cursor_execute.py run --kit .claude/kits/docs-site --dry-run   # the Cursor argv; spawns nothing
 python3 bin/kit_scheduler.py demo              # two tasks batched and integrated, a conflict kept, a sized manifest
 python3 bin/kit_contract.py freshness --kit .claude/kits/docs-site   # stale evidence, if any (exit 1)
+python3 bin/workflow_eval.py demo              # three workflows on a stub harness, the card, a refused proposal; temp dirs only
+python3 bin/workflow_eval.py policy            # the routing policy in force (none until someone applies one)
 ```
 
-Then read step 25 in the roadmap and continue. The pattern that has worked: verify the step's
+Then read step 26 in the roadmap and continue. The pattern that has worked: verify the step's
 claims against HEAD first, implement, run the affected suites, then the full suite, then update
 `SECURITY.md` / `CLAUDE.md` / the doc mirrors together.

@@ -31,3 +31,4 @@
 | [The role experiment — does adding roles pay?](role-experiment.md) |
 | [Routing history — the cross-kit per-tier track record](routing-history.md) |
 | [Routing trends — cross-repo history and the snapshot time series](routing-trends.md) |
+| [Workflow evaluation](workflow-eval.md) |

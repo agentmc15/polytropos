@@ -57,6 +57,15 @@ These are properties with code behind them, not conventions:
   whole. An acceptance records the upstream artifact versions it rested on, and a dependency
   re-accepted with a different artifact makes it stale: its dependents are not scheduled
   until it is re-verified.
+- **A routing default changes only through a reviewed, versioned, reversible proposal.**
+  `bin/workflow_eval.py` measures complete workflows on held-out tasks with the tests oracle
+  as the only source of `solved`; a reviewer's verdict, the kit's own check, and a person's
+  adjudication are recorded beside it, and an acceptance the oracle contradicts is counted
+  as an incorrect acceptance rather than averaged away. `prefs/routing-policy.json` is
+  written only by `apply`, which refuses a proposal below the evidence floor, from a single
+  repeat, from tasks that already backed the policy in force, without a named reviewer's
+  acceptance, or against a file that changed since the proposal was made; every version is
+  kept and `rollback` restores one. Nothing reads that file automatically.
 - **A declared role a driver cannot run is refused or disclosed, never skipped.** Every driver
   reads a kit's PLAN.md `roles:` and `workflow:` lines through the one grammar in
   `bin/kit_contract.py` before it previews or claims anything; a role the driver cannot
@@ -156,6 +165,11 @@ Do not rely on any of the following. Each is a known gap, not a subtlety:
   is not detected, only conflicting writes are.
 - **A worktree is not a sandbox.** Separate directories separate *files*. They do not separate
   privileges, credentials, network access, or the rest of your home directory.
+- **An evaluation's ranking is evidence about one run, not a universal.** A workflow that
+  ranks first on one repository, one instruction version, and one harness has been measured
+  there and nowhere else; the card refuses to state an order below the evidence floor or
+  from a single repeat, and a live plan's figures are estimates a ceiling bounds only at the
+  next dispatch, never a provider-side guarantee. No workflow has been run live from here.
 - **Benchmark candidates and judges are not yet confined.** `bin/repo_bench.py` builds
   history-free sandboxes and withholds reference tests structurally, but candidate and judge
   dispatch does not yet run under `exec_policy`. Its setup and test commands run with the
