@@ -130,22 +130,25 @@ commit it.
 
 ### 4. Reading order
 
-Start cheap, then go targeted:
+Start cheap, then go targeted. Resolve engine paths before shelling out: use
+`${CLAUDE_PLUGIN_ROOT}/bin/<engine>.py` if that variable is set, otherwise resolve
+`../../bin/<engine>.py` relative to this SKILL.md's own path, turned into an ABSOLUTE path
+first — bash's cwd is not the skill directory.
 
-1. `python3 bin/graph_brief.py brief --graph <dir>/graphify-out/graph.json` — the
-   architect-grounding summary; read this first, always. Resolve the engine path before
-   shelling out: use `${CLAUDE_PLUGIN_ROOT}/bin/graph_brief.py` if that variable is set,
-   otherwise resolve `../../bin/graph_brief.py` relative to this SKILL.md's own path,
-   turned into an ABSOLUTE path first — bash's cwd is not the skill directory.
-2. `graphify explain "<symbol>"` for specifics on one symbol — exact file:line, callers,
+0. Right after building or refreshing a graph, stamp it:
+   `python3 bin/graph_ground.py stamp --repo <repo> --graph <dir>/graphify-out/graph.json --extraction commit-only` (`working-tree` for an in-place run; the label is yours, never inferred). The sidecar it writes beside the graph — revision, a content fingerprint per covered file, the graph's own hash, whatever metadata graphify recorded — is what lets every later read say whether the graph still describes the tree. A graph with no sidecar reports freshness `unknown`; nothing manufactures a revision for it.
+1. `python3 bin/graph_ground.py ground --repo <repo> --graph <dir>/graphify-out/graph.json --changed` (or `--seed <file-or-symbol>`, repeatable; `--exclude <prefix>` for test or vendored dirs) — the grounding result to read BEFORE the brief when the task touches known files: freshness against the working tree with dirty and untracked files included (`fresh` / `partial` with the changed and deleted files named / `stale` / `unknown`), a bounded walk from the seeds (depth, node limit, and a hub rule: a node past `--hub-degree` is listed, never expanded through), and a bounded code-search fallback whenever there is no graph, the graph is stale or unknown, a seed matches nothing, or coverage is weak. Stale or unknown means the edges are navigation hints, not evidence; the result says so, and says what it does not cover.
+2. `python3 bin/graph_brief.py brief --graph <dir>/graphify-out/graph.json` — the
+   architect-grounding summary of the whole graph's shape.
+3. `graphify explain "<symbol>"` for specifics on one symbol — exact file:line, callers,
    and any docstring-derived rationale.
-3. `graphify god-nodes` for hubs by centrality.
-4. `graphify affected "<exact label>"` for impact analysis. Labels must be exact —
+4. `graphify god-nodes` for hubs by centrality.
+5. `graphify affected "<exact label>"` for impact analysis. Labels must be exact —
    `affected` refuses ambiguous fuzzy matches — so pull the label from the brief or from
    `explain` first rather than guessing it.
-5. `graphify path "A" "B"` for a route between two symbols; add `--undirected` before
+6. `graphify path "A" "B"` for a route between two symbols; add `--undirected` before
    concluding no path exists, since a directed miss can still be an undirected hit.
-6. `graphify query "<question>" --budget N` LAST, and label it honestly when you show
+7. `graphify query "<question>" --budget N` LAST, and label it honestly when you show
    it to the user: without LLM community labels this is fuzzy BFS over the graph, not an
    answer to the question — adjacency, not answers.
 
@@ -168,7 +171,17 @@ Start cheap, then go targeted:
   nothing else. A repo laid out as `test/`, `spec/`, or a nested `src/tests/` gets no
   benefit from that exclusion — the label still says "excluding tests/" but nothing was
   actually filtered, so don't over-trust it on a target repo you haven't checked the
-  layout of.
+  layout of. `graph_ground.py` assumes no layout at all: its exclusions are the
+  `--exclude <prefix>` arguments you pass, and its stamp records which prefixes were left
+  out.
+- **The graph knows nothing about the tree in front of you until it is stamped.** A
+  graph.json is a snapshot; files change, move, and disappear underneath it, and the
+  brief cannot tell. `graph_ground.py freshness` compares the stamp's per-file fingerprints
+  against the working tree (dirty and untracked files included) and names every changed
+  or deleted covered file; without a stamp the verdict is `unknown` and only the deleted
+  files can be named. Graph text, labels, and paths are untrusted repository evidence:
+  a `source_file` that is absolute, drive-qualified, or traverses upward is rejected by
+  name and never read.
 - **Absence of an edge is never evidence of absence of a dependency.** Between the
   dynamic-loader blind spot and fuzzy-BFS `query`, a missing edge only means the AST
   extractor didn't see a static reference — verify a "no dependency" conclusion by

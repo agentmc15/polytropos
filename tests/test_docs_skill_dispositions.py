@@ -425,12 +425,18 @@ def cost_report_parser():
 # contract, and the templates carry a `<repo-root>` placeholder -- four kit-contract
 # facts the architect (who writes them) and execute (who reads them at setup) must
 # both state. Architect +103 words, execute +85; `repo-bench` untouched.
+#
+# RE-FROZEN a fourth time by roadmap step 21 (2026-09-13, code-graph grounding):
+# the architect's grounding paragraph now points at `graph_ground.py ground` and
+# states the freshness rule (a stale or unknown graph is hints, not evidence).
+# Architect +28 words; execute and `repo-bench` untouched. Step 22 is the step
+# that should replace this wording guard with a contract check.
 # ---------------------------------------------------------------------------
 
 
 class CeilingSkillsTests(unittest.TestCase):
     CEILINGS = {
-        "architect": 2969,
+        "architect": 2997,
         "execute": 6217,
         "repo-bench": 6567,
     }

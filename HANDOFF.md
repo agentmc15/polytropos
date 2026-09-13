@@ -1,4 +1,4 @@
-# Handoff — roadmap implementation, steps 01–20
+# Handoff — roadmap implementation, steps 01–21
 
 **As of 2026-09-07.** Steps 01–15 are committed as a single change set on top of `fb40925`:
 66 files modified, 17 added, +5,485 / −1,860 lines. Full suite green: **3,727 tests, OK
@@ -33,11 +33,12 @@ user instructions outrank rule files; delegate in parallel by default).
 
 ## Where things stand
 
-**Steps 01–20 are done.** That is all of Phase A (input/artifact/acceptance boundaries), all of
+**Steps 01–21 are done.** That is all of Phase A (input/artifact/acceptance boundaries), all of
 Phase B (the execution boundary and the P0/P1 security remediation), all of Phase C (the
 shared runtime: durable attempts, cross-harness evidence, the validated execution DAG), and
-the first two steps of Phase D (named routing policies; the role contract). Steps 16–20
-landed on 2026-09-12 on branch `harden/roadmap-steps-16-26`, one commit each.
+the first three steps of Phase D (named routing policies; the role contract; fresh, bounded
+code-graph grounding). Steps 16–21 landed on 2026-09-12/13 on branch
+`harden/roadmap-steps-16-26`, one commit each.
 
 | Step | What it closed |
 |---|---|
@@ -61,6 +62,7 @@ landed on 2026-09-12 on branch `harden/roadmap-steps-16-26`, one commit each.
 | 18 | Validated execution DAG (`kit_contract.validate_graph` / `graph_state` / `readiness`): duplicate ids, self and unknown dependencies, cycles refuse with zero dispatches and zero writes on all three drivers; one readiness rule with `fresh | retry | resume | rerun` modes; automatic selection refuses while a task is in-progress; the task state machine (`TRANSITIONS`) checked at every status write; worker edits to a task block detected as `plan.drift`; `status` ends with the graph verdict; `kit_contract.py graph` / `demo` |
 | 19 | Named routing policies (`bin/routing_policy.py` + `codex_policy.route`): `reserved` is the legacy behaviour under its own name and the default, `adaptive` is opt-in (`--policy`, PLAN.md `routing:`); shape, model, initial effort, and assurance decided separately; hard filters before any preference; pins and unsupported efforts refused, never substituted; an unavailable orchestrator disables nothing a worker path does not need; auth/config/permission/infrastructure dispatch failures stop the ladder on Codex; every decision explainable with its alternatives and an `est.` workflow figure; the same contract routes Claude/Copilot-shaped rosters by rank |
 | 20 | The role contract (`kit_contract.ROLE_CONTRACTS` / `WORKFLOWS` / `resolve_roster` / `ROLE_SUPPORT`): each role's responsibility, scope, hook, assurance, capabilities, and result fields as data, separate from whether an agent is spawned; three workflows (`direct` named on purpose, `reviewed` the default, `extended`) with explicit assurance; one grammar for PLAN.md `roles:`/`workflow:` shared by the skill and every driver; every driver checks the roster before preview or claim and refuses or discloses (`--roster-gap`) a declared role it cannot sequence, recording `roster.checked`; consumer-neutral templates (`<repo-root>`); `independent_review`/`extended_roles` registry rows; a written test plan for trio-vs-direct with no live spend |
+| 21 | Fresh, bounded, task-relevant code-graph grounding (`bin/graph_ground.py`): an optional provenance sidecar stamped from what is actually available (revision, dirty set, per-file content fingerprints, the graph's hash, the operator's extraction label, graphify's own metadata), freshness against the working tree with dirty and untracked files (`fresh` / `partial` naming changed and deleted files / `stale` / `unknown`, never a manufactured revision), a bounded impact walk from changed files or symbols (depth, node limit, hubs listed and never expanded through, configurable excludes), a bounded code-search fallback when the graph is absent, stale, unknown, silent, or weakly covering, one `polytropos.grounding/1` result any adapter can attach, graph paths validated before any read, git read-only through the process runner |
 
 ### New modules, and what each is the *one place* for
 
@@ -91,6 +93,11 @@ landed on 2026-09-12 on branch `harden/roadmap-steps-16-26`, one commit each.
   and Codex `role-use.jsonl`; unknowns kept and counted; latest state a separate projection;
   lineage including failed consults; cost per basis. Captured daily as telemetry's `attempts`
   source.
+- `bin/graph_ground.py` — whether a graphify graph.json still describes the tree, and what
+  near a task's files is worth reading. `stamp` writes the one provenance sidecar beside the
+  graph; `freshness`, `impact`, `search`, and `ground` read. `bin/graph_brief.py` stays the
+  pure whole-graph summary and still carries no process primitive; this module reaches git
+  only through `proc_runner` with read-only verbs.
 - `bin/routing_policy.py` — the harness-neutral routing decision: workflow shape, model,
   initial effort, and assurance as four separate answers, under a named policy (`reserved` |
   `adaptive`) and a preference that never outranks a hard filter. Compares tier RANKS in each
@@ -100,30 +107,58 @@ landed on 2026-09-12 on branch `harden/roadmap-steps-16-26`, one commit each.
 
 ---
 
-## Next: step 21 — make code-graph context fresh, bounded, and relevant to the task
+## Next: step 22 — simplify skills and replace automatic rules with scoped learning
 
-`bin/graph_brief.py` and `skills/graphify`. graphify stays optional and external. Add an
-optional polytropos PROVENANCE SIDECAR beside a graph.json (repository identity, source
-revision/content fingerprints, generation time, extractor version, relationship provenance,
-coverage limits — only what is actually available; never require upstream graphify to emit
-invented metadata, never build a provider framework). A legacy graph without provenance
-reports freshness UNKNOWN; a verified revision is never manufactured. Add a bounded impact
-query seeded by changed files or named symbols (relevant neighbours, paths, evidence, with
-traversal and output limits); compare freshness against the working tree INCLUDING dirty
-and untracked files; treat stale or partial content as navigation hints and fall back to
-targeted code search when the provider is absent or coverage is weak. Keep code
-relationships separate from the execution DAG (step 18): absence of an edge is never absence
-of a dependency, high-degree nodes are never auto-selected, AST edges are not evidence for
-dynamic imports. Preserve commit-only extraction labels; make test-directory exclusions
-configurable. Graph text, labels, and paths are untrusted repository evidence under the same
-size/path/provider-scope policies as other inputs; metadata may suggest reads but grants no
-permission, edits no acceptance, and establishes no safe concurrent write. Tests: stale /
-unknown / fresh graphs, dirty worktrees, malformed records, provider absence,
-dynamic-import blind spots, traversal bounds, irrelevant hubs — synthetic fixtures only,
-graphify never installed or run. Expose the same grounding result to every adapter.
+`skills/architect`, `skills/execute`, `skills/repo-bench`, `CLAUDE.md`,
+`tests/test_guardrails_layout.py`, and `copilot/.github/skills/lessons-loop`. Two halves.
+(1) SKILL SIMPLIFICATION on the skill-creator principles: concise discriminating
+descriptions; real progressive disclosure (mandatory workflow at the entry point,
+optional mode / ledger / reporting detail moved into references or the deterministic
+helpers that already exist); requirements kept separate from suggestions; bounded adaptation
+allowed when repo reality changes an approach without changing scope or acceptance; NO
+minimum-word or byte requirements that force guardrail text (replace wording tests with
+contract checks); no router or directory where a short skill will do; never a long skill
+replaced by references that always load together. Measure description and entry-point size
+before and after, check positive and negative triggers, preserve every operational
+constraint, regenerate the mirrors. Note the architect/execute word CEILINGS in
+`tests/test_docs_skill_dispositions.py` are exactly the kind of wording test this step
+should replace with contract checks — they have been re-frozen four times (steps 09, 18, 20,
+21) for contract additions. (2) SCOPED LEARNING: Copilot's lessons loop turns one correction
+or escalation into a durable startup rule; change automatic lesson creation into scoped
+observations/candidates with provenance, applicable context, contradiction and expiry
+handling, retrieved only when relevant and within a budget; a single escalation never
+becomes a universal model-tier rule; promotion needs demonstrated applicability or an
+explicit user requirement; carry step 13's source/project/provider eligibility into
+candidate retrieval. Measure loaded context and task outcomes separately: byte reduction
+alone is not success. No invocation-policy change without a separate user request; no
+live dispatch or installation.
 
-Remaining after that: **22–24** skills / the Cursor adapter / scheduling, **25–26**
-evaluation and the release matrix.
+Remaining after that: **23–24** the Cursor adapter / scheduling, **25–26** evaluation and
+the release matrix.
+
+### Step 21's own deliberate limits
+
+- **The sidecar is written by an operator command, not by graphify.** graphify emits no
+  provenance and this step did not ask it to; `graph_ground.py stamp` records what git and
+  the file system say at stamp time. A graph stamped long after it was built has a stamp
+  that is honest about the stamp, not about the build — `graph.mtime` is reported with a
+  note saying exactly that.
+- **`generated_at` is not known.** The sidecar carries `stamped_at` and the graph file's
+  mtime, each labelled; an extractor version appears only when graphify wrote one into
+  graph.json (`EXTRACTOR_KEYS`), otherwise `unknown`.
+- **No driver attaches the grounding to a prompt yet.** `grounding()` and
+  `render_grounding()` are the shared result and its bounded text; the graphify and
+  architect skills instruct their use, and any driver can call them, but a `--grounding`
+  flag on the three drivers is a prompt-composition change left to the step that reworks
+  prompts (22) or roles (24).
+- **The search fallback is substring matching over the tracked tree**, bounded by files,
+  hits, and bytes, with no regular expression built from graph or task text. It is a
+  fallback, not a code-search engine, and the result says which reason triggered it.
+- **`stale` versus `partial` is a whole-graph rule**: the graph is `stale` when its bytes
+  differ from the stamped ones or every covered file differs, `partial` when some do. The
+  per-file states are the useful part; the verdict word is the summary.
+- **The architect ceiling was re-frozen a fourth time** (2997 words) for the grounding
+  pointer; step 22 is the right place to retire that guard.
 
 ### Step 20's own deliberate limits
 
@@ -396,8 +431,9 @@ python3 bin/kit_contract.py demo               # a diamond DAG walked, an interr
 python3 bin/routing_policy.py demo             # both routing policies over two synthetic rosters
 python3 bin/codex_execute.py prepare --model strong --policy adaptive --explain   # the real roster, no dispatch
 python3 bin/kit_contract.py roster --kit .claude/kits/docs-site --executor codex   # a declared roster a driver cannot run
+python3 bin/graph_ground.py demo               # stamp / freshness / bounded impact / search fallback, temp tree, canned git
 ```
 
-Then read step 21 in the roadmap and continue. The pattern that has worked: verify the step's
+Then read step 22 in the roadmap and continue. The pattern that has worked: verify the step's
 claims against HEAD first, implement, run the affected suites, then the full suite, then update
 `SECURITY.md` / `CLAUDE.md` / the doc mirrors together.

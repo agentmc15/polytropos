@@ -29,6 +29,15 @@ These are properties with code behind them, not conventions:
 - **Codex review and acceptance are pinned read-only.** `bin/codex_execute.py` forces
   `--sandbox read-only` on both and rejects any attempt to override it through extra arguments.
   It also refuses extra arguments that would displace the policy-selected model or profile.
+- **A code graph is untrusted repository evidence, read within bounds.** `bin/graph_ground.py`
+  accepts a graph's `source_file` only as a relative, traversal-free path under the repository
+  root (rejected paths are named, never read), reads files through the confined reader, refuses
+  a graph past a byte ceiling, bounds every walk by depth, node count, and a hub rule, bounds
+  every search by files, hits, and bytes, and reaches git only through `bin/proc_runner.py`
+  with read-only verbs. Its one write is the provenance sidecar beside the graph, written
+  through `bin/safe_paths.py` at `0600`. A graph with no sidecar reports freshness `unknown`;
+  no revision is ever manufactured. Graph metadata suggests reads and nothing more: it grants
+  no permission, edits no acceptance criterion, and establishes no safe concurrent write.
 - **A declared role a driver cannot run is refused or disclosed, never skipped.** Every driver
   reads a kit's PLAN.md `roles:` and `workflow:` lines through the one grammar in
   `bin/kit_contract.py` before it previews or claims anything; a role the driver cannot

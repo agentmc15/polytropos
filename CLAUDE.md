@@ -93,8 +93,7 @@ changelog.
   unpriced, partial coverage) ride inside the record, and readers degrade with a note when a
   store is absent.
 - **`bin/repo_bench.py` can spend real tokens — only behind `--live` plus an explicit `--max-usd`
-  ceiling; `plan`/`demo` and every test spend nothing.** Tests stub every dispatch and `gh`
-  runner and use fixture repos in temp dirs. Target repos are read-only by construction
+  ceiling; `plan`/`demo` and every test spend nothing.** Target repos are read-only by construction
   (allowlisted git verbs; sandboxes are history-free tree extractions). Verdicts below the
   evidence floor are never applied, and routing changes only through the explicit `apply` step.
 - **Installation never overwrites what it does not own.** `bin/harness_select.py` classifies
@@ -121,9 +120,10 @@ changelog.
   any of them changes.
 - **graphify is an external, user-installed CLI (`uv tool install graphifyy`) — never vendored,
   never auto-installed, and never invoked by tests, verify commands, or kit execution.**
-  `bin/graph_brief.py` only ever READS a graph.json; skill-sanctioned graphify subcommands are
-  the offline set only (no `extract`/`label`/backends/`add`/`clone`/`watch`/`global`/platform-
-  `install` hooks without explicit user opt-in). `/graphify-out/` stays gitignored.
+  `bin/graph_brief.py` and `bin/graph_ground.py` only READ a graph.json (`graph_ground stamp`
+  writes one provenance sidecar beside it); skill-sanctioned graphify subcommands are the
+  offline set only (never `extract`/`label`/backends/`add`/`clone`/`watch`/`global`/`install`
+  without explicit user opt-in). `/graphify-out/` stays gitignored.
 - **Generated documentation is never hand-edited.** `docs-site/skills/` and
   `docs-site/deep-dives/` are written only by `bin/docs_build.py`, and `copilot-docs/` only by
   `bin/copilot_docs.py`. Edit the SOURCE (a SKILL.md, `docs/*.md`, `README.md`, `SECURITY.md`,
@@ -178,7 +178,7 @@ python3 bin/exec_policy.py check                     # what OS execution boundar
 python3 bin/attempt_ledger.py demo                   # crash/resume walkthrough in a temp dir
 python3 bin/attempt_history.py demo                  # every dispatch, joined across sources
 python3 bin/kit_contract.py graph --kit DIR          # DAG validity + frontier; also `roster`, `demo`
-python3 bin/graph_brief.py demo                      # architect-grounding brief from a graphify graph.json
+python3 bin/graph_ground.py demo                     # graph freshness, bounded impact, search fallback; brief: graph_brief.py demo
 python3 bin/docs_build.py check                      # docs-site freshness (exit 1 on drift); `build` regenerates
 python3 bin/copilot_docs.py check                    # Copilot doc center freshness; `build` regenerates
 python3 bin/primitives.py check copilot/aesop.toml   # AI-primitive manifest validation (exit 2 on findings)
