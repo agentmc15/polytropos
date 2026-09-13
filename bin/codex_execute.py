@@ -1347,7 +1347,9 @@ def cmd_run(args):
     tasks_path = kit / "TASKS.md"
     text = _read_tasks_text(kit)
     tasks = parse_tasks(text)
-    task, select_reason = select_task(tasks, args.task, allow_rerun=args.rerun)
+    task, select_reason = select_task(
+        tasks, args.task, allow_rerun=args.rerun,
+        freshness=_CONTRACT.kit_freshness(kit, tasks, store=args.attempt_store))
     if task is None:
         print(f"{select_reason} ({tasks_path})", file=sys.stderr)
         sys.exit(2)

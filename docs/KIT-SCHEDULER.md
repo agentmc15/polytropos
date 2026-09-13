@@ -1,0 +1,127 @@
+# The kit scheduler
+
+Every driver runs a kit one task at a time: dispatch, verify, write the verdict, next task.
+That stays the default. `bin/kit_scheduler.py` adds two things on top of the shared contract in
+`bin/kit_contract.py`: acceptances that know which upstream artifact versions they rested on,
+and an opt-in, bounded way to run ready tasks at the same time without letting them collide.
+
+```bash
+python3 bin/kit_scheduler.py plan --kit .claude/kits/<slug> --max-parallel 2      # reads only
+python3 bin/kit_scheduler.py run  --kit .claude/kits/<slug> --harness cursor --max-parallel 2 --dry-run
+python3 bin/kit_scheduler.py run  --kit .claude/kits/<slug> --harness cursor --max-parallel 2
+python3 bin/kit_scheduler.py demo                                                # offline, spends nothing
+python3 bin/kit_contract.py freshness --kit .claude/kits/<slug>                   # exit 1 when something is stale
+python3 bin/kit_contract.py refresh   --kit .claude/kits/<slug> --task <id>       # re-verify, no dispatch
+```
+
+`--max-parallel 1` is the default and is exactly a driver's sequential loop. A real run with
+`--harness cursor` spends the user's Cursor allowance; `plan`, `--dry-run`, and `demo` spawn
+nothing. No live model has been run in parallel from this repository.
+
+## Acceptance is bound to upstream versions
+
+When a task is accepted, the attempt ledger's projection now records two more things: the
+workspace fingerprint the verdict was reached on (the version of that task's output), and, for
+each dependency, the fingerprint its latest acceptance carried. If a dependency is later
+re-accepted with a different fingerprint, the downstream acceptance is **stale**: it was
+verified against output that no longer exists.
+
+| Verdict | Meaning |
+|---|---|
+| `fresh` | every upstream artifact is the version this task was accepted against |
+| `stale` | an upstream task was re-accepted with a different artifact afterwards |
+| `unknown` | accepted before versions were recorded, or a workspace git cannot fingerprint |
+
+`unknown` is disclosed and changes nothing. `stale` changes readiness: a task that depends on a
+stale acceptance is not ready and waits on `<dep> [done (stale)]`, and every driver's `status`
+and `run` see this through the same `graph_state`. Naming the stale task itself selects the
+`refresh` mode: its verify command runs again on the tree as it is now, nothing is dispatched,
+and a pass re-binds the upstream versions while a failure projects `blocked`. `--rerun` still
+means rerun. The fingerprint is `attempt_ledger.workspace_fingerprint`, git-derived; a
+workspace outside git records `None` and its evidence stays `unknown` rather than guessed.
+
+## What a batch does, in order
+
+1. **Select.** Interrupted tasks nobody live holds come first (a dead run's work is settled
+   before anything new), then the ready frontier, bounded by `--max-parallel` (at most 8).
+   Dependents of a stale acceptance are not in the frontier.
+2. **Claim.** Each task is claimed with the ledger's `O_EXCL` claim; a task a live run holds is
+   skipped and named, never taken.
+3. **Settle.** A task with unprojected attempts is reconciled first (step 16): its check runs on
+   the main tree, and finished work is recognised without a second dispatch.
+4. **Admit, once.** The PLAN.md budget is read together with the ledger's own count, and every
+   task in the batch draws a grant from the same `BudgetAdmission` before anything is
+   dispatched. With one dispatch left and four tasks ready, one is dispatched and the stop is
+   recorded for the rest, whose claims are released.
+5. **Isolate.** Each admitted task gets its own copy of the workspace tree under the attempt
+   store, outside the tree: tracked and untracked files alike, modes preserved, symlinks and
+   `.git`/`graphify-out`/caches left out. Its status moves to `in-progress` only when its
+   worker actually starts.
+6. **Dispatch.** Workers run concurrently within the bound, through the harness adapter
+   (`stub` for conformance, `cursor` today), each recorded before and after in the ledger.
+   What each changed is measured by hashing its copy before and after, never declared.
+7. **Manifest.** The integration input is written beside the copies: artifact paths, verdicts,
+   verify exit codes, and a bounded tail of verify output per task. No worker transcript
+   reaches it.
+8. **Integrate.** In batch order, each accepted write set is applied to the main workspace
+   through `bin/safe_paths.py`. A file two workers changed, or one that changed in the main
+   workspace while the batch ran, is a **conflict**: nothing of that task is applied, nothing is
+   reset, its copy is kept in place, and the task is blocked with the files named.
+9. **Verify again.** Every integrated task's verify command runs on the merged tree. A check
+   that passed in a worker's copy is evidence about that copy; a task whose check fails on the
+   merged tree is blocked, and its applied files are not reset.
+10. **Project.** Verdicts are written from a fresh read, each task gets its NOTES.md block
+    (with the batch, the write-set counts, the merged-tree exit, and the integration outcome),
+    claims are released, clean copies are discarded.
+
+## What a worker may not do
+
+- **Edit the kit.** A write set touching `.claude/kits/<slug>/` in the copy is recorded as
+  `security.violation`, nothing of that worker is applied, and the task is blocked. The main
+  kit is never read from a copy.
+- **Grant itself budget.** Admission is decided before dispatch from the main PLAN.md and the
+  ledger; a PLAN.md edited in a copy is the violation above.
+- **Reach another task.** Copies are separate directories under the store; the main tree is
+  written only by the integration step.
+- **Rewrite acceptance.** A worker may leave `.polytropos/revision.json` in its copy proposing
+  `add_depends` (task to dependencies) and `new_tasks` (id, title, reason). Any key naming a
+  brief, acceptance, verify command, status, model, budget, or roster refuses the whole
+  proposal. Proposals are recorded (`plan.revision-proposed`, with the affected tasks) and not
+  applied; `--accept-revisions` applies dependency additions only, after the graph revalidates
+  (a proposal that would close a cycle is refused with the finding). New tasks are the
+  architect's to add. The proposal file is never part of a write set.
+
+## The manifest and the integrating model's window
+
+Integration here is mechanical, but the manifest is shaped for a model that would do it:
+paths, verdicts, and bounded diagnostics, never the corpus. With `--integrator-harness` and
+`--integrator-model`, the manifest is sized (`est.`, at `context_weight.EST_CHARS_PER_TOKEN`)
+against that model's long-context threshold read from its own harness's pricing file under
+that file's own field name: `long_context.threshold_input_tokens` in `data/pricing.codex.json`,
+`long_context.threshold_tokens` in `data/pricing.copilot.json`, `context_window` in
+`data/pricing.json`. `data/pricing.cursor.json` carries none, so a Cursor integrator is
+unbounded and the report says so. Over the threshold, diagnostics are dropped and the trim is
+written into the manifest; still over, integration is refused for the batch, the copies are
+kept, and the report names the cause. Nothing is truncated silently.
+
+## Cancellation and resume
+
+`--stop-on-failure` cancels the tasks that have not started when one fails; Ctrl-C does the
+same. A cancelled task copied nothing, dispatched nothing, keeps its `pending` status, and gets
+a zero-attempt `result=cancelled` line; a dispatch already running is bounded by the process
+runner and its allowance is spent whatever it returns. A batch that dies leaves claims and
+unfinished attempts, which the next run (scheduler or driver) closes as unknown and settles
+from the tree before dispatching anything.
+
+## Limits
+
+- Isolation is of files. Workers on one machine share the network, the credentials the
+  dispatch environment carries, and whatever a verify command reaches outside its copy; the
+  execution boundary bounds that as for every driver.
+- Only `stub` and `cursor` dispatch through the scheduler. The Claude Code, Copilot, and Codex
+  drivers keep their sequential loops until their argument builders are lifted into
+  `harness_adapter` subclasses; `primitives/harness-capabilities.json` says so per harness.
+- A write set is what changed on disk. A worker that reads another file's content and depends
+  on it is not detected; only conflicting writes are.
+- Independence labels and code-graph edges are not consulted for safety. They order and
+  describe; they do not prove.

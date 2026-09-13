@@ -28,11 +28,11 @@ changelog.
   never enter a priced total or a digest's totals.
 - **Never invoke the real `copilot` CLI from tests, kit verify commands, or anything run during
   execution** — and the same holds for `codex`, `claude`, and Cursor's `agent`. Those calls spend the user's real
-  credits and hit the network, and the user has live `~/.copilot`, `~/.codex`, and `~/.claude`
+  credits and hit the network; the user has live `~/.copilot`, `~/.codex`, and `~/.claude`
   homes. A dispatcher spawning its own CLI on the user's explicit run is the point; anything
   else is not. Every dispatcher (`bin/{copilot,claude,codex,cursor}_execute.py`, `bin/copilot_ralph.py`,
-  `bin/journal_summarize.py`) takes an injectable runner; tests stub or mock every dispatch using
-  temp stub executables and temp home dirs only; `--dry-run` / `--demo` are the sole sanctioned
+  `bin/journal_summarize.py`) takes an injectable runner; tests stub or mock every dispatch with
+  temp stubs and temp homes only; `--dry-run` / `--demo` are the sole sanctioned
   CLI smoke paths and spawn nothing.
 - **Reading a harness home is read-only and JSONL-only.** `bin/copilot_usage.py`,
   `bin/codex_usage.py`, `bin/context_weight.py`, and `bin/journal_*.py` read `~/.claude`,
@@ -148,10 +148,10 @@ python3 -m unittest discover -s tests -v   # FULL SUITE — run before claiming 
 # cost, routing, benchmarks
 python3 bin/cost_report.py --days 30                 # transcript cost report (markdown to stdout)
 python3 bin/session_cost.py                          # one session's cost + all-Fable counterfactual
-python3 bin/routing_scorecard.py --demo              # routing quality; add --live/--history/--by-task/--trend/--roles
-python3 bin/repo_bench.py demo                       # full benchmark pipeline: fixture repo, stub dispatch, all four oracles
+python3 bin/routing_scorecard.py --demo              # routing quality; also --live/--history/--by-task/--trend/--roles
+python3 bin/repo_bench.py demo                       # benchmark pipeline: fixture repo, stub dispatch, all four oracles
 python3 bin/repo_bench.py plan --repo . --models sonnet,haiku   # priced matrix + ceiling; only `run --live --max-usd` spends
-echo '{"model":{"id":"claude-fable-5","display_name":"Fable 5"},"cost":{"total_cost_usd":1.23},"context_window":{"used_percentage":42},"rate_limits":{"five_hour":{"used_percentage":12},"seven_day":{"used_percentage":34}}}' | python3 bin/statusline.py
+echo '{"model":{"id":"claude-fable-5","display_name":"Fable 5"},"cost":{"total_cost_usd":1.23},"context_window":{"used_percentage":42}}' | python3 bin/statusline.py
 
 # per-harness pricing and usage
 python3 bin/copilot_pricing.py est M claude-fable-5  # Copilot estimate (USD + AIC); also `knobs`, `prefs`
@@ -177,8 +177,9 @@ python3 bin/harness_update.py check                  # all-harness freshness car
 python3 bin/exec_policy.py check                     # what OS execution boundary this host enforces (exit 3 if none)
 python3 bin/attempt_ledger.py demo                   # crash/resume walkthrough in a temp dir
 python3 bin/attempt_history.py demo                  # every dispatch, joined across sources
-python3 bin/kit_contract.py graph --kit DIR          # DAG validity + frontier; also `roster`, `demo`
-python3 bin/graph_ground.py demo                     # graph freshness, bounded impact, search fallback; brief: graph_brief.py demo
+python3 bin/kit_contract.py graph --kit DIR          # DAG, frontier, stale evidence; also roster/refresh/demo
+python3 bin/graph_ground.py demo                     # freshness, impact, search fallback; brief: graph_brief.py demo
+python3 bin/kit_scheduler.py demo                    # opt-in batches: copies, integrate, verify the merged tree
 python3 bin/docs_build.py check                      # docs-site freshness (exit 1 on drift); `build` regenerates
 python3 bin/copilot_docs.py check                    # Copilot doc center freshness; `build` regenerates
 python3 bin/primitives.py check copilot/aesop.toml   # AI-primitive manifest validation (exit 2 on findings)

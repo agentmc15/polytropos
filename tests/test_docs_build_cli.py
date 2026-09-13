@@ -294,15 +294,15 @@ class RealTreeIdempotenceTests(unittest.TestCase):
     the FULL real roster -- never writing to a tracked file. T5 pinned this at
     43 (39 skill pages + 3 harness indexes + 1 parity page); T6 extends the set
     with 26 deep-dive pages (25 docs/*.md mirrors + 1 index), for 69 total;
-    2026-09-13: 70 once step 23 added docs/CURSOR-HARNESS.md -- this test
-    derives the count dynamically so it stays meaningful if that changes
-    again."""
+    2026-09-13: 70 once step 23 added docs/CURSOR-HARNESS.md, 71 once step 24
+    added docs/KIT-SCHEDULER.md -- this test derives the count dynamically so it
+    stays meaningful if that changes again."""
 
     def test_build_twice_on_the_full_real_roster(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = _copy_real_dirs(tmp, ("skills", "copilot", "codex", "docs"))
             expected_count = len(db.expected_pages(root))
-            self.assertEqual(expected_count, 70, "the pinned page-set size (70 total)")
+            self.assertEqual(expected_count, 71, "the pinned page-set size (71 total)")
 
             code1, out1, err1 = _run_main(["build", "--repo-root", str(root)])
             self.assertEqual(code1, 0, f"stderr={err1!r}")

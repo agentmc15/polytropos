@@ -206,7 +206,8 @@ def cmd_run(args):
     plan_text = (kit / "PLAN.md").read_text() if (kit / "PLAN.md").exists() else ""
     roster, roster_support = roster_for_run(plan_text, "cursor", args.roster_gap, slug=slug)
 
-    task, reason = select_task(tasks, args.task, allow_rerun=args.rerun)
+    task, reason = select_task(tasks, args.task, allow_rerun=args.rerun,
+                               freshness=_CONTRACT.kit_freshness(kit, tasks, store=args.attempt_store))
     if task is None:
         print(f"{reason} ({tasks_path})", file=sys.stderr)
         sys.exit(2)

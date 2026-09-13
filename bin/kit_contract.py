@@ -245,6 +245,14 @@ def _read_tasks_text(kit_dir):
 
 GRAPH_STATES = ("invalid", "complete", "ready", "interrupted", "waiting")
 
+#: Step 24: whether a done task's acceptance still rests on the upstream artifact versions it
+#: was verified against. `unknown` is a kit accepted before versions were recorded, or a
+#: workspace git cannot fingerprint; it is disclosed, never rounded to fresh or stale.
+FRESHNESS_STATES = ("fresh", "stale", "unknown")
+#: The one selection mode `SELECTION_MODES` does not key by status: a done task whose evidence
+#: is stale is re-verified in place (no dispatch) when named. `--rerun` still means rerun.
+REFRESH_MODE = "refresh"
+
 FINDING_KINDS = ("duplicate-id", "self-dependency", "unknown-dependency", "cycle")
 
 #: The task state machine: from each status, the statuses a driver may write over it. A task
@@ -393,7 +401,7 @@ def ready_frontier(tasks):
     ]
 
 
-def graph_state(tasks, findings=None):
+def graph_state(tasks, findings=None, freshness=None):
     """Where the kit stands as a whole -> a dict whose `state` is one of `GRAPH_STATES`.
 
       invalid      findings exist; nothing is selectable until they are fixed.
@@ -408,14 +416,28 @@ def graph_state(tasks, findings=None):
     pending-but-not-ready task to the `(dependency, status)` pairs holding it, and the four
     status lists say which tasks are where. Pure; the ledger is not consulted, so
     `interrupted` cannot say whether the run is alive -- the claim taken at dispatch can.
+
+    Step 24: `freshness` (from `evidence_freshness`) names done tasks whose acceptance is
+    stale because an upstream task was re-accepted with a different artifact. A task that
+    depends on a stale acceptance is NOT ready -- its brief assumes upstream output that has
+    since changed -- and waits on `<dep> [done (stale)]` until that task is refreshed.
     """
     if findings is None:
         findings = validate_graph(tasks)
     status = {t["id"]: t["status"] for t in tasks}
     by_status = {s: [t["id"] for t in tasks if t["status"] == s] for s in STATUSES}
+    stale = sorted(tid for tid, f in (freshness or {}).items() if f.get("state") == "stale")
+    stale_set = set(stale)
     frontier = ready_frontier(tasks) if not findings else []
+    frontier = [tid for tid in frontier
+                if not any(d in stale_set for d in next(t for t in tasks if t["id"] == tid)["depends"])]
+
+    def holding(t):
+        return [(d, "done (stale)" if d in stale_set else status.get(d))
+                for d in t["depends"] if status.get(d) != "done" or d in stale_set]
+
     waiting_on = {
-        t["id"]: [(d, status.get(d)) for d in t["depends"] if status.get(d) != "done"]
+        t["id"]: holding(t)
         for t in tasks if t["status"] == "pending" and t["id"] not in frontier
     }
     if findings:
@@ -437,7 +459,23 @@ def graph_state(tasks, findings=None):
         "blocked": by_status["blocked"],
         "waiting_on": waiting_on,
         "findings": findings,
+        "stale": stale,
+        "stale_detail": {tid: (freshness or {})[tid].get("changed", []) for tid in stale},
     }
+
+
+def render_stale(graph):
+    """The stale-evidence clause for a graph line, or "" (step 24)."""
+    stale = graph.get("stale") or []
+    if not stale:
+        return ""
+    parts = []
+    for tid in stale:
+        changed = graph.get("stale_detail", {}).get(tid) or []
+        parts.append(f"{tid} (upstream {', '.join(changed)} re-accepted with a different "
+                     f"artifact)" if changed else tid)
+    return (f"; stale evidence: {'; '.join(parts)} -- re-verify with "
+            f"`kit_contract.py refresh --task <id>`, or --rerun it")
 
 
 def render_graph_state(graph):
@@ -446,12 +484,12 @@ def render_graph_state(graph):
     if state == "invalid":
         return render_findings(graph["findings"])
     if state == "complete":
-        return "graph: complete -- every task is done"
+        return "graph: complete -- every task is done" + render_stale(graph)
     if state == "ready":
         return (
             f"graph: ready -- frontier: {', '.join(graph['frontier'])} "
             f"(sequential: {graph['frontier'][0]} runs next)"
-        )
+        ) + render_stale(graph)
     if state == "interrupted":
         line = (
             f"graph: interrupted -- in-progress: {', '.join(graph['in_progress'])}; resume "
@@ -459,7 +497,7 @@ def render_graph_state(graph):
         )
         if graph["frontier"]:
             line += f" (also ready, by explicit --task only: {', '.join(graph['frontier'])})"
-        return line
+        return line + render_stale(graph)
     holds = "; ".join(
         f"{tid} waits on " + ", ".join(f"{d} [{s}]" for d, s in deps)
         for tid, deps in graph["waiting_on"].items()
@@ -469,7 +507,7 @@ def render_graph_state(graph):
         line += f": {holds}"
     if graph["blocked"]:
         line += f"; retry a blocked task with --task <id> (blocked: {', '.join(graph['blocked'])})"
-    return line
+    return line + render_stale(graph)
 
 
 def check_transition(previous, new_status):
@@ -500,13 +538,14 @@ def plan_drift(before, after):
     return [f for f in PLAN_FIELDS if before.get(f) != after.get(f)]
 
 
-def readiness(tasks, task_id=None, allow_rerun=False):
+def readiness(tasks, task_id=None, allow_rerun=False, freshness=None):
     """ONE readiness rule for explicit and automatic selection -> a dict.
 
       task    the task to run, or None
       reason  the sentence naming what stopped the run (None when `task` is set)
-      mode    fresh | retry | resume | rerun, from `SELECTION_MODES` (None when `task` is None)
-      graph   `graph_state(tasks)`, so the caller can report where the kit stands
+      mode    fresh | retry | resume | rerun, from `SELECTION_MODES`, or `refresh` for a
+              done task whose evidence is stale (None when `task` is None)
+      graph   `graph_state(tasks, freshness=...)`, so the caller can report where the kit stands
 
     Order of checks: the graph as a whole (an invalid graph selects nothing, whatever was
     named), then the named task's existence and prerequisites, then its status. Automatic
@@ -518,7 +557,8 @@ def readiness(tasks, task_id=None, allow_rerun=False):
     entirely: `--task T5` ran while T4 was still pending and T5's brief assumed T4's output
     existed. Explicit and automatic selection now ask the same questions of the same graph.
     """
-    graph = graph_state(tasks)
+    graph = graph_state(tasks, freshness=freshness)
+    stale = set(graph.get("stale") or [])
 
     def answer(task=None, reason=None, mode=None):
         return {"task": task, "reason": reason, "mode": mode, "graph": graph}
@@ -539,6 +579,16 @@ def readiness(tasks, task_id=None, allow_rerun=False):
                     f"task {task_id} depends on {dep}, which is {status.get(dep)!r} rather "
                     f"than done"
                 ))
+            if dep in stale:
+                changed = graph["stale_detail"].get(dep) or []
+                return answer(reason=(
+                    f"task {task_id} depends on {dep}, whose acceptance is stale: upstream "
+                    f"{', '.join(changed) or 'task(s)'} re-accepted with a different artifact "
+                    f"after {dep} was verified. Refresh {dep} first "
+                    f"(`kit_contract.py refresh --task {dep}`) or --rerun it"
+                ))
+        if task["status"] == "done" and task_id in stale and not allow_rerun:
+            return answer(task=task, mode=REFRESH_MODE)
         if task["status"] == "done" and not allow_rerun:
             return answer(reason=(
                 f"task {task_id} is already done -- pass --rerun to repeat it deliberately "
@@ -607,7 +657,7 @@ def _select_task(tasks, task_id=None):
     return task
 
 
-def select_task(tasks, task_id=None, allow_rerun=False):
+def select_task(tasks, task_id=None, allow_rerun=False, freshness=None):
     """The task to run -> `(task, reason)`, exactly one of which is None.
 
     The driver-facing shape of `readiness`, which holds the rule; see it for the order of
@@ -616,7 +666,7 @@ def select_task(tasks, task_id=None, allow_rerun=False):
     in-progress, nothing pending, everything waiting on a blocked task -- and an operator has
     to know which one they are looking at.
     """
-    r = readiness(tasks, task_id=task_id, allow_rerun=allow_rerun)
+    r = readiness(tasks, task_id=task_id, allow_rerun=allow_rerun, freshness=freshness)
     return r["task"], r["reason"]
 
 def set_status(text, task_id, new_status):
@@ -993,6 +1043,18 @@ ROLE_SUPPORT = {
                                 "boundary; no verifier agent is dispatched per task"),
         "reviewer": ("sequenced", "review (agent -p --mode ask)"),
         **{role: ("unsupported", "run is one task, one role; no hook sequencing")
+           for role in OPTIONAL_ROLES},
+    },
+    # Step 24: the scheduler's conformance executor -- a throwaway stub process standing in
+    # for a harness so batching, isolation, integration, and cancellation can be proven
+    # without a model. It sequences the implementer (one task, one copy) and runs the
+    # deterministic check; it has no review and no optional role. Never a real harness.
+    "stub": {
+        "implementer": ("sequenced", "kit_scheduler.py run --harness stub"),
+        "verifier": ("partial", "the verify command runs under the execution boundary in the "
+                                "worker's copy and again on the merged tree; no verifier agent"),
+        "reviewer": ("unsupported", "the stub executor has no review; it exists for conformance"),
+        **{role: ("unsupported", "the stub executor sequences nothing but the implementer")
            for role in OPTIONAL_ROLES},
     },
 }
@@ -1424,8 +1486,10 @@ def cmd_status(args):
         f"{counts['done']} done / {counts['blocked']} blocked"
     )
     # Step 18: the same graph verdict `run` will reach, so an operator sees an invalid kit or
-    # an interrupted task from `status` rather than from a refused run.
-    print(render_graph_state(graph_state(tasks)))
+    # an interrupted task from `status` rather than from a refused run. Step 24: with the
+    # ledger's artifact bindings, so stale evidence shows here before a run refuses on it.
+    print(render_graph_state(graph_state(
+        tasks, freshness=kit_freshness(args.kit, tasks, store=getattr(args, "attempt_store", None)))))
     # Step 20: the kit's roster and the assurance it declares, from the same grammar `run`
     # checks before dispatching.
     try:
@@ -1688,7 +1752,9 @@ def append_run_note(notes_path, result, task, run_id=None, parent=None, actor="d
     if result.get("usd") is None:
         lines.append("- usd: null (unpriced; the harness reports no usage)")
     lines.extend(extra)
-    attempts = result.get("ledger_attempts") or (1 + len(escalations))
+    attempts = result.get("ledger_attempts")
+    if attempts is None:
+        attempts = 1 + len(escalations)
     outcome_model = model_used if model_used else "unpinned"
     result_word = outcome_result(result.get("status"), escalations, parent)
     line_parent = parent if result_word == "escalated-pass" else None
@@ -1824,8 +1890,21 @@ class TaskRun:
                                       include_tail=include_tail)
 
     def project(self, status, result=None, outcome_line=False, note=""):
+        """Record the projection; an acceptance also binds the artifact versions (step 24).
+
+        `artifact` is this workspace's fingerprint now (None when git cannot say), and
+        `upstream` is each dependency's latest accepted artifact, read from the ledger at
+        this moment -- so a later re-acceptance of a dependency with a different artifact is
+        detectable as stale evidence on this task.
+        """
+        artifact = self.fingerprint() if outcome_line else None
+        upstream = None
+        if outcome_line and status == "done":
+            upstream = {dep: self.ledger.latest_artifact(dep)
+                        for dep in (self.task.get("depends") or [])}
         self.ledger.record_projected(self.run, self.task_id, status, result=result,
-                                     outcome_line=outcome_line, note=note)
+                                     outcome_line=outcome_line, note=note,
+                                     artifact=artifact, upstream=upstream)
 
     def end(self, status="finished", reason=""):
         """Record the run's end and release the claim. Idempotent: a driver calls it on
@@ -1975,6 +2054,112 @@ def finish_task_projection(lifecycle, tasks_path, task, result):
     return text
 
 
+# ---- evidence freshness (step 24) ---------------------------------------------------------------
+#
+# WHAT WAS WRONG. A task accepted against its dependencies' output stayed `done` forever, even
+# after a dependency was re-run and produced something else. Readiness read only statuses, so
+# the downstream verdict outlived the upstream artifact it was reached on. The ledger now
+# records, at every acceptance, the artifact version accepted and the upstream versions it
+# rested on; this section reads those back and names what has gone stale.
+
+def evidence_freshness(tasks, ledger):
+    """Each done task's acceptance against its upstream artifact versions -> {id: verdict}.
+
+    A verdict is `{"state": fresh|stale|unknown, "changed": [dep, ...], "reason": str}`.
+    `stale` means a dependency's latest acceptance carries a different artifact than the one
+    recorded when this task was accepted. `unknown` means the comparison cannot be made: no
+    upstream versions were recorded (accepted before step 24), or a fingerprint is None (a
+    workspace git cannot describe). Unknown is disclosed, never rounded either way; only
+    `stale` changes readiness.
+    """
+    out = {}
+    for t in tasks:
+        if t["status"] != "done":
+            continue
+        deps = list(t.get("depends") or [])
+        if not deps:
+            out[t["id"]] = {"state": "fresh", "changed": [], "reason": "no upstream task"}
+            continue
+        acc = ledger.latest_acceptance(t["id"])
+        recorded = acc.get("upstream") if acc else None
+        if not isinstance(recorded, dict):
+            out[t["id"]] = {"state": "unknown", "changed": [],
+                            "reason": "accepted before upstream artifact versions were recorded"}
+            continue
+        changed, unknown = [], []
+        for dep in deps:
+            rec, cur = recorded.get(dep), ledger.latest_artifact(dep)
+            if rec is None or cur is None:
+                unknown.append(dep)
+            elif rec != cur:
+                changed.append(dep)
+        if changed:
+            out[t["id"]] = {"state": "stale", "changed": changed,
+                            "reason": f"upstream {', '.join(changed)} re-accepted with a "
+                                      f"different artifact after this task was verified"}
+        elif unknown:
+            out[t["id"]] = {"state": "unknown", "changed": [],
+                            "reason": f"no artifact version recorded for {', '.join(unknown)}"}
+        else:
+            out[t["id"]] = {"state": "fresh", "changed": [],
+                            "reason": "every upstream artifact is the version accepted against"}
+    return out
+
+
+def kit_freshness(kit_dir, tasks, store=None):
+    """`evidence_freshness` over the kit's own ledger (read-only; an absent ledger is empty)."""
+    return evidence_freshness(tasks, open_ledger(kit_dir, store=store))
+
+
+def render_freshness(freshness):
+    if not freshness:
+        return "evidence: no accepted task with upstream to compare"
+    lines = []
+    for tid, f in sorted(freshness.items()):
+        lines.append(f"evidence: {tid} {f['state']} -- {f['reason']}")
+    return "\n".join(lines)
+
+
+def refresh_task(kit_dir, task, run_id, verify_runner, actor, store=None, workspace=None,
+                 freshness=None):
+    """Re-verify a done task whose evidence is stale, without dispatching -> the result.
+
+    The task's own check is run again on the tree as it is now; a pass re-binds the upstream
+    versions (the acceptance is current again), a failure projects `blocked` so the graph
+    stops at it. Recorded as `evidence.refreshed` with zero attempts: nothing was spent.
+    Refusing to dispatch here is deliberate -- a re-dispatch is `--rerun`, an operator's
+    explicit gesture, and this operation must never spend on its own.
+    """
+    kit_dir = Path(kit_dir)
+    tasks_path = kit_dir / "TASKS.md"
+    lifecycle, _info = start_task_lifecycle(kit_dir, task, run_id, actor=actor, store=store,
+                                            workspace=workspace, role="implementer")
+    changed = ((freshness or {}).get(task["id"]) or {}).get("changed") or []
+    project_status(tasks_path, task["id"], "in-progress")
+    try:
+        rc, output = verify_runner(task["verify"])
+    except OSError as exc:
+        rc, output = 126, f"verify failed to start: {exc}"
+    lifecycle.ledger.append("evidence.refreshed", run=run_id, task=task["id"], rc=rc,
+                            changed=changed)
+    result = {
+        "id": task["id"], "status": "done" if rc == 0 else "blocked", "model_used": None,
+        "planned_model": task.get("model"), "observed_model": None, "escalations": [],
+        "verify_rc": rc, "dispatch_rc": None, "usd": None,
+        "failure": None if rc == 0 else "verification", "class": None, "role": "implementer",
+        "verify_evidence": " ".join((output or "").split())[-2000:],
+    }
+    finish_task_projection(lifecycle, tasks_path, task, result)
+    result["ledger_attempts"] = 0
+    extra = (f"- refresh: re-verified only, nothing dispatched; upstream "
+             f"{', '.join(changed) or 'task(s)'} had been re-accepted with a different artifact",)
+    append_run_note(kit_dir / "NOTES.md", result, task, run_id=run_id, actor=actor, extra=extra)
+    lifecycle.project(result["status"], outcome_result(result["status"], [], None),
+                      outcome_line=True)
+    lifecycle.end()
+    return result
+
+
 # ---- command line: the graph, and a demo of it --------------------------------------------------
 
 def _demo_task(task_id, status="pending", depends=()):
@@ -2073,6 +2258,21 @@ def _cli(argv=None):
     p_graph = sub.add_parser("graph", help="validate TASKS.md's DAG; exit 2 when invalid")
     p_graph.add_argument("--kit", required=True, help="kit directory holding TASKS.md")
     p_graph.add_argument("--json", action="store_true", help="the graph_state dict as JSON")
+    p_graph.add_argument("--attempt-store", default=None,
+                         help="ledger root for artifact bindings (default: the data root)")
+    p_fresh = sub.add_parser("freshness", help="each done task's acceptance against its "
+                                               "upstream artifact versions (step 24)")
+    p_fresh.add_argument("--kit", required=True)
+    p_fresh.add_argument("--attempt-store", default=None)
+    p_fresh.add_argument("--json", action="store_true")
+    p_refresh = sub.add_parser("refresh", help="re-verify a done task whose evidence is stale; "
+                                                "dispatches nothing; exit 1 when the check fails")
+    p_refresh.add_argument("--kit", required=True)
+    p_refresh.add_argument("--task", required=True)
+    p_refresh.add_argument("--attempt-store", default=None)
+    p_refresh.add_argument("--exec-mode", choices=("enforced", "trusted-host"), default="enforced")
+    p_refresh.add_argument("--force", action="store_true",
+                           help="refresh a done task even when its evidence is not stale")
     p_roster = sub.add_parser("roster", help="PLAN.md's workflow, roles, assurance, and what "
                                              "an executor can run; exit 2 on a grammar "
                                              "error, 1 when the executor has a gap")
@@ -2087,6 +2287,39 @@ def _cli(argv=None):
     if args.cmd == "demo":
         _demo()
         return 0
+    if args.cmd == "freshness":
+        tasks = parse_tasks(_read_tasks_text(args.kit))
+        fresh = kit_freshness(args.kit, tasks, store=args.attempt_store)
+        if args.json:
+            print(json.dumps({"v": CONTRACT_VERSION, "freshness": fresh}, indent=2,
+                             sort_keys=True))
+        else:
+            print(render_freshness(fresh))
+        return 1 if any(f["state"] == "stale" for f in fresh.values()) else 0
+    if args.cmd == "refresh":
+        tasks = parse_tasks(_read_tasks_text(args.kit))
+        exit_if_invalid_graph(tasks, Path(args.kit) / "TASKS.md")
+        fresh = kit_freshness(args.kit, tasks, store=args.attempt_store)
+        task = next((t for t in tasks if t["id"] == args.task), None)
+        if task is None:
+            print(f"no task with id {args.task!r} in this kit", file=sys.stderr)
+            return 2
+        if task["status"] != "done":
+            print(f"task {args.task} is {task['status']!r}, not done; refresh re-verifies an "
+                  f"acceptance and there is none to refresh", file=sys.stderr)
+            return 2
+        state = (fresh.get(args.task) or {}).get("state")
+        if state != "stale" and not args.force:
+            print(f"task {args.task}'s evidence is {state or 'fresh'}, not stale; pass --force to "
+                  f"re-verify it anyway", file=sys.stderr)
+            return 2
+        workspace = Path.cwd()
+        runner = _ep().verify_runner(workspace, mode=args.exec_mode)
+        result = refresh_task(args.kit, task, generate_run_id(), runner, actor="refresh",
+                              store=args.attempt_store, workspace=workspace, freshness=fresh)
+        print(f"task {args.task}: {result['status']} (verify_rc={result['verify_rc']}; "
+              f"nothing dispatched)")
+        return 0 if result["status"] == "done" else 1
     if args.cmd == "roster":
         try:
             roster = resolve_roster(_plan_text(args.kit))
@@ -2103,7 +2336,7 @@ def _cli(argv=None):
             print(render_roster(roster, support))
         return 1 if support["gap"] else 0
     tasks = parse_tasks(_read_tasks_text(args.kit))
-    graph = graph_state(tasks)
+    graph = graph_state(tasks, freshness=kit_freshness(args.kit, tasks, store=args.attempt_store))
     if args.json:
         print(json.dumps(graph, indent=2, sort_keys=True))
     else:

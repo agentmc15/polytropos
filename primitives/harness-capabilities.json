@@ -72,6 +72,14 @@
           "verified": "unknown",
           "source": "bin/kit_contract.py ROLE_SUPPORT",
           "note": "the seven optional roles (scout, test-author, second-verifier, red-team, security-auditor, docs-editor, synthesizer) are sequenced only by the interactive execute skill; `run` is one task, one role, with no hook sequencing, so a kit that declares one is refused or disclosed before dispatch (--roster-gap)"
+        },
+        "concurrent_dispatch": {
+          "product": "not-applicable",
+          "implemented": "unsupported",
+          "verified": "unknown",
+          "source": "bin/kit_scheduler.py (step 24)",
+          "verified_on": null,
+          "note": "no adapter yet: bin/claude_execute.py keeps its own sequential loop; bin/kit_scheduler.py dispatches through harness adapters (stub, cursor) only"
         }
       }
     },
@@ -150,6 +158,14 @@
           "verified": "unknown",
           "source": "bin/kit_contract.py ROLE_SUPPORT",
           "note": "`run` refuses any role but implementer; the optional roles are sequenced only by the interactive execute skill, so a kit that declares one is refused or disclosed before dispatch (--roster-gap)"
+        },
+        "concurrent_dispatch": {
+          "product": "not-applicable",
+          "implemented": "unsupported",
+          "verified": "unknown",
+          "source": "bin/kit_scheduler.py (step 24)",
+          "verified_on": null,
+          "note": "no adapter yet: bin/codex_execute.py keeps its own sequential loop; bin/kit_scheduler.py dispatches through harness adapters (stub, cursor) only"
         }
       }
     },
@@ -202,6 +218,14 @@
           "verified": "unknown",
           "source": "bin/kit_contract.py ROLE_SUPPORT",
           "note": "`run` is one task, one agent, with no hook sequencing; the optional roles are sequenced only by the interactive execute skill, so a kit that declares one is refused or disclosed before dispatch (--roster-gap)"
+        },
+        "concurrent_dispatch": {
+          "product": "not-applicable",
+          "implemented": "unsupported",
+          "verified": "unknown",
+          "source": "bin/kit_scheduler.py (step 24)",
+          "verified_on": null,
+          "note": "no adapter yet: bin/copilot_execute.py keeps its own sequential loop; bin/kit_scheduler.py dispatches through harness adapters (stub, cursor) only"
         }
       }
     },
@@ -226,6 +250,14 @@
           "product": "unsupported",
           "implemented": "unsupported",
           "verified": "unsupported"
+        },
+        "concurrent_dispatch": {
+          "product": "not-applicable",
+          "implemented": "supported",
+          "verified": "supported",
+          "source": "bin/kit_scheduler.py (step 24)",
+          "verified_on": "2026-09-13",
+          "note": "the scheduler's conformance executor; tests/test_kit_scheduler.py drives batches, conflicts, admission, cancellation, and resume through it"
         }
       }
     },
@@ -352,6 +384,14 @@
           "verified": "unknown",
           "source": "https://cursor.com/docs/skills, https://cursor.com/docs/subagents (legacy .claude/ and .codex/ discovery)",
           "note": "polytropos capability: bin/cursor_adapter.py doctor names every .claude/ or .codex/ agent or skill file Cursor would discover that carries another harness's commands"
+        },
+        "concurrent_dispatch": {
+          "product": "not-applicable",
+          "implemented": "supported",
+          "verified": "unknown",
+          "source": "bin/kit_scheduler.py (step 24)",
+          "verified_on": null,
+          "note": "bin/kit_scheduler.py run --harness cursor --max-parallel N: each task in its own copy of the tree, one admission per batch, write sets integrated then verified on the merged tree; never run live from this repository, so verified stays unknown"
         }
       }
     }

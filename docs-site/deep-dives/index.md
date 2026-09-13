@@ -22,6 +22,7 @@
 | [Graph-Engineering Properties in polytropos](graph-engineering.md) |
 | [polytropos — complete guide & cookbook](guide.md) |
 | [How polytropos works](how-it-works.md) |
+| [The kit scheduler](kit-scheduler.md) |
 | [Memory skill](memory-skill.md) |
 | [Next-day runbook](next-day-runbook.md) |
 | [Per-task dollars — attributing delegated cost by task and role](per-task-dollars.md) |

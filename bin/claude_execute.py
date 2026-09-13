@@ -858,7 +858,9 @@ def cmd_run(args):
                 prompt = preamble + "\n\n---\n\n" + t["brief"]
                 _print_dispatch_preview(t, args.claude_bin, model_id, prompt, extra_args)
             return
-        task, reason = select_task(tasks, args.task, allow_rerun=args.rerun)
+        task, reason = select_task(
+            tasks, args.task, allow_rerun=args.rerun,
+            freshness=_CONTRACT.kit_freshness(kit, tasks, store=args.attempt_store))
         if task is None:
             print(f"{reason} ({tasks_path})", file=sys.stderr)
             sys.exit(2)
@@ -867,7 +869,9 @@ def cmd_run(args):
         _print_dispatch_preview(task, args.claude_bin, model_id, prompt, extra_args)
         return
 
-    task, reason = select_task(tasks, args.task, allow_rerun=args.rerun)
+    task, reason = select_task(
+            tasks, args.task, allow_rerun=args.rerun,
+            freshness=_CONTRACT.kit_freshness(kit, tasks, store=args.attempt_store))
     if task is None:
         print(f"{reason} ({tasks_path})", file=sys.stderr)
         sys.exit(2)

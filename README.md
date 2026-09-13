@@ -32,6 +32,8 @@ A Claude Code plugin that picks the right model per task, estimates the cost bef
 
 **Cursor harness:** [docs/CURSOR-HARNESS.md](docs/CURSOR-HARNESS.md) — the same kit contract driven through Cursor's headless CLI (`bin/cursor_execute.py` on `bin/cursor_adapter.py`): the binary's identity proven before any dispatch, a project-scoped `.cursor/` bundle with an ownership-aware installer, IDE/CLI/cloud modes reported separately, and usage honestly unknown (`data/pricing.cursor.json` carries no rates).
 
+**Kit scheduler:** [docs/KIT-SCHEDULER.md](docs/KIT-SCHEDULER.md) — acceptances bound to the upstream artifact versions they rested on (a re-accepted dependency makes downstream evidence stale; `kit_contract.py freshness` / `refresh`), and opt-in bounded concurrency (`bin/kit_scheduler.py`, sequential by default): isolated tree copies, one budget admission per batch, measured write sets, conflicts kept and named, the merged tree verified again.
+
 **Copilot workflow (Phase 2):** [docs/COPILOT-WORKFLOW.md](docs/COPILOT-WORKFLOW.md) — architect → execute → verify → escalate for Copilot CLI (`bin/copilot_execute.py` + workflow agents in `copilot/`), a budget-capped Ralph goal loop (`bin/copilot_ralph.py`), and the vendored `lessons-loop` skill.
 
 **Copilot cost visibility (Phase 3):** [docs/COPILOT-COSTVIZ.md](docs/COPILOT-COSTVIZ.md) — a usage report over Copilot CLI's session logs (`bin/copilot_usage.py`, read-only, priced from `data/pricing.copilot.json` in USD + AIC), pooled-AIC runway for org plans (`bin/copilot_pricing.py runway --pool-aic`), and the aesop compile round-trip proposal ([docs/AESOP-COMPILE-PROPOSAL.md](docs/AESOP-COMPILE-PROPOSAL.md)).

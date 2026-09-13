@@ -1,4 +1,4 @@
-# Handoff — roadmap implementation, steps 01–23
+# Handoff — roadmap implementation, steps 01–24
 
 **As of 2026-09-07.** Steps 01–15 are committed as a single change set on top of `fb40925`:
 66 files modified, 17 added, +5,485 / −1,860 lines. Full suite green: **3,727 tests, OK
@@ -33,12 +33,13 @@ user instructions outrank rule files; delegate in parallel by default).
 
 ## Where things stand
 
-**Steps 01–23 are done.** That is all of Phase A (input/artifact/acceptance boundaries), all of
+**Steps 01–24 are done.** That is all of Phase A (input/artifact/acceptance boundaries), all of
 Phase B (the execution boundary and the P0/P1 security remediation), all of Phase C (the
 shared runtime: durable attempts, cross-harness evidence, the validated execution DAG), and
-the first five steps of Phase D (named routing policies; the role contract; fresh, bounded
-code-graph grounding; lean entry points and scoped lessons; the Cursor adapter). Steps 16–23
-landed on 2026-09-12/13 on branch `harden/roadmap-steps-16-26`, one commit each.
+all of Phase D (named routing policies; the role contract; fresh, bounded code-graph
+grounding; lean entry points and scoped lessons; the Cursor adapter; artifact-aware
+scheduling with opt-in bounded concurrency). Steps 16–24 landed on 2026-09-12/13 on branch
+`harden/roadmap-steps-16-26`, one commit each. Phase E (25–26) remains.
 
 | Step | What it closed |
 |---|---|
@@ -65,6 +66,7 @@ landed on 2026-09-12/13 on branch `harden/roadmap-steps-16-26`, one commit each.
 | 21 | Fresh, bounded, task-relevant code-graph grounding (`bin/graph_ground.py`): an optional provenance sidecar stamped from what is actually available (revision, dirty set, per-file content fingerprints, the graph's hash, the operator's extraction label, graphify's own metadata), freshness against the working tree with dirty and untracked files (`fresh` / `partial` naming changed and deleted files / `stale` / `unknown`, never a manufactured revision), a bounded impact walk from changed files or symbols (depth, node limit, hubs listed and never expanded through, configurable excludes), a bounded code-search fallback when the graph is absent, stale, unknown, silent, or weakly covering, one `polytropos.grounding/1` result any adapter can attach, graph paths validated before any read, git read-only through the process runner |
 | 22 | Lean entry points and scoped lessons: the architect, execute, and repo-bench skills split into a mandatory core plus verbatim references with a "read when" trigger each (3060/6267/6677 words to 2311/2690/1353; thirteen reference files), descriptions with positive and negative triggers, a "what binds, what adapts" rule with bounded adaptation, the exact word-count and 200-byte guards replaced by ceilings and contract checks; `bin/lessons_store.py` replaces automatic lessons with observations carrying provenance, scope, and expiry, rules only by recurrence across distinct sources or by explicit ask, contests, eligibility-gated and budgeted recall (step 13's rule reused), legacy entries as candidates never rules; the Copilot lessons-loop skill and route agent read through it |
 | 23 | A real Cursor adapter on the shared runtime (`bin/cursor_adapter.py` + `bin/cursor_execute.py`): the generically named `agent` binary identified before any dispatch (`--version`, then `about --format json`; unknown or absent fails closed before a claim or a write); `agent -p --output-format json --trust --workspace … [--model …] --force` for implementation and `--mode ask` for review, with overriding extra flags refused; IDE, CLI, and cloud modes reported separately (product / implemented / verified, all `verified: unknown`); a project-scoped `.cursor/` bundle (skill, implementer, read-only verifier) with an ownership-aware, manifest-backed, no-clobber installer (`harness_select install --harness cursor --project`) and a `doctor` that diagnoses ambient files carrying another harness's commands; `data/pricing.cursor.json` as Cursor's own empty roster, usage unknown, `usd: null` on every block; no ladder; the shared conformance (ready, dispatch failure, verify failure, budget stop, resume, roster gap, review) through a stub; `kit_contract.budget_gate` and `append_run_note` extracted for adapters; the anti-triplication guard now spans four drivers |
+| 24 | Artifact-aware scheduling and opt-in bounded concurrency (`bin/kit_scheduler.py` + step-24 additions to `bin/kit_contract.py` / `bin/attempt_ledger.py`): every acceptance records the artifact version accepted and the upstream versions it rested on (`task.projected` carries `artifact` and `upstream`); `evidence_freshness` names a done task `stale` when a dependency was re-accepted with a different artifact (`unknown` for legacy or non-git, disclosed, never rounded); `graph_state`/`readiness` keep dependents of a stale acceptance out of the frontier, every driver's selection sees it, `status`/`graph` print the stale clause, `kit_contract.py freshness` reports and `refresh` re-verifies in place with zero attempts; the scheduler (sequential by default, `--max-parallel` ≤ 8 opt-in) claims a batch atomically, admits it in ONE budget decision, runs each task in its own copy of the tree under the store, measures write sets, integrates from a manifest (paths, verdicts, bounded diagnostics; never a transcript), keeps and names conflicts (two writers, or a user change during the batch) without applying or resetting, verifies every integrated task again on the merged tree, records kit edits from a worker as `security.violation`, refuses proposals that touch acceptance, records dependency proposals and applies them only under `--accept-revisions` after revalidation, sizes the manifest against the integrating model's own long-context field (the recorded amendment), cancels what has not started with zero-attempt `result=cancelled` lines and settles dead runs first; `stub` and `cursor` are the dispatchers; `ROLE_SUPPORT["stub"]` and `concurrent_dispatch` registry rows added |
 
 ### New modules, and what each is the *one place* for
 
@@ -127,35 +129,76 @@ landed on 2026-09-12/13 on branch `harden/roadmap-steps-16-26`, one commit each.
   or identity, lifecycle, `budget_gate`, projection, `reconcile_task`, one dispatch, one
   verification, `finish_task_projection`, `append_run_note`. No ladder, no price list, no
   cost figure.
+- `bin/kit_scheduler.py` — the one scheduler: batch selection (dead-run resumes first, then
+  the frontier, bounded), atomic claims + one `BudgetAdmission` per batch, tree snapshots
+  (`snapshot_tree` / `index_tree` / `write_set`), the dispatcher seam (`StubDispatcher`,
+  `CursorDispatcher`, or any callable `(task, prompt, workspace) -> (rc, output, proc)`), the
+  integration manifest and its bound (`build_manifest` / `manifest_bound` / `fit_manifest`;
+  `THRESHOLD_FIELDS` names each harness's own field), `_integrate` (from the manifest only),
+  the merged-tree re-verification, revision proposals (`read_revision`,
+  `apply_dependency_additions`), cancellation, `plan` / `run` / `demo`. The step-24 contract
+  half lives in `kit_contract.py`: `FRESHNESS_STATES`, `REFRESH_MODE`, `evidence_freshness`,
+  `kit_freshness`, `refresh_task`, `render_stale`, and the `freshness=` parameter on
+  `graph_state` / `readiness` / `select_task`; `attempt_ledger.py` gained
+  `latest_acceptance` / `latest_artifact` and the `artifact` / `upstream` projection fields.
 
 ---
 
-## Next: step 24 — artifact-aware scheduling and optional bounded concurrency
+## Next: step 25 — evaluate complete workflows; promote policy only from defensible evidence
 
-P2 optimisation on the shared scheduler, supported adapter modes only; sequential execution
-stays the compatibility default. Bind task readiness and acceptance to the upstream
-artifact/evidence versions they require, so a changed upstream output invalidates the
-downstream acceptance that rested on it. Add an OPT-IN scheduler that runs ready independent
-work concurrently within host limits and one global budget: separate workspaces or
-enforceable non-conflicting write sets, atomic task claims (step 16's claims are the seam),
-and a central integration step; passing checks on separate branches is not proof the
-combined tree works, so the merged tree gets fresh verification; merge conflict is explicit
-integration work with no automatic reset or loss of user changes. Missing code-graph edges
-and `independent:` flags are insufficient to prove safe parallel writes. Permit bounded plan
-revision when implementation discoveries invalidate the decomposition, preserving the user's
-requirements and acceptance criteria and recording affected dependencies; do not add a
-planning stage to simple direct tasks. Scheduler decisions, claims, and dependency/acceptance
-changes stay under the trusted coordinator: workers may propose revisions but never grant
-themselves capabilities or budget; failure and cancellation release resources without
-refunding consumed work; security fixtures for a worker editing another task or scheduler
-state. Test upstream artifact change, conflicting writers, independent tasks, concurrent
-admission, merge failure, cancellation, and resume with local stubs; no live fan-out and no
-default concurrency change. **Read the amendment below first:** the integration step reads a
-manifest sized under the integrating model's own long-context threshold, from that harness's
-pricing file under its own field name (`data/pricing.cursor.json` carries none, so a Cursor
-integrator is unbounded and the report must say so).
+P2 performance and routing quality, across Claude, Codex, Copilot, and Cursor. Extend the
+existing `bin/repo_bench.py` adapter seam and the cross-harness events (`attempt_history`,
+`model_registry`) -- never a second benchmark framework. Compare COMPLETE workflows on the
+same held-out tasks from equivalent clean snapshots with fixed acceptance evidence, controlled
+budgets, and recorded model/effort/host versions: direct model execution, direct plus
+independent review, the kit orchestration as it is, and selected adaptive graph/role policies
+(step 19's `routing_policy`, step 20's workflows). Repeat or counterbalance runs; one
+stochastic result is not a ranking. Measure accepted completion, escaped defects, human
+interventions, wall-clock, TOTAL workflow usage (planning, review, recovery), and evidence
+coverage; keep provider bills and subscription proxies separate; repricing an observed trace
+is a hypothetical price comparison, never proof another model would have produced the same
+result. Stratify by task class, repository, risk, workflow, and instruction version; reserve
+evaluation tasks from any tuning feedback; report uncertainty and sample limits. Support an
+explicit proposal / apply / rollback process for routing-policy updates (repo_bench's `apply`
+step is the seam) -- sparse observations never silently change defaults. Deterministic offline
+fixtures and adapter conformance FIRST; then a priced live plan with a bounded task set and an
+explicit ceiling that is NOT dispatched. Include security and robustness outcomes: incorrect
+acceptance, evidence tampering, policy/capability violations, budget overshoot, resume
+correctness, privacy eligibility; candidates and judges in the isolated environments already
+built; test/reference separation and artifact identity retained; oracle uncertainty and human
+adjudication tracked rather than a model judge assumed as ground truth. A live plan names its
+hard operation caps and distinguishes estimated spend from provider-side guarantees. Document
+which universal claims remain untested.
 
-Remaining after that: **25–26** evaluation and the release matrix.
+Exit gate: offline adapters and metrics comparable; a bounded live plan exists unexecuted;
+policy updates require evidence review, versioning, and rollback.
+
+Remaining after that: **26** the release matrix.
+
+### Step 24's own deliberate limits
+
+- **No live model ran in parallel.** The `stub` executor is the conformance harness and
+  `cursor` is the only real dispatcher wired; the Claude Code, Copilot, and Codex drivers keep
+  their sequential loops until their argument builders are lifted into `harness_adapter`
+  subclasses. `primitives/harness-capabilities.json` says so per harness
+  (`concurrent_dispatch`).
+- **Isolation is of files.** A worker's copy separates writes; it shares the machine, the
+  network, and the dispatch environment's credentials. A worker that READS a file another is
+  changing is not detected -- only conflicting writes are. Copies are history-free tree
+  extractions (no `.git`), so a verify command that needs git history fails in a copy.
+- **Merging is not attempted.** A conflict keeps the worker's copy and names the files; no
+  three-way merge, no automatic reset. Resolving it is the operator's or the architect's work.
+- **Revision proposals apply only edges.** `--accept-revisions` adds dependencies that keep
+  the graph valid; new tasks are recorded for the architect and never written into TASKS.md.
+- **The manifest bound is exercised, not lived.** Integration here is mechanical; the sizing
+  against the integrating model's long-context field is what a model integrator would be
+  handed, and it is tested (trim with note, refuse, unbounded for Cursor) without one being
+  dispatched.
+- **Fingerprints are git-derived.** `workspace_fingerprint` is HEAD + diff + untracked
+  metadata; outside git it is `None`, freshness is `unknown`, and nothing is invalidated.
+  Two acceptances of one task on byte-identical trees carry the same version, as intended.
+- **Cancellation is cooperative.** It stops what has not started and releases those claims; a
+  running dispatch is bounded by the process runner's clock and its allowance is spent.
 
 ### Step 23's own deliberate limits
 
@@ -461,10 +504,25 @@ These cost real time to discover. All are still live.
    drivers' `status` subparsers take only `--kit`/`--json`, so a helper that appends
    `--cursor-bin`/`--attempt-store` to every command breaks on `status`.
 14. **Adding a `docs/*.md` page moves six census pins.** `tests/test_docs_build_adversarial.py`
-   (26 sources / 28 page-map keys / 70 pages, and the "one more" targets 27 / 29 / 71),
-   `tests/test_docs_build_cli.py` (70), and `tests/test_primitives_doc_adversarial.py` mirror
+   (27 sources / 29 page-map keys / 71 pages, and the "one more" targets 28 / 30 / 72),
+   `tests/test_docs_build_cli.py` (71), and `tests/test_primitives_doc_adversarial.py` mirror
    each other by design: `CensusBumpTripwireTests` exists to prove the other two are real
    tripwires. Move all of them in the same edit, with the date and the file that moved them.
+
+15. **A ledger reader must tolerate an absent store root.** `status`, `graph`, `freshness`, and
+   the scheduler's `plan` read the ledger before any run has written it; `safe_paths` opens
+   the root with `O_DIRECTORY` and raised `FileNotFoundError` there. `events()` and `holder()`
+   now return empty for a root that does not exist, and only a write creates it. A new reader
+   that opens the store through another path will hit the same thing.
+16. **Cancellation and budget-stop are not verdicts.** A task the scheduler cancels never
+   moved (`pending`, no in-progress projection, no snapshot) and gets a zero-attempt
+   `result=cancelled` line; `finish_task_projection` would have written `attempts=1` for it
+   and `TRANSITIONS` has no `in-progress -> pending` edge, which is why the in-progress
+   projection now happens inside the worker after the cancel check. `combined_usage` counts
+   NOTES outcome lines' `attempts=`, not raw ledger events, so a test of "spend not refunded"
+   reads `combined_usage`, not `ledger.usage()`.
+17. **`Scheduler._record(ledger, kind, **fields)` reserves `kind`.** A ledger field named
+   `kind` collides with the event kind; the violation event's field is `violation`.
 
 ---
 
@@ -531,8 +589,10 @@ python3 bin/graph_ground.py demo               # stamp / freshness / bounded imp
 python3 bin/lessons_store.py demo              # an anecdote refused, recurrence promoted, a rule contested, temp store
 python3 bin/cursor_adapter.py demo             # identity accept/refuse, argv, install states, ambient diagnosis, temp dirs
 python3 bin/cursor_execute.py run --kit .claude/kits/docs-site --dry-run   # the Cursor argv; spawns nothing
+python3 bin/kit_scheduler.py demo              # two tasks batched and integrated, a conflict kept, a sized manifest
+python3 bin/kit_contract.py freshness --kit .claude/kits/docs-site   # stale evidence, if any (exit 1)
 ```
 
-Then read step 24 in the roadmap (and the amendment recorded above) and continue. The pattern that has worked: verify the step's
+Then read step 25 in the roadmap and continue. The pattern that has worked: verify the step's
 claims against HEAD first, implement, run the affected suites, then the full suite, then update
 `SECURITY.md` / `CLAUDE.md` / the doc mirrors together.

@@ -45,6 +45,18 @@ These are properties with code behind them, not conventions:
   through `bin/safe_paths.py` at `0600`. A graph with no sidecar reports freshness `unknown`;
   no revision is ever manufactured. Graph metadata suggests reads and nothing more: it grants
   no permission, edits no acceptance criterion, and establishes no safe concurrent write.
+- **Concurrent work cannot collide silently, and the merged tree is verified again.**
+  `bin/kit_scheduler.py` runs ready tasks concurrently only when asked (`--max-parallel`
+  above one; sequential is the default), each in its own copy of the tree outside the
+  workspace. Every task in a batch is claimed atomically and admitted against the PLAN.md
+  budget in one decision before anything is dispatched. What a worker changed is measured,
+  never declared; a file two workers changed, or one the user changed while the batch ran,
+  is a conflict that applies nothing, resets nothing, and keeps the worker's copy. Every
+  integrated task's check runs again on the merged tree. A worker's copy that edits the kit
+  is recorded as a violation and never integrated; a proposal to change acceptance is refused
+  whole. An acceptance records the upstream artifact versions it rested on, and a dependency
+  re-accepted with a different artifact makes it stale: its dependents are not scheduled
+  until it is re-verified.
 - **A declared role a driver cannot run is refused or disclosed, never skipped.** Every driver
   reads a kit's PLAN.md `roles:` and `workflow:` lines through the one grammar in
   `bin/kit_contract.py` before it previews or claims anything; a role the driver cannot
@@ -137,6 +149,11 @@ Do not rely on any of the following. Each is a known gap, not a subtlety:
   profile rules. It would work under API-key auth, but a boundary whose existence depends on
   how you happened to log in is not one we will claim. Verification is confined because a
   verify command authenticates to nothing.
+- **A scheduler's copy is not a sandbox either.** The scheduler separates *writes*: a worker
+  cannot touch the main tree or another worker's copy, and only measured, non-conflicting
+  write sets are applied. Workers still share the machine, the network, and the credentials
+  the dispatch environment carries; a worker that reads a file another worker is changing
+  is not detected, only conflicting writes are.
 - **A worktree is not a sandbox.** Separate directories separate *files*. They do not separate
   privileges, credentials, network access, or the rest of your home directory.
 - **Benchmark candidates and judges are not yet confined.** `bin/repo_bench.py` builds

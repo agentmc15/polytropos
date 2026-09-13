@@ -227,8 +227,14 @@ class AttemptLedger:
         return event
 
     def events(self):
-        """Every parseable event, in order. Corrupt lines are skipped and counted."""
+        """Every parseable event, in order. Corrupt lines are skipped and counted.
+
+        A store whose root does not exist yet holds no events: a reader (status, freshness,
+        a plan) must not create it and must not fail on it -- only a write creates the root.
+        """
         sp = _sp()
+        if not self.root.is_dir():
+            return []
         raw = sp.confined_read_bytes(self.root, self._events_rel, what="attempt ledger",
                                      missing_ok=True)
         if not raw:
@@ -258,6 +264,8 @@ class AttemptLedger:
     def holder(self, task):
         """Who holds `task`'s claim -> dict or None. Unparseable is None (holds nothing)."""
         sp = _sp()
+        if not self.root.is_dir():
+            return None
         raw = sp.confined_read_bytes(self.root, self._claim_rel(task), what="attempt claim",
                                      missing_ok=True)
         if not raw:
@@ -361,10 +369,33 @@ class AttemptLedger:
         )
         return event
 
-    def record_projected(self, run, task, status, result=None, outcome_line=False, note=""):
-        """Record that TASKS.md/NOTES.md now reflect the ledger (the projection happened)."""
+    def record_projected(self, run, task, status, result=None, outcome_line=False, note="",
+                         artifact=None, upstream=None):
+        """Record that TASKS.md/NOTES.md now reflect the ledger (the projection happened).
+
+        Step 24: `artifact` is the workspace fingerprint the verdict was reached on (the
+        version of this task's output, when accepted), and `upstream` maps each dependency to
+        the artifact version ITS latest acceptance carried, read at this moment. A later
+        acceptance of an upstream task with a different artifact makes this task's evidence
+        stale; `kit_contract.evidence_freshness` is the reader.
+        """
         self.append("task.projected", run=run, task=task, status=status, result=result,
-                    outcome_line=bool(outcome_line), note=note)
+                    outcome_line=bool(outcome_line), note=note, artifact=artifact,
+                    upstream=upstream)
+
+    def latest_acceptance(self, task):
+        """The latest `done` projection with an outcome line, or None: the accepted version."""
+        found = None
+        for ev in self.events():
+            if (ev.get("kind") == "task.projected" and ev.get("task") == task
+                    and ev.get("status") == "done" and ev.get("outcome_line")):
+                found = ev
+        return found
+
+    def latest_artifact(self, task):
+        """The artifact version of `task`'s latest acceptance, or None when unrecorded."""
+        acc = self.latest_acceptance(task)
+        return acc.get("artifact") if acc else None
 
     def open_attempts(self, task=None):
         """Started attempts with no finish: a process died between dispatch and its record."""
