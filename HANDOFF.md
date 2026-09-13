@@ -1,4 +1,4 @@
-# Handoff — roadmap implementation, steps 01–21
+# Handoff — roadmap implementation, steps 01–22
 
 **As of 2026-09-07.** Steps 01–15 are committed as a single change set on top of `fb40925`:
 66 files modified, 17 added, +5,485 / −1,860 lines. Full suite green: **3,727 tests, OK
@@ -33,12 +33,12 @@ user instructions outrank rule files; delegate in parallel by default).
 
 ## Where things stand
 
-**Steps 01–21 are done.** That is all of Phase A (input/artifact/acceptance boundaries), all of
+**Steps 01–22 are done.** That is all of Phase A (input/artifact/acceptance boundaries), all of
 Phase B (the execution boundary and the P0/P1 security remediation), all of Phase C (the
 shared runtime: durable attempts, cross-harness evidence, the validated execution DAG), and
-the first three steps of Phase D (named routing policies; the role contract; fresh, bounded
-code-graph grounding). Steps 16–21 landed on 2026-09-12/13 on branch
-`harden/roadmap-steps-16-26`, one commit each.
+the first four steps of Phase D (named routing policies; the role contract; fresh, bounded
+code-graph grounding; lean entry points and scoped lessons). Steps 16–22 landed on
+2026-09-12/13 on branch `harden/roadmap-steps-16-26`, one commit each.
 
 | Step | What it closed |
 |---|---|
@@ -63,6 +63,7 @@ code-graph grounding). Steps 16–21 landed on 2026-09-12/13 on branch
 | 19 | Named routing policies (`bin/routing_policy.py` + `codex_policy.route`): `reserved` is the legacy behaviour under its own name and the default, `adaptive` is opt-in (`--policy`, PLAN.md `routing:`); shape, model, initial effort, and assurance decided separately; hard filters before any preference; pins and unsupported efforts refused, never substituted; an unavailable orchestrator disables nothing a worker path does not need; auth/config/permission/infrastructure dispatch failures stop the ladder on Codex; every decision explainable with its alternatives and an `est.` workflow figure; the same contract routes Claude/Copilot-shaped rosters by rank |
 | 20 | The role contract (`kit_contract.ROLE_CONTRACTS` / `WORKFLOWS` / `resolve_roster` / `ROLE_SUPPORT`): each role's responsibility, scope, hook, assurance, capabilities, and result fields as data, separate from whether an agent is spawned; three workflows (`direct` named on purpose, `reviewed` the default, `extended`) with explicit assurance; one grammar for PLAN.md `roles:`/`workflow:` shared by the skill and every driver; every driver checks the roster before preview or claim and refuses or discloses (`--roster-gap`) a declared role it cannot sequence, recording `roster.checked`; consumer-neutral templates (`<repo-root>`); `independent_review`/`extended_roles` registry rows; a written test plan for trio-vs-direct with no live spend |
 | 21 | Fresh, bounded, task-relevant code-graph grounding (`bin/graph_ground.py`): an optional provenance sidecar stamped from what is actually available (revision, dirty set, per-file content fingerprints, the graph's hash, the operator's extraction label, graphify's own metadata), freshness against the working tree with dirty and untracked files (`fresh` / `partial` naming changed and deleted files / `stale` / `unknown`, never a manufactured revision), a bounded impact walk from changed files or symbols (depth, node limit, hubs listed and never expanded through, configurable excludes), a bounded code-search fallback when the graph is absent, stale, unknown, silent, or weakly covering, one `polytropos.grounding/1` result any adapter can attach, graph paths validated before any read, git read-only through the process runner |
+| 22 | Lean entry points and scoped lessons: the architect, execute, and repo-bench skills split into a mandatory core plus verbatim references with a "read when" trigger each (3060/6267/6677 words to 2311/2690/1353; thirteen reference files), descriptions with positive and negative triggers, a "what binds, what adapts" rule with bounded adaptation, the exact word-count and 200-byte guards replaced by ceilings and contract checks; `bin/lessons_store.py` replaces automatic lessons with observations carrying provenance, scope, and expiry, rules only by recurrence across distinct sources or by explicit ask, contests, eligibility-gated and budgeted recall (step 13's rule reused), legacy entries as candidates never rules; the Copilot lessons-loop skill and route agent read through it |
 
 ### New modules, and what each is the *one place* for
 
@@ -98,6 +99,13 @@ code-graph grounding). Steps 16–21 landed on 2026-09-12/13 on branch
   graph; `freshness`, `impact`, `search`, and `ground` read. `bin/graph_brief.py` stays the
   pure whole-graph summary and still carries no process primitive; this module reaches git
   only through `proc_runner` with read-only verbs.
+- `bin/lessons_store.py` — the per-project lessons file (`tasks/lessons.md`, JSON lines,
+  append-only) with kinds: `observation` (provenance, scope, expiry; a candidate),
+  `rule` (only by `promote`: recurrence across distinct kits or tasks, or `--by user`),
+  `contest` (withholds a rule until re-promoted), `legacy` (pre-kind entries; candidates,
+  never rules). `recall` is eligibility-gated through `memory_recall._eligible` (one rule,
+  reused), expiry- and contest-gated, budgeted. `bin/lessons_promote.py` stays the cross-kit
+  defect-kind draft tool.
 - `bin/routing_policy.py` — the harness-neutral routing decision: workflow shape, model,
   initial effort, and assurance as four separate answers, under a named policy (`reserved` |
   `adaptive`) and a preference that never outranks a hard filter. Compares tier RANKS in each
@@ -107,34 +115,59 @@ code-graph grounding). Steps 16–21 landed on 2026-09-12/13 on branch
 
 ---
 
-## Next: step 22 — simplify skills and replace automatic rules with scoped learning
+## Next: step 23 — deliver a real Cursor adapter on the secured shared runtime
 
-`skills/architect`, `skills/execute`, `skills/repo-bench`, `CLAUDE.md`,
-`tests/test_guardrails_layout.py`, and `copilot/.github/skills/lessons-loop`. Two halves.
-(1) SKILL SIMPLIFICATION on the skill-creator principles: concise discriminating
-descriptions; real progressive disclosure (mandatory workflow at the entry point,
-optional mode / ledger / reporting detail moved into references or the deterministic
-helpers that already exist); requirements kept separate from suggestions; bounded adaptation
-allowed when repo reality changes an approach without changing scope or acceptance; NO
-minimum-word or byte requirements that force guardrail text (replace wording tests with
-contract checks); no router or directory where a short skill will do; never a long skill
-replaced by references that always load together. Measure description and entry-point size
-before and after, check positive and negative triggers, preserve every operational
-constraint, regenerate the mirrors. Note the architect/execute word CEILINGS in
-`tests/test_docs_skill_dispositions.py` are exactly the kind of wording test this step
-should replace with contract checks — they have been re-frozen four times (steps 09, 18, 20,
-21) for contract additions. (2) SCOPED LEARNING: Copilot's lessons loop turns one correction
-or escalation into a durable startup rule; change automatic lesson creation into scoped
-observations/candidates with provenance, applicable context, contradiction and expiry
-handling, retrieved only when relevant and within a budget; a single escalation never
-becomes a universal model-tier rule; promotion needs demonstrated applicability or an
-explicit user requirement; carry step 13's source/project/provider eligibility into
-candidate retrieval. Measure loaded context and task outcomes separately: byte reduction
-alone is not success. No invocation-policy change without a separate user request; no
-live dispatch or installation.
+Cursor CLI first; IDE Agent, local CLI, and background/cloud modes reported SEPARATELY, never
+inferred from one another. Start from the official docs (skills, subagents, cli/headless) and
+read-only installed CLI help/version if present. Keep `primitives/harness-matrix.json` as
+historical provenance and correct the operational capability view so obsolete claims do not
+constrain native skills, subagents, or hooks; diagnose ambient compatibility skills so Cursor
+never invokes another harness's commands. The smallest useful native bundle plus an
+ownership-aware install plan (project-scoped preferred; broader scope explicit, no-clobber
+preserved). Capability probing, model selection from host data, dispatch, result/error
+normalisation, cancellation/status only where supported, verification integration — all on
+the SHARED contracts (parser, evidence, budget, state, graph, roster, routing), never a
+copied executor. Billing separate; unknown usage or identity reported unknown, never
+synthesised from prompt text or list prices. A stub Cursor process for end-to-end
+conformance (ready task, dispatch failure, verify failure, cancellation if supported,
+budget stop, resume); native file generation and no-clobber install proven in temp dirs; a
+documented optional live smoke that is NOT run. Validate the identity of a generically
+named executable (`agent`) before treating it as Cursor; unknown capability, version, or
+provenance is unknown and fails closed for a required security guarantee; no editor-database
+scraping, no browser automation. Run the shared adversarial conformance suite for
+acceptance provenance, state protection, verification isolation, spending, and filesystem
+boundaries. `kit_contract.ROLE_SUPPORT["cursor"]` and the registry's `cursor` rows are
+`unknown` today and are the seam to fill.
 
-Remaining after that: **23–24** the Cursor adapter / scheduling, **25–26** evaluation and
-the release matrix.
+Remaining after that: **24** scheduling, **25–26** evaluation and the release matrix.
+
+### Step 22's own deliberate limits
+
+- **The moves are verbatim.** Every section that left an entry point landed in a reference
+  file unchanged, with a one-line header; nothing was rewritten to be shorter. The entry
+  points are leaner because they carry less, not because the rules got vaguer. Rewriting
+  the moved grammar for concision is a separate, riskier edit.
+- **The size numbers are measured, not the goal.** Words and description characters were
+  recorded before and after; loaded-context and task-outcome effects were NOT measured (no
+  live dispatch), so "3060 → 2311" says what moved, not what improved.
+- **The exact word-count guard is gone; ceilings remain.** `EntryPointContractTests` pins a
+  generous ceiling per entry point, the operational phrases that must stay readable there,
+  and the moved phrases that must exist in their reference. A ceiling is still a size test;
+  it is not a floor and it does not need re-freezing when a rule changes.
+- **`GUARDRAILS.md` no longer needs 200 bytes; it needs a fence.** One substantive line, or a
+  pointer at PLAN.md's out-of-scope section.
+- **Codex and Copilot descriptions were surveyed, not edited.** Codex descriptions are short
+  (57–187 chars); Copilot's run 198–333; `copilot/journal` and `claude/journal` share one
+  description (310 chars, the same tool). No invocation policy was changed.
+- **Legacy lesson entries are demoted, not deleted.** An entry with no `kind` is recalled as a
+  `LEGACY, unscoped candidate`, never as a rule; promoting one takes `--by user`. This
+  changes what the Copilot route agent applies at session start — it is the point of the
+  step, and the skill and agent say so.
+- **Lessons stay a tracked, project-scoped file** (`tasks/lessons.md`), not a per-user store:
+  a team's rules are shared knowledge. The engine appends and never rewrites; supersession
+  is by id.
+- **The execute driver's `lesson-candidate (routing):` line is unchanged**: it names an
+  observation to record, and the skill says that is what it is.
 
 ### Step 21's own deliberate limits
 
@@ -432,8 +465,9 @@ python3 bin/routing_policy.py demo             # both routing policies over two 
 python3 bin/codex_execute.py prepare --model strong --policy adaptive --explain   # the real roster, no dispatch
 python3 bin/kit_contract.py roster --kit .claude/kits/docs-site --executor codex   # a declared roster a driver cannot run
 python3 bin/graph_ground.py demo               # stamp / freshness / bounded impact / search fallback, temp tree, canned git
+python3 bin/lessons_store.py demo              # an anecdote refused, recurrence promoted, a rule contested, temp store
 ```
 
-Then read step 22 in the roadmap and continue. The pattern that has worked: verify the step's
+Then read step 23 in the roadmap and continue. The pattern that has worked: verify the step's
 claims against HEAD first, implement, run the affected suites, then the full suite, then update
 `SECURITY.md` / `CLAUDE.md` / the doc mirrors together.

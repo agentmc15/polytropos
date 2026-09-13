@@ -12,8 +12,8 @@ Prefs source: `(none — defaults)`
 | `install.html` | html | estimated | 5011 | 0.0000 | 0.0000 | HTML is a deterministic render of its Markdown source — zero cost |
 | `SAFETY.md` | markdown | estimated | 4945 | 3.3580 | 0.0336 | Prospective estimate: assumes the manifest's declared input-token convention and treats this document's own measured lexeme count as a stand-in for model output tokens — not a historical usage measurement. |
 | `safety.html` | html | estimated | 6802 | 0.0000 | 0.0000 | HTML is a deterministic render of its Markdown source — zero cost |
-| `SKILLS.md` | markdown | estimated | 22563 | 31.3750 | 0.3137 | Prospective estimate: assumes the manifest's declared input-token convention and treats this document's own measured lexeme count as a stand-in for model output tokens — not a historical usage measurement. |
-| `skills.html` | html | estimated | 26703 | 0.0000 | 0.0000 | HTML is a deterministic render of its Markdown source — zero cost |
+| `SKILLS.md` | markdown | estimated | 22631 | 31.3750 | 0.3137 | Prospective estimate: assumes the manifest's declared input-token convention and treats this document's own measured lexeme count as a stand-in for model output tokens — not a historical usage measurement. |
+| `skills.html` | html | estimated | 26766 | 0.0000 | 0.0000 | HTML is a deterministic render of its Markdown source — zero cost |
 | `AGENTS.md` | markdown | estimated | 16474 | 28.4475 | 0.2845 | Prospective estimate: assumes the manifest's declared input-token convention and treats this document's own measured lexeme count as a stand-in for model output tokens — not a historical usage measurement. |
 | `agents.html` | html | estimated | 20766 | 0.0000 | 0.0000 | HTML is a deterministic render of its Markdown source — zero cost |
 | `MODELS.md` | markdown | estimated | 16351 | 24.9425 | 0.2494 | Prospective estimate: assumes the manifest's declared input-token convention and treats this document's own measured lexeme count as a stand-in for model output tokens — not a historical usage measurement. |

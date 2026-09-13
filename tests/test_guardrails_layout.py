@@ -53,9 +53,22 @@ KIT_SENTINELS = {
 
 
 class KitLayoutTests(unittest.TestCase):
-    """Every kit directory that has a PLAN.md must also carry a substantial GUARDRAILS.md."""
+    """Every kit directory that has a PLAN.md must also carry a GUARDRAILS.md that says
+    something: at least one fence line, or an explicit pointer at PLAN.md's out-of-scope
+    section. Until roadmap step 22 this required 200 bytes -- a size floor that forced
+    padding rather than a fence; the contract is a statement, not a length."""
 
-    def test_every_plan_has_a_guardrails_file(self):
+    @staticmethod
+    def _states_a_fence(text):
+        for line in text.splitlines():
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+            if "PLAN.md" in stripped or len(stripped.split()) >= 4:
+                return True
+        return False
+
+    def test_every_plan_has_a_guardrails_file_that_states_a_fence(self):
         kits_dir = REPO_ROOT / ".claude" / "kits"
         kit_dirs = sorted(p for p in kits_dir.iterdir() if p.is_dir())
         self.assertTrue(kit_dirs, "expected at least one kit directory under .claude/kits/")
@@ -70,11 +83,9 @@ class KitLayoutTests(unittest.TestCase):
                     guardrails.is_file(),
                     f"{kit_dir.name} has PLAN.md but no GUARDRAILS.md",
                 )
-                size = guardrails.stat().st_size
-                self.assertGreaterEqual(
-                    size,
-                    200,
-                    f"{kit_dir.name}/GUARDRAILS.md is only {size} bytes (< 200)",
+                self.assertTrue(
+                    self._states_a_fence(guardrails.read_text(encoding="utf-8")),
+                    f"{kit_dir.name}/GUARDRAILS.md states no fence and points at nothing",
                 )
 
 

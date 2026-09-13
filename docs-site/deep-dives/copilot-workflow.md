@@ -20,8 +20,10 @@ Three pieces were added:
   execution kit), `implementer` (executes one kit task per dispatch), `verifier` (reruns a
   task's verify command adversarially), `reviewer` (phase-boundary drift review). These sit
   alongside the pre-existing `route` agent.
-- **One skill** in `copilot/.github/skills/lessons-loop/SKILL.md` — a durable-lesson pattern
-  vendored from aesop, with a routing category wired into the `route` agent.
+- **One skill** in `copilot/.github/skills/lessons-loop/SKILL.md` — a scoped-lessons pattern
+  vendored from aesop and rebuilt around `bin/lessons_store.py` (observations with provenance
+  and expiry; rules only by recurrence or by ask), with a routing category wired into the
+  `route` agent.
 - **Two drivers** in `bin/`: `copilot_execute.py` (dispatches kit tasks and escalates on
   failure) and `copilot_ralph.py` (the goal loop).
 
@@ -138,16 +140,28 @@ any other real dispatch.
 ## Lessons-loop
 
 `copilot/.github/skills/lessons-loop/SKILL.md` is vendored from aesop's own lessons-loop skill,
-with a Copilot-harness routing category added. Lessons live in `tasks/lessons.md` as durable,
-project-scoped entries; a routing lesson carries `"applies_to": ["routing"]` and states a
-task-shape → tier rule.
+with a Copilot-harness routing category added, and rebuilt by roadmap step 22 around
+`bin/lessons_store.py`. Lessons still live in `tasks/lessons.md` as project-scoped JSON lines,
+but every entry now has a kind. An **observation** is what one correction or one escalation
+taught, with provenance (source, kit, task, run), scope (project, provider, task shape), and an
+expiry (90 days by default); it is recalled as a labelled candidate and never applied as a
+rule. A **rule** is made only by `promote`, which either records an explicit user requirement
+or finds recurrence — the same lesson observed in at least two distinct kits or tasks, every
+one cited as evidence. A **contest** records evidence against a rule and withholds it at recall
+until a human re-promotes it. Entries written before kinds existed are **legacy**: candidates,
+never rules, so a startup rule that never had evidence stops being one without anyone editing
+history.
 
-The execute driver writes these candidates for you: whenever a task escalates, `run`'s NOTES.md
-block gets an extra `lesson-candidate (routing): ...` line naming the task, the tier it was
-pinned at, and the tier that actually finished it. The `route` agent reads `tasks/lessons.md` at
-the start of every session and lets any matching `routing` entry override its default tier
-heuristics — so a misroute recorded once stops recurring instead of getting re-diagnosed from
-scratch each time.
+The execute driver still names the escalations for you: whenever a task escalates, `run`'s
+NOTES.md block gets an extra `lesson-candidate (routing): ...` line naming the task, the tier
+it was pinned at, and the tier that actually finished it — one observation to record. The
+`route` agent recalls `tasks/lessons.md` at the start of every session through
+`lessons_store.py recall`, which returns only entries eligible for this project and provider
+(the same rule the memory store uses), not expired, not contested, matching the asked topic
+and task shape, and within a budget of entries and characters; rules first, then candidates,
+each with its provenance in the header. Only a rule for the task's shape overrides the default
+tier heuristics. A single escalation therefore never becomes a universal tier rule: it is an
+anecdote until it recurs, and the engine refuses to promote it on its own.
 
 ## Cost safety
 

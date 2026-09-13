@@ -28,6 +28,8 @@ The verdict line is `resident: YES` (with the estimated token weight of the guar
 - **Gate 1** (this tool): Does the lesson recur in at least 2 distinct kits?
 - **Gate 2** (human): Is the lesson general enough, stable enough, and transferable enough to justify adding it as a skill or guardrail?
 
+The same two-gate shape governs the lessons file itself since roadmap step 22: `bin/lessons_store.py` records what a correction or escalation taught as a scoped **observation** with provenance and an expiry, promotes it to a **rule** only when it recurs in a second independent kit or task (the same `RECURRENCE_GATE`) or when the user asks, withholds a **contested** rule until a human re-promotes it, and recalls only what is eligible for the session's project and provider, within a budget. `lessons_promote.py` drafts across kits' `defect:` lines; `lessons_store.py` keeps the per-project file honest about what is evidence and what is an anecdote.
+
 Run it with:
 
 ```bash

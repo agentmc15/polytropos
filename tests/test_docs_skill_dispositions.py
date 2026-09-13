@@ -32,6 +32,7 @@ import importlib.util
 import json
 import subprocess
 import tempfile
+import inspect
 import unittest
 from pathlib import Path
 
@@ -400,64 +401,100 @@ def cost_report_parser():
 
 
 # ---------------------------------------------------------------------------
-# Group 6: the three orchestration-ceiling skills may only shrink (D1).
-# Durable across future kits: fails the moment any of the three GROWS past
-# its recorded ceiling, without pinning them to never change at all.
-#
-# RE-FROZEN by step 09 (evidence-bound completion), which added an optional
-# `evidence:` task field. That is a KIT-CONTRACT change, and the repo invariant
-# requires architect and execute to document the contract in step with each
-# other -- so the two of them genuinely had to grow. The values below are the
-# new exact counts, re-frozen at the smallest wording that states the field and
-# its consequence; the "may only shrink" rule resumes from here. `repo-bench`
-# was not touched and keeps its original number.
-#
-# RE-FROZEN AGAIN by roadmap step 18 (2026-09-12, the validated execution DAG).
-# `depends:` acquired rules the drivers now enforce -- ids of blocks in this kit
-# only, unique, no self-dependency, no cycle, or nothing dispatches -- and the
-# architect (who writes the field) and execute (who runs the validator before
-# the first dispatch) each state the rule once, in the smallest wording that
-# names the consequence. Architect +47 words, execute +69; `repo-bench` untouched.
-#
-# RE-FROZEN AGAIN by roadmap step 20 (2026-09-12, the role contract). PLAN.md gained
-# an optional `workflow:` line (direct | reviewed | extended), the `roles:` line is
-# parsed by one shared grammar the drivers also enforce, each role has a stated
-# contract, and the templates carry a `<repo-root>` placeholder -- four kit-contract
-# facts the architect (who writes them) and execute (who reads them at setup) must
-# both state. Architect +103 words, execute +85; `repo-bench` untouched.
-#
-# RE-FROZEN a fourth time by roadmap step 21 (2026-09-13, code-graph grounding):
-# the architect's grounding paragraph now points at `graph_ground.py ground` and
-# states the freshness rule (a stale or unknown graph is hints, not evidence).
-# Architect +28 words; execute and `repo-bench` untouched. Step 22 is the step
-# that should replace this wording guard with a contract check.
+# Group 6: the three orchestration entry points stay lean and keep their
+# contract. Until roadmap step 22 this group pinned EXACT word counts ("may
+# only shrink"), re-frozen four times (steps 09, 18, 20, 21) whenever the kit
+# contract grew -- a wording test that forced the guard to move every time the
+# rule it guarded changed. Step 22 split each entry point into a mandatory core
+# plus verbatim references and replaced the count with what actually matters:
+# a generous ceiling so the core cannot re-bloat, the operational constraints
+# that must stay discoverable at the entry point, and the moved detail still
+# present in the references it was moved to. Measured at the split (2026-09-13):
+# architect 3060 -> 2311 words, execute 6267 -> 2690, repo-bench 6677 -> 1353.
 # ---------------------------------------------------------------------------
 
 
-class CeilingSkillsTests(unittest.TestCase):
-    CEILINGS = {
-        "architect": 2997,
-        "execute": 6217,
-        "repo-bench": 6567,
+class EntryPointContractTests(unittest.TestCase):
+    #: Ceilings, not counts: the split's size with headroom for the next contract fact.
+    CEILINGS = {"architect": 2800, "execute": 3200, "repo-bench": 1800}
+
+    #: Operational constraints that must be readable at the entry point.
+    REQUIRED = {
+        "architect": (
+            "GUARDRAILS.md", "tools: Bash, Read, Grep, Glob", "depends:", "workflow:",
+            "roles:", "<repo-root>", "kit_contract.py graph", "kit_contract.py roster",
+            "evidence:", "references/routing-evidence.md",
+        ),
+        "execute": (
+            "budget-stop", "backtick", "evidence:", "kit_contract.py graph",
+            "kit_contract.py roster", "GUARDRAILS.md", "Fable consult",
+            "references/ledger.md", "references/rerouting.md", "references/roster.md",
+            "references/dispatch-modes.md", "scope or acceptance criteria",
+        ),
+        "repo-bench": (
+            "NEVER add `--live` yourself", "--max-usd", "BELOW EVIDENCE FLOOR",
+            "`solved` means the tests oracle passed", "spend basis", "DISAGREEMENT",
+            "apply", "references/oracles.md", "references/subcommands.md",
+            "references/presenting.md", "references/regrade.md",
+        ),
     }
 
-    def test_ceiling_skills_have_not_grown(self):
-        for name, ceiling in self.CEILINGS.items():
-            body = _skill(name)["body"]
-            word_count = len(body.split())
-            self.assertLessEqual(
-                word_count, ceiling,
-                f"{name} SKILL.md body grew to {word_count} words, past its "
-                f"D1 ceiling of {ceiling} (orchestration skills may only shrink)",
-            )
+    #: Moved detail that must still exist, in the reference it was moved to.
+    MOVED = {
+        "execute": {
+            "ledger.md": ("outcome: <task-id> model=<model> attempts=<n>",
+                          "agent: <task-id> id=<agent-id>", "reviewer: <phase> model=<model>",
+                          "defect: <task-id> kind=<kebab-case-token>"),
+            "rerouting.md": ("reroute: <from-tier> to=<to-tier>", "NEVER to frontier/Fable"),
+            "roster.md": ("scout \u2192 implementer \u2192 test-author", "marginal="),
+            "dispatch-modes.md": ("warm", "SendMessage"),
+        },
+        "repo-bench": {
+            "oracles.md": ("tests passed and nothing else, ever", "false-negative bound"),
+            "subcommands.md": ("--max-usd", "--setup-cmd"),
+            "presenting.md": ("spend basis: actual", "Test-path detection is a naive substring"),
+            "regrade.md": ("STALE VERDICT",),
+            "setup.md": ("--setup-key",),
+            "acquisition.md": ("--gh-repo",),
+            "calibration.md": ("calibration",),
+            "isolation.md": ("carve-outs",),
+        },
+        "architect": {
+            "routing-evidence.md": ("--history", "Escalation lineage", "Failure breakdown",
+                                    "R3", "R10", "budget-stop"),
+        },
+    }
 
-    def test_ceiling_skills_untouched_by_t9(self):
-        # T9's scope is context-weight/journal/setup/cost-report only; the
-        # three ceiling skills should be byte-identical to their D1-recorded
-        # word counts, not merely under the ceiling.
+    def test_entry_points_stay_under_their_ceilings(self):
         for name, ceiling in self.CEILINGS.items():
             body = _skill(name)["body"]
-            self.assertEqual(len(body.split()), ceiling, f"{name} word count drifted")
+            with self.subTest(skill=name):
+                self.assertLessEqual(len(body.split()), ceiling,
+                                     f"{name} SKILL.md grew past its {ceiling}-word ceiling; "
+                                     f"move detail into references, do not raise the ceiling")
+
+    def test_operational_constraints_stay_at_the_entry_point(self):
+        for name, phrases in self.REQUIRED.items():
+            text = (REPO_ROOT / "skills" / name / "SKILL.md").read_text(encoding="utf-8")
+            for phrase in phrases:
+                with self.subTest(skill=name, phrase=phrase):
+                    self.assertIn(phrase, text)
+
+    def test_moved_detail_lives_in_the_reference_it_was_moved_to(self):
+        for name, refs in self.MOVED.items():
+            for ref, phrases in refs.items():
+                path = REPO_ROOT / "skills" / name / "references" / ref
+                with self.subTest(skill=name, ref=ref):
+                    self.assertTrue(path.is_file(), f"missing {path}")
+                    text = path.read_text(encoding="utf-8")
+                    for phrase in phrases:
+                        self.assertIn(phrase, text)
+
+    def test_no_reference_is_a_minimum_text_requirement(self):
+        # The guard is a ceiling and a contract, never a floor: an entry point may shrink to
+        # a sentence as long as the constraints above remain.
+        floor_call = "assertGreater" + "Equal(len(body.split())"
+        self.assertNotIn(floor_call, inspect.getsource(EntryPointContractTests))
 
 
 # ---------------------------------------------------------------------------

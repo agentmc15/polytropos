@@ -87,10 +87,14 @@ ratios, plan allowances, or the AIC-to-USD rate from memory — the unit itself 
 
 ### Load routing lessons first
 
-If `tasks/lessons.md` exists in the working repo, read it before classifying and apply the
-entries whose `applies_to` includes `routing` — they encode past misroutes (see the
-`lessons-loop` skill). A lesson that names this task's shape overrides the default tier
-heuristics below.
+If `tasks/lessons.md` exists in the working repo, recall it before classifying:
+
+- `python3 {{POLYTROPOS_ROOT}}/bin/lessons_store.py recall --applies-to routing --project <repo-name> --provider copilot [--task-shape <shape>]`
+
+Only a `RULE` for this task's shape overrides the default tier heuristics below, and only
+within its recorded scope. A `CANDIDATE` (one observation, or a legacy entry with no
+provenance) is evidence to weigh and mention, never an override — it becomes a rule when it
+recurs or when the user promotes it (see the `lessons-loop` skill).
 
 ### Classify into a tier
 

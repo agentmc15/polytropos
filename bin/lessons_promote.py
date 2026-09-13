@@ -11,7 +11,10 @@ Scans two READ-ONLY evidence sources:
   2. The repo's ``tasks/lessons.md``. Despite the ``.md`` extension it is NOT prose: it is
      newline-delimited JSON objects, one per line, shaped
      ``{"date", "failure_pattern", "lesson", "applies_to": [...]}``. A malformed line is
-     skipped with a note, never a crash — the file is hand-appended.
+     skipped with a note, never a crash — the file is hand-appended. Since roadmap step 22
+     entries written by ``bin/lessons_store.py`` also carry ``kind`` (observation | rule |
+     contest), ``scope``, ``provenance``, and ``expires``; this tool reads every kind the
+     same way it always read the legacy shape and still promotes nothing.
 
 Clustering is on EXACT ``defect:`` kind tokens only — no fuzzy matching, no stemming, no
 substring matching (PLAN.md tripwire: a coined synonym must never silently aggregate with an
