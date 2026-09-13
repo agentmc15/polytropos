@@ -303,6 +303,8 @@ PLAN.md may declare an OPTIONAL `roles:` line — a PLAN.md line family exactly 
 
     `roles: <token> <token> ...`
 
+Read it, and the optional `workflow:` line (`reviewed` = the trio, default; `extended` = trio + declared roles; `direct` = implementer and deterministic checks only, named on purpose, never beside `roles:`), through the shared grammar: `python3 ${CLAUDE_PLUGIN_ROOT}/bin/kit_contract.py roster --kit .claude/kits/<slug>` prints the roster and each contract (`--json`); a grammar error exits 2 before any dispatch. Headless drivers refuse or disclose a role they cannot sequence (`--roster-gap`); you sequence every declared role at the hooks below, and independent review stays binding unless the workflow is `direct`.
+
 Tokens come from exactly seven: `scout`, `test-author`, `second-verifier`, `red-team`, `security-auditor`, `docs-editor`, `synthesizer` — the optional pipeline roles a kit adds beyond the standing trio (implementer / verifier / reviewer). Absent line = the trio, today's behavior everywhere: no extra dispatch, no extra ledger line, and every kit written before this dial existed runs exactly as it always has. Dispatch each declared role to the kit's `<slug>-<role>` agent (the architect instantiates one per declared role from its templates); if a declared role has no agent file, dispatch it with the Agent tool directly on the template's default model and say so in your report.
 
 **Hook points, pinned.** A declared role runs at exactly one place in the loop, and nowhere else:

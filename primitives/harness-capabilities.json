@@ -58,6 +58,20 @@
           "verified": "unknown",
           "source": "bin/proc_runner.py",
           "note": "the process tree can be terminated; that says nothing about whether the model call it made was already billed"
+        },
+        "independent_review": {
+          "product": "not-applicable",
+          "implemented": "supported",
+          "verified": "unknown",
+          "source": "bin/claude_execute.py review; bin/kit_contract.py ROLE_SUPPORT",
+          "note": "phase-end review dispatched with a restricted permission profile and recorded in the attempt ledger. Never run against the live CLI from this repository, so verified stays unknown"
+        },
+        "extended_roles": {
+          "product": "not-applicable",
+          "implemented": "unsupported",
+          "verified": "unknown",
+          "source": "bin/kit_contract.py ROLE_SUPPORT",
+          "note": "the seven optional roles (scout, test-author, second-verifier, red-team, security-auditor, docs-editor, synthesizer) are sequenced only by the interactive execute skill; `run` is one task, one role, with no hook sequencing, so a kit that declares one is refused or disclosed before dispatch (--roster-gap)"
         }
       }
     },
@@ -122,6 +136,20 @@
           "verified": "unknown",
           "source": "bin/proc_runner.py",
           "note": "process-tree termination only; see the claude-code row"
+        },
+        "independent_review": {
+          "product": "not-applicable",
+          "implemented": "supported",
+          "verified": "unknown",
+          "source": "bin/codex_execute.py review/accept; bin/kit_contract.py ROLE_SUPPORT",
+          "note": "phase-end independent verification (review, read-only sandbox, strong worker) and orchestrator acceptance (accept), both recorded as typed role-use records and in the attempt ledger. Never run live from this repository"
+        },
+        "extended_roles": {
+          "product": "not-applicable",
+          "implemented": "unsupported",
+          "verified": "unknown",
+          "source": "bin/kit_contract.py ROLE_SUPPORT",
+          "note": "`run` refuses any role but implementer; the optional roles are sequenced only by the interactive execute skill, so a kit that declares one is refused or disclosed before dispatch (--roster-gap)"
         }
       }
     },
@@ -160,6 +188,20 @@
           "verified": "unknown",
           "source": "bin/proc_runner.py",
           "note": "process-tree termination only; see the claude-code row"
+        },
+        "independent_review": {
+          "product": "not-applicable",
+          "implemented": "supported",
+          "verified": "unknown",
+          "source": "bin/copilot_execute.py review; bin/kit_contract.py ROLE_SUPPORT",
+          "note": "phase-end review dispatched to the reviewer agent without the blanket tool grant and recorded in the attempt ledger. Never run live from this repository"
+        },
+        "extended_roles": {
+          "product": "not-applicable",
+          "implemented": "unsupported",
+          "verified": "unknown",
+          "source": "bin/kit_contract.py ROLE_SUPPORT",
+          "note": "`run` is one task, one agent, with no hook sequencing; the optional roles are sequenced only by the interactive execute skill, so a kit that declares one is refused or disclosed before dispatch (--roster-gap)"
         }
       }
     },
@@ -196,6 +238,18 @@
           "implemented": "unsupported",
           "verified": "unknown",
           "note": "step 23 delivers this adapter. The row exists so the registry says 'not built yet' rather than being silent, which reads the same as 'not applicable'"
+        },
+        "independent_review": {
+          "product": "unknown",
+          "implemented": "unknown",
+          "verified": "unknown",
+          "note": "no adapter yet (step 23)"
+        },
+        "extended_roles": {
+          "product": "unknown",
+          "implemented": "unknown",
+          "verified": "unknown",
+          "note": "no adapter yet (step 23)"
         }
       }
     }

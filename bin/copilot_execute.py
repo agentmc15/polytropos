@@ -162,6 +162,9 @@ finish_task_projection = _CONTRACT.finish_task_projection
 combined_usage = _CONTRACT.combined_usage
 append_block = _CONTRACT.append_block
 project_status = _CONTRACT.project_status
+roster_for_run = _CONTRACT.roster_for_run
+record_roster = _CONTRACT.record_roster
+GAP_MODES = _CONTRACT.GAP_MODES
 default_verify_runner = _CONTRACT.default_verify_runner
 dispatch_status = _CONTRACT.dispatch_status
 generate_run_id = _CONTRACT.generate_run_id
@@ -1019,6 +1022,11 @@ def cmd_run(args):
         print(f"{select_reason} ({tasks_path})", file=sys.stderr)
         sys.exit(2)
 
+    # ROSTER (step 20): a declared role this driver cannot sequence stops the run or is
+    # disclosed before the preview or the claim; it is never skipped in silence.
+    plan_text = (kit / "PLAN.md").read_text() if (kit / "PLAN.md").exists() else ""
+    roster, roster_support = roster_for_run(plan_text, "copilot", args.roster_gap, slug=slug)
+
     # One content-free `run=` id per invocation (T7, PLAN D8) -- generated unconditionally
     # (including under --dry-run, so the preview shows the same id preamble a real run would
     # dispatch with) since generating a random hex string spawns nothing and costs nothing.
@@ -1106,6 +1114,7 @@ def cmd_run(args):
         break_claim=args.break_claim, workspace=Path.cwd(), role=args.agent,
         parent=args.parent,
     )
+    record_roster(lifecycle, roster, roster_support, args.roster_gap)
     plan_path = kit / "PLAN.md"
     plan_budget = parse_plan_budget(plan_path.read_text()) if plan_path.exists() else None
     admission = None
@@ -1506,6 +1515,11 @@ def build_parser():
                        help="root of the attempt ledger (step 16). Default: the per-user data "
                             "root from bin/runtime_data.py, namespaced to this checkout -- never "
                             "inside the tree a worker edits. Tests pass a temp dir.")
+    p_run.add_argument("--roster-gap", choices=GAP_MODES, default="stop",
+                       help="what to do when PLAN.md declares a role this driver cannot run "
+                            "(step 20). `stop` (default) refuses before dispatch and names "
+                            "the alternatives; `disclose` proceeds with the gap printed and "
+                            "recorded in the ledger. Never skipped silently.")
     p_run.add_argument("--break-claim", action="store_true",
                        help="clear a claim another run holds on this task before starting. An "
                             "operator's deliberate act, recorded in the ledger; by default a "

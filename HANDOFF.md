@@ -1,4 +1,4 @@
-# Handoff — roadmap implementation, steps 01–19
+# Handoff — roadmap implementation, steps 01–20
 
 **As of 2026-09-07.** Steps 01–15 are committed as a single change set on top of `fb40925`:
 66 files modified, 17 added, +5,485 / −1,860 lines. Full suite green: **3,727 tests, OK
@@ -33,11 +33,11 @@ user instructions outrank rule files; delegate in parallel by default).
 
 ## Where things stand
 
-**Steps 01–19 are done.** That is all of Phase A (input/artifact/acceptance boundaries), all of
+**Steps 01–20 are done.** That is all of Phase A (input/artifact/acceptance boundaries), all of
 Phase B (the execution boundary and the P0/P1 security remediation), all of Phase C (the
 shared runtime: durable attempts, cross-harness evidence, the validated execution DAG), and
-the first step of Phase D (named routing policies). Steps 16–19 landed on 2026-09-12 on
-branch `harden/roadmap-steps-16-26`, one commit each.
+the first two steps of Phase D (named routing policies; the role contract). Steps 16–20
+landed on 2026-09-12 on branch `harden/roadmap-steps-16-26`, one commit each.
 
 | Step | What it closed |
 |---|---|
@@ -60,6 +60,7 @@ branch `harden/roadmap-steps-16-26`, one commit each.
 | 17 | Cross-harness evidence (`bin/attempt_history.py` + `bin/model_registry.py`): one record per attempt over ledger + NOTES.md + role-use, unknowns kept, history never collapsed, failed consults keep lineage, cost per basis; reviews recorded on all three drivers; concrete ids resolve to tiers; telemetry `attempts` source |
 | 18 | Validated execution DAG (`kit_contract.validate_graph` / `graph_state` / `readiness`): duplicate ids, self and unknown dependencies, cycles refuse with zero dispatches and zero writes on all three drivers; one readiness rule with `fresh | retry | resume | rerun` modes; automatic selection refuses while a task is in-progress; the task state machine (`TRANSITIONS`) checked at every status write; worker edits to a task block detected as `plan.drift`; `status` ends with the graph verdict; `kit_contract.py graph` / `demo` |
 | 19 | Named routing policies (`bin/routing_policy.py` + `codex_policy.route`): `reserved` is the legacy behaviour under its own name and the default, `adaptive` is opt-in (`--policy`, PLAN.md `routing:`); shape, model, initial effort, and assurance decided separately; hard filters before any preference; pins and unsupported efforts refused, never substituted; an unavailable orchestrator disables nothing a worker path does not need; auth/config/permission/infrastructure dispatch failures stop the ladder on Codex; every decision explainable with its alternatives and an `est.` workflow figure; the same contract routes Claude/Copilot-shaped rosters by rank |
+| 20 | The role contract (`kit_contract.ROLE_CONTRACTS` / `WORKFLOWS` / `resolve_roster` / `ROLE_SUPPORT`): each role's responsibility, scope, hook, assurance, capabilities, and result fields as data, separate from whether an agent is spawned; three workflows (`direct` named on purpose, `reviewed` the default, `extended`) with explicit assurance; one grammar for PLAN.md `roles:`/`workflow:` shared by the skill and every driver; every driver checks the roster before preview or claim and refuses or discloses (`--roster-gap`) a declared role it cannot sequence, recording `roster.checked`; consumer-neutral templates (`<repo-root>`); `independent_review`/`extended_roles` registry rows; a written test plan for trio-vs-direct with no live spend |
 
 ### New modules, and what each is the *one place* for
 
@@ -71,8 +72,11 @@ branch `harden/roadmap-steps-16-26`, one commit each.
 - `bin/redact.py` — what may not leave the machine in plain text.
 - `bin/runtime_data.py` — where personal stores live (outside the plugin tree).
 - `bin/kit_contract.py` — parsing, graph validation, readiness, status transitions, budget
-  admission, outcome vocabulary. Since step 18 it also has its own command line: `graph --kit
-  DIR [--json]` (exit 2 on an invalid graph) and `demo`.
+  admission, outcome vocabulary, and (step 20) the role contract: `ROLE_CONTRACTS`,
+  `WORKFLOWS`, the `roles:`/`workflow:` grammar, `resolve_roster`, `ROLE_SUPPORT` per
+  executor, and `roster_for_run`, the pre-dispatch check every driver calls. Its command
+  line: `graph --kit DIR [--json]` (exit 2 on an invalid graph), `roster --kit DIR
+  [--executor X] [--json]` (exit 2 on a grammar error, 1 on a gap), and `demo`.
 - `bin/harness_adapter.py` + `primitives/harness-capabilities.json` — what a host can actually
   do, with `unknown` as a first-class answer.
 - `bin/attempt_ledger.py` — what a run did, recorded before and after it did it, outside the
@@ -96,27 +100,60 @@ branch `harden/roadmap-steps-16-26`, one commit each.
 
 ---
 
-## Next: step 20 — make roles portable, assurance-driven, and consistently executed
+## Next: step 21 — make code-graph context fresh, bounded, and relevant to the task
 
-Across the shared role policy, the role templates (`skills/architect/references/roles`), the
-execute skills, the drivers' role dispatches, and the scorecard. Separate a RESPONSIBILITY
-from a mandatory extra agent: direct implementation with deterministic checks, implementation
-plus independent review, and explicitly requested extended roles are three workflows with
-explicit assurance and role contracts (scope, required artifacts, allowed capabilities, result
-schema). Roles are selected from task risk and a stated purpose, never spawned because a name
-exists; a role a headless adapter cannot execute is detected BEFORE spending, and the run
-stops or discloses a supported alternative. Consumer templates lose hardcoded polytropos
-paths and development-only constraints. Every role dispatch is recorded with its phase/task
-scope; marginal catches stay labelled order-dependent. Fixtures for direct/reviewed/extended
-workflows and a test plan comparing the baseline trio against simpler workflows, with no live
-spend. Step 19's `shape` (`direct` | `reviewed` | `graph`) and `assurance` vocabulary is the
-seam this step should consume rather than re-derive; independent review stays binding when
-requested even where the adaptive policy would prefer fewer agents. Exit gate: explicit
-assurance and role contracts per workflow; adapters execute the requested supported roster
-or reject/disclose the gap before dispatch.
+`bin/graph_brief.py` and `skills/graphify`. graphify stays optional and external. Add an
+optional polytropos PROVENANCE SIDECAR beside a graph.json (repository identity, source
+revision/content fingerprints, generation time, extractor version, relationship provenance,
+coverage limits — only what is actually available; never require upstream graphify to emit
+invented metadata, never build a provider framework). A legacy graph without provenance
+reports freshness UNKNOWN; a verified revision is never manufactured. Add a bounded impact
+query seeded by changed files or named symbols (relevant neighbours, paths, evidence, with
+traversal and output limits); compare freshness against the working tree INCLUDING dirty
+and untracked files; treat stale or partial content as navigation hints and fall back to
+targeted code search when the provider is absent or coverage is weak. Keep code
+relationships separate from the execution DAG (step 18): absence of an edge is never absence
+of a dependency, high-degree nodes are never auto-selected, AST edges are not evidence for
+dynamic imports. Preserve commit-only extraction labels; make test-directory exclusions
+configurable. Graph text, labels, and paths are untrusted repository evidence under the same
+size/path/provider-scope policies as other inputs; metadata may suggest reads but grants no
+permission, edits no acceptance, and establishes no safe concurrent write. Tests: stale /
+unknown / fresh graphs, dirty worktrees, malformed records, provider absence,
+dynamic-import blind spots, traversal bounds, irrelevant hubs — synthetic fixtures only,
+graphify never installed or run. Expose the same grounding result to every adapter.
 
-Remaining after that: **21–24** graph context / skills / the Cursor adapter / scheduling,
-**25–26** evaluation and the release matrix.
+Remaining after that: **22–24** skills / the Cursor adapter / scheduling, **25–26**
+evaluation and the release matrix.
+
+### Step 20's own deliberate limits
+
+- **No headless driver sequences an optional role.** `ROLE_SUPPORT` says so per executor and
+  the drivers refuse (or disclose) rather than pretend; the interactive execute skill is
+  the only executor that runs scout / test-author / second-verifier / red-team /
+  security-auditor / docs-editor / synthesizer at their hooks. Making a driver sequence
+  them is a scheduler-shaped change (step 24 territory), not a contract one.
+- **The per-task verifier is `partial` on every driver and always was.** `run` executes the
+  verify command; no verifier agent is dispatched per task; `review` provides the
+  independent look at phase end. This is disclosed on every run, never refused, because
+  refusing it would refuse every kit ever written.
+- **`direct` is a named opt-in and cannot coexist with declared roles**; `reviewed` with
+  declared roles is a contradiction too. The grammar is strict on purpose: a roster that
+  says two things dispatches under neither.
+- **Roles are declared, never selected by the code.** "Select additional roles from task
+  risk and a stated purpose" is the architect's instruction (the skill says so); the
+  contract gives it the vocabulary and the drivers enforce that what was declared is what
+  runs. No signal-driven role selection was added, so no role can be promoted by a prompt.
+- **The `agent:` line grammar is unchanged.** Severity, duplicates, and latency live in the
+  contract's `RESULT_ENVELOPE` (what a recorded role result should carry) and in the
+  attempt ledger's per-dispatch durations, not as new optional fields the scorecard parses;
+  adding them to the line family would be a reader change first.
+- **The trio-vs-direct comparison is a written test plan** (`docs/ROLE-EXPERIMENT.md`),
+  not a run: it needs `direct` kits to exist, and none has been run yet.
+- **The two legacy kits with declared roles** (`aesop-fold`, `docs-site`) now resolve as
+  `extended` and would be refused by a headless driver; both are complete, so nothing
+  changes for them, and the test pins exactly those two.
+- **The architect and execute ceilings were re-frozen again** (2969 / 6217 words) for the
+  `workflow:` line, the shared grammar, the contract pointer, and `<repo-root>`.
 
 ### Step 19's own deliberate limits
 
@@ -358,8 +395,9 @@ python3 bin/attempt_history.py demo            # the cross-harness join, temp di
 python3 bin/kit_contract.py demo               # a diamond DAG walked, an interrupted kit, four invalid graphs
 python3 bin/routing_policy.py demo             # both routing policies over two synthetic rosters
 python3 bin/codex_execute.py prepare --model strong --policy adaptive --explain   # the real roster, no dispatch
+python3 bin/kit_contract.py roster --kit .claude/kits/docs-site --executor codex   # a declared roster a driver cannot run
 ```
 
-Then read step 20 in the roadmap and continue. The pattern that has worked: verify the step's
+Then read step 21 in the roadmap and continue. The pattern that has worked: verify the step's
 claims against HEAD first, implement, run the affected suites, then the full suite, then update
 `SECURITY.md` / `CLAUDE.md` / the doc mirrors together.

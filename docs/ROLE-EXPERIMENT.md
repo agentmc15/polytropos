@@ -56,6 +56,70 @@ wins for this repo on two grounds:
   a role's marginal rate as settled before it clears the sample floor is exactly the
   mistake the honesty labels below exist to prevent.
 
+## Three workflows, one role contract
+
+Since roadmap step 20 a kit's roster is a stated WORKFLOW, and each role is a stated
+CONTRACT, both in `bin/kit_contract.py` and both read by the interactive skill and every
+headless driver through the same grammar (`python3 bin/kit_contract.py roster --kit
+<dir> [--executor codex] [--json]`):
+
+| Workflow | PLAN.md | Roles | Assurance it carries |
+|---|---|---|---|
+| `direct` | `workflow: direct` (must be named) | implementer | the task's own deterministic check |
+| `reviewed` | nothing (the default) | implementer, verifier, reviewer | + independent verification, independent review |
+| `extended` | `roles: <tokens>` | the trio + the declared roles | + each declared role's own kind |
+
+A role's contract names its responsibility, scope (task / phase / run), hook, assurance
+kind (`deterministic-check`, `independent-verification`, `independent-review`,
+`adversarial-test`, `fence-audit`, `grounding`, `documentation`, `synthesis`), required
+artifacts, allowed capabilities (read / search / shell / write-code / write-tests /
+write-docs / write-notes), whether it produces adjudicable findings, and its result
+fields — separately from whether another agent is spawned to provide it. That
+separation is the point: `direct` exists so a small task can complete under a
+deterministic check without a mandatory trio, and it must be asked for by name because
+it drops independent review; `reviewed` is every kit ever written; a declared role runs
+because the kit stated it for a purpose, never because its name exists.
+
+**What a headless driver can run.** `ROLE_SUPPORT` states it per executor and the drivers
+check it before previewing or claiming anything. All three run the implementer (`run`)
+and the phase-end independent review (`review`; on Codex `review` then `accept`); the
+per-task verifier's assurance is `partial` (the verify command runs, no verifier agent is
+dispatched per task) and is disclosed, never refused, because that has always been the
+headless shape; the seven optional roles are `unsupported` on every driver today (the
+drivers sequence no hook) and a kit that declares one is refused before dispatch with the
+supported alternatives named — run it interactively, drop the role, or `--roster-gap
+disclose` to proceed with the gap printed and recorded in the attempt ledger as
+`roster.checked`. Nothing is skipped in silence. The seven templates the architect
+instantiates are consumer-neutral: they name the kit's `GUARDRAILS.md` and the target
+repo's own conventions through a `<repo-root>` placeholder, never this plugin's fences.
+
+## Test plan: is the baseline trio worth it?
+
+The marginal-catch method above measures roles ADDED to the trio. It does not establish
+that the trio beats `direct`. The plan for that, with no live A/B spend:
+
+1. **Run the next small, low-risk kits at `workflow: direct`** — mechanical or
+   single-file work whose verify command is a real red-to-green check. The scorecard
+   labels an observed roster by its size (a `direct` kit reads `R1`), so its outcomes
+   group separately from `R3` kits under `--roles` and `--history`.
+2. **Measure what `direct` would have missed, after the fact, not in parallel.** At the
+   next phase boundary (or the kit's end) dispatch the reviewer once over the
+   `direct`-completed work and adjudicate its findings exactly as a phase review's:
+   every confirmed finding is a catch the trio would have made and `direct` did not,
+   recorded on the `reviewer:` line as usual. One review per kit, not one per task, is
+   the whole cost of the measurement.
+3. **Compare on the same terms as the roles card**: confirmed catches per kit against
+   the dispatches the trio would have spent (one verifier dispatch per task plus one
+   review per phase, at their pinned models), with the same evidence floor
+   (`MIN_ROLE_DISPATCHES`) before reading anything as settled, and with the same
+   order-dependent caveat — a review run after `direct` sees the finished work, which
+   is a different vantage from a verifier that runs per task.
+4. **Decide between kits, by hand, and write the decision into the next PLAN.md** as
+   `workflow:`; never let a run promote or demote its own workflow.
+
+Until that sample exists, `reviewed` stays the default for the reason it always was:
+an implementer's claim of success is not evidence.
+
 ## The tier ladder
 
 Roster size is DERIVED from the role tokens actually observed in a kit's ledger (which

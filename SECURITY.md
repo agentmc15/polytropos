@@ -29,6 +29,13 @@ These are properties with code behind them, not conventions:
 - **Codex review and acceptance are pinned read-only.** `bin/codex_execute.py` forces
   `--sandbox read-only` on both and rejects any attempt to override it through extra arguments.
   It also refuses extra arguments that would displace the policy-selected model or profile.
+- **A declared role a driver cannot run is refused or disclosed, never skipped.** Every driver
+  reads a kit's PLAN.md `roles:` and `workflow:` lines through the one grammar in
+  `bin/kit_contract.py` before it previews or claims anything; a role the driver cannot
+  sequence (`ROLE_SUPPORT`) stops the run by default, and `--roster-gap disclose` proceeds only
+  with the gap printed and recorded in the attempt ledger. Each role's scope, hook, assurance,
+  capabilities, and result fields are stated as data (`ROLE_CONTRACTS`), separate from whether
+  an agent is spawned for it; no role runs because its name exists.
 - **Routing policy is an explicit selection, never a learned one.** Which policy routes a
   Codex task (`reserved`, the default, or the opt-in `adaptive`) comes only from a `--policy`
   flag or a kit's PLAN.md `routing:` line, both validated before anything is dispatched.

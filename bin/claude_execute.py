@@ -221,6 +221,9 @@ plan_budget_exhausted = _CONTRACT.plan_budget_exhausted
 recorded_outcome_result = _CONTRACT.recorded_outcome_result
 select_task = _CONTRACT.select_task
 exit_if_invalid_graph = _CONTRACT.exit_if_invalid_graph
+roster_for_run = _CONTRACT.roster_for_run
+record_roster = _CONTRACT.record_roster
+GAP_MODES = _CONTRACT.GAP_MODES
 set_status = _CONTRACT.set_status
 # The attempt lifecycle (step 16) -- claim, resume, record, project -- is the contract's.
 start_task_lifecycle = _CONTRACT.start_task_lifecycle
@@ -834,6 +837,13 @@ def cmd_run(args):
     preamble, role_frontmatter = load_role_spec(args.role, slug, REPO_ROOT)
     permissions = role_permission_profile(args.role, role_frontmatter)
 
+    # ROSTER (step 20): what the kit declared, and whether this driver can run it, decided
+    # BEFORE the preview or the claim. A declared role this driver cannot sequence stops the
+    # run or is disclosed; it is never skipped in silence.
+    plan_text = (kit / "PLAN.md").read_text() if (kit / "PLAN.md").exists() else ""
+    roster, roster_support = roster_for_run(plan_text, "claude-code", args.roster_gap,
+                                            slug=slug)
+
     if args.dry_run:
         # `--dry-run` with no `--task` previews EVERY pending task (not just the first
         # dependency-eligible one) -- a full plan preview, per T5's acceptance criterion.
@@ -894,6 +904,7 @@ def cmd_run(args):
     # PLAN.md budget dial (T9) -- checked against the kit's OWN recorded history before
     # anything is dispatched or written. `--dry-run` never reaches here (it returned above);
     # this gate only ever stops a REAL run. See the module's "PLAN.md budget dial" section.
+    record_roster(lifecycle, roster, roster_support, args.roster_gap)
     plan_path = kit / "PLAN.md"
     plan_budget = parse_plan_budget(plan_path.read_text()) if plan_path.exists() else None
     admission = None
@@ -1152,6 +1163,11 @@ def build_parser():
                        help="root of the attempt ledger (step 16). Default: the per-user data "
                             "root from bin/runtime_data.py, namespaced to this checkout -- never "
                             "inside the tree a worker edits. Tests pass a temp dir.")
+    p_run.add_argument("--roster-gap", choices=GAP_MODES, default="stop",
+                       help="what to do when PLAN.md declares a role this driver cannot run "
+                            "(step 20). `stop` (default) refuses before dispatch and names "
+                            "the alternatives; `disclose` proceeds with the gap printed and "
+                            "recorded in the ledger. Never skipped silently.")
     p_run.add_argument("--break-claim", action="store_true",
                        help="clear a claim another run holds on this task before starting. An "
                             "operator's deliberate act, recorded in the ledger; by default a "

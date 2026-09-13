@@ -801,6 +801,379 @@ def parse_plan_routing(text):
     found = dict(re.findall(rf"({keys})=([A-Za-z0-9_.-]+)", m.group(1)))
     return found or None
 
+
+# ---- the role contract (step 20) -----------------------------------------------------------------
+#
+# WHAT WAS MEASURED before this section existed. The interactive execute skill reads a kit's
+# PLAN.md `roles:` line and sequences each declared role at its hook; no headless driver read
+# that line at all (`grep roles: bin/` found only the scorecard), so a kit declaring
+# `roles: test-author red-team` ran headlessly with neither, and nothing said so. The role
+# templates the architect copies into a TARGET repository named this repository's own path
+# (`/path/to/polytropos`) and this repository's own development fences (stdlib-only tests, no
+# real `copilot`/`codex` CLI, the pricing-file convention), which are not a consumer's
+# constraints. And a role's RESPONSIBILITY -- what assurance it adds, at what scope, with what
+# capabilities, reporting what -- lived only in prose, so nothing could ask whether a
+# workflow with fewer agents still carried the assurance the kit needed.
+#
+# This section states the contract as data: each role's responsibility, scope, hook,
+# assurance kind, required artifacts, allowed capabilities, and result fields, SEPARATE from
+# whether another agent is spawned to provide it; three workflows (`direct`, `reviewed`,
+# `extended`) with the assurance each carries; one grammar for the PLAN.md `roles:` and
+# `workflow:` lines that the interactive skill and every driver parse the same way; and what
+# each headless driver can actually execute, so a declared role a driver cannot run is refused
+# or disclosed BEFORE anything is dispatched, never skipped. Nothing here spawns a role
+# because its name exists: a role runs because a kit declared it and the executor can run it.
+
+STANDING_ROLES = ("implementer", "verifier", "reviewer")
+
+OPTIONAL_ROLES = ("scout", "test-author", "second-verifier", "red-team", "security-auditor",
+                  "docs-editor", "synthesizer")
+
+ALL_ROLES = STANDING_ROLES + OPTIONAL_ROLES
+
+#: The canonical pipeline order: a finding raised by an earlier layer is never marginal for a
+#: later one. This is the order `marginal=` is adjudicated against and the order a roster is
+#: rendered in.
+PIPELINE_ORDER = ("scout", "implementer", "test-author", "verifier", "second-verifier",
+                  "red-team", "reviewer", "security-auditor", "docs-editor", "synthesizer")
+
+ROLE_SCOPES = ("task", "phase", "run")
+
+#: What a role ADDS, named separately from the agent that adds it.
+ASSURANCE_KINDS = ("deterministic-check", "independent-verification", "independent-review",
+                   "adversarial-test", "fence-audit", "grounding", "documentation", "synthesis")
+
+#: Capability grants a role may hold. A grant is what the template's tools pin and scoped-write
+#: law allow; `shell` is named because a shell can still write anything, which every read-only
+#: template says in words.
+CAPABILITY_GRANTS = ("read", "search", "shell", "write-code", "write-tests", "write-docs",
+                     "write-notes")
+
+READ_ONLY_GRANTS = ("read", "search", "shell")
+
+#: Every recorded role result carries these beside the role's own fields, so a later reader can
+#: tell what ran, where, on what, at what cost, and what stayed unknown.
+RESULT_ENVELOPE = ("role", "scope", "scope_id", "model", "dispatched", "artifacts",
+                   "cost_basis", "latency_s", "unknown")
+
+
+def _contract(responsibility, scope, hook, assurance, artifacts, capabilities,
+              produces_findings, result):
+    return {
+        "responsibility": responsibility, "scope": scope, "hook": hook,
+        "assurance": assurance, "artifacts": tuple(artifacts),
+        "capabilities": tuple(capabilities), "produces_findings": produces_findings,
+        "result": tuple(result),
+    }
+
+
+ROLE_CONTRACTS = {
+    "implementer": _contract(
+        "make the task's change so its verify command passes",
+        "task", "the task's own dispatch", None,
+        ("the change", "a passing verify command"),
+        ("read", "search", "shell", "write-code", "write-tests", "write-docs"),
+        False, ("status", "verify_rc", "dispatch_rc", "model_used", "escalations"),
+    ),
+    "verifier": _contract(
+        "re-derive the task's verdict from repo state against its acceptance, trusting "
+        "nothing the implementer claimed",
+        "task", "after the implementer reports done", "independent-verification",
+        ("rerun verify output", "per-acceptance-line evidence"), READ_ONLY_GRANTS,
+        True, ("verdict", "findings", "confirmed", "marginal"),
+    ),
+    "reviewer": _contract(
+        "judge a completed phase against PLAN.md for drift, scope creep, and contract "
+        "breakage",
+        "phase", "phase end", "independent-review",
+        ("findings with file:line evidence", "a phase verdict"), READ_ONLY_GRANTS,
+        True, ("verdict", "findings", "confirmed"),
+    ),
+    "scout": _contract(
+        "ground the implementer in actual repo state before it starts",
+        "task", "before the implementer, per opted-in task", "grounding",
+        ("a grounding brief", "brief-vs-repo discrepancies"), READ_ONLY_GRANTS,
+        False, ("grounding_brief", "discrepancies"),
+    ),
+    "test-author": _contract(
+        "write tests from the brief's acceptance, never from the implementation",
+        "task", "after the implementer, before the verifier", "adversarial-test",
+        ("test files under the repo's test path",), ("read", "search", "shell", "write-tests"),
+        True, ("files", "findings", "confirmed", "marginal"),
+    ),
+    "second-verifier": _contract(
+        "verify functional reality with a lens the first verifier did not use",
+        "task", "in parallel with the verifier", "independent-verification",
+        ("rerun verify output", "exercised-behaviour evidence"), READ_ONLY_GRANTS,
+        True, ("verdict", "findings", "confirmed", "marginal"),
+    ),
+    "red-team": _contract(
+        "break the verified deliverable with what the acceptance never anticipated",
+        "task", "after the verifier passes, before done", "adversarial-test",
+        ("reproducible breaks",), READ_ONLY_GRANTS,
+        True, ("findings", "confirmed", "marginal"),
+    ),
+    "security-auditor": _contract(
+        "check the phase against the kit's fences and leak surfaces, and nothing else",
+        "phase", "phase end, in parallel with the reviewer", "fence-audit",
+        ("fence findings with file:line evidence",), READ_ONLY_GRANTS,
+        True, ("findings", "confirmed", "marginal"),
+    ),
+    "docs-editor": _contract(
+        "make documentation and comments say what the code now does",
+        "phase", "phase end, after findings are adjudicated", "documentation",
+        ("edited docs and comments",), ("read", "search", "shell", "write-docs"),
+        False, ("files", "gaps"),
+    ),
+    "synthesizer": _contract(
+        "distil the run's cross-task learnings into NOTES.md prose",
+        "run", "end of run", "synthesis",
+        ("NOTES.md prose",), ("read", "search", "write-notes"),
+        False, ("prose",),
+    ),
+}
+
+WORKFLOWS = ("direct", "reviewed", "extended")
+DEFAULT_WORKFLOW = "reviewed"
+
+#: The roles each workflow runs. `extended` is `reviewed` plus whatever the kit declared.
+WORKFLOW_ROLES = {
+    "direct": ("implementer",),
+    "reviewed": STANDING_ROLES,
+    "extended": STANDING_ROLES,
+}
+
+#: The assurance each workflow carries before any declared role adds its own. `direct` is the
+#: task's own deterministic check and nothing independent; it must be asked for by name.
+WORKFLOW_ASSURANCE = {
+    "direct": ("deterministic-check",),
+    "reviewed": ("deterministic-check", "independent-verification", "independent-review"),
+    "extended": ("deterministic-check", "independent-verification", "independent-review"),
+}
+
+PLAN_ROLES_RE = re.compile(r"^\s*roles:[ \t]*(.*)$", re.MULTILINE)
+PLAN_WORKFLOW_RE = re.compile(r"^\s*workflow:[ \t]*(\S*)", re.MULTILINE)
+
+#: What each executor can do with a role. `sequenced`: it runs the role at the role's hook;
+#: `partial`: the role's assurance is provided another way, named in the note; `unsupported`:
+#: nothing runs it; `unknown`: nobody has checked. The three headless drivers run one task per
+#: invocation (`run`) and one phase review (`review`); none sequences a per-task agent beside
+#: the implementer, which is why the optional roles are `unsupported` there today and a kit
+#: that declares one is refused or disclosed before dispatch. Tested against the drivers' own
+#: parsers, not asserted from memory.
+ROLE_SUPPORT = {
+    "interactive": {role: ("sequenced", "the execute skill's loop") for role in ALL_ROLES},
+    "claude-code": {
+        "implementer": ("sequenced", "run"),
+        "verifier": ("partial", "run executes the verify command; no verifier agent is "
+                                "dispatched per task"),
+        "reviewer": ("sequenced", "review"),
+        **{role: ("unsupported", "run is one task, one role; no hook sequencing")
+           for role in OPTIONAL_ROLES},
+    },
+    "copilot": {
+        "implementer": ("sequenced", "run"),
+        "verifier": ("partial", "run executes the verify command; no verifier agent is "
+                                "dispatched per task"),
+        "reviewer": ("sequenced", "review"),
+        **{role: ("unsupported", "run is one task, one agent; no hook sequencing")
+           for role in OPTIONAL_ROLES},
+    },
+    "codex": {
+        "implementer": ("sequenced", "run"),
+        "verifier": ("partial", "run executes the verify command; review dispatches an "
+                                "independent verifier per phase, not per task"),
+        "reviewer": ("sequenced", "review, then accept"),
+        **{role: ("unsupported", "run refuses any role but implementer")
+           for role in OPTIONAL_ROLES},
+    },
+    "cursor": {role: ("unknown", "no adapter yet") for role in ALL_ROLES},
+}
+
+EXECUTORS = tuple(ROLE_SUPPORT)
+
+GAP_MODES = ("stop", "disclose")
+
+
+class RosterError(ValueError):
+    """A PLAN.md roster the contract cannot act on: an unknown role or workflow word, or a
+    contradiction between them."""
+
+
+def parse_plan_roles(text):
+    """The kit's optional PLAN.md `roles:` line -> a list of optional-role tokens, or None.
+
+    No line, or an empty one, -> None (the standing trio). An unknown token or a repeated one
+    raises `RosterError`: the architect skill says anything outside the seven is out of
+    grammar, and a driver that guessed would dispatch something the kit never asked for.
+    """
+    if not text:
+        return None
+    m = PLAN_ROLES_RE.search(text)
+    if not m:
+        return None
+    tokens = m.group(1).split()
+    if not tokens:
+        return None
+    seen = []
+    for token in tokens:
+        if token not in OPTIONAL_ROLES:
+            hint = ("is a standing role, always present" if token in STANDING_ROLES
+                    else "is not a role")
+            raise RosterError(
+                f"roles: {token!r} {hint}; the optional roles are "
+                f"{', '.join(OPTIONAL_ROLES)}"
+            )
+        if token in seen:
+            raise RosterError(f"roles: {token!r} is declared twice")
+        seen.append(token)
+    return seen
+
+
+def parse_plan_workflow(text):
+    """The kit's optional PLAN.md `workflow:` line -> one of `WORKFLOWS`, or None."""
+    if not text:
+        return None
+    m = PLAN_WORKFLOW_RE.search(text)
+    if not m:
+        return None
+    word = m.group(1)
+    if word not in WORKFLOWS:
+        raise RosterError(
+            f"workflow: {word!r} is not a workflow; valid: {', '.join(WORKFLOWS)}"
+        )
+    return word
+
+
+def resolve_roster(text):
+    """The kit's roster from PLAN.md -> a dict: workflow, roles in pipeline order, declared
+    optional roles, the assurance the workflow carries, and each role's hook.
+
+    No `workflow:` line means `reviewed` (the standing trio, every kit ever written) or
+    `extended` when roles are declared. `direct` must be named, because it drops independent
+    review, and it cannot coexist with declared roles; `reviewed` with declared roles is a
+    contradiction too -- say `extended`, or drop the line.
+    """
+    declared = parse_plan_roles(text) or []
+    workflow = parse_plan_workflow(text)
+    if workflow is None:
+        workflow = "extended" if declared else DEFAULT_WORKFLOW
+    elif workflow != "extended" and declared:
+        raise RosterError(
+            f"workflow: {workflow} cannot declare roles ({', '.join(declared)}); "
+            f"a kit with declared roles is `extended`"
+        )
+    elif workflow == "extended" and not declared:
+        raise RosterError("workflow: extended declares no roles; add a `roles:` line or say "
+                          "`reviewed`")
+    roles = [r for r in PIPELINE_ORDER if r in WORKFLOW_ROLES[workflow] or r in declared]
+    assurance = list(WORKFLOW_ASSURANCE[workflow])
+    for role in declared:
+        kind = ROLE_CONTRACTS[role]["assurance"]
+        if kind and kind not in assurance:
+            assurance.append(kind)
+    return {
+        "workflow": workflow,
+        "roles": roles,
+        "declared": declared,
+        "assurance": assurance,
+        "hooks": {role: ROLE_CONTRACTS[role]["hook"] for role in roles},
+        "binding_review": workflow != "direct",
+    }
+
+
+def roster_support(roster, executor):
+    """What `executor` can do with each role in `roster` -> a dict.
+
+      levels     {role: (level, note)}
+      gap        declared optional roles the executor cannot run (the refusable gap)
+      partial    roles whose assurance is provided another way (disclosed, never refused)
+      unknown    roles nobody has checked on this executor
+    """
+    if executor not in ROLE_SUPPORT:
+        raise RosterError(f"unknown executor {executor!r}; known: {', '.join(EXECUTORS)}")
+    table = ROLE_SUPPORT[executor]
+    levels = {role: table[role] for role in roster["roles"]}
+    return {
+        "executor": executor,
+        "levels": levels,
+        "gap": [r for r in roster["declared"] if levels[r][0] == "unsupported"],
+        "partial": [r for r, (lvl, _n) in levels.items() if lvl == "partial"],
+        "unknown": [r for r, (lvl, _n) in levels.items() if lvl == "unknown"],
+    }
+
+
+def render_roster(roster, support=None):
+    """One `roster:` line, plus a line per gap or partial role when `support` is given."""
+    line = (f"roster: workflow={roster['workflow']} roles={','.join(roster['roles'])} "
+            f"assurance={'+'.join(roster['assurance'])}")
+    if support is None:
+        return line
+    lines = [line + f" executor={support['executor']}"]
+    for role in support["gap"]:
+        lines.append(f"  gap: {role} is not executed by this driver "
+                     f"({support['levels'][role][1]}); hook: {roster['hooks'][role]}")
+    for role in support["partial"]:
+        lines.append(f"  partial: {role} -- {support['levels'][role][1]}")
+    for role in support["unknown"]:
+        lines.append(f"  unknown: {role} -- {support['levels'][role][1]}")
+    return "\n".join(lines)
+
+
+def roster_for_run(plan_text, executor, gap_mode="stop", slug="<slug>"):
+    """The roster check every driver runs BEFORE dispatch -> `(roster, support)`.
+
+    Prints the roster to stderr. A grammar error exits 2. A declared role this executor
+    cannot run exits 2 under `stop` (the default), naming the role, its hook, and the three
+    supported alternatives; under `disclose` the run proceeds with the gap printed and, once
+    the ledger is open, recorded (`record_roster`). Partial standing roles are disclosed and
+    never stop: every kit ever written runs `reviewed`, and the drivers have always provided
+    its independent review at phase end rather than per task.
+    """
+    if gap_mode not in GAP_MODES:
+        raise RosterError(f"unknown roster gap mode {gap_mode!r}; valid: {', '.join(GAP_MODES)}")
+    try:
+        roster = resolve_roster(plan_text)
+    except RosterError as exc:
+        print(f"roster: {exc}", file=sys.stderr)
+        sys.exit(2)
+    support = roster_support(roster, executor)
+    print(render_roster(roster, support), file=sys.stderr)
+    if support["gap"]:
+        names = ", ".join(support["gap"])
+        if gap_mode == "stop":
+            print(
+                f"roster: PLAN.md declares {names}, which this driver cannot execute, so "
+                f"nothing is dispatched. Supported alternatives: run the kit interactively "
+                f"(/polytropos:execute {slug}), which sequences every declared role at its "
+                f"hook; remove the role from PLAN.md's roles: line; or rerun with "
+                f"--roster-gap disclose to proceed with the gap recorded in the ledger.",
+                file=sys.stderr,
+            )
+            sys.exit(2)
+        print(
+            f"roster: proceeding WITHOUT {names} (--roster-gap disclose); the kit's declared "
+            f"assurance is not what this run provides, and the ledger records that.",
+            file=sys.stderr,
+        )
+    return roster, support
+
+
+def record_roster(lifecycle, roster, support, gap_mode):
+    """Record the roster check on the run, so the history can tell a run that provided the
+    kit's declared assurance from one that disclosed a gap."""
+    return lifecycle.ledger.append(
+        "roster.checked", run=lifecycle.run, task=lifecycle.task_id,
+        workflow=roster["workflow"], roles=roster["roles"], declared=roster["declared"],
+        assurance=roster["assurance"], executor=support["executor"], gap=support["gap"],
+        partial=support["partial"], gap_mode=gap_mode,
+    )
+
+
+def _plan_text(kit_dir):
+    path = Path(kit_dir) / "PLAN.md"
+    return path.read_text() if path.exists() else ""
+
 def count_plan_budget_usage(notes_text):
     """Count dispatches/escalations/consults already recorded in a kit's NOTES.md ledger.
 
@@ -1046,6 +1419,12 @@ def cmd_status(args):
     # Step 18: the same graph verdict `run` will reach, so an operator sees an invalid kit or
     # an interrupted task from `status` rather than from a refused run.
     print(render_graph_state(graph_state(tasks)))
+    # Step 20: the kit's roster and the assurance it declares, from the same grammar `run`
+    # checks before dispatching.
+    try:
+        print(render_roster(resolve_roster(_plan_text(args.kit))))
+    except RosterError as exc:
+        print(f"roster: INVALID -- {exc}")
 
 
 def _budget_stop(task, model_used, escalations, kind, reason):
@@ -1566,6 +1945,25 @@ def _demo(out=None):
         except InvalidTransition as exc:
             say(f"  {previous} -> {new}: REFUSED -- {str(exc).split(';')[0]}")
 
+    say()
+    say("== three workflows, one roster grammar, and what each executor can run ==")
+    plans = {
+        "no line": "# plan\nbudget: max-dispatches=4\n",
+        "roles: test-author red-team": "# plan\nroles: test-author red-team\n",
+        "workflow: direct": "# plan\nworkflow: direct\n",
+        "roles: chef": "# plan\nroles: chef\n",
+    }
+    for label, plan in plans.items():
+        say(f"  [{label}]")
+        try:
+            roster = resolve_roster(plan)
+        except RosterError as exc:
+            say(f"    roster: INVALID -- {exc}")
+            continue
+        for executor in ("interactive", "codex"):
+            for line in render_roster(roster, roster_support(roster, executor)).splitlines():
+                say(f"    {line}")
+
 
 def _cli(argv=None):
     import argparse
@@ -1579,12 +1977,35 @@ def _cli(argv=None):
     p_graph = sub.add_parser("graph", help="validate TASKS.md's DAG; exit 2 when invalid")
     p_graph.add_argument("--kit", required=True, help="kit directory holding TASKS.md")
     p_graph.add_argument("--json", action="store_true", help="the graph_state dict as JSON")
-    sub.add_parser("demo", help="a diamond DAG walked to completion, then invalid graphs")
+    p_roster = sub.add_parser("roster", help="PLAN.md's workflow, roles, assurance, and what "
+                                             "an executor can run; exit 2 on a grammar "
+                                             "error, 1 when the executor has a gap")
+    p_roster.add_argument("--kit", required=True, help="kit directory holding PLAN.md")
+    p_roster.add_argument("--executor", default="interactive", choices=EXECUTORS,
+                          help="who would run it (default: the interactive execute skill)")
+    p_roster.add_argument("--json", action="store_true",
+                          help="roster, support, and every role's contract as JSON")
+    sub.add_parser("demo", help="a diamond DAG walked to completion, invalid graphs, rosters")
     args = parser.parse_args(argv)
 
     if args.cmd == "demo":
         _demo()
         return 0
+    if args.cmd == "roster":
+        try:
+            roster = resolve_roster(_plan_text(args.kit))
+        except RosterError as exc:
+            print(f"roster: {exc}", file=sys.stderr)
+            return 2
+        support = roster_support(roster, args.executor)
+        if args.json:
+            print(json.dumps({
+                "v": CONTRACT_VERSION, "roster": roster, "support": support,
+                "contracts": {role: ROLE_CONTRACTS[role] for role in roster["roles"]},
+            }, indent=2, sort_keys=True))
+        else:
+            print(render_roster(roster, support))
+        return 1 if support["gap"] else 0
     tasks = parse_tasks(_read_tasks_text(args.kit))
     graph = graph_state(tasks)
     if args.json:

@@ -177,7 +177,7 @@ python3 bin/harness_update.py check                  # all-harness freshness car
 python3 bin/exec_policy.py check                     # what OS execution boundary this host enforces (exit 3 if none)
 python3 bin/attempt_ledger.py demo                   # crash/resume walkthrough in a temp dir
 python3 bin/attempt_history.py demo                  # every dispatch, joined across sources
-python3 bin/kit_contract.py graph --kit DIR          # DAG validity + ready frontier; also `demo`
+python3 bin/kit_contract.py graph --kit DIR          # DAG validity + frontier; also `roster`, `demo`
 python3 bin/graph_brief.py demo                      # architect-grounding brief from a graphify graph.json
 python3 bin/docs_build.py check                      # docs-site freshness (exit 1 on drift); `build` regenerates
 python3 bin/copilot_docs.py check                    # Copilot doc center freshness; `build` regenerates

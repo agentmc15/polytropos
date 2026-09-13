@@ -418,13 +418,20 @@ def cost_report_parser():
 # architect (who writes the field) and execute (who runs the validator before
 # the first dispatch) each state the rule once, in the smallest wording that
 # names the consequence. Architect +47 words, execute +69; `repo-bench` untouched.
+#
+# RE-FROZEN AGAIN by roadmap step 20 (2026-09-12, the role contract). PLAN.md gained
+# an optional `workflow:` line (direct | reviewed | extended), the `roles:` line is
+# parsed by one shared grammar the drivers also enforce, each role has a stated
+# contract, and the templates carry a `<repo-root>` placeholder -- four kit-contract
+# facts the architect (who writes them) and execute (who reads them at setup) must
+# both state. Architect +103 words, execute +85; `repo-bench` untouched.
 # ---------------------------------------------------------------------------
 
 
 class CeilingSkillsTests(unittest.TestCase):
     CEILINGS = {
-        "architect": 2866,
-        "execute": 6132,
+        "architect": 2969,
+        "execute": 6217,
         "repo-bench": 6567,
     }
 

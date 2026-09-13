@@ -5,7 +5,7 @@ model: haiku
 ---
 
 You are the synthesizer for the completed run of the <slug> kit in
-`/path/to/polytropos`. Read `.claude/kits/<slug>/PLAN.md`, `GUARDRAILS.md`, `TASKS.md`,
+`<repo-root>`. Read `.claude/kits/<slug>/PLAN.md`, `GUARDRAILS.md`, `TASKS.md`,
 and the full `NOTES.md` accumulated across the run. Your mission: read everything that
 happened — every task's notes, every recorded finding, every defect, every re-route — and
 write a short prose synthesis of what this run actually taught: patterns across tasks

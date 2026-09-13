@@ -645,7 +645,8 @@ class DiamondThroughTheDriverTests(unittest.TestCase):
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
             claude.main(["status", "--kit", str(self.kit)])
-        return out.getvalue().splitlines()[-1]
+        # Step 20 appended a `roster:` line after the graph verdict; find the verdict by name.
+        return next(ln for ln in out.getvalue().splitlines() if ln.startswith("graph: "))
 
     def statuses(self):
         return {t["id"]: t["status"] for t in kc.parse_tasks((self.kit / "TASKS.md").read_text())}
@@ -784,7 +785,7 @@ class CommandLineTests(unittest.TestCase):
         self.assertIn("pending -> done: REFUSED", out)
         self.assertIn("in-progress -> done: allowed", out)
 
-    def test_status_on_every_driver_ends_with_the_graph_line(self):
+    def test_status_on_every_driver_carries_the_graph_line_after_the_counts(self):
         with tempfile.TemporaryDirectory() as tmp:
             kit = Path(tmp) / "fixturekit"
             kit.mkdir()
@@ -794,8 +795,10 @@ class CommandLineTests(unittest.TestCase):
                 with contextlib.redirect_stdout(out):
                     driver.main(["status", "--kit", str(kit)])
                 lines = out.getvalue().splitlines()
-                self.assertRegex(lines[-2], r"\d+ pending / \d+ in-progress / \d+ done / \d+ blocked")
-                self.assertEqual(lines[-1],
+                graph_at = next(i for i, ln in enumerate(lines) if ln.startswith("graph: "))
+                self.assertRegex(lines[graph_at - 1],
+                                 r"\d+ pending / \d+ in-progress / \d+ done / \d+ blocked")
+                self.assertEqual(lines[graph_at],
                                  "graph: interrupted -- in-progress: T1; resume with --task <id> "
                                  "(also ready, by explicit --task only: T2)")
 
