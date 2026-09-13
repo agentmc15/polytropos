@@ -289,9 +289,17 @@ class DispatchEnvironmentTests(_Scripts):
                 self.assertNotIn(leaked, env, f"{leaked} reached the {provider} dispatch")
 
     def test_an_unknown_provider_gets_the_base_set_only(self):
-        env = pr.dispatch_env("cursor", base={**self.BASE, "ANTHROPIC_API_KEY": "k"})
+        # "cursor" stopped being the unknown example when step 23 gave it a prefix.
+        env = pr.dispatch_env("vscode", base={**self.BASE, "ANTHROPIC_API_KEY": "k"})
         self.assertNotIn("ANTHROPIC_API_KEY", env)
         self.assertIn("PATH", env)
+
+    def test_cursor_carries_its_own_key_and_nobody_elses(self):
+        env = pr.dispatch_env("cursor", base={**self.BASE, "CURSOR_API_KEY": "c",
+                                              "ANTHROPIC_API_KEY": "k", "OPENAI_API_KEY": "o"})
+        self.assertEqual(env.get("CURSOR_API_KEY"), "c")
+        self.assertNotIn("ANTHROPIC_API_KEY", env)
+        self.assertNotIn("OPENAI_API_KEY", env)
 
     def test_a_host_can_widen_the_list_it_cannot_otherwise_recover_from(self):
         source = {**self.BASE, "WEIRD_CORP_VAR": "v", pr.EXTRA_ENV_VAR: "WEIRD_CORP_VAR"}

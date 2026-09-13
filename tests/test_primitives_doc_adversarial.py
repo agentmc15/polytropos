@@ -287,19 +287,20 @@ class TomlExcerptIsRealManifestContentTests(unittest.TestCase):
 
 class CensusBumpTripwireTests(unittest.TestCase):
     """T8's amendment hardcoded four census assertions in
-    tests/test_docs_build_adversarial.py (25/27/69/70) and one in
-    tests/test_docs_build_cli.py (69). Confirms those counts are correct for
+    tests/test_docs_build_adversarial.py (26/28/70/71) and one in
+    tests/test_docs_build_cli.py (70). Confirms those counts are correct for
     the real tree today, and that they are still real tripwires -- adding
-    one more docs/*.md file in a temp copy must break them (26/28/70), not
-    sail through unfalsified."""
+    one more docs/*.md file in a temp copy must break them (27/29/71), not
+    sail through unfalsified. 2026-09-13: every pin moved by one when step 23
+    added docs/CURSOR-HARNESS.md."""
 
     def test_pinned_counts_match_the_real_tree(self):
         docs_build = _load("_t8_docs_build_real", BIN_DIR / "docs_build.py")
         md_sources = sorted((REPO_ROOT / "docs").glob("*.md"))
-        self.assertEqual(len(md_sources), 25)
+        self.assertEqual(len(md_sources), 26)
         page_map = docs_build.deep_dive_page_map(REPO_ROOT)
-        self.assertEqual(len(page_map), 27)
-        self.assertEqual(len(docs_build.expected_pages(REPO_ROOT)), 69)
+        self.assertEqual(len(page_map), 28)
+        self.assertEqual(len(docs_build.expected_pages(REPO_ROOT)), 70)
 
     def test_one_more_doc_breaks_the_pinned_counts(self):
         docs_build = _load("_t8_docs_build_copy", BIN_DIR / "docs_build.py")
@@ -309,16 +310,16 @@ class CensusBumpTripwireTests(unittest.TestCase):
                 shutil.copytree(REPO_ROOT / name, tmp / name)
 
             md_before = sorted((tmp / "docs").glob("*.md"))
-            self.assertEqual(len(md_before), 25)
-            self.assertEqual(len(docs_build.expected_pages(tmp)), 69)
+            self.assertEqual(len(md_before), 26)
+            self.assertEqual(len(docs_build.expected_pages(tmp)), 70)
 
             (tmp / "docs" / "ZZZ-STUB.md").write_text("# Stub\n\nStub content.\n", encoding="utf-8")
 
             md_after = sorted((tmp / "docs").glob("*.md"))
-            self.assertEqual(len(md_after), 26, "one more doc must move the pinned 25 -> 26")
+            self.assertEqual(len(md_after), 27, "one more doc must move the pinned 26 -> 27")
             page_map_after = docs_build.deep_dive_page_map(tmp)
-            self.assertEqual(len(page_map_after), 28, "one more doc must move the pinned 27 -> 28")
-            self.assertEqual(len(docs_build.expected_pages(tmp)), 70, "one more doc must move the pinned 69 -> 70")
+            self.assertEqual(len(page_map_after), 29, "one more doc must move the pinned 28 -> 29")
+            self.assertEqual(len(docs_build.expected_pages(tmp)), 71, "one more doc must move the pinned 70 -> 71")
 
 
 class DocHygieneAcceptanceTests(unittest.TestCase):

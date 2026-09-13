@@ -1,0 +1,20 @@
+{
+  "cached_date": "2026-09-13",
+  "update_from": "https://cursor.com/docs/cli/reference/parameters (flags) -- Cursor publishes no per-model CLI price table this file could mirror; nothing below is a rate",
+  "harness": "cursor",
+  "billing_modes": {
+    "plan": {
+      "unit": null,
+      "usage_limited": true,
+      "note": "Cursor CLI under a Cursor account draws down the account's plan allowance; the CLI documents no usage or cost output and publishes no token-to-allowance conversion, so every Cursor dispatch is unpriced: billed_usd stays null and no proxy dollar is invented."
+    },
+    "api_key": {
+      "unit": null,
+      "note": "CURSOR_API_KEY / --api-key authentication is documented; its pricing is not recorded here and is never estimated from another harness's rates."
+    }
+  },
+  "model_ids_note": "No model ids are recorded. The host's own list is read at run time, read-only, with `agent models` / `--list-models` (bin/cursor_adapter.py models), and is never written into this file from memory. A `--model` given to the driver is passed to the CLI as written and resolved by Cursor, not by this file. The observed model is taken only from a `model` field the CLI's own JSON output carries.",
+  "models": {},
+  "task_profiles": {},
+  "knobs": {}
+}

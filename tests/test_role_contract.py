@@ -240,9 +240,17 @@ class SupportTests(unittest.TestCase):
                 self.assertEqual(support["levels"]["implementer"][0], "sequenced")
                 self.assertEqual(support["levels"]["reviewer"][0], "sequenced")
 
-    def test_cursor_is_unknown_not_assumed(self):
+    def test_cursor_is_declared_with_its_gaps_and_an_unknown_executor_is_refused(self):
+        # Step 20 pinned Cursor as unknown; step 23 delivered its driver, so its support is
+        # now stated like the other three: sequenced implementer and reviewer, the verifier
+        # partial (the check runs, no verifier agent is dispatched), and nothing unknown.
         support = kc.roster_support(kc.resolve_roster(""), "cursor")
-        self.assertEqual(support["unknown"], ["implementer", "verifier", "reviewer"])
+        self.assertEqual(support["unknown"], [])
+        self.assertEqual(support["partial"], ["verifier"])
+        self.assertEqual(support["levels"]["implementer"][0], "sequenced")
+        self.assertEqual(support["levels"]["reviewer"][0], "sequenced")
+        ext = kc.roster_support(kc.resolve_roster("roles: test-author red-team"), "cursor")
+        self.assertEqual(ext["gap"], ["test-author", "red-team"])
         with self.assertRaises(kc.RosterError):
             kc.roster_support(kc.resolve_roster(""), "vscode")
 
@@ -284,7 +292,8 @@ class SupportTests(unittest.TestCase):
                                  "implemented but never run live")
                 self.assertIn("ROLE_SUPPORT", rows["extended_roles"]["source"])
         cursor = ha.registry_capabilities("cursor")
-        self.assertEqual(ha.effective(cursor["extended_roles"]), ha.UNKNOWN)
+        self.assertEqual(ha.effective(cursor["extended_roles"]), ha.UNSUPPORTED)
+        self.assertEqual(ha.effective(cursor["independent_review"]), ha.UNKNOWN)
 
 
 # ---- 4. the pre-dispatch check on every driver ----------------------------------------------------

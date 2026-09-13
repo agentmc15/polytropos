@@ -13,6 +13,7 @@
 | [Copilot CLI parity — the Claude Code plugin experience, ported](copilot-parity.md) |
 | [Copilot model prefs — pinning and excluding models](copilot-pins.md) |
 | [The Copilot workflow layer](copilot-workflow.md) |
+| [The Cursor harness](cursor-harness.md) |
 | [Daily work journal](daily-journal.md) |
 | [The effort dial — cross-harness contract](effort-dial.md) |
 | [Evidence-Loop: Measuring Governance, Promotion, and Escalation Quality](evidence-loop.md) |

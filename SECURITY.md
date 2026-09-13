@@ -29,6 +29,13 @@ These are properties with code behind them, not conventions:
 - **Codex review and acceptance are pinned read-only.** `bin/codex_execute.py` forces
   `--sandbox read-only` on both and rejects any attempt to override it through extra arguments.
   It also refuses extra arguments that would displace the policy-selected model or profile.
+- **Cursor is identified before it is trusted, and its review is pinned read-only.** Cursor's
+  CLI is a binary named `agent`, a name anything might carry. `bin/cursor_execute.py` dispatches
+  to it only after `--version` or `about --format json` names Cursor; anything else is refused
+  before a claim, a ledger entry, or a file write. `review` runs under `--mode ask`, never
+  `--force`, and extra arguments that would change the mode, model, workspace, or session are
+  refused. Only the version line is kept from the `about` payload. `--dry-run` spawns nothing,
+  not even the identity probe.
 - **A code graph is untrusted repository evidence, read within bounds.** `bin/graph_ground.py`
   accepts a graph's `source_file` only as a relative, traversal-free path under the repository
   root (rejected paths are named, never read), reads files through the confined reader, refuses
@@ -59,7 +66,7 @@ These are properties with code behind them, not conventions:
   stores are gitignored, written only by their own engines, and never bulk-injected into a
   session's context. Journal and usage collection read home directories strictly read-only.
 
-- **Installation does not overwrite what it does not own.** Every Copilot and Codex destination
+- **Installation does not overwrite what it does not own.** Every Copilot, Codex, and Cursor destination
   is classified before a byte is written — absent, already identical, written by this installer
   and unchanged, or something else — and that last case is preserved and reported rather than
   replaced. Overwriting it takes an explicit flag that also keeps the prior bytes. Ownership
@@ -165,6 +172,11 @@ Do not rely on any of the following. Each is a known gap, not a subtlety:
   `--allowedTools` was documented and implemented and silently swallowed the prompt until
   someone ran it. Most rows there say `unknown`, and that is the honest state, not a gap to
   fill in optimistically.
+- **Cursor's IDE and cloud modes are files, not a driver.** The bundle this repository installs
+  under `.cursor/` is read by Cursor's IDE agent and cloud agents as well as by its CLI, but
+  only the CLI is dispatched from here, and none of the three has been run live from this
+  repository. Usage and model identity are what the CLI's own output says or `unknown`; the
+  editor's SQLite store is never opened and no browser is automated to find out more.
 - **Redaction is shape-matching, not a guarantee of absence.** `bin/redact.py` catches
   strings that look like published credential formats and secret-named assignments. A password
   that reads as an ordinary word, a customer name, an address — none of those have a shape and

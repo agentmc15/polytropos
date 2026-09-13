@@ -11,8 +11,8 @@ loaded into every session, so keep it a list of rules — not history, not ratio
 changelog.
 
 - **Pricing data is the single numeric source of truth — one file per harness, never merged.**
-  `data/pricing.json` (Claude), `data/pricing.copilot.json`, `data/pricing.codex.json`; no
-  harness's config reads another's. Never hardcode prices, ratios, plan facts, credit values,
+  `data/pricing.json` (Claude), `data/pricing.copilot.json`, `data/pricing.codex.json`,
+  `data/pricing.cursor.json`; no harness's config reads another's. Never hardcode prices, ratios, plan facts, credit values,
   model IDs, or pricing dates into skills, scripts, or bundle content — derive them at run time
   (the AIC unit itself is data: `billing_unit.usd_per_credit`). Codex model ids are best-effort
   (`model_ids_note`); corrections land in that file and nowhere else. `README.md` and `docs/`
@@ -27,10 +27,10 @@ changelog.
   `billed_usd` stays null, the source stays `priced: false` / `usd: null`, and proxy dollars
   never enter a priced total or a digest's totals.
 - **Never invoke the real `copilot` CLI from tests, kit verify commands, or anything run during
-  execution** — and the same holds for `codex` and `claude`. Those calls spend the user's real
+  execution** — and the same holds for `codex`, `claude`, and Cursor's `agent`. Those calls spend the user's real
   credits and hit the network, and the user has live `~/.copilot`, `~/.codex`, and `~/.claude`
   homes. A dispatcher spawning its own CLI on the user's explicit run is the point; anything
-  else is not. Every dispatcher (`bin/{copilot,claude,codex}_execute.py`, `bin/copilot_ralph.py`,
+  else is not. Every dispatcher (`bin/{copilot,claude,codex,cursor}_execute.py`, `bin/copilot_ralph.py`,
   `bin/journal_summarize.py`) takes an injectable runner; tests stub or mock every dispatch using
   temp stub executables and temp home dirs only; `--dry-run` / `--demo` are the sole sanctioned
   CLI smoke paths and spawn nothing.
@@ -99,8 +99,8 @@ changelog.
 - **Installation never overwrites what it does not own.** `bin/harness_select.py` classifies
   every destination before writing, restates that precondition at the moment it writes, and rolls
   back only bytes the same run wrote. It never writes `config.toml`, never overwrites a differing
-  `AGENTS.md` or skill dir, and resolves `{{POLYTROPOS_ROOT}}` in `copilot/` and `codex/` bundle
-  files to an absolute path at install time — the only place that substitution ever happens.
+  `AGENTS.md` or skill dir, and resolves `{{POLYTROPOS_ROOT}}` in `copilot/`, `codex/`, and `cursor/`
+  bundle files to an absolute path at install time — the only place that substitution ever happens.
 - **`bin/harness_update.py` check is strictly read-only; apply writes only the Copilot/Codex homes
   via `harness_select`'s own writers plus the repo's generated mirrors — never `~/.claude` (the
   remedy is printed, never executed), never pricing numbers or docs tables.** Codex prompts are
@@ -190,8 +190,7 @@ python3 bin/primitives.py check copilot/aesop.toml   # AI-primitive manifest val
   claim without its output counts as failure.
 - The brief is authoritative. If it conflicts with repo reality (beyond shifted line numbers),
   stop and report the discrepancy — do not improvise a different fix.
-- Check `.claude/kits/<slug>/PLAN.md` for the active kit's out-of-scope fence before starting.
-  Each kit's own fences live in `.claude/kits/<slug>/GUARDRAILS.md` — read it together with
-  that kit's PLAN.md before starting any of its tasks. Those fences are kit-scoped law: they
-  bind only while that kit's tasks run and never generalize to other work. The Invariants
-  above are the only always-on rules.
+- Read the active kit's `.claude/kits/<slug>/PLAN.md` (its out-of-scope fence) and
+  `GUARDRAILS.md` (its own fences) before starting any of its tasks. Those fences are
+  kit-scoped law: they bind only while that kit's tasks run and never generalize to other
+  work. The Invariants above are the only always-on rules.

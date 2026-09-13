@@ -121,6 +121,7 @@ nav:
     - Copilot CLI parity: deep-dives/copilot-parity.md
     - Copilot model prefs: deep-dives/copilot-pins.md
     - Copilot workflow layer: deep-dives/copilot-workflow.md
+    - Cursor harness: deep-dives/cursor-harness.md
     - Daily work journal: deep-dives/daily-journal.md
     - Effort dial: deep-dives/effort-dial.md
     - Evidence loop: deep-dives/evidence-loop.md

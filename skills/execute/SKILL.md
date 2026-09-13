@@ -92,7 +92,7 @@ PLAN.md may declare an OPTIONAL `budget:` line — a PLAN.md line family exactly
 
     `budget: max-dispatches=N max-escalations=N max-consults=N`
 
-Any subset of the three keys may appear, in any order. Absent block = today's behavior everywhere: unbounded, no check performed. All three headless drivers (`bin/claude_execute.py`, `bin/copilot_execute.py`, `bin/codex_execute.py`) honor the SAME block under the same names — see their "PLAN.md budget dial" docstring sections — and this loop honors it identically, so a kit behaves the same whether it is run interactively or through a driver.
+Any subset of the three keys may appear, in any order. Absent block = today's behavior everywhere: unbounded, no check performed. All four headless drivers (`bin/claude_execute.py`, `bin/copilot_execute.py`, `bin/codex_execute.py`, `bin/cursor_execute.py`) honor the SAME block under the same names — see their "PLAN.md budget dial" docstring sections — and this loop honors it identically, so a kit behaves the same whether it is run interactively or through a driver.
 
 **What the three keys count, in this loop's dispatch model:**
 

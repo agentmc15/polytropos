@@ -230,26 +230,128 @@
       }
     },
     "cursor": {
-      "client_mode": "unknown",
-      "pricing_file": null,
+      "client_mode": "cli (agent -p)",
+      "pricing_file": "data/pricing.cursor.json",
+      "modes_note": "IDE agent, local CLI, and background/cloud agents are three products; this registry describes the CLI, which bin/cursor_adapter.py drives. Files it installs (.cursor/skills, .cursor/agents) are read by all three, which says nothing about driving the other two -- see cursor_adapter.modes_report.",
       "capabilities": {
         "dispatch": {
+          "product": "supported",
+          "implemented": "supported",
+          "verified": "unknown",
+          "source": "https://cursor.com/docs/cli/headless (agent -p --output-format json --trust --force)",
+          "note": "bin/cursor_execute.py run through bin/cursor_adapter.build_dispatch; never invoked live from this repository -- tests stub the binary -- so verified stays unknown"
+        },
+        "identity_probe": {
+          "product": "supported",
+          "implemented": "supported",
+          "verified": "unknown",
+          "source": "https://cursor.com/docs/cli/reference/parameters (-v/--version, about --format json)",
+          "note": "polytropos capability: the generically named `agent` is dispatched to only after `--version` or `about --format json` names Cursor; unknown fails closed. The probe's output format is undocumented, so which of the two answers positively on a real install is unverified"
+        },
+        "read_only_dispatch": {
+          "product": "supported",
+          "implemented": "supported",
+          "verified": "unknown",
+          "source": "https://cursor.com/docs/cli/reference/parameters (--mode ask)",
+          "note": "review and verification dispatches pass --mode ask and never --force; whether ask mode refuses every write is the product's promise, not verified here"
+        },
+        "model_selection": {
+          "product": "supported",
+          "implemented": "supported",
+          "verified": "unknown",
+          "source": "https://cursor.com/docs/cli/reference/parameters (--model, --list-models, agent models)",
+          "note": "--model is passed as written; the host's list is read at run time and never mirrored into a pricing file"
+        },
+        "structured_events": {
+          "product": "supported",
+          "implemented": "supported",
+          "verified": "unknown",
+          "source": "https://cursor.com/docs/cli/headless (--output-format json|stream-json)",
+          "note": "the output schema is undocumented: a top-level object is kept and only a string `model` field is read as an observed model; everything else stays unknown"
+        },
+        "status": {
           "product": "unknown",
           "implemented": "unsupported",
           "verified": "unknown",
-          "note": "step 23 delivers this adapter. The row exists so the registry says 'not built yet' rather than being silent, which reads the same as 'not applicable'"
+          "source": "https://cursor.com/docs/cli/reference/parameters (ls, resume, status)",
+          "note": "`status` reports authentication, not a run; `ls`/`resume` address chats. No per-run status is exposed, so the adapter raises CapabilityError"
+        },
+        "cancel": {
+          "product": "unknown",
+          "implemented": "unsupported",
+          "verified": "unknown",
+          "source": "",
+          "note": "no documented way to cancel a run from outside it; bin/proc_runner.py can stop the process tree, which says nothing about whether the call was billed"
+        },
+        "cli_sandbox": {
+          "product": "supported",
+          "implemented": "unsupported",
+          "verified": "unknown",
+          "source": "https://cursor.com/docs/cli/reference/parameters (--sandbox enabled|disabled, sandbox run)",
+          "note": "Cursor's own command sandbox is documented and not relied on: verification runs under bin/exec_policy.py, and the dispatch itself is unconfined, as on every harness"
+        },
+        "usage_report": {
+          "product": "unknown",
+          "implemented": "unsupported",
+          "verified": "unknown",
+          "source": "",
+          "note": "the CLI documents no usage or cost output; state.vscdb is an undocumented SQLite store this repository does not open; every Cursor dispatch is unpriced (usd null)"
+        },
+        "skill_files": {
+          "product": "supported",
+          "implemented": "supported",
+          "verified": "unknown",
+          "source": "https://cursor.com/docs/skills (.cursor/skills/<name>/SKILL.md)",
+          "note": "the bundle installs one project-scoped skill through the ownership-aware installer; discovery by the product is not verified here"
+        },
+        "subagent_files": {
+          "product": "supported",
+          "implemented": "supported",
+          "verified": "unknown",
+          "source": "https://cursor.com/docs/subagents (.cursor/agents/*.md: name, description, model, readonly, is_background)",
+          "note": "the bundle installs an implementer and a readonly verifier; the driver does not dispatch subagents itself"
+        },
+        "ide_mode": {
+          "product": "supported",
+          "implemented": "unsupported",
+          "verified": "unknown",
+          "source": "https://cursor.com/docs/subagents",
+          "note": "the IDE agent reads the installed files; no adapter operation drives the IDE"
+        },
+        "cloud_mode": {
+          "product": "supported",
+          "implemented": "unsupported",
+          "verified": "unknown",
+          "source": "https://cursor.com/docs/subagents (/in-cloud; agent worker start)",
+          "note": "cloud subagents and private workers read project-level files only; no adapter operation launches or drives one"
+        },
+        "durable_attempts": {
+          "product": "not-applicable",
+          "implemented": "supported",
+          "verified": "unknown",
+          "source": "bin/attempt_ledger.py, bin/kit_contract.py TaskRun",
+          "note": "polytropos capability: every dispatch is recorded before and after it runs, a dead run's open attempt is closed as unknown and reconciled by re-running the check, claims use O_EXCL. Exercised with a stub binary and temp stores only"
         },
         "independent_review": {
-          "product": "unknown",
-          "implemented": "unknown",
+          "product": "not-applicable",
+          "implemented": "supported",
           "verified": "unknown",
-          "note": "no adapter yet (step 23)"
+          "source": "bin/cursor_execute.py review; bin/kit_contract.py ROLE_SUPPORT",
+          "note": "phase-end review dispatched read-only (--mode ask) and recorded in the attempt ledger; never run live"
         },
         "extended_roles": {
-          "product": "unknown",
-          "implemented": "unknown",
+          "product": "not-applicable",
+          "implemented": "unsupported",
           "verified": "unknown",
-          "note": "no adapter yet (step 23)"
+          "source": "bin/kit_contract.py ROLE_SUPPORT",
+          "note": "`run` is one task, one role, with no hook sequencing; a kit that declares an optional role is refused or disclosed before dispatch (--roster-gap)"
+        },
+        "ambient_diagnosis": {
+          "product": "not-applicable",
+          "implemented": "supported",
+          "verified": "unknown",
+          "source": "https://cursor.com/docs/skills, https://cursor.com/docs/subagents (legacy .claude/ and .codex/ discovery)",
+          "note": "polytropos capability: bin/cursor_adapter.py doctor names every .claude/ or .codex/ agent or skill file Cursor would discover that carries another harness's commands"
         }
       }
     }

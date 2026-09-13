@@ -1,4 +1,4 @@
-# Handoff — roadmap implementation, steps 01–22
+# Handoff — roadmap implementation, steps 01–23
 
 **As of 2026-09-07.** Steps 01–15 are committed as a single change set on top of `fb40925`:
 66 files modified, 17 added, +5,485 / −1,860 lines. Full suite green: **3,727 tests, OK
@@ -33,12 +33,12 @@ user instructions outrank rule files; delegate in parallel by default).
 
 ## Where things stand
 
-**Steps 01–22 are done.** That is all of Phase A (input/artifact/acceptance boundaries), all of
+**Steps 01–23 are done.** That is all of Phase A (input/artifact/acceptance boundaries), all of
 Phase B (the execution boundary and the P0/P1 security remediation), all of Phase C (the
 shared runtime: durable attempts, cross-harness evidence, the validated execution DAG), and
-the first four steps of Phase D (named routing policies; the role contract; fresh, bounded
-code-graph grounding; lean entry points and scoped lessons). Steps 16–22 landed on
-2026-09-12/13 on branch `harden/roadmap-steps-16-26`, one commit each.
+the first five steps of Phase D (named routing policies; the role contract; fresh, bounded
+code-graph grounding; lean entry points and scoped lessons; the Cursor adapter). Steps 16–23
+landed on 2026-09-12/13 on branch `harden/roadmap-steps-16-26`, one commit each.
 
 | Step | What it closed |
 |---|---|
@@ -64,6 +64,7 @@ code-graph grounding; lean entry points and scoped lessons). Steps 16–22 lande
 | 20 | The role contract (`kit_contract.ROLE_CONTRACTS` / `WORKFLOWS` / `resolve_roster` / `ROLE_SUPPORT`): each role's responsibility, scope, hook, assurance, capabilities, and result fields as data, separate from whether an agent is spawned; three workflows (`direct` named on purpose, `reviewed` the default, `extended`) with explicit assurance; one grammar for PLAN.md `roles:`/`workflow:` shared by the skill and every driver; every driver checks the roster before preview or claim and refuses or discloses (`--roster-gap`) a declared role it cannot sequence, recording `roster.checked`; consumer-neutral templates (`<repo-root>`); `independent_review`/`extended_roles` registry rows; a written test plan for trio-vs-direct with no live spend |
 | 21 | Fresh, bounded, task-relevant code-graph grounding (`bin/graph_ground.py`): an optional provenance sidecar stamped from what is actually available (revision, dirty set, per-file content fingerprints, the graph's hash, the operator's extraction label, graphify's own metadata), freshness against the working tree with dirty and untracked files (`fresh` / `partial` naming changed and deleted files / `stale` / `unknown`, never a manufactured revision), a bounded impact walk from changed files or symbols (depth, node limit, hubs listed and never expanded through, configurable excludes), a bounded code-search fallback when the graph is absent, stale, unknown, silent, or weakly covering, one `polytropos.grounding/1` result any adapter can attach, graph paths validated before any read, git read-only through the process runner |
 | 22 | Lean entry points and scoped lessons: the architect, execute, and repo-bench skills split into a mandatory core plus verbatim references with a "read when" trigger each (3060/6267/6677 words to 2311/2690/1353; thirteen reference files), descriptions with positive and negative triggers, a "what binds, what adapts" rule with bounded adaptation, the exact word-count and 200-byte guards replaced by ceilings and contract checks; `bin/lessons_store.py` replaces automatic lessons with observations carrying provenance, scope, and expiry, rules only by recurrence across distinct sources or by explicit ask, contests, eligibility-gated and budgeted recall (step 13's rule reused), legacy entries as candidates never rules; the Copilot lessons-loop skill and route agent read through it |
+| 23 | A real Cursor adapter on the shared runtime (`bin/cursor_adapter.py` + `bin/cursor_execute.py`): the generically named `agent` binary identified before any dispatch (`--version`, then `about --format json`; unknown or absent fails closed before a claim or a write); `agent -p --output-format json --trust --workspace … [--model …] --force` for implementation and `--mode ask` for review, with overriding extra flags refused; IDE, CLI, and cloud modes reported separately (product / implemented / verified, all `verified: unknown`); a project-scoped `.cursor/` bundle (skill, implementer, read-only verifier) with an ownership-aware, manifest-backed, no-clobber installer (`harness_select install --harness cursor --project`) and a `doctor` that diagnoses ambient files carrying another harness's commands; `data/pricing.cursor.json` as Cursor's own empty roster, usage unknown, `usd: null` on every block; no ladder; the shared conformance (ready, dispatch failure, verify failure, budget stop, resume, roster gap, review) through a stub; `kit_contract.budget_gate` and `append_run_note` extracted for adapters; the anti-triplication guard now spans four drivers |
 
 ### New modules, and what each is the *one place* for
 
@@ -112,34 +113,80 @@ code-graph grounding; lean entry points and scoped lessons). Steps 16–22 lande
   harness's own order, never tier names; never reads a pricing file itself (each harness
   builds a catalog from its own). `codex_policy.catalog` / `request_for` / `route` are the
   Codex side; the Codex driver is the only one dispatching under it so far.
+- `bin/cursor_adapter.py` — everything Cursor-specific that is not the run loop: identity
+  (`identify` / `require_cursor`, fail-closed), the argv (`build_dispatch`, blocked extra
+  flags), output reading (`parse_output`: a `model` field or unknown; never usage), the
+  three modes (`MODES`), the project bundle (`BUNDLE`, `bundle_sources` resolving
+  `{{POLYTROPOS_ROOT}}`), the install plan and its writer (`plan_install` / `apply_install`
+  through `safe_paths`, manifest at `.cursor/polytropos/install-manifest.json`), ambient
+  diagnosis, `doctor`, the documented-not-run smoke, and the `harness_adapter.Adapter`
+  subclass (`adapter()`) whose capabilities are the registry's rows. Carries no process
+  primitive; probes go through `proc_runner` with `dispatch_env("cursor")`.
+- `bin/cursor_execute.py` — the fourth driver, and the first written entirely on the
+  contract: `probe` / `status` / `run` / `review`. `run` is roster check, selection, dry-run
+  or identity, lifecycle, `budget_gate`, projection, `reconcile_task`, one dispatch, one
+  verification, `finish_task_projection`, `append_run_note`. No ladder, no price list, no
+  cost figure.
 
 ---
 
-## Next: step 23 — deliver a real Cursor adapter on the secured shared runtime
+## Next: step 24 — artifact-aware scheduling and optional bounded concurrency
 
-Cursor CLI first; IDE Agent, local CLI, and background/cloud modes reported SEPARATELY, never
-inferred from one another. Start from the official docs (skills, subagents, cli/headless) and
-read-only installed CLI help/version if present. Keep `primitives/harness-matrix.json` as
-historical provenance and correct the operational capability view so obsolete claims do not
-constrain native skills, subagents, or hooks; diagnose ambient compatibility skills so Cursor
-never invokes another harness's commands. The smallest useful native bundle plus an
-ownership-aware install plan (project-scoped preferred; broader scope explicit, no-clobber
-preserved). Capability probing, model selection from host data, dispatch, result/error
-normalisation, cancellation/status only where supported, verification integration — all on
-the SHARED contracts (parser, evidence, budget, state, graph, roster, routing), never a
-copied executor. Billing separate; unknown usage or identity reported unknown, never
-synthesised from prompt text or list prices. A stub Cursor process for end-to-end
-conformance (ready task, dispatch failure, verify failure, cancellation if supported,
-budget stop, resume); native file generation and no-clobber install proven in temp dirs; a
-documented optional live smoke that is NOT run. Validate the identity of a generically
-named executable (`agent`) before treating it as Cursor; unknown capability, version, or
-provenance is unknown and fails closed for a required security guarantee; no editor-database
-scraping, no browser automation. Run the shared adversarial conformance suite for
-acceptance provenance, state protection, verification isolation, spending, and filesystem
-boundaries. `kit_contract.ROLE_SUPPORT["cursor"]` and the registry's `cursor` rows are
-`unknown` today and are the seam to fill.
+P2 optimisation on the shared scheduler, supported adapter modes only; sequential execution
+stays the compatibility default. Bind task readiness and acceptance to the upstream
+artifact/evidence versions they require, so a changed upstream output invalidates the
+downstream acceptance that rested on it. Add an OPT-IN scheduler that runs ready independent
+work concurrently within host limits and one global budget: separate workspaces or
+enforceable non-conflicting write sets, atomic task claims (step 16's claims are the seam),
+and a central integration step; passing checks on separate branches is not proof the
+combined tree works, so the merged tree gets fresh verification; merge conflict is explicit
+integration work with no automatic reset or loss of user changes. Missing code-graph edges
+and `independent:` flags are insufficient to prove safe parallel writes. Permit bounded plan
+revision when implementation discoveries invalidate the decomposition, preserving the user's
+requirements and acceptance criteria and recording affected dependencies; do not add a
+planning stage to simple direct tasks. Scheduler decisions, claims, and dependency/acceptance
+changes stay under the trusted coordinator: workers may propose revisions but never grant
+themselves capabilities or budget; failure and cancellation release resources without
+refunding consumed work; security fixtures for a worker editing another task or scheduler
+state. Test upstream artifact change, conflicting writers, independent tasks, concurrent
+admission, merge failure, cancellation, and resume with local stubs; no live fan-out and no
+default concurrency change. **Read the amendment below first:** the integration step reads a
+manifest sized under the integrating model's own long-context threshold, from that harness's
+pricing file under its own field name (`data/pricing.cursor.json` carries none, so a Cursor
+integrator is unbounded and the report must say so).
 
-Remaining after that: **24** scheduling, **25–26** evaluation and the release matrix.
+Remaining after that: **25–26** evaluation and the release matrix.
+
+### Step 23's own deliberate limits
+
+- **Nothing was run against Cursor.** No `agent` binary exists on this machine
+  (`/usr/local/bin/cursor` is the IDE launcher and was not run); the flags, file locations,
+  and the JSON output shape come from Cursor's documentation, cited in `cursor_adapter.DOCS`.
+  Every `verified` cell in the registry's `cursor` rows and in `MODES` is `unknown`, and the
+  smoke command is printed, never executed. When the binary and the documentation disagree,
+  the binary wins and the adapter is what to correct.
+- **`parse_output` reads a documented format with an undocumented schema.** A top-level JSON
+  object (or the last object line of a stream) is kept; a string `model` field is the only
+  thing taken as an observed model; usage is always `None`. Nothing is guessed from prompt
+  text, and the editor's SQLite store is never opened.
+- **No ladder, no cost.** `data/pricing.cursor.json` has an empty roster and no rates, so a
+  failed verification blocks after one attempt and every NOTES block says `usd: null`. The
+  file exists so the one-file-per-harness rule holds and so a future roster lands in one place.
+- **Cancellation and status are unsupported and say so** (`CapabilityError`); the process
+  runner's wall-clock bound is the only stop. `harness_update.py check` does not yet know
+  Cursor; `detect()` still reports three harnesses (pinned by tests) — the Cursor binary's
+  presence is `cursor_execute.py probe`'s job.
+- **Project scope only.** The bundle installs under the project's `.cursor/`; a user-scope
+  install (`~/.cursor/`) was not added because nothing here may touch a home directory and
+  the roadmap prefers project scope. `harness_select.py detect`'s keys are unchanged.
+- **The verifier subagent is a file, not a dispatch.** `run` executes the verify command
+  under the execution boundary itself (`ROLE_SUPPORT["cursor"]["verifier"]` is `partial`);
+  the read-only verifier prompt is used by `review` and is available to the IDE.
+- **Two contract extractions, no behaviour change for the three original drivers.**
+  `kit_contract.budget_gate` and `append_run_note` were added for adapters; the original
+  drivers keep their inline budget block and their own `append_note` (each carries a bullet
+  the others do not). The anti-triplication guard covers all four; the highest cross-driver
+  similarity of any shared name is `_kc` (exempt bootstrap) at 80%.
 
 ### Step 22's own deliberate limits
 
@@ -402,6 +449,22 @@ These cost real time to discover. All are still live.
 11. **`project_status` now refuses an edge `TRANSITIONS` lacks** (`pending -> done`, say) with
    `InvalidTransition`, a `ValueError` that `run_cli` turns into exit 2. A test that writes a
    verdict straight over `pending` must go through `in-progress` first, as the drivers do.
+12. **Modules loaded by path are separate copies, and so are their exception classes.** A test
+   that loads `harness_adapter` itself and asserts `assertRaises(ha.CapabilityError)` against
+   an adapter that loaded its own copy never catches it. `test_cursor_adapter.py` takes
+   `ha = ca._ha()`; `test_kit_contract.py` hands its `ha` to the cursor module through
+   `_SIBLINGS["harness_adapter"]`. The same rule made `harness_select.py` load
+   `cursor_adapter` by path (`_cursor_adapter()`), not `import cursor_adapter`, because
+   `harness_update.py` loads `harness_select` by path and `bin/` is not on `sys.path` there.
+13. **argparse eats a flag-shaped value.** `--extra-arg --force` is a parse error ("expected
+   one argument"); the form that reaches the adapter's refusal is `--extra-arg=--force`. The
+   drivers' `status` subparsers take only `--kit`/`--json`, so a helper that appends
+   `--cursor-bin`/`--attempt-store` to every command breaks on `status`.
+14. **Adding a `docs/*.md` page moves six census pins.** `tests/test_docs_build_adversarial.py`
+   (26 sources / 28 page-map keys / 70 pages, and the "one more" targets 27 / 29 / 71),
+   `tests/test_docs_build_cli.py` (70), and `tests/test_primitives_doc_adversarial.py` mirror
+   each other by design: `CensusBumpTripwireTests` exists to prove the other two are real
+   tripwires. Move all of them in the same edit, with the date and the file that moved them.
 
 ---
 
@@ -455,7 +518,7 @@ Each is recorded in `SECURITY.md` rather than hidden. None is a surprise; all ar
 ```bash
 cd /Users/michaelcave/Developer/reposV2/polytropos
 python3 -m unittest discover -s tests          # expect OK (2 skipped), ~4 min; the count is in the last commit that changed it
-git log --oneline -4                           # steps 16, 17, 18 on top of the merged 01–15
+git log --oneline -9                           # steps 16–23 on top of the merged 01–15
 python3 bin/runtime_data.py where              # where your stores resolved to
 python3 bin/harness_adapter.py                 # what each harness can actually do
 python3 bin/attempt_ledger.py demo             # crash / resume / progress walkthrough, temp dir only
@@ -466,8 +529,10 @@ python3 bin/codex_execute.py prepare --model strong --policy adaptive --explain 
 python3 bin/kit_contract.py roster --kit .claude/kits/docs-site --executor codex   # a declared roster a driver cannot run
 python3 bin/graph_ground.py demo               # stamp / freshness / bounded impact / search fallback, temp tree, canned git
 python3 bin/lessons_store.py demo              # an anecdote refused, recurrence promoted, a rule contested, temp store
+python3 bin/cursor_adapter.py demo             # identity accept/refuse, argv, install states, ambient diagnosis, temp dirs
+python3 bin/cursor_execute.py run --kit .claude/kits/docs-site --dry-run   # the Cursor argv; spawns nothing
 ```
 
-Then read step 23 in the roadmap and continue. The pattern that has worked: verify the step's
+Then read step 24 in the roadmap (and the amendment recorded above) and continue. The pattern that has worked: verify the step's
 claims against HEAD first, implement, run the affected suites, then the full suite, then update
 `SECURITY.md` / `CLAUDE.md` / the doc mirrors together.

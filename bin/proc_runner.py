@@ -107,6 +107,8 @@ PROVIDER_ENV_PREFIXES = {
     "claude": ("ANTHROPIC_", "CLAUDE_"),
     "copilot": ("GH_", "GITHUB_", "COPILOT_"),
     "codex": ("OPENAI_", "CODEX_"),
+    # Step 23: Cursor's CLI authenticates with CURSOR_API_KEY (or a stored login under HOME).
+    "cursor": ("CURSOR_",),
 }
 
 #: Escape hatch, because an allowlist that cannot be widened is one a user cannot recover from.

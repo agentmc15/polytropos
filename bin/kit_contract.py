@@ -987,7 +987,14 @@ ROLE_SUPPORT = {
         **{role: ("unsupported", "run refuses any role but implementer")
            for role in OPTIONAL_ROLES},
     },
-    "cursor": {role: ("unknown", "no adapter yet") for role in ALL_ROLES},
+    "cursor": {
+        "implementer": ("sequenced", "run (agent -p --force)"),
+        "verifier": ("partial", "run executes the verify command under the execution "
+                                "boundary; no verifier agent is dispatched per task"),
+        "reviewer": ("sequenced", "review (agent -p --mode ask)"),
+        **{role: ("unsupported", "run is one task, one role; no hook sequencing")
+           for role in OPTIONAL_ROLES},
+    },
 }
 
 EXECUTORS = tuple(ROLE_SUPPORT)
@@ -1599,6 +1606,95 @@ def append_block(notes_path, block):
         pass
     with open(notes_path, "a", encoding="utf-8") as fh:
         fh.write(prefix + block)
+
+
+def budget_gate(kit_dir, tasks, task, run_id, lifecycle, consult=False, role="implementer"):
+    """The PLAN.md budget dial, checked against the kit's own record BEFORE anything is
+    dispatched -> a `BudgetAdmission` (or None when the kit declares no budget).
+
+    A cap already reached prints the stop, writes ONE budget-stop outcome line unless the
+    task already carries a verdict (a budget stop never displaces one), ends the lifecycle,
+    and exits 1 -- the task's status is left exactly as found. The three original drivers
+    carry this block inline; an adapter built on the contract calls this.
+    """
+    kit_dir = Path(kit_dir)
+    plan_path = kit_dir / "PLAN.md"
+    plan_budget = parse_plan_budget(plan_path.read_text()) if plan_path.exists() else None
+    if not plan_budget:
+        return None
+    notes_path = kit_dir / "NOTES.md"
+    notes_text = notes_path.read_text() if notes_path.exists() else ""
+    used = combined_usage(notes_text, lifecycle.ledger)
+    admission = BudgetAdmission(plan_budget, used)
+    exhausted_key = plan_budget_exhausted(plan_budget, used, is_consult=consult)
+    if not exhausted_key:
+        return admission
+    cap = plan_budget[exhausted_key]
+    remaining = sum(1 for t in tasks if t["status"] == "pending")
+    print(
+        f"budget-stop: PLAN.md budget {exhausted_key}={cap} already reached "
+        f"(used={used[exhausted_key]}) -- task {task['id']} was NOT dispatched; "
+        f"{remaining} pending task(s) (including this one) left untouched. See NOTES.md.",
+        file=sys.stderr,
+    )
+    prior_result = recorded_outcome_result(notes_text, task["id"])
+    if prior_result is not None and prior_result != "budget-stop":
+        print(
+            f"budget-stop: NOT recorded in the ledger -- task {task['id']} already carries "
+            f"result={prior_result} and a budget-stop is not a verdict, so writing one would "
+            f"displace recorded evidence. The stop above still applies: nothing was dispatched.",
+            file=sys.stderr,
+        )
+    else:
+        append_plan_budget_stop_note(notes_path, task, run_id, exhausted_key, cap,
+                                     used[exhausted_key], remaining, role=role)
+    lifecycle.end("budget-stop", reason=f"{exhausted_key}={cap} reached")
+    sys.exit(1)
+
+
+def append_run_note(notes_path, result, task, run_id=None, parent=None, actor="driver",
+                    extra=()):
+    """The generic NOTES.md run block, for an adapter that has no harness-specific bullets.
+
+    The three original drivers keep their own `append_note` (each carries a bullet the others
+    do not); an adapter built on this contract writes the same block shape through this one:
+    the heading, role, planned and used model, escalations, verify exit, the step-16 and
+    step-19 bullets when present, any `extra` bullets, then exactly ONE outcome line. A
+    `parent` rides the line only on `escalated-pass`, as everywhere else.
+    """
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    task_id = task["id"]
+    model_used = result.get("model_used")
+    escalations = result.get("escalations") or []
+    lines = [
+        f"## {ts}{EM_DASH}{task_id}",
+        f"- role: {result.get('role', 'implementer')}",
+        f"- harness: {actor}",
+        f"- planned model: {result.get('planned_model') or task.get('model') or 'unpinned'}",
+        f"- model used: {model_used or f'{actor} default'}",
+        f"- observed model: {result.get('observed_model') or 'unknown'}",
+        f"- escalations: {' -> '.join(escalations) if escalations else '(none)'}",
+        f"- verify: exit {result.get('verify_rc')}",
+    ]
+    if result.get("dispatch_rc") not in (None, 0):
+        lines.append(f"- dispatch: exit {result['dispatch_rc']}")
+    if result.get("class"):
+        lines.append(f"- failure-class: {result['class']}")
+    if result.get("reconciled"):
+        lines.append(f"- reconciled: {result['reconciled']} earlier attempt(s) settled by "
+                     f"re-running the check; nothing was re-dispatched")
+    if result.get("plan_drift"):
+        lines.append(f"- plan-drift: {', '.join(result['plan_drift'])}")
+    if result.get("usd") is None:
+        lines.append("- usd: null (unpriced; the harness reports no usage)")
+    lines.extend(extra)
+    attempts = result.get("ledger_attempts") or (1 + len(escalations))
+    outcome_model = model_used if model_used else "unpinned"
+    result_word = outcome_result(result.get("status"), escalations, parent)
+    line_parent = parent if result_word == "escalated-pass" else None
+    lines.append("- " + build_outcome_line(task_id, outcome_model, attempts, result_word,
+                                           run_id=run_id, parent=line_parent))
+    append_block(notes_path, "\n".join(lines) + "\n")
 
 
 def project_status(tasks_path, task_id, new_status, expected=None):

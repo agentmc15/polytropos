@@ -26,7 +26,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-DRIVERS = ("claude_execute", "copilot_execute", "codex_execute")
+DRIVERS = ("claude_execute", "copilot_execute", "codex_execute", "cursor_execute")
 
 #: The one function that legitimately repeats in every driver: the loader that reaches the
 #: shared contract. It cannot come from the contract, because reaching the contract is what it
@@ -308,7 +308,11 @@ class AdapterConformanceTests(unittest.TestCase):
     """The same logical task through every adapter, including one that is not a real harness."""
 
     def adapters(self):
-        return [ha.StubAdapter()]
+        # Step 23: the first real adapter walks the same conformance as the stub. It is
+        # handed THIS test's harness_adapter so its exception classes are the ones asserted.
+        cursor = _load("cursor_adapter")
+        cursor._SIBLINGS["harness_adapter"] = ha
+        return [ha.StubAdapter(), cursor.adapter()]
 
     def test_every_adapter_builds_a_dispatch_argv_for_the_same_task(self):
         task = kc.to_contract(kc.parse_tasks(TASKS_MD)[1])
@@ -317,7 +321,9 @@ class AdapterConformanceTests(unittest.TestCase):
                 argv = adapter.build_dispatch(task, model_id="fake-mid-a", prompt="do it")
                 self.assertIsInstance(argv, list)
                 self.assertTrue(all(isinstance(a, str) for a in argv))
-                self.assertIn("T2", argv)
+                # The dispatch names its task: as its own argument, or inside the prompt of
+                # a prompt-only CLI.
+                self.assertTrue(any("T2" in a for a in argv), argv)
 
     def test_every_adapter_normalizes_a_runner_result_the_same_way(self):
         raw = {"outcome": "ok", "rc": 0, "terminal": True, "stdout": "out", "stderr": "",

@@ -1,0 +1,152 @@
+# The Cursor harness
+
+Polytropos runs execution kits through Cursor's command-line agent the same way it runs them
+through Claude Code, Copilot CLI, and Codex: one task per dispatch, the verify command re-run
+inside the execution boundary, the attempt recorded before and after, the kit's state written
+from a fresh read. Everything that must mean the same thing on every harness comes from
+`bin/kit_contract.py`. What `bin/cursor_adapter.py` and `bin/cursor_execute.py` add is only
+what Cursor makes different: an identity check before any dispatch, the `agent -p` argument
+vector, a project-scoped native bundle, and an honest account of what the CLI does not report.
+
+Nothing in this repository runs Cursor. Every test and every `demo`, `--dry-run`, and `doctor`
+path uses a throwaway stub or spawns nothing. A real `run` spends the user's Cursor allowance.
+
+## Three products, reported separately
+
+Cursor ships an IDE agent, a command-line agent, and cloud agents. They read the same
+project files, but only one of them is driven from here, and none has been run live from
+this repository. `bin/harness_select.py doctor --harness cursor` prints this table from
+`cursor_adapter.MODES`; the product column cites Cursor's own documentation.
+
+| Mode | Product | Implemented here | Verified | What that means |
+|---|---|---|---|---|
+| `cli` | supported | supported | unknown | the driver dispatches through `agent -p`; never run live from the repository |
+| `ide` | supported | files-only | unknown | the IDE reads the installed `.cursor/skills` and `.cursor/agents`; nothing here drives the IDE |
+| `cloud` | supported | files-only | unknown | cloud subagents and private workers read project files; nothing here launches one |
+
+`verified` stays `unknown` until someone runs the documented smoke on their own machine and
+records it in `primitives/harness-capabilities.json`. The historical product matrix in
+`primitives/harness-matrix.json` is provenance, not the operational view.
+
+## Identity before trust
+
+Cursor's CLI installs as a binary named `agent`, a name any tool might carry. The driver
+refuses to dispatch to it until it has said what it is: `agent --version` must name Cursor,
+or `agent about --format json` must. A binary that says neither is `unknown` and is refused
+before a claim is taken, before the ledger is opened, before any file is written. An absent
+binary is `absent`. Only the version line is kept from the `about` payload; account fields in
+it are not recorded.
+
+```bash
+python3 bin/cursor_execute.py probe                      # exit 3 unless --cursor-bin is Cursor
+python3 bin/cursor_execute.py probe --models             # also `agent models` (network)
+python3 bin/cursor_execute.py probe --cursor-bin /path/to/agent
+```
+
+## Install the project bundle
+
+The bundle is project-scoped: Cursor discovers skills and subagents under `.cursor/` in the
+workspace, so that is where they go. Nothing is written under the home directory.
+
+```bash
+python3 bin/harness_select.py install --harness cursor --project . --dry-run
+python3 bin/harness_select.py install --harness cursor --project .
+python3 bin/harness_select.py install --harness cursor --project . --adopt-existing
+python3 bin/harness_select.py doctor  --harness cursor --project . [--cursor-bin BIN] [--json]
+```
+
+| Destination | What it is |
+|---|---|
+| `.cursor/skills/polytropos-execute/SKILL.md` | the entry point: how a kit is run and what the driver owns; `{{POLYTROPOS_ROOT}}` resolved to this checkout at install time |
+| `.cursor/agents/polytropos-implementer.md` | the implementer subagent (`model: inherit`, `readonly: false`); also the prompt preamble of every `run` |
+| `.cursor/agents/polytropos-verifier.md` | the read-only verifier subagent (`readonly: true`); also the preamble of every `review` |
+| `.cursor/polytropos/install-manifest.json` | what this installer wrote, by content hash |
+
+Every destination is classified before a byte is written: `install` (absent), `up-to-date`
+(identical), `managed-update` (the manifest says this installer wrote what is there),
+`unmanaged` (present, different, not ours). An unmanaged file is preserved and the whole
+install is refused with exit 2; `--adopt-existing` overwrites it and keeps the prior bytes
+beside it as `<file>.polytropos-bak`. A manifest that cannot be parsed owns nothing. Every
+write goes through `bin/safe_paths.py`: a destination that traverses a symlink out of the
+project is refused at the moment of writing, and files the same run already wrote are
+removed again.
+
+`doctor` also lists **ambient** files Cursor would discover that carry another harness's
+commands (`.claude/agents/*.md`, `.claude/skills/*/SKILL.md`, `.codex/*`, `.agents/skills/*`):
+a subagent written for Claude Code that says `claude -p` or `/polytropos:execute` would be
+picked up by Cursor and run the wrong tool. The diagnosis names the file and the tokens; it
+changes nothing.
+
+## Run a kit
+
+```bash
+python3 bin/cursor_execute.py status --kit .claude/kits/<slug>
+python3 bin/cursor_execute.py run    --kit .claude/kits/<slug> --dry-run          # spawns nothing
+python3 bin/cursor_execute.py run    --kit .claude/kits/<slug> [--task ID] [--model ID]
+python3 bin/cursor_execute.py review --kit .claude/kits/<slug> --phase N
+```
+
+`run` selects the first ready task (or `--task`), checks the graph and the roster, proves the
+binary's identity, claims the task in the attempt ledger, applies the PLAN.md budget dial,
+and dispatches once:
+
+```text
+agent -p --output-format json --trust --workspace <cwd> [--model ID] --force <prompt>
+```
+
+`--trust` is the documented headless trust flag; `--force` lets the implementer write. The
+prompt is the implementer preamble, the run's id line (`[kit=… run=… task=…]`), and the
+task's brief. `--model` is passed to `agent --model` exactly as written, with the task's
+`model:` pin as the default and the host's own default when neither is given; no price list
+is consulted to choose it. Extra flags may be added with `--extra-arg`, except the ones that
+would replace what the adapter chose and recorded (identity, mode, model, workspace, session).
+
+`review` dispatches the verifier preamble with `--mode ask`, never `--force`, records the
+dispatch in the ledger against `phase-<N>` with role `reviewer`, and writes nothing into the
+kit.
+
+Every `run` flag the other drivers take works the same way here: `--roster-gap`,
+`--exec-mode`, `--attempt-store`, `--break-claim`, `--parent`, `--rerun`. The roster check
+states Cursor's support for each standing role: implementer and reviewer are sequenced,
+the verifier is partial (the check runs under the boundary; no verifier agent is dispatched
+per task), and every optional role is a gap that stops the run unless disclosed.
+
+## What is recorded, and what stays unknown
+
+- **The attempt ledger** records the dispatch before and after it runs, the verify result,
+  the projection, and the claim's release, outside the tree. A run that died is closed as
+  unknown by the next run, which re-runs the check and either accepts the work it finds or
+  dispatches once more with the earlier attempts' evidence in the prompt. Nothing is replayed.
+- **NOTES.md** gets the generic run block: role, harness, planned and used model, observed
+  model, verify exit, dispatch exit and failure class when the process failed, and exactly one
+  `outcome:` line. `usd: null (unpriced; the harness reports no usage)` on every block.
+- **The observed model** is whatever the CLI's own JSON output names in a `model` field, or
+  `unknown`. It is never inferred from the prompt or from a price list.
+- **Usage and cost are unknown.** Cursor's CLI documents no usage output, and its editor
+  database is an undocumented SQLite store this repository does not open. `data/pricing.cursor.json`
+  is Cursor's own pricing file, separate from the other three and never merged with them; it
+  records the two billing modes with no rates and an empty model roster. A run therefore
+  carries no dollar figure, and no digest counts one.
+- **There is no escalation ladder.** With no tiers to climb, a failed verification leaves the
+  task `blocked` after one attempt and says so; a dispatch failure is classified (auth,
+  config, permission, infrastructure, unknown) and never retried on a different model.
+- **Cancellation and status queries are not supported**, and the adapter raises rather than
+  answering; a process that overruns its bound is ended by the process runner.
+
+## The optional live smoke
+
+Documented, never run by this repository: it contacts Cursor with the user's credentials and
+may spend. `doctor` prints it with the project's own path filled in.
+
+```bash
+agent -p --trust --workspace /path/to/project --output-format json --mode ask "Reply with the single word ready"
+```
+
+Recording its outcome in the registry is what turns a `verified: unknown` row into evidence.
+
+## Sources
+
+The flags and file locations come from Cursor's documentation, cited in
+`cursor_adapter.DOCS`: headless mode, the parameter reference, skills, and subagents. They
+were not confirmed against a live installation; when the documentation and the binary
+disagree, the binary wins and the adapter is what to correct.

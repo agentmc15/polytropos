@@ -115,6 +115,19 @@ def detect():
 
 
 _SAFE_PATHS = None
+_CURSOR_ADAPTER = None
+
+
+def _cursor_adapter():
+    """Lazy-load `bin/cursor_adapter.py` by path (step 23), for the same reason as `_sp`."""
+    global _CURSOR_ADAPTER
+    if _CURSOR_ADAPTER is None:
+        path = Path(__file__).resolve().parent / "cursor_adapter.py"
+        spec = importlib.util.spec_from_file_location("polytropos_cursor_adapter", path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        _CURSOR_ADAPTER = module
+    return _CURSOR_ADAPTER
 
 
 def _sp():
@@ -1386,11 +1399,36 @@ def cmd_install(args):
     )
     if args.harness != "codex" and any(codex_only_values):
         raise SystemExit("Codex setup flags may be used only with --harness codex")
-    if args.harness != "copilot" and args.adopt_existing:
-        raise SystemExit("--adopt-existing may be used only with --harness copilot")
+    if args.harness not in ("copilot", "cursor") and args.adopt_existing:
+        raise SystemExit("--adopt-existing may be used only with --harness copilot or cursor")
+    if args.harness != "cursor" and args.project:
+        raise SystemExit("--project may be used only with --harness cursor")
 
     if args.harness == "claude-code":
         print(f"claude-code: {CLAUDE_CODE_MESSAGE}")
+        return
+
+    if args.harness == "cursor":
+        # Step 23: project-scoped, ownership-aware; the adapter owns the plan and the writes.
+        cursor_adapter = _cursor_adapter()
+        project = Path(args.project) if args.project else Path.cwd()
+        try:
+            plan = cursor_adapter.plan_install(project, adopt_unmanaged=args.adopt_existing)
+        except FileNotFoundError as exc:
+            print(str(exc), file=sys.stderr)
+            sys.exit(2)
+        if args.dry_run:
+            print(cursor_adapter.render_plan(plan))
+            if plan["conflicts"]:
+                sys.exit(2)
+            return
+        try:
+            written = cursor_adapter.apply_install(plan)
+        except (cursor_adapter.InstallConflict, cursor_adapter._sp().SafePathError) as exc:
+            print(cursor_adapter.render_plan(plan), file=sys.stderr)
+            print(str(exc), file=sys.stderr)
+            sys.exit(2)
+        print(cursor_adapter.render_plan(plan, written))
         return
 
     if args.harness == "codex":
@@ -1449,8 +1487,16 @@ def cmd_install(args):
 
 
 def cmd_doctor(args):
+    if args.harness == "cursor":
+        cursor_adapter = _cursor_adapter()
+        project = Path(args.project) if getattr(args, "project", None) else Path.cwd()
+        report = cursor_adapter.doctor(project, getattr(args, "cursor_bin", None)
+                                       or cursor_adapter.BINARY)
+        print(json.dumps(report, indent=2, sort_keys=True) if args.json
+              else cursor_adapter.render_doctor(report))
+        return
     if args.harness != "codex":
-        raise SystemExit("doctor currently supports only --harness codex")
+        raise SystemExit("doctor currently supports only --harness codex or cursor")
     root = Path(args.repo_root) if args.repo_root else REPO_ROOT
     home = Path(args.codex_home) if args.codex_home else (Path.home() / ".codex")
     try:
@@ -1505,8 +1551,13 @@ def build_parser():
 
     p_install = sub.add_parser("install", help="materialize a harness's native config")
     p_install.add_argument(
-        "--harness", choices=["claude-code", "copilot", "codex"], required=True,
+        "--harness", choices=["claude-code", "copilot", "codex", "cursor"], required=True,
         help="which harness to install",
+    )
+    p_install.add_argument(
+        "--project", default=None,
+        help="project root to install Cursor's project-scoped bundle into (Cursor only; "
+             "default: the current directory)",
     )
     p_install.add_argument(
         "--copilot-home", default=None,
@@ -1553,9 +1604,12 @@ def build_parser():
     p_install.set_defaults(func=cmd_install)
 
     p_doctor = sub.add_parser("doctor", help="diagnose Codex plugin, agents, and legacy copies")
-    p_doctor.add_argument("--harness", choices=["codex"], required=True)
+    p_doctor.add_argument("--harness", choices=["codex", "cursor"], required=True)
     p_doctor.add_argument("--repo-root", default=None)
     p_doctor.add_argument("--codex-home", default=None)
+    p_doctor.add_argument("--project", default=None,
+                          help="project root to diagnose (Cursor only; default: cwd)")
+    p_doctor.add_argument("--cursor-bin", default=None, help="the Cursor CLI binary (Cursor only)")
     p_doctor.add_argument("--json", action="store_true")
     p_doctor.set_defaults(func=cmd_doctor)
 
