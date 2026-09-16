@@ -182,6 +182,137 @@ which rows a client release invalidates and writes nothing. If a later session p
 - A new `docs/*.md` still moves the census pins (now 29 / 31 / 73 and 30 / 32 / 74).
 - `CLAUDE.md` has 8 bytes of headroom under its 16,000-byte ceiling; trim before adding.
 
+### Live verification on 2026-09-16 (after the roadmap)
+
+On the user's go-ahead, step 2 of the post-roadmap list (Cursor) and step 3 (one live Claude
+run) were done; step 4 (the bounded evaluation) waits on a target repository.
+
+- **Cursor.** `agent` was not on the host's PATH (Cursor.app installed; CLI not);
+  `cursor_execute.py probe` reported `absent` and refused. The user then had the CLI installed
+  (`curl https://cursor.com/install -fsS | bash`, inspected first: a tarball into
+  `~/.local/share/cursor-agent/versions/`, symlinks in `~/.local/bin`, no sudo). The probe
+  refused AGAIN (`unknown`): the real CLI names itself nowhere -- `--version` prints a bare
+  `2026.09.10-fd3934a` and `about --format json` carries `cliVersion`/`latestStatus`/
+  `latestVersion`/`osPlatform`/`model`/`subscriptionTier`/`userEmail`/... with no product name
+  in any value. The registry note had flagged exactly this risk. `cursor_adapter.identify` now
+  accepts that schema with a string `cliVersion` (`ABOUT_SCHEMA_KEYS`; two tests, one with the
+  real shape and account fields it must not keep); the probe answers `cursor (2026.09.10-fd3934a)`
+  and `identity_probe` is verified. The install is NOT logged in (`agent status`: "Not logged
+  in"): the documented smoke and one driver `run` on a second throwaway kit both returned
+  `Error: Authentication required. Please run 'agent login' first, or set CURSOR_API_KEY
+  environment variable.`; the driver classified it `auth`, projected T1 `blocked` with no verify,
+  recorded it (run `2026-09-16-765a`), and spent nothing. The user then ran `agent login`
+  (browser flow) and, with the throwaway kit's budget raised to two dispatches: the documented
+  smoke returned `ready` in 4 s (JSON result with `usage` token counts, no `model` field); `run
+  --task T1 --exec-mode enforced` dispatched once with no model pinned, rc 0 in ~17 s, the edit
+  landed, the confined verify passed, T1 done (run `2026-09-16-f427`); `review --phase 1` under
+  `--mode ask` ran ~80 s, rc 0, tree byte-identical, recorded as run `2026-09-16-fb01` -- the
+  reviewer wrote findings and said it could not run the verify command in ask mode, and produced
+  no `REVIEW VERDICT=` line. Cursor rows re-dated with `client_version`: `identity_probe`,
+  `dispatch`, `read_only_dispatch`, `structured_events`, `durable_attempts`, `independent_review`;
+  `usage_report` now says the product DOES report usage (the adapter does not read it yet).
+  Still unknown on Cursor: `model_selection` (no `--model` was passed), `cli_sandbox`, the IDE and
+  cloud modes, `concurrent_dispatch`, `workflow_evaluation`.
+- **Claude Code 2.1.273.** A throwaway project under the session scratchpad with a one-task kit
+  (`m.py` returns 1, the test wants 2; `budget: max-dispatches=2 max-escalations=1`). The dry run
+  found the driver reading `.claude/agents/<slug>-<role>.md` from THIS checkout only, so a kit in
+  its own project could not be driven at all -- fixed on branch `verify/claude-live-smoke`
+  (`claude_execute.agent_roots`: workspace, then the project the kit path implies, then this
+  repo; `AgentRootsTests`). Then, with the nested-session variables (`CLAUDECODE`,
+  `CLAUDE_CODE_*`) unset so the child saw a user's terminal: `run --task T1 --exec-mode
+  enforced` dispatched Sonnet once, rc 0 in ~20 s, the one-line edit landed, the confined
+  verify went red -> green, the task was projected done, ten ledger events recorded (run
+  `2026-09-16-60c2`); `review --phase 1` ran with `--allowedTools=Bash Read Grep Glob` and no
+  blanket grant, rc 0 in ~40 s, `REVIEW VERDICT=accept`, tree byte-identical, recorded as run
+  `2026-09-16-2c48` role=reviewer. Registry rows re-dated with `client_version`: `dispatch`,
+  `tool_pin`, `confined_verify`, `durable_attempts`, `independent_review`.
+- **Copilot CLI 1.0.80 (logged in as the user).** On a third throwaway kit: `run --task T1
+  --exec-mode enforced` dispatched `copilot --agent implementer --allow-all-tools -p …` once,
+  rc 0 in ~17 s, edit landed, confined verify passed, T1 done (run `2026-09-16-7d16`); `review
+  --phase 1` dispatched `copilot --agent reviewer -p …` with no blanket grant, rc 0 in ~40 s,
+  tree byte-identical (run `2026-09-16-ae3d`). The CLI's summary footer prints `AI Credits`,
+  token counts, and a resume id that the driver does not read (follow-up); the model is
+  recorded as `agent default`. Rows verified: `dispatch`, `durable_attempts`,
+  `independent_review`; `tool_pin` unchanged (no per-tool flag exists).
+- **codex-cli 0.153.3 (ChatGPT plan).** On a fourth throwaway kit: `run` dispatched `codex exec
+  --json --model <mid tier> --sandbox workspace-write …` under the reserved policy, rc 0 in
+  ~73 s, the rollout's `turn_context` attested the model (run `2026-09-16-1565`); `review
+  --phase 1` ran the strong tier under `--sandbox read-only`, rc 0 in ~52 s, typed role-use
+  record written. Then `accept --phase 1` REFUSED (exit 2, "no successful independent Sol
+  review record"): `review_evidence_fingerprint` hashed every untracked file except NOTES.md,
+  and the review had just written `role-use.jsonl` into the kit after computing the fingerprint
+  it recorded -- so on a real workspace no review could ever certify itself. Moving the file
+  aside reproduced the recorded hash exactly. Fixed: the driver's own records are excluded
+  (`test_the_reviews_own_typed_record_does_not_move_the_fingerprint`). The second `accept`
+  ran the frontier tier, ~110 s, `POLYTROPOS_ACCEPTANCE: accepted`, result recorded. Rows
+  verified: `dispatch`, `structured_events`, `sandbox_read_only`, `durable_attempts`,
+  `independent_review`. Observed and left alone: the CLI prints `Reading additional input from
+  stdin...` after the JSON stream; the compatibility review prompt asks for no verdict marker,
+  so a review's `result` is null by design; untracked `__pycache__` bytes are part of the
+  fingerprint (stable while the source is, fragile otherwise).
+- **General-mode mining on a real target.** `ai-stack-advisor` (322 YAML, 170 Markdown, 42
+  Python files) sorts `.claude/` and `docs/` before any package, and the operators match
+  English (" and " -> " or "), so the `limit * 4` site bound would have been spent on prose and
+  nothing admitted. `repo_bench.order_mutation_candidates` now examines source code first,
+  data after, prose last (`MutationCandidateOrderTests`) -- last, not never: a `.txt` golden
+  file is a real site, and the undecodable-file note (F4) needs the file read. The repo's suite is green on a
+  history-free copy with its own venv: 284 passed, 1 xfailed, ~67 s. The test command is
+  `env PYTHONPATH=. <repo>/.venv/bin/python -m pytest -q -p no:cacheprovider`. Correcting
+  `ab2a42a`, which said the venv's editable install "would otherwise import the ORIGINAL
+  tree": that is true only for the bare `pytest` console script (its `.pth` names the original
+  checkout and the script's own dir leads `sys.path`); under `python -m pytest` the sandbox cwd
+  already leads `sys.path` and wins with or without `PYTHONPATH` -- checked with `python -I`
+  from a sandbox copy, which resolves every package to the original tree, and without `-I`,
+  which resolves every package to the copy. Keep the variable; it is belt-and-braces, not magic.
+- **The first real evaluation plan (free) and what it found.** `workflow_eval.py plan --repo
+  ai-stack-advisor --harness claude --models sonnet,haiku --workflows direct,reviewed,kit
+  --policies pinned --repeats 2 --limit 6` ran 2026-09-16 01:10-01:38 UTC (28 min, all of it
+  the target's suite once per site) and dispatched nothing. Issue-replay found 0 usable pairs;
+  general mode examined its full bound of 24 sites and admitted ONE task (`mut-1-aistack`, XS):
+  23 mutations left the suite green. The 24 sites were 19 in `cli/aistack.py` and 5 in
+  `kb/audit.py`, and most were not code at all -- `True` inside click decorator arguments,
+  and ` and ` / `==` inside docstrings and help strings -- because the line scanner matches
+  operator text anywhere in a source line. The one RED site was `if __name__ == "__main__":`
+  flipped to `!=`, which runs the CLI at import; a discriminating bug by the oracle's rule and a
+  trivial one by any other. So the priced plan (est. $0.48 over 16 dispatches, 16 check runs,
+  wall cap 8 h) is a pipeline smoke, not a routing verdict: one task is below the evidence
+  floor of 5 per variant, and `propose` would refuse it by design. Two follow-ups, neither
+  started: a token-aware site scan for Python (stdlib `tokenize`; skip COMMENT and STRING
+  tokens, naive elsewhere) so the bound is spent on operators, and the fact that tree order
+  within code puts `cli/` before `recommender/`, so the tested core is never reached under a
+  small `--limit`. Also worth knowing before a live run: `run --live` re-mines from scratch in
+  its own temp dir, so the plan's 28 minutes repeat before the first dispatch. The plan card is
+  in this session's scratchpad (`asa-plan.json`); it is deterministic and reproducible.
+- **The first live workflow evaluation (Claude Code 2.1.273, run `2026-09-16-1b4c`).** On the
+  user's "lets run the smoke as planned": `run --live --max-usd 2 --max-dispatches 16` with the
+  plan's flags, 01:46-02:53 UTC, into the default evals store. Mining repeated (28 min, same one
+  task); then 16 of 16 dispatches, $1.90 model-reported against the $2.00 ceiling, `overspent:
+  false`, 12/12 trials solved, every variant BELOW the evidence floor and labelled so, no
+  security outcome tripped. What it showed: (1) the review form lacked `--output-format json`,
+  so every review stage was priced as an estimate while the implement stage beside it was
+  model-reported -- fixed, `test_each_review_form_is_the_harness_documented_read_only_shape`
+  pins the format args; (2) the results envelope carried the constant "no workflow has been run
+  live from this repository on any harness" -- now `untested_claims()` reads the registry and
+  names only the harnesses whose `workflow_evaluation` row is unverified (codex, copilot,
+  cursor); the stored envelope of `1b4c` keeps the stale sentence, as stored records do;
+  (3) the reviewer ran in an empty throwaway directory and said it could only review the diff
+  statically -- by design (HANDOFF, step 25's limits) but worth knowing when reading a review;
+  (4) `observed_model` is null on every attempt because the claude adapter never parses it;
+  (5) the plan's estimates ran well under the reported figures for sonnet (est. $0.045 per
+  implement, reported $0.17-$0.35). The registry row is verified with the run named; nothing
+  was proposed or applied.
+- **What the live runs showed the ledger does not carry yet.** `duration_s` is null on every
+  live attempt on both harnesses (the drivers' `(rc, output)` runners drop `proc_runner`'s
+  timing, and Cursor's JSON even reports `duration_ms`); the verify events do not say which
+  `--exec-mode` ran; the Claude review pins no model and plain-text output attests none; Cursor's
+  JSON result carries `usage` token counts the adapter does not read (its NOTES line still says
+  "the harness reports no usage", which is now false -- it is unpriced, not unreported) and no
+  `model` field, so `observed_model` stays null. None blocks a release; each is a small
+  follow-up, and the registry notes name them.
+- **What was NOT verified.** The dead-run resume path (stubs only), escalation (every first
+  attempt passed), Cursor's `--model` selection and its IDE/cloud modes, concurrent dispatch,
+  and the workflow-evaluation adapters.
+
 ### Step 26's own deliberate limits
 
 - **Nothing ran live.** The gate reads the registry; it does not verify anything itself. Every
@@ -218,10 +349,11 @@ which rows a client release invalidates and writes nothing. If a later session p
 
 ### Step 25's own deliberate limits
 
-- **Nothing ran live.** Every adapter's argv is its driver's documented shape and every dollar
-  figure is an estimate at the harness's own rates; the registry's `workflow_evaluation` rows
-  are `verified: unknown` for all four real harnesses and `supported` only for the stub. The
-  bounded plan in `docs/WORKFLOW-EVAL.md` is a command, not a result.
+- **One harness has dispatched live.** Every adapter's argv is its driver's documented shape and every dollar
+  figure is an estimate at the harness's own rates until a run reports usage; the registry's
+  `workflow_evaluation` rows are `verified: unknown` for codex, copilot, and cursor, `supported`
+  for the stub and, since run `2026-09-16-1b4c` (above), for claude-code. That run mined one
+  task, so it verified the pipeline and produced no applicable verdict.
 - **`solved` is the tests oracle and only that.** The full-patch diagnostic and the blind
   judge stay repo_bench's; the evaluator does not dispatch a judge. A reviewer's verdict, the
   kit's own check, and an adjudication are recorded beside `solved`, never in it.

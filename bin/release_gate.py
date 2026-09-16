@@ -1671,8 +1671,8 @@ def render_triggers():
 def render_prepared():
     out = ["### Prepared, not run", "",
            "Each of these contacts a vendor with the user's own credentials or spends. They are "
-           "written out so that running one is a decision, not an improvisation, and none has "
-           "been run from this repository.", ""]
+           "written out so that running one is a decision, not an improvisation; the registry "
+           "rows each one names say whether, when, and on which client it has run.", ""]
     for p in PREPARED_COMMANDS:
         out.append(f"**{p['name']}.** Records: {p['records']}.")
         out.append("")

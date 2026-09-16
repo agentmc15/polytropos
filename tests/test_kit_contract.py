@@ -284,15 +284,24 @@ class CapabilityRegistryTests(unittest.TestCase):
                 self.assertIn("dispatch", rows)
 
     def test_the_registry_records_what_was_actually_verified_and_what_was_not(self):
-        # The honest shape: one harness has live evidence, the others do not, and the file says
-        # so rather than rounding up.
+        # The honest shape (2026-09-16): every real harness's dispatch has been run live once
+        # and carries the date and client version of that run, while the rows nobody has run
+        # stay unknown or unsupported rather than being rounded up to match their neighbours.
         claude = ha.registry_capabilities("claude-code")
         self.assertEqual(ha.effective(claude["tool_pin"]), ha.SUPPORTED)
         self.assertTrue(claude["tool_pin"]["verified_on"])
-        for harness in ("codex", "copilot"):
+        raw = ha.load_capabilities()["harnesses"]
+        for harness in ("claude-code", "codex", "copilot", "cursor"):
             with self.subTest(harness=harness):
-                self.assertEqual(ha.effective(ha.registry_capabilities(harness)["dispatch"]),
-                                 ha.UNKNOWN)
+                row = ha.registry_capabilities(harness)["dispatch"]
+                self.assertEqual(ha.effective(row), ha.SUPPORTED)
+                self.assertTrue(row["verified_on"])
+                self.assertTrue(raw[harness]["capabilities"]["dispatch"].get("client_version"))
+        for harness, name in (("claude-code", "extended_roles"), ("codex", "concurrent_dispatch"),
+                              ("copilot", "workflow_evaluation"), ("cursor", "model_selection")):
+            with self.subTest(harness=harness, capability=name):
+                self.assertNotEqual(ha.effective(ha.registry_capabilities(harness)[name]),
+                                    ha.SUPPORTED, "never run live, so never more than unknown")
 
     def test_the_historical_product_matrix_is_left_alone(self):
         # It answers a different question, pinned from aesop's own research at a stated commit.

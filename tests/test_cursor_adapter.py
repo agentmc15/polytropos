@@ -91,6 +91,33 @@ class IdentityTests(unittest.TestCase):
         self.assertNotIn("someone@example.com", json.dumps(report),
                          "only the version is kept from the about payload")
 
+    def test_the_real_about_schema_is_accepted_though_no_value_names_cursor(self):
+        """2026-09-16: the first real install. `--version` prints a bare version and `about`
+        names Cursor nowhere; the `cliVersion` schema is the identity. Account fields are read
+        for nothing and never kept."""
+        real_shape = {"cliVersion": "2026.09.10-fd3934a", "latestStatus": "up_to_date",
+                      "latestVersion": "2026.09.10-fd3934a", "model": "Auto",
+                      "subscriptionTier": None, "osPlatform": "darwin", "osArch": "arm64",
+                      "userEmail": "someone@example.com", "terminalProgram": "apple-terminal",
+                      "shell": "zsh", "lastRequestId": None}
+        report = ca.identify(self.bin, runner=_runner(version="2026.09.10-fd3934a\n",
+                                                      about=real_shape))
+        self.assertEqual(report["identity"], "cursor")
+        self.assertEqual(report["version"], "2026.09.10-fd3934a")
+        self.assertIn("cliVersion", report["reason"])
+        self.assertNotIn("someone@example.com", json.dumps(report))
+        self.assertIs(ca.require_cursor(report), report)
+
+    def test_a_partial_or_non_string_cli_version_stays_unknown(self):
+        for about in ({"cliVersion": "1.0"},                       # schema keys missing
+                      {"cliVersion": 7, "latestStatus": "x", "latestVersion": "x",
+                       "osPlatform": "darwin"},                    # not a string
+                      {"cliVersion": "  ", "latestStatus": "x", "latestVersion": "x",
+                       "osPlatform": "darwin"}):                   # blank
+            with self.subTest(about=about):
+                report = ca.identify(self.bin, runner=_runner(version="3.1\n", about=about))
+                self.assertEqual(report["identity"], "unknown")
+
     def test_a_binary_that_never_names_cursor_is_unknown_and_refused(self):
         report = ca.identify(self.bin, runner=_runner(version="acme-agent 3.1\n",
                                                       about={"name": "acme"}))
@@ -181,9 +208,17 @@ class OutputTests(unittest.TestCase):
         self.assertIsNone(ca.usage_report()["billed_usd"])
         modes = ca.modes_report()
         self.assertEqual(set(modes), {"cli", "ide", "cloud"})
+        # 2026-09-16: the CLI mode was run live (one dispatch, one review); it carries the date
+        # and client version a verification must name. The IDE and cloud modes are files this
+        # adapter installs, never driven, and stay unknown rather than being rounded up.
+        self.assertEqual(modes["cli"]["verified"], "supported")
+        self.assertTrue(modes["cli"]["verified_on"])
+        self.assertTrue(modes["cli"]["client_version"])
+        for mode in ("ide", "cloud"):
+            with self.subTest(mode=mode):
+                self.assertEqual(modes[mode]["verified"], "unknown")
         for mode, spec in modes.items():
             with self.subTest(mode=mode):
-                self.assertEqual(spec["verified"], "unknown")
                 self.assertTrue(spec["source"].startswith("https://cursor.com/docs/"))
         self.assertEqual(modes["cli"]["implemented"], "supported")
         self.assertEqual(modes["ide"]["implemented"], "files-only")
@@ -372,11 +407,18 @@ class RegistryAndPricingTests(unittest.TestCase):
         for name in ("dispatch", "identity_probe", "read_only_dispatch", "ide_mode",
                      "cloud_mode", "usage_report", "ambient_diagnosis"):
             self.assertIn(name, rows)
-        self.assertEqual(ha.effective(rows["dispatch"]), ha.UNKNOWN,
+        # 2026-09-16: `dispatch` was run live once and is verified with a date; `requires`
+        # accepts it. A row nobody has run (`model_selection`: no --model was ever passed live)
+        # is still refused, and `usage_report` stays unsupported: the product reports usage in
+        # its JSON result, but this adapter does not read it yet.
+        self.assertEqual(ha.effective(rows["dispatch"]), ha.SUPPORTED)
+        self.assertTrue(rows["dispatch"]["verified_on"])
+        self.assertTrue(adapter.requires("dispatch"))
+        self.assertEqual(ha.effective(rows["model_selection"]), ha.UNKNOWN,
                          "never run live from here, so never more than unknown")
         self.assertEqual(ha.effective(rows["usage_report"]), ha.UNSUPPORTED)
         with self.assertRaises(ha.CapabilityError):
-            adapter.requires("dispatch")
+            adapter.requires("model_selection")
 
     def test_pricing_is_its_own_empty_file_with_a_date_and_no_borrowed_numbers(self):
         payload = json.loads((ROOT / "data" / "pricing.cursor.json").read_text())

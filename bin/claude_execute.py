@@ -8,9 +8,10 @@ task to `claude -p` with the kit's generated agent preamble, reruns the task's v
 through `bin/kit_verify_hook.py` (PLAN D3/D10 -- precheck before dispatch, record after a
 pass), escalates up the pricing tiers on failure, and writes statuses + `outcome:` ledger
 lines (T1 grammar: `run=`/`parent=`) back to the kit's own NOTES.md. Kits live at
-`.claude/kits/<slug>/` in THIS repo -- unlike the Copilot/Codex bundle drivers, this file is
-not distributed to consumer repos, so it targets the same kit layout
-`bin/kit_verify_hook.py` and `skills/execute/SKILL.md` already use.
+`.claude/kits/<slug>/` -- in THIS repo, or in the project the architect wrote them into, whose
+`.claude/agents/` is asked for the kit's agents first (`agent_roots`); this file is not
+distributed to consumer repos, so it targets the same kit layout `bin/kit_verify_hook.py` and
+`skills/execute/SKILL.md` already use.
 
 ============================================================================================
  !!! MONEY / NETWORK SAFETY -- READ THIS BEFORE RUNNING OR TESTING ANYTHING !!!
@@ -422,21 +423,50 @@ def load_preamble(role, slug, repo_root=None):
     return load_role_spec(role, slug, repo_root)[0]
 
 
+def agent_roots(kit, workspace=None):
+    """Where a kit's `.claude/agents/<slug>-<role>.md` may live, most specific first.
+
+    2026-09-15: the first live run against a kit in a throwaway project found `cmd_run` and
+    `cmd_review` reading agents from THIS checkout only, so a kit the architect wrote into its
+    own project -- agents beside it under that project's `.claude/agents/` -- could not be
+    driven at all. The workspace (the driver's cwd: where the verify runs and what the ledger
+    records) is asked first, then the project the kit path itself implies
+    (`<project>/.claude/kits/<slug>` -> `<project>`), then this repository, whose own kits keep
+    working unchanged. Duplicates and non-directories drop out; order is kept.
+    """
+    kit = Path(kit)
+    candidates = [Path(workspace) if workspace is not None else Path.cwd()]
+    resolved = kit.resolve()
+    if resolved.parent.name == "kits" and resolved.parent.parent.name == ".claude":
+        candidates.append(resolved.parent.parent.parent)
+    candidates.append(REPO_ROOT)
+    roots = []
+    for root in candidates:
+        root = Path(root)
+        if root not in roots and (root / ".claude" / "agents").is_dir():
+            roots.append(root)
+    return roots or [REPO_ROOT]
+
+
 def load_role_spec(role, slug, repo_root=None):
     """`(body, frontmatter)` for a kit agent file -- the preamble AND its declaration.
 
     `load_preamble` keeps returning just the body for every caller that only needs the prompt;
     the dispatch path uses this one, because the `tools:` pin lives in the half that used to be
-    dropped on the floor.
+    dropped on the floor. `repo_root` may be one root or a list of roots to try in order (see
+    `agent_roots`); a miss names every path that was looked at.
     """
     if repo_root is None:
         repo_root = REPO_ROOT
-    repo_root = Path(repo_root)
-    path = repo_root / ".claude" / "agents" / f"{slug}-{role}.md"
-    if not path.exists():
-        raise FileNotFoundError(f"no kit agent at {path}")
-    fields, body = parse_frontmatter(path.read_text())
-    return body.strip(), fields
+    roots = [Path(r) for r in (repo_root if isinstance(repo_root, (list, tuple)) else [repo_root])]
+    looked = []
+    for root in roots:
+        path = root / ".claude" / "agents" / f"{slug}-{role}.md"
+        looked.append(path)
+        if path.exists():
+            fields, body = parse_frontmatter(path.read_text())
+            return body.strip(), fields
+    raise FileNotFoundError("no kit agent at " + " or ".join(str(p) for p in looked))
 
 
 # ---- dispatch + escalation --------------------------------------------------------------------
@@ -834,7 +864,7 @@ def cmd_run(args):
 
     pricing = load_pricing()
     extra_args = tuple(args.extra_arg or ())
-    preamble, role_frontmatter = load_role_spec(args.role, slug, REPO_ROOT)
+    preamble, role_frontmatter = load_role_spec(args.role, slug, agent_roots(kit))
     permissions = role_permission_profile(args.role, role_frontmatter)
 
     # ROSTER (step 20): what the kit declared, and whether this driver can run it, decided
@@ -1090,7 +1120,7 @@ def cmd_review(args):
     kit = Path(args.kit)
     slug = kit.name
     extra_args = tuple(args.extra_arg or ())
-    preamble, frontmatter = load_role_spec("reviewer", slug, REPO_ROOT)
+    preamble, frontmatter = load_role_spec("reviewer", slug, agent_roots(kit))
     profile = role_permission_profile(
         "reviewer", frontmatter, review_mode=args.review_permissions
     )

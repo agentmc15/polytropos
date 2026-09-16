@@ -25,13 +25,16 @@ THREE MODES, REPORTED SEPARATELY. The IDE agent, the local CLI, and background/c
 are three products. This adapter drives the CLI. Files it installs (skills, subagents) are
 consumed by all three, which is a fact about the files, not a claim that this adapter drives
 the IDE or a cloud worker: `modes_report` says `cli: implemented`, `ide: files only`,
-`cloud: files only`, and none of the three is `verified` because nothing here is run live.
+`cloud: files only`; only `cli` is `verified` (one live run and one review on 2026-09-16), and
+the other two stay unknown because nothing here drives them.
 
 IDENTITY BEFORE TRUST. The binary is called `agent`, a name anything could have. Before a
 dispatch this adapter asks it `--version` and, failing that, `about --format json`, and
-treats it as Cursor only when the answer says so (`IDENTITY_TOKEN`). Unknown is refused: a
-required guarantee (we are about to hand this process `--force` over a workspace) fails
-closed. Account fields the `about` payload may carry are never kept -- only a version string.
+treats it as Cursor only when the answer says so (`IDENTITY_TOKEN`) or carries Cursor's own
+`about` schema (`ABOUT_SCHEMA_KEYS` with a string `cliVersion`) -- the real CLI, first seen
+2026-09-16, names itself nowhere. Unknown is refused: a required guarantee (we are about to
+hand this process `--force` over a workspace) fails closed. Account fields the `about`
+payload may carry are never kept -- only a version string.
 
 WHAT IS UNKNOWN STAYS UNKNOWN. The CLI documents no usage or cost output; `usage_report` says
 so and reads nothing else (Cursor's `state.vscdb` is an undocumented SQLite store this
@@ -64,6 +67,10 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 
 BINARY = "agent"
 IDENTITY_TOKEN = "cursor"
+#: The keys Cursor's `about --format json` carries (observed on cliVersion 2026.09.10-fd3934a,
+#: 2026-09-16). A payload with a string `cliVersion` and every one of these is Cursor even
+#: though no value names it; a payload with only some of them is not, and stays unknown.
+ABOUT_SCHEMA_KEYS = ("cliVersion", "latestStatus", "latestVersion", "osPlatform")
 IDENTITIES = ("cursor", "unknown", "absent")
 PROBE_TIMEOUT_SECONDS = 30
 DISPATCH_TIMEOUT_SECONDS = 3600
@@ -82,10 +89,12 @@ DOCS = {
 #: The three products, each answered on its own. `product` is what the documentation says;
 #: `implemented` is what this repository does; `verified` is what someone has run here.
 MODES = {
-    "cli": {"product": "supported", "implemented": "supported", "verified": "unknown",
+    "cli": {"product": "supported", "implemented": "supported", "verified": "supported",
+            "verified_on": "2026-09-16", "client_version": "Cursor CLI 2026.09.10-fd3934a",
             "source": DOCS["headless"],
-            "note": "driven by this adapter through `agent -p`; never run live from the "
-                    "repository, so verified stays unknown"},
+            "note": "driven by this adapter through `agent -p`; run live once on 2026-09-16 "
+                    "(one dispatch and one `--mode ask` review on a throwaway kit, recorded in "
+                    "the attempt ledger; see primitives/harness-capabilities.json)"},
     "ide": {"product": "supported", "implemented": "files-only", "verified": "unknown",
             "source": DOCS["subagents"],
             "note": "the IDE agent reads the same `.cursor/skills` and `.cursor/agents` files "
@@ -180,8 +189,10 @@ def identify(cursor_bin=BINARY, cwd=None, runner=None):
     """Is `cursor_bin` Cursor? -> a dict with `identity` in `IDENTITIES`.
 
     `--version` first; `about --format json` when that says nothing. The answer is `cursor`
-    only when the output names it. The `about` payload can carry account fields; only a
-    version string is kept from it, and the evidence recorded is the bounded first line.
+    when the output names it, or when the `about` payload carries Cursor's own schema
+    (`ABOUT_SCHEMA_KEYS` with a string `cliVersion`) -- the real CLI names itself nowhere.
+    The `about` payload can carry account fields; only a version string is kept from it, and
+    the evidence recorded is the bounded first line.
     """
     resolved = shutil.which(cursor_bin) or (str(Path(cursor_bin)) if Path(cursor_bin).exists()
                                             else None)
@@ -209,6 +220,18 @@ def identify(cursor_bin=BINARY, cwd=None, runner=None):
             version = payload.get("version") if isinstance(payload.get("version"), str) else None
             report.update(identity="cursor", version=version, evidence=f"about: version={version}",
                           reason="`about --format json` names Cursor")
+            return report
+        # 2026-09-16, the first real install: Cursor's own CLI names itself nowhere. `--version`
+        # prints a bare `2026.09.10-fd3934a`, and `about --format json` answers with the schema
+        # below and no product name in any value. What identifies it is that schema: no other
+        # `agent` answers `about --format json` with a string `cliVersion`. Its account fields
+        # (`userEmail`, `subscriptionTier`) are read for nothing; only the version is kept.
+        cli_version = payload.get("cliVersion")
+        if isinstance(cli_version, str) and cli_version.strip() and all(
+                key in payload for key in ABOUT_SCHEMA_KEYS):
+            report.update(identity="cursor", version=cli_version.strip(),
+                          evidence=f"about: cliVersion={cli_version.strip()}",
+                          reason="`about --format json` carries Cursor's `cliVersion` schema")
             return report
     report.update(identity="unknown", evidence=line,
                   reason=f"neither `--version` ({line or 'no output'}) nor `about --format json` "

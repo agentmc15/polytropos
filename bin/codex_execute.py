@@ -1249,11 +1249,20 @@ def review_evidence_fingerprint(kit, tasks_text, phase):
     if head["rc"] != 0:
         raise PolicyError("final acceptance requires a committed HEAD for review freshness")
     notes = (kit / "NOTES.md").resolve()
-    try:
-        notes_rel = notes.relative_to(root).as_posix()
-    except ValueError:
-        notes_rel = None
-    exclude = [f":(exclude){notes_rel}"] if notes_rel else []
+    # The driver's own append-only records are not evidence about the work: NOTES.md was
+    # always excluded, and since 2026-09-16 so is role-use.jsonl. The first live `review`
+    # wrote its typed record into the kit and thereby changed the untracked set the very
+    # fingerprint it had just recorded was computed over, so `accept` found every review
+    # stale and could never succeed on a real workspace. Stub tests never saw it because their
+    # kits were not the untracked files of a git workspace the way a real project's are.
+    own_records = [notes, (kit / ROLE_USE_FILENAME).resolve()]
+    own_rel = []
+    for path in own_records:
+        try:
+            own_rel.append(path.relative_to(root).as_posix())
+        except ValueError:
+            continue
+    exclude = [f":(exclude){rel}" for rel in own_rel]
     diff = _git(str(root), "diff", "--binary", "--no-ext-diff", "HEAD", "--", ".", *exclude)
     status = _git(str(root), "status", "--porcelain=v1", "-z", "--untracked-files=all")
     if diff["rc"] != 0 or status["rc"] != 0:
@@ -1263,7 +1272,7 @@ def review_evidence_fingerprint(kit, tasks_text, phase):
         if not entry.startswith(b"?? "):
             continue
         rel = entry[3:].decode(errors="surrogateescape")
-        if notes_rel and rel == notes_rel:
+        if rel in own_rel:
             continue
         path = root / rel
         try:

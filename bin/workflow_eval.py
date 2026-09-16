@@ -122,9 +122,12 @@ NOT_A_RANKING = ("not a ranking: every compared variant must clear the evidence 
 SOLVED_LABEL = ("`solved` = the tests oracle passed on a constructed substrate that withholds "
                 "the reference tests -- never a reviewer's verdict, the kit's own check, or a "
                 "human adjudication, which are recorded beside it")
+#: The claims a card carries whatever the run measured. Which harnesses have never run live
+#: is NOT in this tuple: that fact lives in the registry's `workflow_evaluation` rows and is
+#: read from there by `untested_claims()`, so the sentence cannot go stale the way a constant
+#: did on 2026-09-16, when the first live run on Claude Code left "no workflow has been run
+#: live from this repository on any harness" in its own results envelope.
 UNTESTED_CLAIMS = (
-    "no workflow has been run live from this repository on any harness; every figure a live "
-    "run would produce is unmeasured",
     "no universal superiority of any workflow, policy, model, or harness is supported; a "
     "variant ranks only within one run, one repository, one instruction version",
     "repricing an observed trace at another harness's rates is a hypothetical comparison, "
@@ -136,6 +139,28 @@ UNTESTED_CLAIMS = (
 )
 
 _SIBLINGS = {}
+
+
+def untested_claims():
+    """`UNTESTED_CLAIMS`, prefixed by which harnesses' `workflow_evaluation` rows the registry
+    still records as unverified -- the registry's word, never a constant's."""
+    ha = _ha()
+    unrun = []
+    for name, key in REGISTRY_KEYS.items():
+        if name == "stub":
+            continue
+        try:
+            row = ha.registry_capabilities(key).get("workflow_evaluation")
+        except (OSError, ValueError, KeyError):
+            row = None
+        if row is None or ha.effective(row) != "supported":
+            unrun.append(key)
+    head = ()
+    if unrun:
+        head = (f"no workflow has been run live from this repository on {', '.join(unrun)}: "
+                f"the registry's `workflow_evaluation` row is unverified there, and every figure "
+                f"a live run would produce is unmeasured",)
+    return head + UNTESTED_CLAIMS
 
 
 def _sibling(name):
@@ -242,7 +267,11 @@ def claude_adapter():
     def build_review_argv(bin_, model, prompt, task_id=None, workspace=None):
         profile = ce.permission_profile(("Read", "Grep", "Glob"), bypass=False,
                                         source="reviewer: restricted (no bypass)")
-        return ce.build_dispatch(bin_, model, prompt, permissions=profile)
+        # 2026-09-16, first live run: without the JSON envelope the review's token counts were
+        # unreadable and every review stage fell back to the plan estimate while the implement
+        # stage beside it was model-reported. Same format args as the implement form.
+        return ce.build_dispatch(bin_, model, prompt, extra_args=rb.OUTPUT_FORMAT_ARGS,
+                                 permissions=profile)
 
     def estimate(model, profile, pricing):
         return {"basis": "estimated", "usd": rb.estimate_dispatch_usd(model, profile, pricing),
@@ -1096,7 +1125,7 @@ class Evaluation:
                           "overspent": overspent},
                 "holdout": {"tasks": sorted(self.tasks), "reserved_from": "routing tuning"},
                 "labels": labels, "notes": notes, "adjudications": [],
-                "evidence_floor": rb.MIN_EVIDENCE_TASKS, "untested_claims": list(UNTESTED_CLAIMS),
+                "evidence_floor": rb.MIN_EVIDENCE_TASKS, "untested_claims": list(untested_claims()),
             }
             # Records land in the store only now: no dispatch of any kind is live.
             for tid, task in self.tasks.items():
@@ -1217,7 +1246,7 @@ def build_card(envelope):
         "sample": {"tasks": len({r["task_id"] for r in recs}), "trials": len(recs),
                    "repeats": repeats, "repositories": 1},
         "labels": labels, "notes": list(envelope.get("notes") or []),
-        "untested_claims": list(envelope.get("untested_claims") or UNTESTED_CLAIMS),
+        "untested_claims": list(envelope.get("untested_claims") or untested_claims()),
     }
 
 

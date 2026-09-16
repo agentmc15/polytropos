@@ -25,22 +25,32 @@ this repository. `bin/harness_select.py doctor --harness cursor` prints this tab
 
 | Mode | Product | Implemented here | Verified | What that means |
 |---|---|---|---|---|
-| `cli` | supported | supported | unknown | the driver dispatches through `agent -p`; never run live from the repository |
+| `cli` | supported | supported | 2026-09-16 | the driver dispatches through `agent -p`; run live once (one dispatch, one `--mode ask` review) on CLI 2026.09.10-fd3934a |
 | `ide` | supported | files-only | unknown | the IDE reads the installed `.cursor/skills` and `.cursor/agents`; nothing here drives the IDE |
 | `cloud` | supported | files-only | unknown | cloud subagents and private workers read project files; nothing here launches one |
 
 `verified` stays `unknown` until someone runs the documented smoke on their own machine and
-records it in `primitives/harness-capabilities.json`. The historical product matrix in
+records it in `primitives/harness-capabilities.json`. On 2026-09-16 that happened for the CLI
+mode (2026.09.10-fd3934a, macOS 14.4): the identity probe, one dispatch, the read-only review
+form, the JSON result, the attempt ledger, and the independent review are verified with that
+date; `--model` selection, the IDE and cloud modes, and the CLI's own sandbox are not. The
+first attempt, made while the install was logged out, was refused with an authentication error
+and classified `auth` -- the fail-closed path seen for real. The historical product matrix in
 `primitives/harness-matrix.json` is provenance, not the operational view.
 
 ## Identity before trust
 
 Cursor's CLI installs as a binary named `agent`, a name any tool might carry. The driver
-refuses to dispatch to it until it has said what it is: `agent --version` must name Cursor,
-or `agent about --format json` must. A binary that says neither is `unknown` and is refused
-before a claim is taken, before the ledger is opened, before any file is written. An absent
-binary is `absent`. Only the version line is kept from the `about` payload; account fields in
-it are not recorded.
+refuses to dispatch to it until it has said what it is: `agent --version` names Cursor, or
+`agent about --format json` does -- by naming it, or by answering with Cursor's own schema, a
+string `cliVersion` beside `latestStatus`, `latestVersion`, and `osPlatform`
+(`cursor_adapter.ABOUT_SCHEMA_KEYS`). That second form exists because the first real install
+(2026-09-16, CLI 2026.09.10-fd3934a) names itself nowhere: `--version` prints a bare version
+and no value in `about` contains the word, so the original "must name Cursor" rule refused a
+genuine Cursor and the registry note had said it might. A binary that matches neither is
+`unknown` and is refused before a claim is taken, before the ledger is opened, before any file
+is written. An absent binary is `absent`. Only the version is kept from the `about` payload;
+its account fields (`userEmail`, `subscriptionTier`) are read for nothing and not recorded.
 
 ```bash
 python3 bin/cursor_execute.py probe                      # exit 3 unless --cursor-bin is Cursor
@@ -140,8 +150,12 @@ per task), and every optional role is a gap that stops the run unless disclosed.
 
 ## The optional live smoke
 
-Documented, never run by this repository: it contacts Cursor with the user's credentials and
-may spend. `doctor` prints it with the project's own path filled in.
+It contacts Cursor with the user's credentials and may spend, so it is never run by a test
+or a verify command; `doctor` prints it with the project's own path filled in. The user ran it
+on 2026-09-16: `ready` in four seconds, a single JSON object with `result`, `session_id`,
+`request_id`, `duration_ms`, and a `usage` block of token counts, and no `model` field -- which
+is why the observed model stays unknown and why `usage_report` now says the product reports
+usage that this adapter does not read yet.
 
 ```bash
 agent -p --trust --workspace /path/to/project --output-format json --mode ask "Reply with the single word ready"

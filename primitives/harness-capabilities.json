@@ -12,31 +12,36 @@
           "implemented": "supported",
           "verified": "supported",
           "source": "vendor CLI documentation",
-          "verified_on": "2026-09-06",
-          "note": "one authorized live invocation, scoped to validating flag handling; tests never invoke the real CLI"
+          "verified_on": "2026-09-16",
+          "note": "one authorized live `bin/claude_execute.py run` on 2026-09-16 (UTC) against a one-task kit in a throwaway project on the maintainer's macOS 14.4 host, run 2026-09-16-60c2 in an explicit --attempt-store: `claude -p --model <sonnet-tier id from data/pricing.json> --dangerously-skip-permissions <prompt>` returned rc 0 in ~20 s, the one-line edit the brief asked for landed and nothing else changed, the task was projected done with no escalation. The 2026-09-06 verification (flag handling only) is superseded. Tests never invoke the real CLI",
+          "client_version": "Claude Code 2.1.273"
         },
         "durable_attempts": {
           "product": "not-applicable",
           "implemented": "supported",
-          "verified": "unknown",
+          "verified": "supported",
           "source": "bin/attempt_ledger.py, bin/kit_contract.py TaskRun",
-          "note": "polytropos capability, not a product one: every dispatch is recorded before and after it runs, a dead run's open attempt is closed as unknown and reconciled by re-running the check, budget usage carries across runs, tasks are claimed with O_EXCL. Exercised with stub executables and temp stores only; never run against the live CLI, so verified stays unknown"
+          "note": "polytropos capability, not a product one. Live on 2026-09-16 (the run above): claim.taken, run.started, roster.checked, verify.precheck, attempt.started, attempt.finished, verify.finished, task.projected, run.finished, claim.released were recorded outside the tree, and the review's attempt (run 2026-09-16-2c48, role reviewer) likewise. The dead-run path -- an open attempt closed as unknown and reconciled by re-running the check -- was exercised with stub executables and temp stores only. `duration_s` was null on both live attempts: the drivers' runners drop proc_runner's timing (follow-up)",
+          "verified_on": "2026-09-16",
+          "client_version": "Claude Code 2.1.273"
         },
         "tool_pin": {
           "product": "supported",
           "implemented": "supported",
           "verified": "supported",
           "source": "vendor CLI documentation (--allowedTools)",
-          "verified_on": "2026-09-06",
-          "note": "the `--allowedTools=<space-joined>` form is REQUIRED: the variadic form swallows the following positional, which silently consumed the prompt on every review dispatch. This row is why the registry has a verified column"
+          "verified_on": "2026-09-16",
+          "note": "the `--allowedTools=<space-joined>` form is REQUIRED: the variadic form swallows the following positional, which silently consumed the prompt on every review dispatch (found 2026-09-06). Re-verified 2026-09-16: `review --phase 1` dispatched `claude -p '--allowedTools=Bash Read Grep Glob' <prompt>` with no blanket grant, the reviewer received the prompt (it produced a phase review and a `REVIEW VERDICT=` line) and the tree was byte-identical afterwards. This row is why the registry has a verified column",
+          "client_version": "Claude Code 2.1.273"
         },
         "confined_verify": {
           "product": "not-applicable",
           "implemented": "supported",
           "verified": "supported",
           "source": "bin/exec_policy.py, macOS sandbox-exec",
-          "verified_on": "2026-09-06",
-          "note": "polytropos capability, not a product one: verify commands run under an OS boundary. macOS only -- enforced mode refuses on Linux and Windows rather than downgrading"
+          "verified_on": "2026-09-16",
+          "note": "polytropos capability, not a product one: verify commands run under an OS boundary. Re-verified 2026-09-16 in the live run above with the default `--exec-mode enforced`: `exec_policy check` reported the sandbox-exec backend, the precheck was red (rc 1) before the dispatch and the verify green (rc 0) after it, and enforced mode refuses rather than downgrading when no backend exists. macOS only -- enforced mode refuses on Linux and Windows. The ledger's verify events do not yet record which mode ran (follow-up)",
+          "client_version": "macOS 14.4 sandbox-exec (Darwin 23.4.0)"
         },
         "confined_dispatch": {
           "product": "unsupported",
@@ -62,9 +67,11 @@
         "independent_review": {
           "product": "not-applicable",
           "implemented": "supported",
-          "verified": "unknown",
+          "verified": "supported",
           "source": "bin/claude_execute.py review; bin/kit_contract.py ROLE_SUPPORT",
-          "note": "phase-end review dispatched with a restricted permission profile and recorded in the attempt ledger. Never run against the live CLI from this repository, so verified stays unknown"
+          "note": "phase-end review dispatched with a restricted permission profile and recorded in the attempt ledger. Live on 2026-09-16: `review --phase 1` on the throwaway kit returned rc 0 in ~40 s with `REVIEW VERDICT=accept`, was recorded as run 2026-09-16-2c48 role=reviewer op=review, and left the tree byte-identical. The review argv pins no model (`model: null` in the ledger; the CLI's default ran) and plain-text output attests none (`observed_model: null`); the verdict line is recorded beside the grade, never as it",
+          "verified_on": "2026-09-16",
+          "client_version": "Claude Code 2.1.273"
         },
         "extended_roles": {
           "product": "not-applicable",
@@ -84,9 +91,11 @@
         "workflow_evaluation": {
           "product": "not-applicable",
           "implemented": "supported",
-          "verified": "unknown",
+          "verified": "supported",
           "source": "bin/workflow_eval.py (step 25)",
-          "note": "bin/workflow_eval.py claude adapter: repo_bench's claude argv for implement, a restricted-permission dispatch for review, dollars from data/pricing.json; never run live from this repository"
+          "note": "bin/workflow_eval.py claude adapter: repo_bench's claude argv for implement, a restricted-permission dispatch for review, dollars from data/pricing.json. One authorized live run on 2026-09-16 (UTC), run 2026-09-16-1b4c in the default evals store, against the maintainer's own ai-stack-advisor checkout: general-mode mining admitted one XS task (23 of 24 sites green); 16 dispatches of a 16 cap across direct/reviewed/kit x sonnet/haiku x 2 repeats, $1.90 model-reported against a $2.00 ceiling, no overspend, 12/12 trials solved by the tests oracle, every variant BELOW the evidence floor (n=2 < 5) and labelled so -- a pipeline verification, not a routing verdict. Observed in the run and fixed after it: review dispatches carried no --output-format json, so their usage was unreadable and priced as estimates. Still open: the reviewer runs in an empty throwaway directory and reviewed the diff statically (it said so); observed_model is never parsed from Claude's JSON; no proposal was made",
+          "verified_on": "2026-09-16",
+          "client_version": "Claude Code 2.1.273"
         }
       }
     },
@@ -97,30 +106,38 @@
         "dispatch": {
           "product": "supported",
           "implemented": "supported",
-          "verified": "unknown",
+          "verified": "supported",
           "source": "vendor CLI documentation",
-          "note": "never invoked live from this repository -- tests stub every dispatch"
+          "note": "Verified 2026-09-16 on the maintainer's ChatGPT-plan install (macOS 14.4): one authorized `bin/codex_execute.py run --task T1 --exec-mode enforced` on a throwaway one-task kit dispatched `codex exec --json --model <mid-tier id from data/pricing.codex.json> --sandbox workspace-write <prompt>` under the reserved policy, rc 0 in ~73 s; the one-line edit landed and nothing else changed; the confined verify passed; T1 projected done (run 2026-09-16-1565). The turn's `turn.completed` usage block and `turn_context` model were parsed. Tests never invoke the real CLI",
+          "verified_on": "2026-09-16",
+          "client_version": "codex-cli 0.153.3"
         },
         "durable_attempts": {
           "product": "not-applicable",
           "implemented": "supported",
-          "verified": "unknown",
+          "verified": "supported",
           "source": "bin/attempt_ledger.py, bin/kit_contract.py TaskRun",
-          "note": "polytropos capability, not a product one: every dispatch is recorded before and after it runs, a dead run's open attempt is closed as unknown and reconciled by re-running the check, budget usage carries across runs, tasks are claimed with O_EXCL. Exercised with stub executables and temp stores only; never run against the live CLI, so verified stays unknown"
+          "note": "polytropos capability, not a product one: every dispatch is recorded before and after it runs, a dead run's open attempt is closed as unknown and reconciled by re-running the check, budget usage carries across runs, tasks are claimed with O_EXCL. Live 2026-09-16: the run's events and the review's attempt were recorded outside the tree in the named --attempt-store, with `observed_model` filled from the rollout on both; the dead-run path was exercised with stub executables and temp stores only; `duration_s` is null on live attempts (follow-up shared by every driver)",
+          "verified_on": "2026-09-16",
+          "client_version": "codex-cli 0.153.3"
         },
         "sandbox_read_only": {
           "product": "supported",
           "implemented": "supported",
-          "verified": "unknown",
+          "verified": "supported",
           "source": "vendor CLI documentation (--sandbox read-only)",
-          "note": "review and acceptance are pinned read-only and extra arguments cannot override it. The flag's runtime effect has not been verified here"
+          "note": "review and acceptance are pinned read-only and extra arguments cannot override it. Live 2026-09-16: `review --phase 1` ran `codex exec --json --model <strong-tier id> --sandbox read-only` for ~52 s, rc 0; the reviewer ran read-only commands (rg, git status, sed, the unittest) and the tree was byte-identical afterwards. Whether a write attempt would be refused inside the sandbox was not exercised: nothing tried one",
+          "verified_on": "2026-09-16",
+          "client_version": "codex-cli 0.153.3"
         },
         "structured_events": {
           "product": "supported",
           "implemented": "supported",
-          "verified": "unknown",
+          "verified": "supported",
           "source": "vendor CLI documentation (exec --json)",
-          "note": "thread.started / item.completed / turn.completed are parsed; model attestation falls back to unknown when no correlated record appears"
+          "note": "vendor CLI documentation (exec --json), verified 2026-09-16: thread.started / item.started / item.completed (command_execution, agent_message, collab_tool_call) / turn.completed with a `usage` block were all observed on a live run and a live review; the model attestation correlated the rollout's turn_context to the dispatched id (`actual_provenance=correlated-rollout-turn_context`), so `observed_model` equalled `dispatched_model` on both. After the stream the CLI printed `Reading additional input from stdin...` to stdout once, harmlessly",
+          "verified_on": "2026-09-16",
+          "client_version": "codex-cli 0.153.3"
         },
         "async_tools": {
           "product": "unknown",
@@ -155,9 +172,11 @@
         "independent_review": {
           "product": "not-applicable",
           "implemented": "supported",
-          "verified": "unknown",
+          "verified": "supported",
           "source": "bin/codex_execute.py review/accept; bin/kit_contract.py ROLE_SUPPORT",
-          "note": "phase-end independent verification (review, read-only sandbox, strong worker) and orchestrator acceptance (accept), both recorded as typed role-use records and in the attempt ledger. Never run live from this repository"
+          "note": "phase-end independent verification (review, read-only sandbox, strong worker) and orchestrator acceptance (accept), both recorded as typed role-use records and in the attempt ledger. Live 2026-09-16 on a throwaway kit: `review --phase 1` (strong tier, ~52 s, rc 0, typed record with the rollout-attested model) and `accept --phase 1` (frontier tier, ~110 s, rc 0, terminal message ending `POLYTROPOS_ACCEPTANCE: accepted`, result recorded `accepted`), tree byte-identical after both. The FIRST `accept` refused (exit 2, 'no successful independent Sol review record'): the review had written role-use.jsonl into the kit after computing the fingerprint it recorded, and the fingerprint hashed every untracked file, so no live review could ever certify its own workspace. Fixed the same day (`review_evidence_fingerprint` excludes the driver's own records, like NOTES.md); the second `accept` is the verification. The compatibility review prompt asks for no verdict marker, so a review's `result` stays null by design and only `accept` carries one",
+          "verified_on": "2026-09-16",
+          "client_version": "codex-cli 0.153.3"
         },
         "extended_roles": {
           "product": "not-applicable",
@@ -190,16 +209,20 @@
         "dispatch": {
           "product": "supported",
           "implemented": "supported",
-          "verified": "unknown",
+          "verified": "supported",
           "source": "vendor CLI documentation",
-          "note": "never invoked live from this repository, by invariant: a real call spends the user's AI Credits"
+          "note": "Verified 2026-09-16 on the maintainer's logged-in install (macOS 14.4): one authorized `bin/copilot_execute.py run --task T1 --exec-mode enforced` on a throwaway one-task kit dispatched `copilot --agent implementer --allow-all-tools -p <prompt>` with no model pinned, rc 0 in ~17 s; the one-line edit landed and nothing else changed; the confined verify passed; T1 projected done (run 2026-09-16-7d16). The CLI's summary footer reports `AI Credits`, token counts, and a resume id, which the driver does not read (follow-up); model used is recorded as `agent default`. Tests never invoke the real CLI, by invariant",
+          "verified_on": "2026-09-16",
+          "client_version": "GitHub Copilot CLI 1.0.80"
         },
         "durable_attempts": {
           "product": "not-applicable",
           "implemented": "supported",
-          "verified": "unknown",
+          "verified": "supported",
           "source": "bin/attempt_ledger.py, bin/kit_contract.py TaskRun",
-          "note": "polytropos capability, not a product one: every dispatch is recorded before and after it runs, a dead run's open attempt is closed as unknown and reconciled by re-running the check, budget usage carries across runs, tasks are claimed with O_EXCL. Exercised with stub executables and temp stores only; never run against the live CLI, so verified stays unknown"
+          "note": "polytropos capability, not a product one: every dispatch is recorded before and after it runs, a dead run's open attempt is closed as unknown and reconciled by re-running the check, budget usage carries across runs, tasks are claimed with O_EXCL. Live 2026-09-16: the run's ten events and the review's two were recorded outside the tree in the named --attempt-store; the dead-run path was exercised with stub executables and temp stores only; `duration_s` is null on live attempts (follow-up shared by every driver)",
+          "verified_on": "2026-09-16",
+          "client_version": "GitHub Copilot CLI 1.0.80"
         },
         "tool_pin": {
           "product": "unknown",
@@ -222,9 +245,11 @@
         "independent_review": {
           "product": "not-applicable",
           "implemented": "supported",
-          "verified": "unknown",
+          "verified": "supported",
           "source": "bin/copilot_execute.py review; bin/kit_contract.py ROLE_SUPPORT",
-          "note": "phase-end review dispatched to the reviewer agent without the blanket tool grant and recorded in the attempt ledger. Never run live from this repository"
+          "note": "phase-end review dispatched to the reviewer agent without the blanket tool grant and recorded in the attempt ledger. Live 2026-09-16: `review --phase 1` dispatched `copilot --agent reviewer -p <prompt>` (permissions: restricted, no blanket grant), rc 0 in ~40 s, the reviewer reported it changed nothing and the tree was byte-identical; recorded as run 2026-09-16-ae3d role=reviewer op=review with no verdict line (`result: null`); the grade came from the verify alone",
+          "verified_on": "2026-09-16",
+          "client_version": "GitHub Copilot CLI 1.0.80"
         },
         "extended_roles": {
           "product": "not-applicable",
@@ -298,23 +323,29 @@
         "dispatch": {
           "product": "supported",
           "implemented": "supported",
-          "verified": "unknown",
+          "verified": "supported",
           "source": "https://cursor.com/docs/cli/headless (agent -p --output-format json --trust --force)",
-          "note": "bin/cursor_execute.py run through bin/cursor_adapter.build_dispatch; never invoked live from this repository -- tests stub the binary -- so verified stays unknown"
+          "note": "bin/cursor_execute.py run through bin/cursor_adapter.build_dispatch; tests stub the binary. Verified 2026-09-16 on a real, logged-in install (macOS 14.4): one `run --task T1 --exec-mode enforced` on a throwaway one-task kit dispatched `agent -p --trust --workspace … --output-format json --force <prompt>` with no model pinned, rc 0 in ~17 s, the one-line edit landed and nothing else changed, the confined verify passed, T1 was projected done (run 2026-09-16-f427). Earlier the same day, logged out, the same command was refused with `Authentication required`, classified `auth`, and spent nothing (run 2026-09-16-765a)",
+          "verified_on": "2026-09-16",
+          "client_version": "Cursor CLI 2026.09.10-fd3934a"
         },
         "identity_probe": {
           "product": "supported",
           "implemented": "supported",
-          "verified": "unknown",
+          "verified": "supported",
           "source": "https://cursor.com/docs/cli/reference/parameters (-v/--version, about --format json)",
-          "note": "polytropos capability: the generically named `agent` is dispatched to only after `--version` or `about --format json` names Cursor; unknown fails closed. The probe's output format is undocumented, so which of the two answers positively on a real install is unverified"
+          "note": "polytropos capability: the generically named `agent` is dispatched to only after `--version` or `about --format json` identifies Cursor; unknown or absent fails closed. Verified 2026-09-16 on a real install (cliVersion 2026.09.10-fd3934a, macOS 14.4): earlier that day the binary was absent and the probe refused (`absent`); after `curl https://cursor.com/install -fsS | bash` the probe refused again (`unknown`), because the real CLI names itself nowhere -- `--version` prints a bare version and `about --format json` carries `cliVersion`, `latestStatus`, `latestVersion`, `osPlatform`, `model`, `subscriptionTier`, `userEmail`, ... with no product name in any value. The rule now accepts that schema with a string `cliVersion` (`cursor_adapter.ABOUT_SCHEMA_KEYS`), and `cursor_execute.py probe` answers `cursor (2026.09.10-fd3934a)` on this host. Only the version is kept from the payload",
+          "verified_on": "2026-09-16",
+          "client_version": "Cursor CLI 2026.09.10-fd3934a"
         },
         "read_only_dispatch": {
           "product": "supported",
           "implemented": "supported",
-          "verified": "unknown",
+          "verified": "supported",
           "source": "https://cursor.com/docs/cli/reference/parameters (--mode ask)",
-          "note": "review and verification dispatches pass --mode ask and never --force; whether ask mode refuses every write is the product's promise, not verified here"
+          "note": "review and verification dispatches pass --mode ask and never --force. Verified 2026-09-16: the documented smoke returned `ready` in 4 s, and `review --phase 1` ran ~80 s under `--mode ask` and left the tree byte-identical; the reviewer's own text says it could not run the verify command in ask mode (\"switch to Agent mode or allow Shell\"), which is the product refusing execution, observed once. Whether ask mode refuses every write on every prompt is still the product's promise",
+          "verified_on": "2026-09-16",
+          "client_version": "Cursor CLI 2026.09.10-fd3934a"
         },
         "model_selection": {
           "product": "supported",
@@ -326,16 +357,18 @@
         "structured_events": {
           "product": "supported",
           "implemented": "supported",
-          "verified": "unknown",
+          "verified": "supported",
           "source": "https://cursor.com/docs/cli/headless (--output-format json|stream-json)",
-          "note": "the output schema is undocumented: a top-level object is kept and only a string `model` field is read as an observed model; everything else stays unknown"
+          "note": "`--output-format json` verified 2026-09-16: a single JSON object per run with keys type, subtype, is_error, duration_ms, duration_api_ms, result, session_id, request_id, usage (inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens). No `model` field, so the observed model stays unknown by design; `about` reports the selection as `Auto`. Only `result` and a string `model` are read; everything else stays unknown",
+          "verified_on": "2026-09-16",
+          "client_version": "Cursor CLI 2026.09.10-fd3934a"
         },
         "status": {
           "product": "unknown",
           "implemented": "unsupported",
           "verified": "unknown",
           "source": "https://cursor.com/docs/cli/reference/parameters (ls, resume, status)",
-          "note": "`status` reports authentication, not a run; `ls`/`resume` address chats. No per-run status is exposed, so the adapter raises CapabilityError"
+          "note": "`status` reports authentication, not a run; `ls`/`resume` address chats. No per-run status is exposed, so the adapter raises CapabilityError. 2026-09-16: `agent status` on a real install prints `Not logged in`, confirming it reports authentication, not a run"
         },
         "cancel": {
           "product": "unknown",
@@ -352,11 +385,11 @@
           "note": "Cursor's own command sandbox is documented and not relied on: verification runs under bin/exec_policy.py, and the dispatch itself is unconfined, as on every harness"
         },
         "usage_report": {
-          "product": "unknown",
+          "product": "supported",
           "implemented": "unsupported",
           "verified": "unknown",
           "source": "",
-          "note": "the CLI documents no usage or cost output; state.vscdb is an undocumented SQLite store this repository does not open; every Cursor dispatch is unpriced (usd null)"
+          "note": "2026-09-16: the CLI's `--output-format json` result carries a `usage` block (inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens) and `duration_ms`, so the product does report usage; this adapter does not read it yet (follow-up) and prices nothing (data/pricing.cursor.json is an empty roster), so every Cursor dispatch stays unpriced (usd null). state.vscdb is an undocumented SQLite store this repository does not open"
         },
         "skill_files": {
           "product": "supported",
@@ -389,16 +422,20 @@
         "durable_attempts": {
           "product": "not-applicable",
           "implemented": "supported",
-          "verified": "unknown",
+          "verified": "supported",
           "source": "bin/attempt_ledger.py, bin/kit_contract.py TaskRun",
-          "note": "polytropos capability: every dispatch is recorded before and after it runs, a dead run's open attempt is closed as unknown and reconciled by re-running the check, claims use O_EXCL. Exercised with a stub binary and temp stores only"
+          "note": "polytropos capability: every dispatch is recorded before and after it runs, a dead run's open attempt is closed as unknown and reconciled by re-running the check, claims use O_EXCL. Live 2026-09-16: nineteen events across three runs (the auth-refused dispatch, the passing dispatch, the review) recorded outside the tree in the named --attempt-store. The dead-run path was exercised with a stub binary and temp stores only; `duration_s` is null on every live attempt (follow-up, shared with the Claude driver)",
+          "verified_on": "2026-09-16",
+          "client_version": "Cursor CLI 2026.09.10-fd3934a"
         },
         "independent_review": {
           "product": "not-applicable",
           "implemented": "supported",
-          "verified": "unknown",
+          "verified": "supported",
           "source": "bin/cursor_execute.py review; bin/kit_contract.py ROLE_SUPPORT",
-          "note": "phase-end review dispatched read-only (--mode ask) and recorded in the attempt ledger; never run live"
+          "note": "phase-end review dispatched read-only (--mode ask) and recorded in the attempt ledger. Verified 2026-09-16: `review --phase 1` on the throwaway kit, rc 0, recorded as run 2026-09-16-fb01 role=reviewer op=review, tree byte-identical. The reviewer produced findings but no `REVIEW VERDICT=` line (`result: null` in the ledger); the grade came from the verify, never from the review",
+          "verified_on": "2026-09-16",
+          "client_version": "Cursor CLI 2026.09.10-fd3934a"
         },
         "extended_roles": {
           "product": "not-applicable",
