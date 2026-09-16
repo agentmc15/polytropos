@@ -261,7 +261,9 @@ evidence, which is precisely the failure mode the generated matrix exists to pre
   the baseline described them.
 - D03 should report to D05 that **no** duration fix has landed anywhere: `duration_s` is null on
   every live attempt on every harness, because the drivers' runners drop `bin/proc_runner.py`'s
-  timing, and Cursor's own JSON reports a `duration_ms` that `bin/cursor_adapter.py` never reads.
+  timing. (An earlier draft added that Cursor's JSON reports a `duration_ms` the adapter never
+  reads; that half was withdrawn in D03 as unverifiable — the only `duration_ms` anywhere in this
+  tree is in `bin/copilot_statusline.py`, which is Copilot's, not Cursor's.)
 - D16 and D17 must build the grounding-to-prompt seam rather than assume it exists.
 - D29 must not reimplement or relabel the Cursor adapter merely because an adaptive profile is
   unavailable; six of its rows are verified and that evidence stands.

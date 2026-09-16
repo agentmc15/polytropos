@@ -40,7 +40,7 @@ VERIFY
 ### D02 — Legacy goldens
 - id: D02
 - title: Legacy goldens
-- status: pending
+- status: done
 - model: sonnet
 - depends: D01
 **Brief.** Own `tests/test_decision_legacy.py:LegacyDecisionGoldenTests`; fixture `bin/kit_contract.py`, drivers and `bin/workflow_eval.py`. Pin parse/readiness/admission/recovery behavior and absent active pointer as legacy default; assert workflow_eval remains pull-only.
@@ -56,7 +56,7 @@ PYTHONPATH=tests python3 -m unittest test_decision_legacy.LegacyDecisionGoldenTe
 ### D03 — Authority inventory
 - id: D03
 - title: Authority inventory
-- status: pending
+- status: done
 - model: opus
 - depends: D01
 **Brief.** Own `docs/DECISION-IMPROVEMENT-AUTHORITY-INVENTORY.md`. Map attempt/admission/acceptance/policy/evaluation writers, missing full versions and acceptance/policy/decision/admission refs, duration coverage, unknown migration and workflow_eval pull-only limitation.

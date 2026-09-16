@@ -179,7 +179,7 @@ which rows a client release invalidates and writes nothing. If a later session p
 
 - `python3 bin/release_gate.py check` first; then `check --run` if there is time (it runs the
   whole contract map in-process, several minutes).
-- A new `docs/*.md` still moves the census pins (now 30 / 32 / 74 and 31 / 33 / 75).
+- A new `docs/*.md` still moves the census pins (now 31 / 33 / 75 and 32 / 34 / 76).
 - `CLAUDE.md` has 8 bytes of headroom under its 16,000-byte ceiling; trim before adding.
 
 ### Live verification on 2026-09-16 (after the roadmap)
@@ -765,6 +765,13 @@ These cost real time to discover. All are still live.
    edit, exactly as entry 14 prescribes. The task's own acceptance said "no code changes",
    which is why the bump is recorded here and as a `defect:` line in the kit's NOTES.md
    rather than folded silently into the task.
+
+29. **The census pins moved again**: 31 sources / 33 page-map keys / 75 pages, and the
+   "one more" targets 32 / 34 / 76 (2026-09-16, decision-improvement-v1 task D03,
+   `docs/DECISION-IMPROVEMENT-AUTHORITY-INVENTORY.md`). Also learned here, and missing from
+   entry 14: `bin/docs_build.py build` does NOT update `mkdocs.yml`. The nav list is
+   hand-maintained, so a new deep-dive page also needs one alphabetically-placed nav line or
+   `test_docs_site.NavCoverageTests` fails — a SEVENTH failure beyond the six census pins.
 
 ---
 

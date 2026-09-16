@@ -299,10 +299,10 @@ class CensusBumpTripwireTests(unittest.TestCase):
     def test_pinned_counts_match_the_real_tree(self):
         docs_build = _load("_t8_docs_build_real", BIN_DIR / "docs_build.py")
         md_sources = sorted((REPO_ROOT / "docs").glob("*.md"))
-        self.assertEqual(len(md_sources), 30)
+        self.assertEqual(len(md_sources), 31)
         page_map = docs_build.deep_dive_page_map(REPO_ROOT)
-        self.assertEqual(len(page_map), 32)
-        self.assertEqual(len(docs_build.expected_pages(REPO_ROOT)), 74)
+        self.assertEqual(len(page_map), 33)
+        self.assertEqual(len(docs_build.expected_pages(REPO_ROOT)), 75)
 
     def test_one_more_doc_breaks_the_pinned_counts(self):
         docs_build = _load("_t8_docs_build_copy", BIN_DIR / "docs_build.py")
@@ -312,16 +312,16 @@ class CensusBumpTripwireTests(unittest.TestCase):
                 shutil.copytree(REPO_ROOT / name, tmp / name)
 
             md_before = sorted((tmp / "docs").glob("*.md"))
-            self.assertEqual(len(md_before), 30)
-            self.assertEqual(len(docs_build.expected_pages(tmp)), 74)
+            self.assertEqual(len(md_before), 31)
+            self.assertEqual(len(docs_build.expected_pages(tmp)), 75)
 
             (tmp / "docs" / "ZZZ-STUB.md").write_text("# Stub\n\nStub content.\n", encoding="utf-8")
 
             md_after = sorted((tmp / "docs").glob("*.md"))
-            self.assertEqual(len(md_after), 31, "one more doc must move the pinned 30 -> 31")
+            self.assertEqual(len(md_after), 32, "one more doc must move the pinned 31 -> 32")
             page_map_after = docs_build.deep_dive_page_map(tmp)
-            self.assertEqual(len(page_map_after), 33, "one more doc must move the pinned 32 -> 33")
-            self.assertEqual(len(docs_build.expected_pages(tmp)), 75, "one more doc must move the pinned 74 -> 75")
+            self.assertEqual(len(page_map_after), 34, "one more doc must move the pinned 33 -> 34")
+            self.assertEqual(len(docs_build.expected_pages(tmp)), 76, "one more doc must move the pinned 75 -> 76")
 
 
 class DocHygieneAcceptanceTests(unittest.TestCase):
