@@ -303,7 +303,7 @@ class RealTreeIdempotenceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = _copy_real_dirs(tmp, ("skills", "copilot", "codex", "docs"))
             expected_count = len(db.expected_pages(root))
-            self.assertEqual(expected_count, 73, "the pinned page-set size (73 total)")
+            self.assertEqual(expected_count, 74, "the pinned page-set size (74 total)")
 
             code1, out1, err1 = _run_main(["build", "--repo-root", str(root)])
             self.assertEqual(code1, 0, f"stderr={err1!r}")

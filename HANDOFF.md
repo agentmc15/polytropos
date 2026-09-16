@@ -179,7 +179,7 @@ which rows a client release invalidates and writes nothing. If a later session p
 
 - `python3 bin/release_gate.py check` first; then `check --run` if there is time (it runs the
   whole contract map in-process, several minutes).
-- A new `docs/*.md` still moves the census pins (now 29 / 31 / 73 and 30 / 32 / 74).
+- A new `docs/*.md` still moves the census pins (now 30 / 32 / 74 and 31 / 33 / 75).
 - `CLAUDE.md` has 8 bytes of headroom under its 16,000-byte ceiling; trim before adding.
 
 ### Live verification on 2026-09-16 (after the roadmap)
@@ -758,6 +758,13 @@ These cost real time to discover. All are still live.
    dirty count, interpreter version, or test result goes into `render_block`; those live in
    the live `check` output. `binary_name` loads four driver modules to read parser defaults,
    which is deterministic but not free — `harness_matrix(with_binaries=False)` where speed matters.
+
+28. **The census pins moved again**: 30 sources / 32 page-map keys / 74 pages, and the
+   "one more" targets 31 / 33 / 75 (2026-09-16, decision-improvement-v1 task D01,
+   `docs/DECISION-IMPROVEMENT-RECONCILIATION.md`). Six pins across the same three files, one
+   edit, exactly as entry 14 prescribes. The task's own acceptance said "no code changes",
+   which is why the bump is recorded here and as a `defect:` line in the kit's NOTES.md
+   rather than folded silently into the task.
 
 ---
 

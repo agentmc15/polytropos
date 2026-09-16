@@ -15,6 +15,7 @@
 | [The Copilot workflow layer](copilot-workflow.md) |
 | [The Cursor harness](cursor-harness.md) |
 | [Daily work journal](daily-journal.md) |
+| [Decision and improvement — reconciliation against HEAD](decision-improvement-reconciliation.md) |
 | [The effort dial — cross-harness contract](effort-dial.md) |
 | [Evidence-Loop: Measuring Governance, Promotion, and Escalation Quality](evidence-loop.md) |
 | [Fusion Tier 1 — multi-model orchestration borrows](fusion-tier1.md) |

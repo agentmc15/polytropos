@@ -12,7 +12,7 @@ repository uses 3.12 syntax and `tomllib`. Do not install or mutate an interpret
 ### D01 — Reconcile and ADR
 - id: D01
 - title: Reconcile and ADR
-- status: pending
+- status: done
 - model: opus
 - depends: (none)
 **Brief.** Own `docs/DECISION-IMPROVEMENT-RECONCILIATION.md` and `docs/adr/decision-improvement-v1.md`. Compare exact HEAD, HANDOFF, SECURITY, roadmap and kit contract; classify steps 16–26, preserve legacy, distinguish advisory prediction from authority, and state Jev-free/human-gated/data-only design.

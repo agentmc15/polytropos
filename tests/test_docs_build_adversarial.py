@@ -747,7 +747,7 @@ class DeepDivePageMapRealTreeTests(unittest.TestCase):
     def test_every_real_docs_md_source_is_mapped_with_lowercased_slug(self):
         page_map = db.deep_dive_page_map(REPO_ROOT)
         md_sources = sorted((REPO_ROOT / "docs").glob("*.md"))
-        self.assertEqual(len(md_sources), 29)  # 2026-09-13: step 26 added docs/RELEASE.md (28 -> 29 sources)
+        self.assertEqual(len(md_sources), 30)  # 2026-09-16: D01 added docs/DECISION-IMPROVEMENT-RECONCILIATION.md (29 -> 30 sources)
         for path in md_sources:
             key = f"docs/{path.name}"
             expected_value = f"deep-dives/{path.stem.lower()}.md"
@@ -775,9 +775,10 @@ class DeepDivePageMapRealTreeTests(unittest.TestCase):
         mirrors + 1 index, per the brief's 'Currently 24 sources -> 25
         pages'). 2026-09-13: 27 -> 28 when step 23 added docs/CURSOR-HARNESS.md,
         28 -> 29 when step 24 added docs/KIT-SCHEDULER.md, 29 -> 30 when step 25
-        added docs/WORKFLOW-EVAL.md, 30 -> 31 when step 26 added docs/RELEASE.md."""
+        added docs/WORKFLOW-EVAL.md, 30 -> 31 when step 26 added docs/RELEASE.md, 31 -> 32
+    when D01 added docs/DECISION-IMPROVEMENT-RECONCILIATION.md."""
         page_map = db.deep_dive_page_map(REPO_ROOT)
-        self.assertEqual(len(page_map), 31)
+        self.assertEqual(len(page_map), 32)
 
 
 class DeepDivesNeverMirrorHtmlFilesLiveTreeTests(unittest.TestCase):
@@ -941,24 +942,24 @@ class DeepDiveGlobDerivationExtraFileTests(unittest.TestCase):
     """Brief: 'DERIVE the set from a docs/ glob, never a hardcoded list, so a
     future doc auto-joins'. Proves it on a temp COPY of the real repo's
     skills/copilot/codex/docs directories plus one extra docs/NEW-THING.md --
-    expected_pages() must grow by exactly one mirror page (30 -> 31 deep-dive
-    pages; 73 -> 74 total), never touching the real tracked docs/ dir.
+    expected_pages() must grow by exactly one mirror page (31 -> 32 deep-dive
+    pages; 74 -> 75 total), never touching the real tracked docs/ dir.
     2026-09-13: baseline 69 -> 70 (step 23, docs/CURSOR-HARNESS.md) -> 71 (step 24,
     docs/KIT-SCHEDULER.md) -> 72 (step 25, docs/WORKFLOW-EVAL.md) -> 73 (step 26,
-    docs/RELEASE.md)."""
+    docs/RELEASE.md) -> 74 (D01, docs/DECISION-IMPROVEMENT-RECONCILIATION.md)."""
 
-    def test_extra_doc_file_yields_a_31st_mirror_page(self):
+    def test_extra_doc_file_yields_a_32nd_mirror_page(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = _copy_real_dirs(tmp, ("skills", "copilot", "codex", "docs"))
             baseline = db.expected_pages(root)
-            self.assertEqual(len(baseline), 73)
+            self.assertEqual(len(baseline), 74)
 
             (root / "docs" / "NEW-THING.md").write_text(
                 "# New Thing\n\nA brand-new doc.\n", encoding="utf-8"
             )
 
             grown = db.expected_pages(root)
-            self.assertEqual(len(grown), 74)
+            self.assertEqual(len(grown), 75)
             self.assertIn("docs-site/deep-dives/new-thing.md", grown)
 
 

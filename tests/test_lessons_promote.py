@@ -5,8 +5,10 @@ SAFETY CONTRACT (binds every test in this file): every test that needs kit evide
 the real ``.claude/kits`` or the real ``tasks/lessons.md``. The one exception is
 ``test_real_run_touches_only_gitignored_path``, which snapshots ``git status --porcelain``
 before and after a real subprocess invocation of the tool (still with a synthetic
-``--kits-dir``) to prove the default output path never modifies anything tracked; it cleans up
-any file it creates.
+``--kits-dir``) to prove the default output path never modifies anything tracked. It pins
+``POLYTROPOS_DATA_HOME`` to a temp dir, so the "default" store it exercises is a fixture and
+never the real one, and it resolves that default through ``runtime_data.store_path`` rather
+than assuming an in-tree ``journal/`` exists.
 
 ``bin/`` is not a package; ``lessons_promote.py`` is loaded via importlib by absolute path,
 mirroring ``tests/test_memory_store.py``.
@@ -16,6 +18,7 @@ import contextlib
 import importlib.util
 import io
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -549,30 +552,36 @@ class NoScaffoldingWritesTests(unittest.TestCase):
             ["git", "status", "--porcelain"], cwd=REPO_ROOT,
             capture_output=True, text=True, check=True).stdout
 
-        default_dir = REPO_ROOT / "journal" / "promotions"
-        before_files = (set(p for p in default_dir.rglob("*") if p.is_file())
-                        if default_dir.is_dir() else set())
-
-        with tempfile.TemporaryDirectory() as td:
+        with tempfile.TemporaryDirectory() as td, tempfile.TemporaryDirectory() as home:
             kits_dir, lessons_file = self._make_fixture(td)
+
+            # The default output dir is whatever `runtime_data` resolves the `journal` store
+            # to -- NOT a fixed in-tree path. A fresh worktree has no in-tree `journal/`, so
+            # it resolves out of the tree; a checkout that still carries a populated one
+            # resolves to that. Asking the product's own resolver is what makes this test
+            # true in BOTH shapes. `POLYTROPOS_DATA_HOME` pins it to a temp dir so the run
+            # can never reach the real store (same seam as tests/test_attempt_ledger.py).
+            env = dict(os.environ, POLYTROPOS_DATA_HOME=home)
+            runtime_data = _load("runtime_data")
+            default_dir = runtime_data.store_path("journal", REPO_ROOT, env=env) / "promotions"
+            before_files = (set(p for p in default_dir.rglob("*") if p.is_file())
+                            if default_dir.is_dir() else set())
+
             written_path = default_dir / "9999-01-01.md"
-            try:
-                result = subprocess.run(
-                    [sys.executable, str(BIN_DIR / "lessons_promote.py"),
-                     "--kits-dir", str(kits_dir), "--lessons-file", str(lessons_file),
-                     "--now", "9999-01-01"],
-                    cwd=REPO_ROOT, capture_output=True, text=True, check=True)
-                self.assertIn("9999-01-01.md", result.stdout)
-                self.assertTrue(written_path.is_file())
-                # The confirmation line carries the RESOLVED path.
-                self.assertIn(str(written_path.resolve()), result.stdout)
-                # The default path writes EXACTLY one file — no strays, no traversal.
-                after_files = set(p for p in default_dir.rglob("*") if p.is_file())
-                self.assertEqual(after_files - before_files, {written_path},
-                                "the default run must create exactly one new file")
-            finally:
-                if written_path.exists():
-                    written_path.unlink()
+            result = subprocess.run(
+                [sys.executable, str(BIN_DIR / "lessons_promote.py"),
+                 "--kits-dir", str(kits_dir), "--lessons-file", str(lessons_file),
+                 "--now", "9999-01-01"],
+                cwd=REPO_ROOT, env=env, capture_output=True, text=True, check=True)
+            self.assertIn("9999-01-01.md", result.stdout)
+            self.assertTrue(written_path.is_file(),
+                            f"the default run must write {written_path}")
+            # The confirmation line carries the RESOLVED path.
+            self.assertIn(str(written_path.resolve()), result.stdout)
+            # The default path writes EXACTLY one file — no strays, no traversal.
+            after_files = set(p for p in default_dir.rglob("*") if p.is_file())
+            self.assertEqual(after_files - before_files, {written_path},
+                            "the default run must create exactly one new file")
 
             after = subprocess.run(
                 ["git", "status", "--porcelain"], cwd=REPO_ROOT,
