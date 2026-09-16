@@ -283,6 +283,24 @@ run) were done; step 4 (the bounded evaluation) waits on a target repository.
   small `--limit`. Also worth knowing before a live run: `run --live` re-mines from scratch in
   its own temp dir, so the plan's 28 minutes repeat before the first dispatch. The plan card is
   in this session's scratchpad (`asa-plan.json`); it is deterministic and reproducible.
+- **The first live workflow evaluation (Claude Code 2.1.273, run `2026-09-16-1b4c`).** On the
+  user's "lets run the smoke as planned": `run --live --max-usd 2 --max-dispatches 16` with the
+  plan's flags, 01:46-02:53 UTC, into the default evals store. Mining repeated (28 min, same one
+  task); then 16 of 16 dispatches, $1.90 model-reported against the $2.00 ceiling, `overspent:
+  false`, 12/12 trials solved, every variant BELOW the evidence floor and labelled so, no
+  security outcome tripped. What it showed: (1) the review form lacked `--output-format json`,
+  so every review stage was priced as an estimate while the implement stage beside it was
+  model-reported -- fixed, `test_each_review_form_is_the_harness_documented_read_only_shape`
+  pins the format args; (2) the results envelope carried the constant "no workflow has been run
+  live from this repository on any harness" -- now `untested_claims()` reads the registry and
+  names only the harnesses whose `workflow_evaluation` row is unverified (codex, copilot,
+  cursor); the stored envelope of `1b4c` keeps the stale sentence, as stored records do;
+  (3) the reviewer ran in an empty throwaway directory and said it could only review the diff
+  statically -- by design (HANDOFF, step 25's limits) but worth knowing when reading a review;
+  (4) `observed_model` is null on every attempt because the claude adapter never parses it;
+  (5) the plan's estimates ran well under the reported figures for sonnet (est. $0.045 per
+  implement, reported $0.17-$0.35). The registry row is verified with the run named; nothing
+  was proposed or applied.
 - **What the live runs showed the ledger does not carry yet.** `duration_s` is null on every
   live attempt on both harnesses (the drivers' `(rc, output)` runners drop `proc_runner`'s
   timing, and Cursor's JSON even reports `duration_ms`); the verify events do not say which
@@ -331,12 +349,11 @@ run) were done; step 4 (the bounded evaluation) waits on a target repository.
 
 ### Step 25's own deliberate limits
 
-- **Nothing has dispatched live.** Every adapter's argv is its driver's documented shape and every dollar
-  figure is an estimate at the harness's own rates; the registry's `workflow_evaluation` rows
-  are `verified: unknown` for all four real harnesses and `supported` only for the stub. The
-  bounded plan in `docs/WORKFLOW-EVAL.md` is a command, not a result. One `plan` has run on a
-  real target (2026-09-16, above): it mined one task, so a live run of it would verify the
-  pipeline, not produce an applicable verdict.
+- **One harness has dispatched live.** Every adapter's argv is its driver's documented shape and every dollar
+  figure is an estimate at the harness's own rates until a run reports usage; the registry's
+  `workflow_evaluation` rows are `verified: unknown` for codex, copilot, and cursor, `supported`
+  for the stub and, since run `2026-09-16-1b4c` (above), for claude-code. That run mined one
+  task, so it verified the pipeline and produced no applicable verdict.
 - **`solved` is the tests oracle and only that.** The full-patch diagnostic and the blind
   judge stay repo_bench's; the evaluator does not dispatch a judge. A reviewer's verdict, the
   kit's own check, and an adjudication are recorded beside `solved`, never in it.

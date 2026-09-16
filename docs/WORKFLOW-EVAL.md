@@ -107,7 +107,7 @@ and `unpriced` stand as separate columns. Only the first two count against `--ma
 | resume | a dead attempt in a kit trial is closed as unknown, the check runs first, finished work is recognised without a dispatch, unfinished work gets one attempt that carries the prior evidence, and nothing is replayed |
 | privacy | the statement goes through `bin/redact.py` before it reaches a prompt; the counts by kind ride on the trial and the plan, never the value |
 
-## The live plan, and why it has not run
+## The live plan, and the first run
 
 `plan` prices every dispatching stage at the harness's own rates and names the hard caps: the
 number of dispatches, the number of check runs, and the wall-clock bound the process runner
@@ -118,16 +118,27 @@ its price, which is what bounds a harness whose dispatches are unpriced. A ceili
 possible and is labelled rather than prevented. None of this is a provider-side guarantee, and
 a subscription harness's proxy is not a bill.
 
-A bounded plan exists in this repository as a command, not as a result:
+The bounded plan this repository prepares is:
 
 ```bash
 python3 bin/workflow_eval.py plan --repo /path/to/a/repo --harness claude --models sonnet,haiku \
     --workflows direct,reviewed,kit --repeats 2 --limit 6 --test-cmd "python -m pytest -q"
 ```
 
-That is thirty-six trials and sixty dispatches at most. Adding `--live --max-usd 5
---max-dispatches 60` would run it against the user's own account; nobody has, and every figure
-above is an estimate until someone does.
+That is thirty-six trials and sixty dispatches at most; `--live --max-usd 5 --max-dispatches
+60` would run it against the user's own account. It has run once, on Claude Code on
+2026-09-16, against the maintainer's own Python project, with a ceiling of two dollars and
+sixteen dispatches. General-mode mining admitted one task (twenty-three of twenty-four
+mutation sites left that project's suite green), so the run was twelve trials over one task:
+all sixteen dispatches completed, $1.90 was model-reported against the ceiling with no
+overspend, every trial was solved by the tests oracle, and every variant was labelled below
+the evidence floor, which is the honest result of one task. It verified the pipeline and the
+registry's Claude `workflow_evaluation` row; it produced no ranking and no proposal. Two
+things it taught are fixed: the review dispatch now asks for the JSON envelope so its usage is
+reported rather than estimated, and the "never run live" claim on a card is read from the
+registry per harness instead of being a constant. The plan's estimates were not a forecast of
+the bill: reported sonnet implement stages ran four to eight times the profile estimate. The
+other three adapters have not run, and the card says so by name.
 
 ## Changing a routing default
 

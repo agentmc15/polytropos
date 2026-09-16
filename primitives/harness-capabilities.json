@@ -91,9 +91,11 @@
         "workflow_evaluation": {
           "product": "not-applicable",
           "implemented": "supported",
-          "verified": "unknown",
+          "verified": "supported",
           "source": "bin/workflow_eval.py (step 25)",
-          "note": "bin/workflow_eval.py claude adapter: repo_bench's claude argv for implement, a restricted-permission dispatch for review, dollars from data/pricing.json; never run live from this repository"
+          "note": "bin/workflow_eval.py claude adapter: repo_bench's claude argv for implement, a restricted-permission dispatch for review, dollars from data/pricing.json. One authorized live run on 2026-09-16 (UTC), run 2026-09-16-1b4c in the default evals store, against the maintainer's own ai-stack-advisor checkout: general-mode mining admitted one XS task (23 of 24 sites green); 16 dispatches of a 16 cap across direct/reviewed/kit x sonnet/haiku x 2 repeats, $1.90 model-reported against a $2.00 ceiling, no overspend, 12/12 trials solved by the tests oracle, every variant BELOW the evidence floor (n=2 < 5) and labelled so -- a pipeline verification, not a routing verdict. Observed in the run and fixed after it: review dispatches carried no --output-format json, so their usage was unreadable and priced as estimates. Still open: the reviewer runs in an empty throwaway directory and reviewed the diff statically (it said so); observed_model is never parsed from Claude's JSON; no proposal was made",
+          "verified_on": "2026-09-16",
+          "client_version": "Claude Code 2.1.273"
         }
       }
     },

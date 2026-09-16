@@ -247,6 +247,10 @@ class AdapterTests(unittest.TestCase):
         self.assertIn("--dangerously-skip-permissions", claude["build_argv"]("c", "m", p))
         rv = claude["build_review_argv"]("c", "m", p)
         self.assertNotIn("--dangerously-skip-permissions", rv)
+        # 2026-09-16: a review without the JSON envelope reports no usage and falls back to the
+        # estimate; the review form carries the same output-format args as the implement form.
+        for a in rb.OUTPUT_FORMAT_ARGS:
+            self.assertIn(a, rv, rv)
         self.assertTrue(any(a.startswith("--allowedTools") or a == "--allowedTools" for a in rv), rv)
         codex = we.codex_adapter()
         self.assertIn("workspace-write", codex["build_argv"]("x", "m", p))
@@ -360,7 +364,28 @@ class AdapterTests(unittest.TestCase):
             with self.subTest(harness=key):
                 row = registry["harnesses"][key]["capabilities"]["workflow_evaluation"]
                 self.assertEqual(row["implemented"], "supported")
-                self.assertEqual(row["verified"], "supported" if key == "stub" else "unknown")
+                # claude-code: live run 2026-09-16-1b4c on 2026-09-16 (the registry row's note).
+                self.assertEqual(row["verified"],
+                                 "supported" if key in ("stub", "claude-code") else "unknown")
+                if key == "claude-code":
+                    self.assertEqual(row["verified_on"], "2026-09-16")
+                    self.assertTrue(row.get("client_version"))
+
+    def test_the_never_run_live_claim_is_the_registrys_word_not_a_constant(self):
+        # 2026-09-16: the first live run's own envelope said "no workflow has been run live
+        # from this repository on any harness". The sentence is now derived per run.
+        registry = json.loads((ROOT / "primitives" / "harness-capabilities.json").read_text())
+        expected = [key for name, key in we.REGISTRY_KEYS.items() if name != "stub"
+                    and registry["harnesses"][key]["capabilities"]["workflow_evaluation"]["verified"]
+                    != "supported"]
+        claims = we.untested_claims()
+        self.assertEqual(list(claims[-len(we.UNTESTED_CLAIMS):]), list(we.UNTESTED_CLAIMS))
+        self.assertNotIn("any harness", " ".join(claims))
+        if expected:
+            self.assertIn(", ".join(expected), claims[0])
+            self.assertNotIn("claude-code", claims[0])
+        else:
+            self.assertEqual(len(claims), len(we.UNTESTED_CLAIMS))
 
 
 # ---- the plan ---------------------------------------------------------------------------------------------
