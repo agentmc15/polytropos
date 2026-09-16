@@ -208,9 +208,17 @@ class OutputTests(unittest.TestCase):
         self.assertIsNone(ca.usage_report()["billed_usd"])
         modes = ca.modes_report()
         self.assertEqual(set(modes), {"cli", "ide", "cloud"})
+        # 2026-09-16: the CLI mode was run live (one dispatch, one review); it carries the date
+        # and client version a verification must name. The IDE and cloud modes are files this
+        # adapter installs, never driven, and stay unknown rather than being rounded up.
+        self.assertEqual(modes["cli"]["verified"], "supported")
+        self.assertTrue(modes["cli"]["verified_on"])
+        self.assertTrue(modes["cli"]["client_version"])
+        for mode in ("ide", "cloud"):
+            with self.subTest(mode=mode):
+                self.assertEqual(modes[mode]["verified"], "unknown")
         for mode, spec in modes.items():
             with self.subTest(mode=mode):
-                self.assertEqual(spec["verified"], "unknown")
                 self.assertTrue(spec["source"].startswith("https://cursor.com/docs/"))
         self.assertEqual(modes["cli"]["implemented"], "supported")
         self.assertEqual(modes["ide"]["implemented"], "files-only")
@@ -399,11 +407,18 @@ class RegistryAndPricingTests(unittest.TestCase):
         for name in ("dispatch", "identity_probe", "read_only_dispatch", "ide_mode",
                      "cloud_mode", "usage_report", "ambient_diagnosis"):
             self.assertIn(name, rows)
-        self.assertEqual(ha.effective(rows["dispatch"]), ha.UNKNOWN,
+        # 2026-09-16: `dispatch` was run live once and is verified with a date; `requires`
+        # accepts it. A row nobody has run (`model_selection`: no --model was ever passed live)
+        # is still refused, and `usage_report` stays unsupported: the product reports usage in
+        # its JSON result, but this adapter does not read it yet.
+        self.assertEqual(ha.effective(rows["dispatch"]), ha.SUPPORTED)
+        self.assertTrue(rows["dispatch"]["verified_on"])
+        self.assertTrue(adapter.requires("dispatch"))
+        self.assertEqual(ha.effective(rows["model_selection"]), ha.UNKNOWN,
                          "never run live from here, so never more than unknown")
         self.assertEqual(ha.effective(rows["usage_report"]), ha.UNSUPPORTED)
         with self.assertRaises(ha.CapabilityError):
-            adapter.requires("dispatch")
+            adapter.requires("model_selection")
 
     def test_pricing_is_its_own_empty_file_with_a_date_and_no_borrowed_numbers(self):
         payload = json.loads((ROOT / "data" / "pricing.cursor.json").read_text())

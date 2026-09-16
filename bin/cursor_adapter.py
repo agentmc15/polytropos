@@ -25,7 +25,8 @@ THREE MODES, REPORTED SEPARATELY. The IDE agent, the local CLI, and background/c
 are three products. This adapter drives the CLI. Files it installs (skills, subagents) are
 consumed by all three, which is a fact about the files, not a claim that this adapter drives
 the IDE or a cloud worker: `modes_report` says `cli: implemented`, `ide: files only`,
-`cloud: files only`, and none of the three is `verified` because nothing here is run live.
+`cloud: files only`; only `cli` is `verified` (one live run and one review on 2026-09-16), and
+the other two stay unknown because nothing here drives them.
 
 IDENTITY BEFORE TRUST. The binary is called `agent`, a name anything could have. Before a
 dispatch this adapter asks it `--version` and, failing that, `about --format json`, and
@@ -88,10 +89,12 @@ DOCS = {
 #: The three products, each answered on its own. `product` is what the documentation says;
 #: `implemented` is what this repository does; `verified` is what someone has run here.
 MODES = {
-    "cli": {"product": "supported", "implemented": "supported", "verified": "unknown",
+    "cli": {"product": "supported", "implemented": "supported", "verified": "supported",
+            "verified_on": "2026-09-16", "client_version": "Cursor CLI 2026.09.10-fd3934a",
             "source": DOCS["headless"],
-            "note": "driven by this adapter through `agent -p`; never run live from the "
-                    "repository, so verified stays unknown"},
+            "note": "driven by this adapter through `agent -p`; run live once on 2026-09-16 "
+                    "(one dispatch and one `--mode ask` review on a throwaway kit, recorded in "
+                    "the attempt ledger; see primitives/harness-capabilities.json)"},
     "ide": {"product": "supported", "implemented": "files-only", "verified": "unknown",
             "source": DOCS["subagents"],
             "note": "the IDE agent reads the same `.cursor/skills` and `.cursor/agents` files "

@@ -289,14 +289,17 @@ class SupportTests(unittest.TestCase):
                 rows = ha.registry_capabilities(harness)
                 self.assertEqual(ha.effective(rows["extended_roles"]), ha.UNSUPPORTED)
                 self.assertIn("ROLE_SUPPORT", rows["extended_roles"]["source"])
-        # Independent review: implemented on every driver, run live on exactly one. Claude's
-        # row was verified on 2026-09-16 (one authorized `review --phase 1` on a throwaway kit,
-        # recorded in the ledger); it must carry the date it was run. The others stay unknown
-        # until someone runs them -- a row is never rounded up to match its neighbour.
-        claude = ha.registry_capabilities("claude-code")
-        self.assertEqual(ha.effective(claude["independent_review"]), ha.SUPPORTED)
-        self.assertTrue(claude["independent_review"]["verified_on"])
-        for harness in ("codex", "copilot", "cursor"):
+        # Independent review: implemented on every driver, run live on two. Claude's and
+        # Cursor's rows were verified on 2026-09-16 (one authorized `review --phase 1` each on a
+        # throwaway kit, recorded in the ledger); each must carry the date it was run. The
+        # others stay unknown until someone runs them -- a row is never rounded up to match
+        # its neighbour.
+        for harness in ("claude-code", "cursor"):
+            with self.subTest(harness=harness):
+                rows = ha.registry_capabilities(harness)
+                self.assertEqual(ha.effective(rows["independent_review"]), ha.SUPPORTED)
+                self.assertTrue(rows["independent_review"]["verified_on"])
+        for harness in ("codex", "copilot"):
             with self.subTest(harness=harness):
                 rows = ha.registry_capabilities(harness)
                 self.assertEqual(ha.effective(rows["independent_review"]), ha.UNKNOWN,

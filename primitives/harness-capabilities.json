@@ -305,9 +305,11 @@
         "dispatch": {
           "product": "supported",
           "implemented": "supported",
-          "verified": "unknown",
+          "verified": "supported",
           "source": "https://cursor.com/docs/cli/headless (agent -p --output-format json --trust --force)",
-          "note": "bin/cursor_execute.py run through bin/cursor_adapter.build_dispatch; never invoked live from this repository -- tests stub the binary -- so verified stays unknown. 2026-09-16: one `run` on a throwaway one-task kit while the CLI was NOT logged in: `agent -p --trust --workspace … --output-format json --force <prompt>` exited 1 in ~1 s with `Error: Authentication required. Please run 'agent login' first, or set CURSOR_API_KEY environment variable.`; the driver classified it `auth`, projected T1 `blocked` with no verify, recorded it (run 2026-09-16-765a), and spent nothing. A successful dispatch has not been seen, so verified stays unknown until the user logs in"
+          "note": "bin/cursor_execute.py run through bin/cursor_adapter.build_dispatch; tests stub the binary. Verified 2026-09-16 on a real, logged-in install (macOS 14.4): one `run --task T1 --exec-mode enforced` on a throwaway one-task kit dispatched `agent -p --trust --workspace … --output-format json --force <prompt>` with no model pinned, rc 0 in ~17 s, the one-line edit landed and nothing else changed, the confined verify passed, T1 was projected done (run 2026-09-16-f427). Earlier the same day, logged out, the same command was refused with `Authentication required`, classified `auth`, and spent nothing (run 2026-09-16-765a)",
+          "verified_on": "2026-09-16",
+          "client_version": "Cursor CLI 2026.09.10-fd3934a"
         },
         "identity_probe": {
           "product": "supported",
@@ -321,9 +323,11 @@
         "read_only_dispatch": {
           "product": "supported",
           "implemented": "supported",
-          "verified": "unknown",
+          "verified": "supported",
           "source": "https://cursor.com/docs/cli/reference/parameters (--mode ask)",
-          "note": "review and verification dispatches pass --mode ask and never --force; whether ask mode refuses every write is the product's promise, not verified here. 2026-09-16: the documented smoke (`--mode ask`) was run on a real, logged-out install and returned the same authentication error; the flag's effect on a logged-in run is still unverified"
+          "note": "review and verification dispatches pass --mode ask and never --force. Verified 2026-09-16: the documented smoke returned `ready` in 4 s, and `review --phase 1` ran ~80 s under `--mode ask` and left the tree byte-identical; the reviewer's own text says it could not run the verify command in ask mode (\"switch to Agent mode or allow Shell\"), which is the product refusing execution, observed once. Whether ask mode refuses every write on every prompt is still the product's promise",
+          "verified_on": "2026-09-16",
+          "client_version": "Cursor CLI 2026.09.10-fd3934a"
         },
         "model_selection": {
           "product": "supported",
@@ -335,9 +339,11 @@
         "structured_events": {
           "product": "supported",
           "implemented": "supported",
-          "verified": "unknown",
+          "verified": "supported",
           "source": "https://cursor.com/docs/cli/headless (--output-format json|stream-json)",
-          "note": "the output schema is undocumented: a top-level object is kept and only a string `model` field is read as an observed model; everything else stays unknown"
+          "note": "`--output-format json` verified 2026-09-16: a single JSON object per run with keys type, subtype, is_error, duration_ms, duration_api_ms, result, session_id, request_id, usage (inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens). No `model` field, so the observed model stays unknown by design; `about` reports the selection as `Auto`. Only `result` and a string `model` are read; everything else stays unknown",
+          "verified_on": "2026-09-16",
+          "client_version": "Cursor CLI 2026.09.10-fd3934a"
         },
         "status": {
           "product": "unknown",
@@ -361,11 +367,11 @@
           "note": "Cursor's own command sandbox is documented and not relied on: verification runs under bin/exec_policy.py, and the dispatch itself is unconfined, as on every harness"
         },
         "usage_report": {
-          "product": "unknown",
+          "product": "supported",
           "implemented": "unsupported",
           "verified": "unknown",
           "source": "",
-          "note": "the CLI documents no usage or cost output; state.vscdb is an undocumented SQLite store this repository does not open; every Cursor dispatch is unpriced (usd null)"
+          "note": "2026-09-16: the CLI's `--output-format json` result carries a `usage` block (inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens) and `duration_ms`, so the product does report usage; this adapter does not read it yet (follow-up) and prices nothing (data/pricing.cursor.json is an empty roster), so every Cursor dispatch stays unpriced (usd null). state.vscdb is an undocumented SQLite store this repository does not open"
         },
         "skill_files": {
           "product": "supported",
@@ -398,16 +404,20 @@
         "durable_attempts": {
           "product": "not-applicable",
           "implemented": "supported",
-          "verified": "unknown",
+          "verified": "supported",
           "source": "bin/attempt_ledger.py, bin/kit_contract.py TaskRun",
-          "note": "polytropos capability: every dispatch is recorded before and after it runs, a dead run's open attempt is closed as unknown and reconciled by re-running the check, claims use O_EXCL. Exercised with a stub binary and temp stores only"
+          "note": "polytropos capability: every dispatch is recorded before and after it runs, a dead run's open attempt is closed as unknown and reconciled by re-running the check, claims use O_EXCL. Live 2026-09-16: nineteen events across three runs (the auth-refused dispatch, the passing dispatch, the review) recorded outside the tree in the named --attempt-store. The dead-run path was exercised with a stub binary and temp stores only; `duration_s` is null on every live attempt (follow-up, shared with the Claude driver)",
+          "verified_on": "2026-09-16",
+          "client_version": "Cursor CLI 2026.09.10-fd3934a"
         },
         "independent_review": {
           "product": "not-applicable",
           "implemented": "supported",
-          "verified": "unknown",
+          "verified": "supported",
           "source": "bin/cursor_execute.py review; bin/kit_contract.py ROLE_SUPPORT",
-          "note": "phase-end review dispatched read-only (--mode ask) and recorded in the attempt ledger; never run live"
+          "note": "phase-end review dispatched read-only (--mode ask) and recorded in the attempt ledger. Verified 2026-09-16: `review --phase 1` on the throwaway kit, rc 0, recorded as run 2026-09-16-fb01 role=reviewer op=review, tree byte-identical. The reviewer produced findings but no `REVIEW VERDICT=` line (`result: null` in the ledger); the grade came from the verify, never from the review",
+          "verified_on": "2026-09-16",
+          "client_version": "Cursor CLI 2026.09.10-fd3934a"
         },
         "extended_roles": {
           "product": "not-applicable",

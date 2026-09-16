@@ -201,8 +201,18 @@ run) were done; step 4 (the bounded evaluation) waits on a target repository.
   in"): the documented smoke and one driver `run` on a second throwaway kit both returned
   `Error: Authentication required. Please run 'agent login' first, or set CURSOR_API_KEY
   environment variable.`; the driver classified it `auth`, projected T1 `blocked` with no verify,
-  recorded it (run `2026-09-16-765a`), and spent nothing. `dispatch` and `read_only_dispatch`
-  stay `unknown` until the user runs `agent login` -- a browser flow that is theirs.
+  recorded it (run `2026-09-16-765a`), and spent nothing. The user then ran `agent login`
+  (browser flow) and, with the throwaway kit's budget raised to two dispatches: the documented
+  smoke returned `ready` in 4 s (JSON result with `usage` token counts, no `model` field); `run
+  --task T1 --exec-mode enforced` dispatched once with no model pinned, rc 0 in ~17 s, the edit
+  landed, the confined verify passed, T1 done (run `2026-09-16-f427`); `review --phase 1` under
+  `--mode ask` ran ~80 s, rc 0, tree byte-identical, recorded as run `2026-09-16-fb01` -- the
+  reviewer wrote findings and said it could not run the verify command in ask mode, and produced
+  no `REVIEW VERDICT=` line. Cursor rows re-dated with `client_version`: `identity_probe`,
+  `dispatch`, `read_only_dispatch`, `structured_events`, `durable_attempts`, `independent_review`;
+  `usage_report` now says the product DOES report usage (the adapter does not read it yet).
+  Still unknown on Cursor: `model_selection` (no `--model` was passed), `cli_sandbox`, the IDE and
+  cloud modes, `concurrent_dispatch`, `workflow_evaluation`.
 - **Claude Code 2.1.273.** A throwaway project under the session scratchpad with a one-task kit
   (`m.py` returns 1, the test wants 2; `budget: max-dispatches=2 max-escalations=1`). The dry run
   found the driver reading `.claude/agents/<slug>-<role>.md` from THIS checkout only, so a kit in
@@ -216,13 +226,17 @@ run) were done; step 4 (the bounded evaluation) waits on a target repository.
   blanket grant, rc 0 in ~40 s, `REVIEW VERDICT=accept`, tree byte-identical, recorded as run
   `2026-09-16-2c48` role=reviewer. Registry rows re-dated with `client_version`: `dispatch`,
   `tool_pin`, `confined_verify`, `durable_attempts`, `independent_review`.
-- **What the live run showed the ledger does not carry yet.** `duration_s` is null on both
-  attempts (the drivers' `(rc, output)` runners drop `proc_runner`'s timing); the verify
-  events do not say which `--exec-mode` ran; the review dispatch pins no model and plain-text
-  output attests none (`model: null`, `observed_model: null`). None blocks a release; each is a
-  small follow-up, and the registry notes name them.
-- **What was NOT verified.** The dead-run resume path (stubs only), escalation (the first
-  attempt passed), any Codex or Copilot row, and the workflow-evaluation adapters.
+- **What the live runs showed the ledger does not carry yet.** `duration_s` is null on every
+  live attempt on both harnesses (the drivers' `(rc, output)` runners drop `proc_runner`'s
+  timing, and Cursor's JSON even reports `duration_ms`); the verify events do not say which
+  `--exec-mode` ran; the Claude review pins no model and plain-text output attests none; Cursor's
+  JSON result carries `usage` token counts the adapter does not read (its NOTES line still says
+  "the harness reports no usage", which is now false -- it is unpriced, not unreported) and no
+  `model` field, so `observed_model` stays null. None blocks a release; each is a small
+  follow-up, and the registry notes name them.
+- **What was NOT verified.** The dead-run resume path (stubs only), escalation (every first
+  attempt passed), Cursor's `--model` selection and its IDE/cloud modes, any Codex or Copilot
+  row, and the workflow-evaluation adapters.
 
 ### Step 26's own deliberate limits
 
