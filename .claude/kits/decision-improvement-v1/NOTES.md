@@ -356,3 +356,81 @@ outcome: D05 model=sonnet attempts=1 result=pass review=clean run=2026-09-16-aa6
 agent: D05 id=a592177 role=implementer model=sonnet
 agent: D05 id=aecc920 role=verifier model=sonnet findings=1 confirmed=1 result=accepted
 defect: D05 kind=contradictory-acceptance
+
+### D06 — Immutable manifests
+
+47 tests, verify exit 0, suite 4329/0/2, all gates 0. `bin/workflow_eval.py` +1097, one
+`VERSION_SOURCES` row, one GENERATED line each in `docs/RELEASE.md` and its mirror (rebuild is
+idempotent — proven by re-running both generators on a temp copy: "up to date", "written 0").
+The four prior test modules pass BYTE-IDENTICAL to HEAD (52+17+25+26 = 120). 6/6 mutations
+tripped, including emptying the enforcement disclaimer.
+
+**THE PRODUCT FINDING — confirmed REAL by independent re-derivation, and it constrains D18/D19.**
+`repo_bench.mine_issue_tasks` falls back to `statement = subject + body` with
+`statement_source = "commit-message"` whenever `gh` was not used — and `use_gh` defaults to
+FALSE everywhere (`--with-gh` is `action="store_true"`, off by default), while `--mode auto`
+resolves to `issue-replay` in the ordinary case. So the default mining path builds a problem
+statement that literally IS the fix commit message. D06's screen flags that as
+`future-fix-message`, quarantine is contagious within a defect group, and the promotion
+partition ends up EMPTY. **An evaluation run in the default mode yields ZERO held-out evidence.**
+This was checked against the real pipeline, not a fixture: `test_workflow_eval._Case.plan()`
+calls the real `build_plan(mode="issue-replay")` against a real temp git repo, and a full
+`Evaluation.run()` over that pool asserts `partitions["promotion"] == 0`.
+The screen is NOT over-aggressive — pools with `statement_source="issue"` fill every partition
+cleanly, and `repo_bench` already self-labels this path "weaker than issue text". **D18 must not
+plan a trial on default-mined tasks and call the result held-out. Either pass `--with-gh` or
+state plainly that the cohort carries no held-out evidence.**
+
+**D03's inventory was internally inconsistent, and D06 was right to deviate.** Its table row
+assigned manifest refs to `EVAL_VERSION`; the same document two sections later states the rule
+that contradicts it. `list_runs` gates envelope reads on `EVAL_VERSION`
+(`workflow_eval.py:2445`), so stamping the manifest with it would force a future manifest-shape
+change to either bump `EVAL_VERSION` — making every stored `results.json` unreadable, D04's
+trap — or lie. D06 added `MANIFEST_VERSION` on the referenced object, per D04's precedent. The
+table row is now corrected and the correction recorded in the document.
+
+**Integrity vs tamper-evidence, which is the point of the task.** Move one audit variant into
+development by hand and `verify_manifest` reports `digest` + `group-split`; recompute the digest
+and `digest` goes quiet while **`group-split` still fires** and `require_held_out` still refuses.
+`partition_for` is a pure function of the defect key and the allocation — never of the revision,
+run, clock or mining order, because a reshuffle on a new commit would turn yesterday's audit
+material into today's development material. Digest excludes `created_at`/`created_by`, so the
+same pool built twice by two people is the same manifest; verified across four interpreters under
+different `PYTHONHASHSEED` values, which a same-process assertion cannot see.
+
+**Post-hoc cohort selection is refused on log POSITION, not a clock.** `select_cohort(items=[...])`
+is refused outright; `declare_cohort` refuses once results exist; and the order check is
+re-applied AT READ TIME, so a `cohort.declared` line appended out of band — even with a backdated
+`at` timestamp claiming to precede the result — is still refused, citing positions. A clock can
+be lied to; an append position cannot, short of rewriting the whole log, which the test says it
+does not survive.
+
+**`NOT_ENFORCEMENT_LABEL` rides INSIDE the digest** (`content.rules.enforcement` and
+`content.labels`), so "a hash is not enforcement" cannot be stripped without changing the
+manifest id. Nothing in D06 presumes D07 succeeds — D07 may legitimately conclude the profile is
+`unavailable`.
+
+Carry-forward:
+- **The four-way allocator is only exercised on synthetic pools.** `Evaluation._record_manifest`
+  hardcodes `allocation={self.partition: 1}` — the real evaluator puts the whole pool in ONE
+  partition (`promotion` by default). Grouping logic does run on the genuine mined pool; it is
+  the partition SPACE that is degenerate. Same disclosed-but-unbound shape as D04's four
+  unbound `BudgetAdmission` builders. Whoever wires a persistent cross-run pool (D23/D33) owns
+  it. The storage functions already take their root as an argument, so that is a different
+  LOCATION, never a different writer.
+- **`Evaluation` writes with `on_leak="quarantine"`, not `"reject"`** — by the time `run()`'s
+  `finally` executes the tasks were already dispatched, so refusing would destroy the record
+  rather than prevent the exposure. Judged sound: quarantined items are never members of any
+  partition, `require_held_out` raises once quarantine empties the target, and the label is loud.
+- **The screen cannot prove absence** — a paraphrase of the fix passes it, and a test
+  deliberately demonstrates that so no reader treats an empty finding list as "clean". Same
+  caveat `bin/redact.py` carries.
+- **Manifests live in `<run_dir>/manifests/`, not the store root.** D06's first attempt put them
+  at the root and broke `test_workflow_eval.py:988` (`iterdir()[0]`) nondeterministically, 1 in 6
+  under load. Verified fixed: 18/18 clean runs. Anything later that adds a second entry at the
+  evals-store root will reintroduce that flake.
+
+outcome: D06 model=opus attempts=1 result=pass review=clean run=2026-09-16-aa6e
+agent: D06 id=af52e46 role=implementer model=opus
+agent: D06 id=ae5a126 role=verifier model=sonnet findings=2 confirmed=2 result=accepted
+defect: D03 kind=contradictory-acceptance

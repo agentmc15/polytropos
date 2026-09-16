@@ -106,7 +106,7 @@ PYTHONPATH=tests python3 -m unittest test_decision_duration.DurationCoverageTest
 ### D06 — Immutable manifests
 - id: D06
 - title: Immutable manifests
-- status: pending
+- status: done
 - model: opus
 - depends: D03
 **Brief.** Extend the existing manifest/storage seam in `bin/workflow_eval.py` and `tests/test_decision_evaluation_manifest.py:EvaluationManifestTests`. Create content-addressed grouped development/calibration/promotion/audit partitions with exposure accounting and reference-leak/staleness rejection.

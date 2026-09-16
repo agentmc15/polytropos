@@ -145,6 +145,7 @@ VERSION_SOURCES = (
     ("graph provenance sidecar", "graph_ground", "SIDECAR_VERSION"),
     ("integration manifest", "kit_scheduler", "MANIFEST_VERSION"),
     ("workflow evaluation", "workflow_eval", "EVAL_VERSION"),
+    ("evaluation manifest", "workflow_eval", "MANIFEST_VERSION"),
     ("policy proposal", "workflow_eval", "PROPOSAL_VERSION"),
     ("routing policy file", "workflow_eval", "POLICY_VERSION"),
     ("lessons store", "lessons_store", "SCHEMA"),

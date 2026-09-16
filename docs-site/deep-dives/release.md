@@ -113,6 +113,7 @@ Contract versions are read from the module that owns each one; package versions 
 | graph provenance sidecar | `bin/graph_ground.py` | `polytropos.graph-provenance/1` |
 | integration manifest | `bin/kit_scheduler.py` | `polytropos.integration-manifest/1` |
 | workflow evaluation | `bin/workflow_eval.py` | `polytropos.workflow-eval/1` |
+| evaluation manifest | `bin/workflow_eval.py` | `polytropos.eval-manifest/1` |
 | policy proposal | `bin/workflow_eval.py` | `polytropos.policy-proposal/1` |
 | routing policy file | `bin/workflow_eval.py` | `polytropos.routing-policy/1` |
 | lessons store | `bin/lessons_store.py` | `polytropos.lessons/2` |

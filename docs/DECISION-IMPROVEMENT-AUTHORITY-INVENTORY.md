@@ -105,7 +105,7 @@ Every reference below is **to add**. None exists at this revision.
 | `decision_ref` — the id and content hash of the decision record that produced the selection | `attempt.started` | `TaskRun.attempt_started` | its own decision id; one decision may precede several attempts, so the id cannot be derived from the attempt id | the decision contract's version | D04, defined by D09 |
 | `admission_ref` — the identity of the grant that admitted this operation | `attempt.started` | `TaskRun.attempt_started`, minted by `BudgetAdmission.admit` | `(namespace, run, task, attempt)`; the grant is issued immediately before the attempt id exists, so the mint must precede the record | `kit_contract.CONTRACT_VERSION` | D04 |
 | `duration_s` and its basis | `attempt.finished` | `TaskRun.attempt_finished` (the parameter already exists) | as above | `LEDGER_VERSION` — no new constant | D05 |
-| partition / exposure manifest refs | the evaluation envelope | `workflow_eval` | `run_id` plus the manifest's content id | `EVAL_VERSION` | D06 |
+| partition / exposure manifest refs | the evaluation envelope | `workflow_eval` | `run_id` plus the manifest's content id | `MANIFEST_VERSION` | D06 |
 | lifecycle and approval binding | the proposal and policy files | `workflow_eval` | proposal id, policy version | `PROPOSAL_VERSION`, `POLICY_VERSION` | D20, D22, D23 |
 
 Three rules govern that table.
@@ -295,6 +295,8 @@ occurs three times in `bin/` — its definition at `attempt_history.py:34`, the 
 `release_gate.VERSION_SOURCES` — and nothing anywhere reads a persisted history file and checks
 it. `attempt_history` writes nothing, so there is no store for a bump to render unreadable: it is
 a stamp with no reader, and it carries no migration hazard today.
+
+**Correction, D06, 2026-09-16.** The table row above said `EVAL_VERSION`, which contradicted this very rule. `list_runs` gates envelope reads on `EVAL_VERSION` (`workflow_eval.py:2445`), so stamping the manifest with it would force a future incompatible manifest shape to either bump `EVAL_VERSION` -- making every stored `results.json` unreadable, D04's documented trap -- or lie. D06 therefore added `MANIFEST_VERSION` on the referenced object, registered it in `release_gate.VERSION_SOURCES`, and regenerated `docs/RELEASE.md` through its generator. The row now says so.
 
 Where a genuinely incompatible shape is needed,
 the new version belongs on the *referenced object's* contract, not on the ledger line that points

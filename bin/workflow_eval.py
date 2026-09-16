@@ -50,6 +50,20 @@ plan names its caps and says which figures are estimates: a ceiling stops the NE
 is not a provider-side guarantee, and a subscription harness's figure is a relative-burn proxy,
 never a bill. `plan`, `card`, `demo`, and every test spend nothing.
 
+MATERIAL. A run's tasks are not a flat list any more: they are admitted into an immutable,
+content-addressed manifest (`MANIFEST_VERSION`, one file per manifest under the run's own
+`manifests/` directory, written once and never rewritten) with four partitions -- development,
+calibration, promotion, audit. Related issue and mutation VARIANTS of one defect are grouped
+and move together, because a group split across partitions is how a held-out result turns out
+to have been solved in development already. Calibration is the only partition a fit may touch
+and therefore the one partition whose result is never evidence. A problem statement carrying a
+reference patch, a future fix message, a fix commit sha or a hidden label is screened out by
+kind and count (never by value) and its whole group is quarantined. Exposure and retirement are
+an append-only log beside the manifest: a fact recorded, not a permission granted. A cohort is
+declared before its results exist or it is refused. NONE of that is enforced by the hashing --
+see `NOT_ENFORCEMENT_LABEL`: a digest detects a rewrite, it prevents nothing, and an isolation
+boundary is `bin/exec_policy.py`'s question, not a manifest's.
+
 POLICY. `prefs/routing-policy.json` changes only through `propose` (refused below the evidence
 floor, on a single repeat, or when the run's tasks already backed the applied policy),
 `review` (a person, by name), and `apply` (refused unreviewed, rejected, or stale against the
@@ -774,13 +788,1006 @@ def wilson(k, n, z=1.96):
     return [round(max(0.0, (c - s) / d), 4), round(min(1.0, (c + s) / d), 4)]
 
 
+# ---- immutable grouped partitions, exposure and leak screening -------------------------------
+#
+# WHY THIS EXISTS. A run's `holdout` used to be a flat list of task ids with no grouping, no
+# content identity, and no record of what had already been seen. Three things go wrong with
+# that shape, and each of them makes an evaluation lie to itself rather than fail loudly:
+#
+#   * two mined VARIANTS of the same underlying defect land on opposite sides of the split, so
+#     the "held-out" result was already solved, in full view, in development;
+#   * material a threshold or a calibrator was FIT on is later cited as held-out evidence,
+#     which is not evidence at all -- it is the fit, read back;
+#   * the cohort is chosen AFTER the results are in, and the tasks that happened to work are
+#     the tasks that count.
+#
+# WHAT IS ADDRESSED BY CONTENT, AND WHAT THAT BUYS. Every item carries four identities -- code
+# (repo + base commit), task (id, mode, defect key, statement digest), acceptance (the test
+# command, whether an objective oracle exists, the withheld test blobs' digests) and artifact
+# (the reference/setup patch digests) -- and its item id is the digest of exactly those. The
+# manifest's own id is the digest of its whole immutable `content`. Recomputing an identity
+# from a task record is therefore how staleness is detected: if the acceptance criteria moved,
+# every id under them moves, and the old evidence is stale by construction rather than by
+# somebody remembering.
+#
+# WHAT A DIGEST DOES NOT BUY, STATED ONCE AND MEANT: see NOT_ENFORCEMENT_LABEL. A hash detects
+# a change; it stops nothing. The rules below are enforced by the controller functions in this
+# module -- `build_manifest` (grouping, screening), `declare_cohort` / `select_cohort`
+# (ordering), `require_held_out` (roles, exposure, retirement, staleness) -- and an actual
+# isolation boundary, if this host has one at all, is `bin/exec_policy.py`'s question, which
+# the decision-improvement kit's D07 asks and is allowed to answer `unavailable`.
+#
+# NOTHING HERE IS A SECOND WRITER. `bin/workflow_eval.py` persists manifests, into its own
+# evals store, through `bin/safe_paths.py`'s confined create/append verbs -- the same
+# primitives the attempt ledger uses. `bin/repo_bench.py` remains the only writer of the
+# benchruns store and the owner of task mining and the content of a task record; this module
+# takes identities OF those records and never writes one.
+
+MANIFEST_VERSION = "polytropos.eval-manifest/1"
+
+#: The subdirectory, under whatever root a caller gives the storage functions, where manifests
+#: and their exposure logs live. `Evaluation` gives them its own run directory, because the
+#: evals store's ROOT holds exactly the run directories and its readers walk it expecting that.
+#: A pool partitioned once for a repository and shared across runs is a different root, chosen
+#: by whoever owns that pool -- the functions take it as an argument, so a shared manifest set
+#: is a different LOCATION and never a different writer. When that root is the store root,
+#: `list_runs` skips this name rather than reporting it as a malformed run.
+MANIFEST_DIR = "manifests"
+
+NOT_ENFORCEMENT_LABEL = (
+    "a content hash identifies and DETECTS change; it never prevents it. This manifest is "
+    "tamper-evident, not tamper-proof: anything running with the user's own privileges can "
+    "rewrite the file and recompute the digest. What is enforced here is enforced by the "
+    "controller -- partition roles, one group to one partition, append-order of cohort "
+    "declarations against results, leak screening, retirement -- and a digest, a worktree and "
+    "a 0700 mode are none of them an isolation boundary."
+)
+
+#: The four partitions, their roles, and the one rule that matters between them: a partition
+#: is EITHER somewhere a fit may happen or somewhere a result may be cited as evidence, never
+#: both. Material that was fit on is spent; reading it back is reading the fit.
+PARTITION_ROLES = {
+    "development": {
+        "purpose": "development", "fitting": True, "held_out": False, "single_use": False,
+        "note": "iteration material: read it, break it, look at it as often as you like",
+    },
+    "calibration": {
+        "purpose": "calibration-fitting", "fitting": True, "held_out": False,
+        "single_use": False,
+        "note": "the ONLY partition a calibrator or a threshold may be fit on, and therefore "
+                "never citable as held-out evidence",
+    },
+    "promotion": {
+        "purpose": "promotion-evidence", "fitting": False, "held_out": True,
+        "single_use": False,
+        "note": "held-out evidence for a promotion decision; no fit has ever seen it",
+    },
+    "audit": {
+        "purpose": "audit-evidence", "fitting": False, "held_out": True, "single_use": True,
+        "note": "the final held-out partition, and a single-use one: any exposure at all spends "
+                "the material it touched, which is then retired rather than read twice",
+    },
+}
+PARTITIONS = tuple(PARTITION_ROLES)
+
+#: Where a leaking item goes. NOT a partition: nothing is ever selected from it, and its role
+#: is absence of a role. Quarantine is contagious within a group -- see `build_manifest`.
+QUARANTINE = "quarantine"
+BUCKETS = PARTITIONS + (QUARANTINE,)
+
+#: Why material was seen. Four of them are a partition's own role; `inspection` is the honest
+#: word for a human or a tool having looked at material for any other reason, which is exactly
+#: the kind of exposure an evaluation forgets to write down.
+EXPOSURE_PURPOSES = ("development", "calibration-fitting", "promotion-evidence",
+                     "audit-evidence", "inspection")
+
+#: The append-only log's entry kinds. `result` is what makes post-hoc cohort selection
+#: detectable: a cohort declared after results for its partition are known is not a cohort.
+LOG_KINDS = ("cohort.declared", "exposure", "result", "retirement")
+
+#: How much of a pool each partition draws, by weight. Weights, not counts: the allocation is
+#: applied per DEFECT GROUP, so the item counts come out uneven and that is correct -- a
+#: defect with six variants moves as one thing.
+DEFAULT_ALLOCATION = {"development": 50, "calibration": 20, "promotion": 20, "audit": 10}
+
+GROUPING_RULE = (
+    "one defect, one group, one partition. A mined task is grouped by the defect it is a "
+    "variant OF -- its issue, else its fix commit, else the path(s) its reference patch "
+    "touches -- so related issue variants and mutation variants of the same defect are never "
+    "split across partitions. The rule is deliberately COARSE: over-grouping costs only "
+    "granularity, while under-grouping contaminates a held-out result, so where the two are "
+    "in tension this groups."
+)
+ASSIGNMENT_RULE = (
+    "a group's partition is a pure function of its defect key and the declared allocation -- "
+    "not of the repository revision, the run id, the clock, or the order tasks were mined. "
+    "That is load-bearing: if assignment moved when the code moved, yesterday's audit material "
+    "would be today's development material and every audit result taken since would be "
+    "contaminated by an exposure recorded under the old label."
+)
+
+#: What a candidate problem statement may never carry. `future-fix-message` includes the case
+#: `repo_bench` itself labels "statement from commit message (weaker than issue text)": the
+#: message of the commit that FIXED the defect did not exist when the defect did.
+LEAK_KINDS = ("reference-patch", "future-fix-message", "fix-commit-identity", "hidden-label")
+
+#: Markers that only ever appear beside an answer. Matched case-insensitively.
+HIDDEN_LABEL_MARKERS = ("ANSWER-KEY", "GROUND-TRUTH", "GROUND TRUTH", "EXPECTED-VERDICT",
+                        "ORACLE-VERDICT", "HIDDEN-LABEL", "SOLVED=", "EXPECTED_OUTPUT=")
+#: Shapes that only a diff has.
+DIFF_MARKERS = ("diff --git ", "--- a/", "+++ b/", "@@ -")
+#: Below this many characters a line shared with the reference patch is a coincidence
+#: (`return 2`, `}`, `import os`), not a leak. Above it, verbatim is verbatim.
+MIN_LEAK_LINE_CHARS = 12
+
+_DIFF_PATH_RE = re.compile(r"^diff --git a/(\S+) b/(\S+)\s*$", re.M)
+_LABEL_RE = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9._-]{0,63}\Z")
+
+
+def _sp():
+    return _sibling("safe_paths")
+
+
+def _canonical(obj):
+    """The ONE serialisation every digest in this section is taken over.
+
+    `sort_keys` is what makes a digest independent of dict construction order, and the compact
+    separators keep the bytes independent of anyone's formatter. Nothing that varies between
+    two runs of the same inputs -- a timestamp, a temp path, a `set`'s iteration order -- may
+    reach this function, which is why every collection below is sorted before it is stored.
+    """
+    return json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+
+
+def _frozen(obj):
+    """A deep copy through the canonical form: the rules a manifest carries are its own."""
+    return json.loads(_canonical(obj))
+
+
+def manifest_digest(content):
+    """The sha256 of a manifest's immutable `content`. Nothing else is in it."""
+    return _sha(_canonical(content))
+
+
+def _normalised_allocation(allocation=None):
+    """`[(partition, weight)]` in PARTITIONS order -- never dict order, which is an input."""
+    alloc = dict(DEFAULT_ALLOCATION if allocation is None else allocation)
+    unknown = sorted(set(alloc) - set(PARTITIONS))
+    if unknown:
+        raise EvalError(f"unknown partition(s) in the allocation: {', '.join(unknown)}; "
+                        f"the four are {', '.join(PARTITIONS)}")
+    out = []
+    for name in PARTITIONS:
+        weight = int(alloc.get(name, 0) or 0)
+        if weight < 0:
+            raise EvalError(f"allocation weight for {name!r} is negative")
+        out.append((name, weight))
+    if not sum(w for _, w in out):
+        raise EvalError("the allocation gives every partition zero weight; nothing could be "
+                        "assigned anywhere")
+    return out
+
+
+def partition_for(defect_key_value, allocation=None):
+    """Which partition a DEFECT belongs to -- a pure function of its key (see ASSIGNMENT_RULE)."""
+    alloc = _normalised_allocation(allocation)
+    total = sum(w for _, w in alloc)
+    draw = int(_sha("partition:" + str(defect_key_value))[:16], 16) % total
+    upto = 0
+    for name, weight in alloc:
+        upto += weight
+        if draw < upto:
+            return name
+    return alloc[-1][0]  # unreachable while total == sum(weights)
+
+
+def patched_paths(patch):
+    """Every path a unified diff names, sorted. `/dev/null` included: it is a path a diff names."""
+    paths = set()
+    for a, b in _DIFF_PATH_RE.findall(patch or ""):
+        paths.add(a)
+        paths.add(b)
+    return sorted(paths)
+
+
+def defect_key(task):
+    """The underlying defect a mined task is a VARIANT of (GROUPING_RULE).
+
+    Issue first (two mined pairs from one issue are one defect), then the fix commit, then the
+    path(s) the reference patch touches -- which is what makes two mutation-repair variants of
+    the same file one group. The final fallback is the task's own id, i.e. "a group of one",
+    which is honest rather than clever: an unrecognisable task is not silently merged with
+    anything.
+    """
+    issue = task.get("issue")
+    if issue not in (None, "",):
+        return f"issue:{issue}"
+    fix = task.get("fix_commit")
+    if fix:
+        return f"fix:{fix}"
+    paths = patched_paths(task.get("reference_patch")) or patched_paths(task.get("setup_patch"))
+    if paths:
+        return "site:" + "|".join(paths)
+    return f"task:{task.get('task_id')}"
+
+
+def _group_id(key):
+    return _sha("group:" + str(key))[:12]
+
+
+def _blob_digests(blobs):
+    out = {}
+    for path, blob in sorted((blobs or {}).items()):
+        if isinstance(blob, bytes):
+            out[str(path)] = hashlib.sha256(blob).hexdigest()
+        elif isinstance(blob, str):
+            out[str(path)] = _sha(blob)
+        else:
+            out[str(path)] = _sha(_canonical(blob))
+    return out
+
+
+def item_identity(task, repo, base_commit, acceptance=None, acceptance_sha=None):
+    """The four identities an item is addressed by: code, task, acceptance, artifact.
+
+    Digests, never payloads. The reference patch is the ANSWER; a manifest that stored it would
+    be a leak vector of its own, so what is stored is its sha256 -- enough to notice it changed,
+    useless for solving anything. Same reasoning as the attempt ledger's "a reference, never
+    the payload".
+
+    `acceptance` is the acceptance criterion's text (the repository's own test command) and is
+    hashed here. `acceptance_sha` carries an ALREADY computed digest instead, which is what a
+    freshness re-derivation has: the text is not stored, so a reader that never saw it cannot
+    recompute it and must say so rather than pretend (see `verify_manifest`).
+    """
+    statement = task.get("statement") or ""
+    subject = task.get("subject") or ""
+    reference = task.get("reference_patch") or ""
+    setup = task.get("setup_patch") or ""
+    return {
+        "code": {
+            "repo": str(repo),
+            "base_commit": task.get("base_commit") or base_commit,
+        },
+        "task": {
+            "task_id": task.get("task_id"),
+            "mode": task.get("mode"),
+            "defect": defect_key(task),
+            "statement_sha": _sha(statement),
+            "statement_source": task.get("statement_source"),
+            "subject_sha": _sha(subject) if subject else None,
+            "size_profile": task.get("size_profile"),
+        },
+        "acceptance": {
+            "test_cmd_sha": (acceptance_sha if acceptance_sha is not None
+                             else (_sha(acceptance) if acceptance else None)),
+            "oracle_tests_available": bool(task.get("oracle_tests_available")),
+            "test_blobs": _blob_digests(task.get("test_blobs")),
+        },
+        "artifact": {
+            "reference_patch_sha": _sha(reference) if reference else None,
+            "setup_patch_sha": _sha(setup) if setup else None,
+            "issue": task.get("issue"),
+            "fix_commit": task.get("fix_commit"),
+        },
+    }
+
+
+def item_id(identity):
+    return _sha(_canonical(identity))[:16]
+
+
+def _patch_lines(patch):
+    """The added/removed lines of a diff, long enough that verbatim means verbatim."""
+    out = []
+    for line in (patch or "").splitlines():
+        if line.startswith(("+++", "---")):
+            continue
+        if line[:1] in ("+", "-"):
+            text = line[1:].strip()
+            if len(text) >= MIN_LEAK_LINE_CHARS:
+                out.append(text)
+    return out
+
+
+def screen_statement(task, statement=None):
+    """Leak findings for one candidate problem statement, by KIND and COUNT -- never by value.
+
+    The repository's redaction rule ("report what was caught by kind and count, never the
+    value") applies here for the same reason it applies to credentials: a finding that quotes
+    the leak copies it somewhere new. And, as with `bin/redact.py`, shape-matching cannot prove
+    absence -- an empty finding list means nothing matched these shapes, never that the
+    statement is clean.
+    """
+    text = task.get("statement") if statement is None else statement
+    text = text or ""
+    found = []
+
+    markers = sum(text.count(m) for m in DIFF_MARKERS)
+    if markers:
+        found.append({"kind": "reference-patch", "count": markers,
+                      "evidence": "unified-diff markers in the statement"})
+    shared = 0
+    for patch in (task.get("reference_patch"), task.get("setup_patch")):
+        shared += sum(1 for line in _patch_lines(patch) if line in text)
+    if shared:
+        found.append({"kind": "reference-patch", "count": shared,
+                      "evidence": f"line(s) of >={MIN_LEAK_LINE_CHARS} chars shared verbatim "
+                                  f"with the reference or setup patch"})
+
+    subject = (task.get("subject") or "").strip()
+    if len(subject) >= 8 and subject in text:
+        found.append({"kind": "future-fix-message", "count": 1,
+                      "evidence": "the fix commit's subject appears in the statement (this is "
+                                  "what statement_source='commit-message' means)"})
+    fix = (task.get("fix_commit") or "").strip()
+    if len(fix) >= 7 and fix[:7] in text:
+        found.append({"kind": "fix-commit-identity", "count": 1,
+                      "evidence": "the fix commit's sha appears in the statement"})
+
+    upper = text.upper()
+    labels = sum(upper.count(m) for m in HIDDEN_LABEL_MARKERS)
+    if labels:
+        found.append({"kind": "hidden-label", "count": labels,
+                      "evidence": "answer-key marker(s) in the statement"})
+    blobs = task.get("test_blobs") or {}
+    named = sum(1 for path in sorted(blobs) if str(path) and str(path) in text)
+    if named:
+        found.append({"kind": "hidden-label", "count": named,
+                      "evidence": "the statement names withheld oracle test path(s)"})
+    quoted = 0
+    for path in sorted(blobs):
+        blob = blobs[path]
+        if isinstance(blob, bytes):
+            try:
+                blob = blob.decode("utf-8")
+            except UnicodeDecodeError:
+                continue
+        for line in str(blob or "").splitlines():
+            line = line.strip()
+            if len(line) >= MIN_LEAK_LINE_CHARS and line in text:
+                quoted += 1
+    if quoted:
+        found.append({"kind": "hidden-label", "count": quoted,
+                      "evidence": "withheld oracle test content quoted in the statement"})
+
+    merged = {}
+    for finding in found:
+        key = (finding["kind"], finding["evidence"])
+        merged.setdefault(key, {"kind": finding["kind"], "count": 0,
+                                "evidence": finding["evidence"]})["count"] += finding["count"]
+    return [merged[k] for k in sorted(merged)]
+
+
+def leak_summary(findings):
+    """`{kind: count}` over a list of findings -- the shape a label may safely carry."""
+    out = {}
+    for finding in findings or []:
+        out[finding["kind"]] = out.get(finding["kind"], 0) + int(finding["count"])
+    return {k: out[k] for k in sorted(out)}
+
+
+def build_manifest(repo, base_commit, tasks, *, allocation=None, on_leak="reject",
+                   acceptance=None, cohorts=(), labels=(), created_by=None, created_at=None):
+    """A pool of mined task records -> one immutable, content-addressed, grouped manifest.
+
+    `on_leak="reject"` refuses the whole pool when any statement screens positive, naming kinds
+    and counts and no values. `on_leak="quarantine"` admits the item, records its findings, and
+    puts its WHOLE GROUP in `quarantine` -- never a partition -- because variants of one defect
+    are one defect: knowing the answer to A is knowing the answer to B, so a leak in one variant
+    spends them all. An evaluator that has already dispatched against its tasks uses the second
+    form: the exposure happened, and refusing to write it down afterwards would lose the fact.
+
+    `created_at` / `created_by` are provenance and are deliberately OUTSIDE the digest, so the
+    same pool built twice is the same manifest.
+    """
+    if on_leak not in ("reject", "quarantine"):
+        raise EvalError("on_leak must be 'reject' or 'quarantine'")
+    alloc = _normalised_allocation(allocation)
+    items, groups = {}, {}
+    for task in tasks:
+        identity = item_identity(task, repo, base_commit, acceptance=acceptance)
+        iid = item_id(identity)
+        key = identity["task"]["defect"]
+        gid = _group_id(key)
+        findings = screen_statement(task)
+        items[iid] = {"item": iid, "task_id": task.get("task_id"), "group": gid,
+                      "identity": identity, "leaks": findings}
+        group = groups.setdefault(gid, {"group": gid, "key": key, "items": [], "leaks": {}})
+        if iid not in group["items"]:
+            group["items"].append(iid)
+        for kind, count in leak_summary(findings).items():
+            group["leaks"][kind] = group["leaks"].get(kind, 0) + count
+
+    leaking = {gid: g["leaks"] for gid, g in groups.items() if g["leaks"]}
+    if leaking and on_leak == "reject":
+        kinds = {}
+        for summary in leaking.values():
+            for kind, count in summary.items():
+                kinds[kind] = kinds.get(kind, 0) + count
+        raise EvalError(
+            f"{len(leaking)} defect group(s) carry a leaking problem statement "
+            f"({', '.join(f'{k}={v}' for k, v in sorted(kinds.items()))}); a candidate statement "
+            f"may not carry a reference patch, a future fix message, a fix commit identity or a "
+            f"hidden label. Counts by kind only -- the values are never quoted. Pass "
+            f"on_leak='quarantine' to record them instead, which keeps the whole group out of "
+            f"every partition.")
+
+    buckets = {name: [] for name in BUCKETS}
+    for gid in sorted(groups):
+        group = groups[gid]
+        group["items"] = sorted(group["items"])
+        group["partition"] = QUARANTINE if group["leaks"] else partition_for(group["key"], alloc)
+        for iid in group["items"]:
+            items[iid]["partition"] = group["partition"]
+            buckets[group["partition"]].append(iid)
+    for name in buckets:
+        buckets[name] = sorted(buckets[name])
+
+    declared = []
+    for cohort in cohorts or ():
+        declared.append(_validated_cohort(cohort, buckets))
+
+    content = {
+        "v": MANIFEST_VERSION,
+        "repo": str(repo),
+        "base_commit": base_commit,
+        "rules": {
+            "partitions": _frozen(PARTITION_ROLES),
+            "allocation": {name: weight for name, weight in alloc},
+            "grouping": GROUPING_RULE,
+            "assignment": ASSIGNMENT_RULE,
+            "quarantine": ("a leak in one variant quarantines its whole group; quarantine is "
+                           "not a partition and nothing is ever selected from it"),
+            "leak_kinds": list(LEAK_KINDS),
+            "on_leak": on_leak,
+            "exposure_purposes": list(EXPOSURE_PURPOSES),
+            "enforcement": NOT_ENFORCEMENT_LABEL,
+        },
+        "groups": {gid: groups[gid] for gid in sorted(groups)},
+        "items": {iid: items[iid] for iid in sorted(items)},
+        "partitions": buckets,
+        "cohorts": declared,
+        "labels": sorted({NOT_ENFORCEMENT_LABEL, *(labels or ())}),
+    }
+    sha = manifest_digest(content)
+    return {
+        "v": MANIFEST_VERSION,
+        "id": sha[:16],
+        "sha": sha,
+        "digest": {
+            "algorithm": "sha256",
+            "canonical": "json.dumps(sort_keys=True, separators=(',',':'), ensure_ascii=True)",
+            "over": "content",
+            "excludes": ["created_at", "created_by", "id", "sha", "digest"],
+            "note": NOT_ENFORCEMENT_LABEL,
+        },
+        "created_at": created_at or _now(),
+        "created_by": created_by or "",
+        "content": content,
+    }
+
+
+def _validated_cohort(cohort, buckets):
+    """A predeclared cohort: a named subset of ONE partition, fixed in the immutable content."""
+    name = str(cohort.get("cohort") or "")
+    partition = cohort.get("partition")
+    if not _LABEL_RE.match(name):
+        raise EvalError(f"cohort id {name!r} must match {_LABEL_RE.pattern}")
+    if partition not in PARTITIONS:
+        raise EvalError(f"cohort {name!r}: unknown partition {partition!r}")
+    members = sorted(set(cohort.get("items") or []))
+    stray = [i for i in members if i not in buckets.get(partition, [])]
+    if stray:
+        raise EvalError(f"cohort {name!r} names {len(stray)} item(s) that are not in the "
+                        f"{partition} partition")
+    return {"cohort": name, "partition": partition, "items": members,
+            "declared_by": str(cohort.get("declared_by") or ""),
+            "note": str(cohort.get("note") or "")}
+
+
+def manifest_ref(manifest):
+    """The reference an envelope carries: id, content digest, contract version. Never a payload."""
+    if not manifest:
+        return None
+    return {"id": manifest["id"], "sha": manifest["sha"], "v": manifest["v"]}
+
+
+def manifest_summary(manifest):
+    """Counts only -- what the card and the envelope may repeat without copying the manifest."""
+    content = manifest["content"]
+    return {
+        "items": len(content["items"]),
+        "groups": len(content["groups"]),
+        "partitions": {name: len(content["partitions"].get(name) or []) for name in BUCKETS},
+        "quarantined": len(content["partitions"].get(QUARANTINE) or []),
+        "leaks": leak_summary([f for item in content["items"].values() for f in item["leaks"]]),
+        "allocation": dict(content["rules"]["allocation"]),
+    }
+
+
+# ---- storage: one owner, create-once, append-only ---------------------------------------------
+
+def _manifest_root(store_dir):
+    root = Path(store_dir)
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
+def _manifest_rel(manifest_id, suffix=".json"):
+    mid = _sp().validate_id(manifest_id, "manifest id")
+    return f"{MANIFEST_DIR}/{mid}{suffix}"
+
+
+def write_manifest(store_dir, manifest):
+    """Persist a manifest under the evals store. Create-once, and idempotent for the same bytes.
+
+    `safe_paths.confined_create_bytes` is `O_EXCL`: the "is this name free" and the write are
+    one kernel operation, and a symlink at the leaf counts as taken rather than being followed.
+    Writing the same manifest twice is a no-op that KEEPS THE FIRST (so its `created_at` is the
+    real one); writing different content under the same id is refused loudly, because with a
+    content-addressed id that means either a sha256 collision or a rewrite.
+    """
+    sp = _sp()
+    root = _manifest_root(store_dir)
+    rel = _manifest_rel(manifest["id"])
+    body = json.dumps(manifest, indent=2, sort_keys=True) + "\n"
+    try:
+        sp.confined_create_bytes(root, rel, body.encode("utf-8"), what="eval manifest")
+    except sp.SafePathExists:
+        raw = sp.confined_read_bytes(root, rel, what="eval manifest")
+        existing = json.loads(raw.decode("utf-8"))
+        if _canonical(existing.get("content")) != _canonical(manifest["content"]):
+            raise EvalError(
+                f"manifest {manifest['id']} already exists with DIFFERENT content: an id is the "
+                f"digest of the content it names, so this is a rewrite (or a sha256 collision), "
+                f"not a re-run. Nothing was overwritten.") from None
+    return root / MANIFEST_DIR / f"{manifest['id']}.json"
+
+
+def read_manifest(store_dir, manifest_id):
+    """Load a manifest and re-derive its identity. A rewritten file fails here, not later.
+
+    Two checks, and they are the chain of custody such as it is: the digest of `content` must
+    still be the `sha` the file carries, and that sha's prefix must still be the id the file is
+    FILED under. A tamperer who recomputes the digest changes the id and therefore the filename,
+    and the reference in whatever envelope pointed here stops resolving. That is detection, not
+    prevention -- see NOT_ENFORCEMENT_LABEL.
+    """
+    root = Path(store_dir)
+    raw = (_sp().confined_read_bytes(root, _manifest_rel(manifest_id), what="eval manifest",
+                                     missing_ok=True) if root.is_dir() else None)
+    if raw is None:
+        raise EvalError(f"no manifest {manifest_id!r} under {store_dir}")
+    manifest = json.loads(raw.decode("utf-8"))
+    if manifest.get("v") != MANIFEST_VERSION:
+        raise EvalError(f"manifest {manifest_id!r} is not a {MANIFEST_VERSION} manifest")
+    sha = manifest_digest(manifest.get("content") or {})
+    if sha != manifest.get("sha"):
+        raise EvalError(f"manifest {manifest_id!r} does not match its own digest: its content "
+                        f"has been rewritten since it was written")
+    if not str(manifest_id).startswith(sha[:16]) or manifest.get("id") != sha[:16]:
+        raise EvalError(f"manifest {manifest_id!r} is filed under an id that is not its content "
+                        f"digest ({sha[:16]})")
+    return manifest
+
+
+def _append_log(store_dir, manifest_id, entry):
+    root = _manifest_root(store_dir)
+    line = _canonical(entry) + "\n"
+    _sp().confined_append_bytes(root, _manifest_rel(manifest_id, ".log.jsonl"),
+                                line.encode("utf-8"), what="eval manifest log")
+    return entry
+
+
+def exposure_log(store_dir, manifest_id):
+    """`(entries, notes)`: every line of the append-only log, in order, with `seq` = position.
+
+    An unparseable line is counted and skipped, never treated as evidence -- the attempt
+    ledger's rule, for the same reason: a corrupt line must not silently become an absence.
+    """
+    root = Path(store_dir)
+    entries, notes = [], []
+    if not root.is_dir():
+        return entries, notes
+    raw = _sp().confined_read_bytes(root, _manifest_rel(manifest_id, ".log.jsonl"),
+                                    what="eval manifest log", missing_ok=True)
+    if raw is None:
+        return entries, notes
+    for n, line in enumerate(raw.decode("utf-8").splitlines()):
+        if not line.strip():
+            continue
+        try:
+            entry = json.loads(line)
+        except ValueError:
+            notes.append(f"line {n + 1}: unreadable")
+            continue
+        if not isinstance(entry, dict) or entry.get("kind") not in LOG_KINDS:
+            notes.append(f"line {n + 1}: not a {MANIFEST_VERSION} log entry")
+            continue
+        entry["seq"] = len(entries)
+        entries.append(entry)
+    return entries, notes
+
+
+def _known_items(manifest, items, what):
+    known = manifest["content"]["items"]
+    chosen = sorted(set(items))
+    stray = [i for i in chosen if i not in known]
+    if stray:
+        raise EvalError(f"{what}: {len(stray)} item id(s) are not in manifest {manifest['id']}")
+    return chosen
+
+
+def record_exposure(store_dir, manifest, *, partition, purpose=None, items=None, by="",
+                    run=None, note=""):
+    """Write down that material was SEEN. A fact, never a permission.
+
+    Nothing about this call decides whether the material may still be used: that is
+    `require_held_out`'s question, asked later, over this log. Recording an exposure of
+    quarantined material is allowed and correct -- the exposure happened.
+    """
+    if partition not in BUCKETS:
+        raise EvalError(f"unknown partition {partition!r}")
+    purpose = purpose or (PARTITION_ROLES.get(partition) or {}).get("purpose") or "inspection"
+    if purpose not in EXPOSURE_PURPOSES:
+        raise EvalError(f"unknown exposure purpose {purpose!r}; the vocabulary is "
+                        f"{', '.join(EXPOSURE_PURPOSES)}")
+    if items is None:
+        items = list(manifest["content"]["partitions"].get(partition) or [])
+    chosen = _known_items(manifest, items, "exposure")
+    return _append_log(store_dir, manifest["id"], {
+        "v": MANIFEST_VERSION, "kind": "exposure", "manifest": manifest["id"],
+        "partition": partition, "purpose": purpose, "items": chosen, "by": str(by or ""),
+        "run": run, "note": str(note or ""), "at": _now(),
+    })
+
+
+def record_results(store_dir, manifest, *, partition, run=None, by="", note=""):
+    """Write down that results over a partition are now KNOWN. This is what closes selection."""
+    if partition not in BUCKETS:
+        raise EvalError(f"unknown partition {partition!r}")
+    return _append_log(store_dir, manifest["id"], {
+        "v": MANIFEST_VERSION, "kind": "result", "manifest": manifest["id"],
+        "partition": partition, "run": run, "by": str(by or ""), "note": str(note or ""),
+        "at": _now(),
+    })
+
+
+def retire(store_dir, manifest, *, items, reason, by=""):
+    """Retire contaminated material. The manifest does not change -- retirement is a fact about
+    exposure, and rewriting the manifest to drop an item would change its id and orphan every
+    reference to it. Readers subtract the retired set at read time."""
+    if not reason:
+        raise EvalError("retirement needs a reason: contaminated material is retired on the "
+                        "record, never quietly")
+    chosen = _known_items(manifest, items or [], "retirement")
+    if not chosen:
+        raise EvalError("retirement names no item")
+    return _append_log(store_dir, manifest["id"], {
+        "v": MANIFEST_VERSION, "kind": "retirement", "manifest": manifest["id"],
+        "items": chosen, "reason": str(reason), "by": str(by or ""), "at": _now(),
+    })
+
+
+def declare_cohort(store_dir, manifest, *, partition, cohort, items, by="", note=""):
+    """Declare a named cohort of one partition BEFORE its results exist.
+
+    Refused once a `result` entry for that partition is in the log: a cohort chosen after the
+    outcomes are known is not a cohort, it is a conclusion. The refusal is on the log's ORDER,
+    not on a clock, so it survives a machine whose time moved.
+    """
+    if partition not in PARTITIONS:
+        raise EvalError(f"unknown partition {partition!r}")
+    if not _LABEL_RE.match(str(cohort or "")):
+        raise EvalError(f"cohort id {cohort!r} must match {_LABEL_RE.pattern}")
+    if not by:
+        raise EvalError("--by is required: a predeclared cohort names who declared it")
+    entries, _notes = exposure_log(store_dir, manifest["id"])
+    if any(e["kind"] == "result" and e.get("partition") == partition for e in entries):
+        raise EvalError(
+            f"post-hoc cohort selection refused: results over the {partition} partition are "
+            f"already recorded, so no cohort of it can be declared now. A cohort is declared "
+            f"before the outcomes exist or it is not evidence.")
+    if any(e["kind"] == "cohort.declared" and e.get("cohort") == str(cohort) for e in entries):
+        raise EvalError(f"cohort {cohort!r} is already declared for manifest {manifest['id']}")
+    chosen = _known_items(manifest, items or [], "cohort")
+    members = set(manifest["content"]["partitions"].get(partition) or [])
+    stray = [i for i in chosen if i not in members]
+    if stray:
+        raise EvalError(f"cohort {cohort!r} names {len(stray)} item(s) outside the {partition} "
+                        f"partition")
+    if not chosen:
+        raise EvalError(f"cohort {cohort!r} names no item")
+    return _append_log(store_dir, manifest["id"], {
+        "v": MANIFEST_VERSION, "kind": "cohort.declared", "manifest": manifest["id"],
+        "partition": partition, "cohort": str(cohort), "items": chosen, "by": str(by),
+        "note": str(note or ""), "at": _now(),
+    })
+
+
+def exposure_state(store_dir, manifest):
+    """What the log says, per partition and per item. Read-only; it decides nothing."""
+    content = manifest["content"]
+    entries, notes = exposure_log(store_dir, manifest["id"])
+    partitions = {}
+    for name in BUCKETS:
+        members = list(content["partitions"].get(name) or [])
+        partitions[name] = {
+            "items": len(members), "exposures": 0, "purposes": {}, "fitted": False,
+            "results_known": False, "results_at_seq": None, "cohorts": {},
+            "retired": 0, "usable": len(members),
+            "held_out": bool((PARTITION_ROLES.get(name) or {}).get("held_out")),
+        }
+    items = {iid: {"exposures": 0, "purposes": [], "retired": None}
+             for iid in content["items"]}
+    for entry in entries:
+        name = entry.get("partition")
+        row = partitions.get(name)
+        if entry["kind"] == "exposure":
+            if row is not None:
+                row["exposures"] += 1
+                purpose = entry.get("purpose")
+                row["purposes"][purpose] = row["purposes"].get(purpose, 0) + 1
+                if purpose == PARTITION_ROLES["calibration"]["purpose"]:
+                    row["fitted"] = True
+            for iid in entry.get("items") or []:
+                if iid in items:
+                    items[iid]["exposures"] += 1
+                    if entry.get("purpose") not in items[iid]["purposes"]:
+                        items[iid]["purposes"].append(entry.get("purpose"))
+        elif entry["kind"] == "result":
+            if row is not None and not row["results_known"]:
+                row["results_known"] = True
+                row["results_at_seq"] = entry["seq"]
+        elif entry["kind"] == "cohort.declared":
+            if row is not None:
+                row["cohorts"][entry.get("cohort")] = entry["seq"]
+        elif entry["kind"] == "retirement":
+            for iid in entry.get("items") or []:
+                if iid in items:
+                    items[iid]["retired"] = {"reason": entry.get("reason"),
+                                             "by": entry.get("by"), "seq": entry["seq"]}
+    for name in BUCKETS:
+        members = list(content["partitions"].get(name) or [])
+        retired = [i for i in members if items.get(i, {}).get("retired")]
+        partitions[name]["retired"] = len(retired)
+        partitions[name]["usable"] = len(members) - len(retired)
+    for iid, row in items.items():
+        row["purposes"] = sorted(p for p in row["purposes"] if p)
+    return {"manifest": manifest["id"], "partitions": partitions, "items": items,
+            "entries": len(entries), "unreadable": len(notes), "notes": notes}
+
+
+# ---- the controller: what the rules refuse ----------------------------------------------------
+
+def verify_manifest(manifest, tasks=None, acceptance=None):
+    """Structural and freshness findings over a manifest -> a list; `[]` is clean.
+
+    What this catches: a digest that no longer matches its content, a group split across
+    partitions, a partition list that disagrees with its items, a leaking item sitting in a
+    real partition, and -- when `tasks` is supplied -- an item whose source record has moved
+    since it was admitted (stale). What it CANNOT catch is a rewrite that fixes every one of
+    those consistently, which is the whole of NOT_ENFORCEMENT_LABEL in one sentence.
+
+    `acceptance` is the acceptance criterion the pool is being re-checked under. Without it the
+    stored acceptance digest is carried over, so a CHANGED test command is not detected -- the
+    text was never stored and cannot be re-derived from its own hash. Supply it to check that
+    axis too; a changed command moves every item id under it.
+    """
+    findings = []
+    if manifest.get("v") != MANIFEST_VERSION:
+        findings.append({"kind": "version", "detail": f"not a {MANIFEST_VERSION} manifest"})
+        return findings
+    content = manifest.get("content") or {}
+    sha = manifest_digest(content)
+    if sha != manifest.get("sha") or manifest.get("id") != sha[:16]:
+        findings.append({"kind": "digest",
+                         "detail": "the content does not match the id/sha it is filed under"})
+    items = content.get("items") or {}
+    groups = content.get("groups") or {}
+    buckets = content.get("partitions") or {}
+    for name in buckets:
+        if name not in BUCKETS:
+            findings.append({"kind": "unknown-partition", "detail": name})
+    listed = {}
+    for name in BUCKETS:
+        for iid in buckets.get(name) or []:
+            listed.setdefault(iid, []).append(name)
+    for iid, names in sorted(listed.items()):
+        if iid not in items:
+            findings.append({"kind": "membership", "item": iid,
+                             "detail": f"listed in {', '.join(names)} but not an item"})
+        elif len(names) > 1:
+            findings.append({"kind": "membership", "item": iid,
+                             "detail": f"listed in more than one bucket: {', '.join(names)}"})
+        elif items[iid].get("partition") != names[0]:
+            findings.append({"kind": "membership", "item": iid,
+                             "detail": f"listed in {names[0]} but carries "
+                                       f"{items[iid].get('partition')!r}"})
+    for iid, item in sorted(items.items()):
+        if iid not in listed:
+            findings.append({"kind": "orphan", "item": iid,
+                             "detail": "in no bucket at all"})
+        if item.get("leaks") and item.get("partition") != QUARANTINE:
+            findings.append({"kind": "leak-in-partition", "item": iid,
+                             "detail": f"screened {leak_summary(item['leaks'])} but sits in "
+                                       f"{item.get('partition')!r}"})
+        gid = item.get("group")
+        if gid not in groups:
+            findings.append({"kind": "orphan", "item": iid, "detail": "in no group"})
+    for gid, group in sorted(groups.items()):
+        if gid != _group_id(group.get("key")):
+            findings.append({"kind": "group-key", "group": gid,
+                             "detail": "the group id is not the digest of its key"})
+        homes = sorted({str(items[i].get("partition"))
+                        for i in group.get("items") or [] if i in items})
+        if len(homes) > 1:
+            findings.append({
+                "kind": "group-split", "group": gid, "detail":
+                    f"the {len(group.get('items') or [])} variant(s) of defect "
+                    f"{group.get('key')!r} are split across {', '.join(homes)} -- a held-out "
+                    f"result over any of them was already seen through the others"})
+        elif homes and group.get("partition") not in homes:
+            findings.append({"kind": "group-split", "group": gid,
+                             "detail": f"the group says {group.get('partition')!r}, its items "
+                                       f"say {', '.join(homes)}"})
+    if tasks is not None:
+        by_id = {t.get("task_id"): t for t in tasks}
+        for iid, item in sorted(items.items()):
+            task = by_id.get(item.get("task_id"))
+            if task is None:
+                findings.append({"kind": "stale", "item": iid,
+                                 "detail": f"task {item.get('task_id')!r} is gone from the pool"})
+                continue
+            stored_sha = (item.get("identity") or {}).get("acceptance", {}).get("test_cmd_sha")
+            fresh = item_identity(
+                task, content.get("repo") or "", content.get("base_commit"),
+                acceptance=acceptance,
+                acceptance_sha=None if acceptance is not None else stored_sha)
+            if item_id(fresh) == iid:
+                continue
+            moved = sorted(k for k in ("code", "task", "acceptance", "artifact")
+                           if _canonical(fresh.get(k)) != _canonical(item["identity"].get(k)))
+            findings.append({"kind": "stale", "item": iid,
+                             "detail": f"{item.get('task_id')} has moved since it was admitted: "
+                                       f"{', '.join(moved) or 'identity'} changed"})
+    return findings
+
+
+def _held_out_blockers(manifest, partition, state, chosen):
+    role = PARTITION_ROLES.get(partition) or {}
+    blockers = []
+    if not role.get("held_out"):
+        blockers.append(
+            f"the {partition} partition's role is {'fitting' if role.get('fitting') else 'none'}"
+            f", not held-out evidence: {role.get('note', '')}")
+    row = state["partitions"].get(partition) or {}
+    if row.get("fitted"):
+        blockers.append(f"a calibration fit has been recorded against {partition}; material "
+                        f"that was fit on is spent as evidence")
+    for iid in chosen:
+        item = state["items"].get(iid) or {}
+        if item.get("retired"):
+            blockers.append(f"{iid} was retired ({(item['retired'] or {}).get('reason')})")
+        for purpose in item.get("purposes") or []:
+            if purpose != role.get("purpose"):
+                blockers.append(f"{iid} was already exposed for {purpose!r}, which is not "
+                                f"{partition}'s own role -- retire it rather than cite it")
+            elif role.get("single_use"):
+                blockers.append(f"{iid} has already been exposed once and {partition} is "
+                                f"single-use: read twice, it is not held out the second time")
+    return blockers
+
+
+def require_held_out(store_dir, manifest, partition, *, items=None, tasks=None, acceptance=None):
+    """The usable item ids of a HELD-OUT partition, or `EvalError` naming every blocker.
+
+    This is the controller. Everything it refuses -- a partition whose role is fitting, a
+    partition a fit has touched, retired material, material exposed for something else, a split
+    group, a stale identity, a leaking statement -- is refused by a rule the manifest carries in
+    its own immutable content, and none of it is refused by the digest. The digest only says
+    whether the rules being read are the rules that were written.
+    """
+    if partition not in PARTITIONS:
+        raise EvalError(f"unknown partition {partition!r}; the four are {', '.join(PARTITIONS)}")
+    findings = verify_manifest(manifest, tasks=tasks, acceptance=acceptance)
+    state = exposure_state(store_dir, manifest)
+    members = list(manifest["content"]["partitions"].get(partition) or [])
+    chosen = _known_items(manifest, items, "held-out selection") if items is not None else members
+    outside = [i for i in chosen if i not in members]
+    blockers = _held_out_blockers(manifest, partition, state, chosen)
+    if outside:
+        blockers.append(f"{len(outside)} item(s) are not in the {partition} partition")
+    for finding in findings:
+        blockers.append(f"{finding['kind']}: {finding['detail']}")
+    if state["unreadable"]:
+        blockers.append(f"{state['unreadable']} unreadable line(s) in the exposure log: the "
+                        f"record of what has been seen is incomplete")
+    if not chosen:
+        blockers.append(f"the {partition} partition is empty")
+    if blockers:
+        raise EvalError(f"{partition} cannot be cited as held-out evidence: "
+                        + "; ".join(blockers))
+    return sorted(chosen)
+
+
+def select_cohort(store_dir, manifest, partition, *, cohort=None, items=None, purpose=None,
+                  by="", run=None, tasks=None, acceptance=None, record=True):
+    """Freeze the cohort a result will be reported over, and record the exposure.
+
+    Three ways in, and only two of them exist:
+
+      * the whole partition (`cohort=None`), which is the default and needs no declaration;
+      * a cohort `declare_cohort` wrote down BEFORE any result over that partition;
+      * naming items here -- which is refused, always. That is what post-hoc cohort selection
+        looks like from the inside, and there is no argument for it that is not also an
+        argument for choosing the cohort after seeing the results.
+
+    The order check is re-applied at READ time, not only at declaration time: a declaration
+    appended to the log out of band, after a result, is still refused here. It would not be
+    refused by a rewrite of the whole log, which is the honest limit of a file-based record.
+    """
+    if items is not None:
+        raise EvalError(
+            "refusing an item list at selection time: a cohort is a rule declared before the "
+            "results exist (declare_cohort), or it is the whole partition. Choosing items now "
+            "is post-hoc cohort selection.")
+    if partition not in PARTITIONS:
+        raise EvalError(f"unknown partition {partition!r}")
+    entries, _notes = exposure_log(store_dir, manifest["id"])
+    result_seqs = [e["seq"] for e in entries
+                   if e["kind"] == "result" and e.get("partition") == partition]
+    chosen = list(manifest["content"]["partitions"].get(partition) or [])
+    if cohort is not None:
+        declarations = [e for e in entries
+                        if e["kind"] == "cohort.declared" and e.get("cohort") == str(cohort)]
+        if not declarations:
+            declarations = [dict(c, seq=-1) for c in manifest["content"].get("cohorts") or []
+                            if c.get("cohort") == str(cohort)]
+        if not declarations:
+            raise EvalError(f"cohort {cohort!r} was never declared for manifest "
+                            f"{manifest['id']}; an undeclared cohort is a cohort chosen now")
+        declaration = declarations[0]
+        if declaration.get("partition") != partition:
+            raise EvalError(f"cohort {cohort!r} was declared over "
+                            f"{declaration.get('partition')!r}, not {partition!r}")
+        if result_seqs and declaration.get("seq", -1) > min(result_seqs):
+            raise EvalError(
+                f"post-hoc cohort selection refused: cohort {cohort!r} was declared at log "
+                f"position {declaration['seq']}, after results over {partition} were recorded "
+                f"at position {min(result_seqs)}")
+        chosen = list(declaration.get("items") or [])
+    role = PARTITION_ROLES[partition]
+    if role["held_out"]:
+        chosen = require_held_out(store_dir, manifest, partition, items=chosen, tasks=tasks,
+                                  acceptance=acceptance)
+    else:
+        findings = verify_manifest(manifest, tasks=tasks, acceptance=acceptance)
+        if findings:
+            raise EvalError(f"{partition} is not usable: "
+                            + "; ".join(f"{f['kind']}: {f['detail']}" for f in findings))
+        state = exposure_state(store_dir, manifest)
+        retired = [i for i in chosen if (state["items"].get(i) or {}).get("retired")]
+        chosen = sorted(i for i in chosen if i not in retired)
+    if record:
+        record_exposure(store_dir, manifest, partition=partition,
+                        purpose=purpose or role["purpose"], items=chosen, by=by, run=run,
+                        note=f"cohort {cohort}" if cohort else "whole partition")
+    return sorted(chosen)
+
+
 class Evaluation:
     """One run: every trial through its workflow, graded by the same oracle, recorded."""
 
     def __init__(self, plan, tasks, adapter, *, store_dir, runner=None, git_runner=None,
                  test_runner=None, binary=None, max_usd=None, max_dispatches=None,
                  exec_mode="enforced", keep_work=False, out=None, err=None, pricing=None,
-                 timeout=DEFAULT_TIMEOUT_SECONDS, verify_factory=None):
+                 timeout=DEFAULT_TIMEOUT_SECONDS, verify_factory=None, partition="promotion"):
+        if partition not in PARTITIONS:
+            raise EvalError(f"unknown partition {partition!r}; the four are "
+                            f"{', '.join(PARTITIONS)}")
+        self.partition = partition
         self.plan = plan
         self.tasks = {t["task_id"]: t for t in tasks}
         self.adapter = adapter
@@ -1084,6 +2091,57 @@ class Evaluation:
 
     # -- the loop --
 
+    @property
+    def manifest_root(self):
+        """Where THIS evaluator files its manifests: `<run dir>/manifests/`.
+
+        Inside the run directory rather than at the store root, because the store root holds
+        exactly the run directories and readers walk it expecting that. The manifest functions
+        themselves take their root as an argument, so a pool shared across runs -- a
+        repository-level partitioning, which nothing mines today -- is a different root passed
+        by whoever owns that pool, not a different writer.
+        """
+        return self.run_dir
+
+    def _record_manifest(self, labels, notes):
+        """This run's tasks -> one immutable manifest in the store, plus the exposure it caused.
+
+        `on_leak="quarantine"`, not `"reject"`: by the time this runs the tasks have already
+        been dispatched against, so a leak found now is a fact to write down, not a pool to
+        refuse. Quarantined material is in the manifest, is in the exposure record, and is in
+        no partition -- `require_held_out` can never cite it.
+
+        Every failure here is degraded to a label and a note rather than raised: this runs in
+        `run`'s `finally`, and a manifest problem must not cost an operator the results of a
+        run that may have spent real money. An absent manifest is disclosed, never implied.
+        """
+        try:
+            manifest = build_manifest(
+                self.plan["repo"], self.plan["base_commit"],
+                [self.tasks[tid] for tid in sorted(self.tasks)],
+                allocation={self.partition: 1}, on_leak="quarantine",
+                acceptance=self.plan.get("test_cmd"), created_by="workflow_eval",
+                labels=[f"pool mined for one evaluation run: the whole pool is "
+                        f"{self.partition} material"])
+            write_manifest(self.manifest_root, manifest)
+            record_exposure(self.manifest_root, manifest, partition=self.partition,
+                            items=sorted(manifest["content"]["items"]), by="workflow_eval",
+                            run=self.run_id,
+                            note="every task of this run was dispatched against")
+        except (EvalError, OSError, ValueError) as exc:  # noqa: BLE001 -- disclosed, not fatal
+            labels.append(f"manifest unavailable: {type(exc).__name__}: {exc}")
+            return None
+        summary = manifest_summary(manifest)
+        if summary["quarantined"]:
+            labels.append(
+                f"{summary['quarantined']} task(s) quarantined from the {self.partition} "
+                f"partition: their problem statements screen positive for "
+                f"{', '.join(f'{k}={v}' for k, v in summary['leaks'].items())} (counts by kind; "
+                f"the values are never quoted). Quarantined material is never held-out evidence")
+            notes.append(f"manifest {manifest['id']}: {summary['quarantined']} of "
+                         f"{summary['items']} item(s) quarantined")
+        return manifest
+
     def run(self):
         rb = _rb()
         self.run_id, self.run_dir = rb.new_run_dir(self.store_dir)
@@ -1126,6 +2184,7 @@ class Evaluation:
                 labels.append(f"overspend: ${self.spent_usd:.4f} recorded against a ${self.max_usd:.4f} ceiling")
             if not completed:
                 labels.append("aborted: the trial loop raised before completing")
+            manifest = self._record_manifest(labels, notes)
             envelope = {
                 "v": EVAL_VERSION, "run_id": self.run_id, "repo": self.plan["repo"],
                 "base_commit": self.plan["base_commit"], "harness": self.harness, "mode": self.plan["mode"],
@@ -1138,7 +2197,11 @@ class Evaluation:
                           "priced_bases": ["model-reported", "estimated"],
                           "max_dispatches": self.max_dispatches, "dispatched": self.dispatched,
                           "overspent": overspent},
-                "holdout": {"tasks": sorted(self.tasks), "reserved_from": "routing tuning"},
+                "holdout": {"tasks": sorted(self.tasks), "reserved_from": "routing tuning",
+                            "partition": self.partition,
+                            "manifest_ref": manifest_ref(manifest),
+                            "manifest_dir": MANIFEST_DIR if manifest else None,
+                            "manifest": manifest_summary(manifest) if manifest else None},
                 "labels": labels, "notes": notes, "adjudications": [],
                 "evidence_floor": rb.MIN_EVIDENCE_TASKS, "untested_claims": list(untested_claims()),
             }
@@ -1152,6 +2215,16 @@ class Evaluation:
             (self.run_dir / "plan.json").write_text(json.dumps(
                 {k: v for k, v in self.plan.items() if k != "_variants_full"}, indent=2) + "\n")
             (self.run_dir / "results.json").write_text(json.dumps(envelope, indent=2) + "\n")
+            if manifest is not None:
+                # Only now are results over this partition KNOWN, which is what closes cohort
+                # selection against it: `declare_cohort` and `select_cohort` both refuse a
+                # declaration that lands after this entry.
+                try:
+                    record_results(self.manifest_root, manifest, partition=self.partition,
+                                   run=self.run_id, by="workflow_eval",
+                                   note="results.json written")
+                except (EvalError, OSError, ValueError) as exc:  # noqa: BLE001 -- recorded, not fatal
+                    notes.append(f"manifest results entry not recorded: {type(exc).__name__}: {exc}")
             ledger.append("eval.finished", run=self.run_id, trials=len(records),
                           dispatched=self.dispatched, spent_usd=round(self.spent_usd, 6),
                           stopped=self.stopped)
@@ -1358,6 +2431,8 @@ def list_runs(store_dir):
         return [], [f"no evals store at {store_dir}"]
     rows, notes = [], []
     for entry in sorted(store_dir.iterdir()):
+        if entry.name == MANIFEST_DIR and entry.is_dir():
+            continue  # this owner's own manifests, beside the runs -- not a malformed run
         results = entry / "results.json"
         if not entry.is_dir() or not results.exists():
             notes.append(f"{entry.name}: not an evaluation run")
@@ -1886,6 +2961,24 @@ def _demo(out=None):
         print(f"  attempt history: {len(records)} dispatch record(s) across "
               f"{list(summary['by_harness'])}; cost bases {summary['cost']['by_basis']['estimated']['n']} est., "
               f"{summary['unknown']['cost']} unknown (the stub is unpriced)", file=out)
+        ref = (env["holdout"] or {}).get("manifest_ref") or {}
+        summary = (env["holdout"] or {}).get("manifest") or {}
+        manifest = read_manifest(ev.run_dir, ref["id"])
+        state = exposure_state(ev.run_dir, manifest)
+        print(f"  manifest {ref['id']}: {summary['items']} item(s) in {summary['groups']} defect "
+              f"group(s); partitions "
+              f"{', '.join(f'{k}={v}' for k, v in summary['partitions'].items() if v)}; "
+              f"exposure entries {state['entries']}", file=out)
+        for kind, count in (summary.get("leaks") or {}).items():
+            print(f"  quarantined by kind: {kind}={count} (this fixture's statement IS its fix "
+                  f"commit message, which is a future fix message by construction)", file=out)
+        try:
+            declare_cohort(ev.run_dir, manifest, partition="promotion", cohort="after-the-fact",
+                           items=sorted(manifest["content"]["partitions"]["promotion"]) or
+                           sorted(manifest["content"]["items"]), by="demo")
+        except EvalError as exc:
+            print(f"  cohort refused: {exc}", file=out)
+        print(f"  hashes are identity, not enforcement: {NOT_ENFORCEMENT_LABEL}", file=out)
         prefs = tmp / "prefs"
         try:
             build_proposal(env, {"workflow": "kit"}, "demo", prefs)
