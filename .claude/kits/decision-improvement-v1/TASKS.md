@@ -122,7 +122,7 @@ PYTHONPATH=tests python3 -m unittest test_decision_evaluation_manifest.Evaluatio
 ### D07 — Protected profile sentinels
 - id: D07
 - title: Protected profile sentinels
-- status: pending
+- status: done
 - model: opus
 - depends: D04, D06
 **Brief.** Own `bin/exec_policy.py` and `tests/test_decision_experiment_boundary.py:ProtectedProfileSentinelTests`. Verify enforceable candidate/setup/test/judge/controller separation; worktrees are not isolation. Unsupported host/profile returns typed unavailable.

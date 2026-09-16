@@ -434,3 +434,80 @@ outcome: D06 model=opus attempts=1 result=pass review=clean run=2026-09-16-aa6e
 agent: D06 id=af52e46 role=implementer model=opus
 agent: D06 id=ae5a126 role=verifier model=sonnet findings=2 confirmed=2 result=accepted
 defect: D03 kind=contradictory-acceptance
+
+### D07 — Protected profile sentinels
+
+**This host CERTIFIES: `darwin-seatbelt`, 21/21 sentinels, 19 denied + 2 allowed.** That is the
+honest outcome, not a hedge — and the task was explicitly allowed to answer `unavailable`.
+38 tests, verify exit 0, suite 4367/0/2, all gates 0, `LEDGER_VERSION` unmoved, no census move.
+Six prior test modules byte-identical (197 tests). 6/6 mutations tripped.
+
+**What makes the certification trustworthy is the attribution, not the pass.** Every denial
+requires TWO witnesses, both enforced by `certify_profile` rather than merely reported:
+1. **A control leg** — the identical command against a fresh per-sentinel mirror tree with NO
+   boundary, which must SUCCEED. If it does not, the sentinel is `inconclusive` and certifies
+   nothing. This is not decoration: D07's first implementation shared one control tree, an
+   earlier leg deleted a file a later leg needed, and two sentinels correctly came back
+   `inconclusive` and BLOCKED certification. The mechanism caught its own bug first.
+2. **A permission-class signal** (`EPERM`/`EACCES`/`operation-not-permitted`). `ENOENT` arrives
+   as `ENOENT` and is explicitly NOT a denial — a live-path test drives a nonexistent file and
+   asserts `inconclusive`. Adding `ENOENT` to `PERMISSION_SIGNALS` trips that test.
+
+The verifier reproduced kernel refusals **outside the module entirely**, with hand-written
+Seatbelt profiles: hidden-file read, controller write, loopback connect, and hardlink-into-
+workspace all succeed unconfined and fail `EPERM` confined; and a confined process calling
+`sandbox-exec` again gets `sandbox_apply: Operation not permitted` (exit 71). So
+`sandbox-renest-escape` is a real mechanism, not a label.
+
+**The 2 `allowed` legs are the positive control and are load-bearing.** Without them a suite
+that passes because NOTHING can execute is indistinguishable from one that passes because the
+boundary works.
+
+**`trusted-host` is absent, not defended.** `ProtectedProfile.run`/`run_shell` have no `mode`
+parameter, no `**kwargs`, no env override; `run()` hardcodes `mode="enforced"`. The only
+`trusted-host` in the new code is the CONTROL leg, which by definition runs against the separate
+control tree. `run_confined`'s own opt-out for ordinary verification is untouched and still
+self-reports.
+
+**"A worktree is not isolation" is now machine-enforced.** `ProtectedLayout` validates six
+pairwise-disjoint realpaths and refuses a candidate workspace containing the controller/hidden/
+accepted roots — **including when a root is a symlink into another**, which is the case a naive
+`startswith` misses. `_real()` uses `os.path.realpath`. Removing the disjointness loop trips the
+symlink-specific test.
+
+**Skips cannot certify — reproduced.** With `detect_backend` patched to return `None` on a temp
+copy: 38 tests OK, 7 skipped, exit 0 — while `certify_profile` returned `certified: False`,
+`mode: None`, all 21 sentinels present by name with `outcome: "unavailable"`. A green suite on a
+host with no boundary never reads as certified.
+
+**What `certified: true` licenses, and what it does NOT.** It licenses OS-enforced separation of
+the four confined roles from the controller's rules/labels/accepted-state and from each other's
+workspaces, on THIS darwin/sandbox-exec host, for the 21 named operations only.
+`SENTINEL_NOT_PROVEN` rides in every report and is accurate — independently confirmed:
+- general filesystem confidentiality is NOT proven (reads stay broadly allowed outside `deny_read`);
+- **`stat(2)` on a denied path still SUCCEEDS** — existence, size and mode leak;
+- `mach-lookup` is allowed, so a system daemon could act on a confined process's behalf;
+- **the model dispatch is not confined at all**;
+- nothing is claimed about any other host.
+
+Carry-forward:
+- **NOTHING IS WIRED.** No driver, `repo_bench` or `workflow_eval` call reaches
+  `ProtectedProfile` — grep across the repo finds it only in `exec_policy.py` and its own test.
+  This is an AVAILABLE boundary, not an invoked one. **`certified: true` licenses no live
+  experiment.** D08 must consume `certified: False` without reading `trusted-host` as a fallback
+  — there is no parameter that offers one. D23 owns activation.
+- `certify_profile` certifies HOST+PROFILE, never a particular experiment's tree. The sentinels
+  build their own synthetic tree; a certification says this host enforces these operations, not
+  that some specific run was isolated. D28/D29 must cite a sentinel report, never this prose.
+- A production caller must create `ProtectedLayout.REQUIRED_DIRS` itself — `exec_policy` creates
+  and deletes nothing outside its own tempfile trees, by design.
+- `linux-bubblewrap` and `container` are declared, permanently `not-implemented`, with their
+  prerequisites named. No installation was performed or is authorized.
+- No row was added to `primitives/harness-capabilities.json` and no release-gate contract claims
+  protected live experiments. That is D28/D29's call, on sentinel evidence.
+- `bin/harness_update.py check` exits 3 — PRE-EXISTING installed-home staleness, proven by
+  running it against a clean `git archive HEAD` extract (identical exit 3). Not this kit's.
+
+outcome: D07 model=opus attempts=1 result=pass review=clean run=2026-09-16-aa6e
+agent: D07 id=a641cf9 role=implementer model=opus
+agent: D07 id=ab0d1bd role=verifier model=sonnet findings=0 confirmed=0 result=accepted

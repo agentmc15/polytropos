@@ -149,6 +149,7 @@ VERSION_SOURCES = (
     ("policy proposal", "workflow_eval", "PROPOSAL_VERSION"),
     ("routing policy file", "workflow_eval", "POLICY_VERSION"),
     ("lessons store", "lessons_store", "SCHEMA"),
+    ("protected profile sentinels", "exec_policy", "SENTINEL_VERSION"),
 )
 
 #: Pricing files, one per harness, never merged. Read for `cached_date` and roster size only.

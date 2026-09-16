@@ -189,6 +189,18 @@ Do not rely on any of the following. Each is a known gap, not a subtlety:
   history-free sandboxes and withholds reference tests structurally, but candidate and judge
   dispatch does not yet run under `exec_policy`. Its setup and test commands run with the
   driver's privileges.
+
+  A protected-experiment *profile* now exists in `bin/exec_policy.py` — `exec_policy.py profile`
+  reports whether this host can enforce one, and `exec_policy.py sentinels` attempts every
+  forbidden operation for real and prints what the kernel returned. It separates the setup,
+  candidate, test and judge roles from the controller's rules, labels, withheld answers and
+  accepted state, and each denial is attributed by an unconfined control run that had to
+  succeed plus a permission-class errno, because a non-zero exit is not a refusal. **Nothing
+  dispatches through it yet**: it is an available boundary, not a wired one, and `repo_bench`
+  is unchanged. Where a host cannot apply a profile it reports `unavailable` with its
+  prerequisites named and certifies nothing — there is no trusted-host fallback for a protected
+  experiment — and a certification covers the named sentinel operations only, with
+  `exec_policy.SENTINEL_NOT_PROVEN` listing what it does not cover.
 - **Role names are not permissions.** A prompt that says "read-only reviewer" does not make a
   reviewer read-only. Review dispatch no longer carries a blanket permission grant by default on
   any harness (`--review-permissions bypass` is the named opt-out on Claude and Copilot, and
