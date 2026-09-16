@@ -33,9 +33,12 @@ that neither can stand in for the other. As of this page's last build, the insta
 verification on record is Claude Code 2.1.273 on 2026-09-16: one authorized live `run` of a
 one-task kit in a throwaway project (dispatch, the confined verify, the attempt ledger) and one
 `review --phase 1` of it (the restricted tool pin, the independent review), each recorded in the
-ledger with the client version in its registry row. Every Codex, Copilot, and Cursor row is still
-`unknown` or `unsupported` -- Cursor's CLI was absent on the host that ran the check -- and the
-block below says which.
+ledger with the client version in its registry row; and Cursor CLI 2026.09.10-fd3934a's identity
+probe, the same day, after the CLI was installed and found to name itself nowhere (its `about`
+schema is the identity now). Every other Cursor row and every Codex and Copilot row is still
+`unknown` or `unsupported` -- the Cursor install was not logged in, so its one dispatch was
+refused with an authentication error, classified `auth`, and spent nothing -- and the block
+below says which.
 
 ## Running the gate
 
@@ -69,10 +72,11 @@ and unimplemented modes stay visible rather than being presented as parity.
 
 - **No vendor client but Claude Code has been run from this repository.** Codex, Copilot, and
   Cursor dispatch, review pinning, structured events, and every workflow-evaluation adapter are
-  implemented against vendor documentation and exercised through stubs only; Cursor's `agent`
-  was not installed on the host that ran the 2026-09-16 check, so its identity probe was seen
-  to fail closed and nothing more. The prepared commands at the end of the block are how that
-  changes, one row at a time. Two things the live Claude run showed the ledger does not yet
+  implemented against vendor documentation and exercised through stubs only. Cursor's CLI was
+  installed on 2026-09-16 and its identity probe verified, but the install was not logged in:
+  the one dispatch tried was refused with an authentication error and classified `auth`.
+  `agent login` is the user's step; the prepared commands at the end of the block are how the
+  rest changes, one row at a time. Two things the live Claude run showed the ledger does not yet
   carry: the attempt's duration (the drivers' runners drop it) and the mode the verify ran
   under (enforced or trusted-host); both are follow-ups, not release blockers.
 - **The execution boundary is macOS Seatbelt only.** `--exec-mode enforced` refuses on Linux and
@@ -137,7 +141,7 @@ Three answers per capability, never collapsed: does the product support it, has 
 | Claude Code | `bin/claude_execute.py` | `claude` | cli (claude -p) | Claude Code 2.1.273, macOS 14.4 sandbox-exec (Darwin 23.4.0) | 2026-09-16 | 5 verified / 2 unknown / 4 unsupported |
 | OpenAI Codex CLI | `bin/codex_execute.py` | `codex` | cli (codex exec --json) | not recorded | none | 0 verified / 7 unknown / 6 unsupported |
 | GitHub Copilot CLI | `bin/copilot_execute.py` | `copilot` | cli (copilot -p) | not recorded | none | 0 verified / 5 unknown / 4 unsupported |
-| Cursor CLI | `bin/cursor_execute.py (bin/cursor_adapter.py)` | `agent` | cli (agent -p) | not recorded | none | 0 verified / 12 unknown / 7 unsupported |
+| Cursor CLI | `bin/cursor_execute.py (bin/cursor_adapter.py)` | `agent` | cli (agent -p) | Cursor CLI 2026.09.10-fd3934a | 2026-09-16 | 1 verified / 11 unknown / 7 unsupported |
 | Stub (conformance target; runs nothing) | `bin/harness_adapter.py StubAdapter; bin/kit_scheduler.py StubDispatcher` | none | none | not recorded | 2026-09-13 | 3 verified / 0 unknown / 2 unsupported |
 
 #### Claude Code
@@ -225,7 +229,7 @@ Three answers per capability, never collapsed: does the product support it, has 
 | durable_attempts | not-applicable | supported | unknown |  |  | unknown |
 | extended_roles | not-applicable | unsupported | unknown |  |  | unsupported |
 | ide_mode | supported | unsupported | unknown |  |  | unsupported |
-| identity_probe | supported | supported | unknown |  |  | unknown |
+| identity_probe | supported | supported | supported | 2026-09-16 | Cursor CLI 2026.09.10-fd3934a | supported |
 | independent_review | not-applicable | supported | unknown |  |  | unknown |
 | model_selection | supported | supported | unknown |  |  | unknown |
 | read_only_dispatch | supported | supported | unknown |  |  | unknown |
@@ -282,7 +286,7 @@ a failed, crashed, or refused dispatch is classified and never counted as succes
 | claude-code | `test_claude_execute.DispatchAndReadinessTests.test_a_failed_dispatch_does_not_become_done_on_a_passing_check` (1); `test_claude_execute.DispatchAndReadinessTests.test_a_failed_dispatch_does_not_climb_the_escalation_ladder` (1); `test_claude_execute.DispatchAndReadinessTests.test_a_runner_that_reports_nothing_is_unknown_not_success` (1); `test_claude_execute.DispatchAndReadinessTests.test_verification_failure_after_a_successful_dispatch_still_escalates` (1) | verified 2026-09-16: dispatch=supported |
 | codex | `test_codex_execute_policy.ReservedRecoveryTests.test_dispatch_failure_cannot_become_success_from_passing_verify` (1); `test_codex_execute_policy.ReservedRecoveryTests.test_runner_oserror_becomes_audited_failure` (1); `test_codex_execute_policy.ReservedRecoveryTests.test_runtime_policy_mismatch_blocks_without_unlocking_recovery` (1) | unknown: dispatch=unknown |
 | copilot | `test_copilot_execute.DispatchAndReadinessTests.test_a_failed_dispatch_does_not_become_done_on_a_passing_check` (1); `test_copilot_execute.DispatchAndReadinessTests.test_a_failed_dispatch_does_not_climb_the_escalation_ladder` (1); `test_attempt_ledger.RalphDurableLoopTests.test_an_environment_failure_stops_the_loop_after_one_tick` (1) | unknown: dispatch=unknown |
-| cursor | `test_cursor_execute.FailureTests.test_a_dispatch_failure_is_classified_blocked_and_never_verified` (1); `test_cursor_execute.FailureTests.test_a_logged_out_cli_is_named_and_recorded` (1); `test_cursor_execute.IdentityRefusalTests` (3) | unknown: dispatch=unknown, identity_probe=unknown |
+| cursor | `test_cursor_execute.FailureTests.test_a_dispatch_failure_is_classified_blocked_and_never_verified` (1); `test_cursor_execute.FailureTests.test_a_logged_out_cli_is_named_and_recorded` (1); `test_cursor_execute.IdentityRefusalTests` (3) | unknown: dispatch=unknown, identity_probe=supported |
 | stub | `test_kit_scheduler.BatchTests.test_a_dispatch_failure_and_a_verify_failure_are_each_blocked_and_nothing_is_applied` (1); `test_workflow_eval.DirectWorkflowTests.test_a_dispatch_failure_is_classified_and_not_graded_as_solved` (1) | verified 2026-09-06: dispatch=supported |
 | shared | `test_attempt_ledger.ClassificationTests` (2); `test_attempt_ledger.FailureClassAtTheDriverTests.test_a_logged_out_cli_is_classified_recorded_and_not_escalated` (1); `test_proc_runner_wiring.DriverDispatchTests.test_a_missing_binary_comes_back_as_a_result_not_an_exception` (1); `test_proc_runner_wiring.DriverDispatchTests.test_a_stalled_dispatch_is_bounded_rather_than_waited_on` (1) | n/a |
 

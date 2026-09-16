@@ -30,17 +30,25 @@ this repository. `bin/harness_select.py doctor --harness cursor` prints this tab
 | `cloud` | supported | files-only | unknown | cloud subagents and private workers read project files; nothing here launches one |
 
 `verified` stays `unknown` until someone runs the documented smoke on their own machine and
-records it in `primitives/harness-capabilities.json`. The historical product matrix in
-`primitives/harness-matrix.json` is provenance, not the operational view.
+records it in `primitives/harness-capabilities.json`. As of 2026-09-16 the identity probe is
+the one Cursor row verified on a real install (CLI 2026.09.10-fd3934a); the install was not
+logged in, so its one dispatch was refused with an authentication error, classified `auth`,
+and `dispatch` stays unknown. The historical product matrix in `primitives/harness-matrix.json`
+is provenance, not the operational view.
 
 ## Identity before trust
 
 Cursor's CLI installs as a binary named `agent`, a name any tool might carry. The driver
-refuses to dispatch to it until it has said what it is: `agent --version` must name Cursor,
-or `agent about --format json` must. A binary that says neither is `unknown` and is refused
-before a claim is taken, before the ledger is opened, before any file is written. An absent
-binary is `absent`. Only the version line is kept from the `about` payload; account fields in
-it are not recorded.
+refuses to dispatch to it until it has said what it is: `agent --version` names Cursor, or
+`agent about --format json` does -- by naming it, or by answering with Cursor's own schema, a
+string `cliVersion` beside `latestStatus`, `latestVersion`, and `osPlatform`
+(`cursor_adapter.ABOUT_SCHEMA_KEYS`). That second form exists because the first real install
+(2026-09-16, CLI 2026.09.10-fd3934a) names itself nowhere: `--version` prints a bare version
+and no value in `about` contains the word, so the original "must name Cursor" rule refused a
+genuine Cursor and the registry note had said it might. A binary that matches neither is
+`unknown` and is refused before a claim is taken, before the ledger is opened, before any file
+is written. An absent binary is `absent`. Only the version is kept from the `about` payload;
+its account fields (`userEmail`, `subscriptionTier`) are read for nothing and not recorded.
 
 ```bash
 python3 bin/cursor_execute.py probe                      # exit 3 unless --cursor-bin is Cursor

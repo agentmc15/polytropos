@@ -187,9 +187,22 @@ which rows a client release invalidates and writes nothing. If a later session p
 On the user's go-ahead, step 2 of the post-roadmap list (Cursor) and step 3 (one live Claude
 run) were done; step 4 (the bounded evaluation) waits on a target repository.
 
-- **Cursor.** `agent` is not on the host's PATH (Cursor.app is installed; its CLI is not).
-  `cursor_execute.py probe` reported `absent` and refused -- the fail-closed branch, observed for
-  real -- and every Cursor row stays `unknown`. Installing the CLI is the user's own step.
+- **Cursor.** `agent` was not on the host's PATH (Cursor.app installed; CLI not);
+  `cursor_execute.py probe` reported `absent` and refused. The user then had the CLI installed
+  (`curl https://cursor.com/install -fsS | bash`, inspected first: a tarball into
+  `~/.local/share/cursor-agent/versions/`, symlinks in `~/.local/bin`, no sudo). The probe
+  refused AGAIN (`unknown`): the real CLI names itself nowhere -- `--version` prints a bare
+  `2026.09.10-fd3934a` and `about --format json` carries `cliVersion`/`latestStatus`/
+  `latestVersion`/`osPlatform`/`model`/`subscriptionTier`/`userEmail`/... with no product name
+  in any value. The registry note had flagged exactly this risk. `cursor_adapter.identify` now
+  accepts that schema with a string `cliVersion` (`ABOUT_SCHEMA_KEYS`; two tests, one with the
+  real shape and account fields it must not keep); the probe answers `cursor (2026.09.10-fd3934a)`
+  and `identity_probe` is verified. The install is NOT logged in (`agent status`: "Not logged
+  in"): the documented smoke and one driver `run` on a second throwaway kit both returned
+  `Error: Authentication required. Please run 'agent login' first, or set CURSOR_API_KEY
+  environment variable.`; the driver classified it `auth`, projected T1 `blocked` with no verify,
+  recorded it (run `2026-09-16-765a`), and spent nothing. `dispatch` and `read_only_dispatch`
+  stay `unknown` until the user runs `agent login` -- a browser flow that is theirs.
 - **Claude Code 2.1.273.** A throwaway project under the session scratchpad with a one-task kit
   (`m.py` returns 1, the test wants 2; `budget: max-dispatches=2 max-escalations=1`). The dry run
   found the driver reading `.claude/agents/<slug>-<role>.md` from THIS checkout only, so a kit in

@@ -91,6 +91,33 @@ class IdentityTests(unittest.TestCase):
         self.assertNotIn("someone@example.com", json.dumps(report),
                          "only the version is kept from the about payload")
 
+    def test_the_real_about_schema_is_accepted_though_no_value_names_cursor(self):
+        """2026-09-16: the first real install. `--version` prints a bare version and `about`
+        names Cursor nowhere; the `cliVersion` schema is the identity. Account fields are read
+        for nothing and never kept."""
+        real_shape = {"cliVersion": "2026.09.10-fd3934a", "latestStatus": "up_to_date",
+                      "latestVersion": "2026.09.10-fd3934a", "model": "Auto",
+                      "subscriptionTier": None, "osPlatform": "darwin", "osArch": "arm64",
+                      "userEmail": "someone@example.com", "terminalProgram": "apple-terminal",
+                      "shell": "zsh", "lastRequestId": None}
+        report = ca.identify(self.bin, runner=_runner(version="2026.09.10-fd3934a\n",
+                                                      about=real_shape))
+        self.assertEqual(report["identity"], "cursor")
+        self.assertEqual(report["version"], "2026.09.10-fd3934a")
+        self.assertIn("cliVersion", report["reason"])
+        self.assertNotIn("someone@example.com", json.dumps(report))
+        self.assertIs(ca.require_cursor(report), report)
+
+    def test_a_partial_or_non_string_cli_version_stays_unknown(self):
+        for about in ({"cliVersion": "1.0"},                       # schema keys missing
+                      {"cliVersion": 7, "latestStatus": "x", "latestVersion": "x",
+                       "osPlatform": "darwin"},                    # not a string
+                      {"cliVersion": "  ", "latestStatus": "x", "latestVersion": "x",
+                       "osPlatform": "darwin"}):                   # blank
+            with self.subTest(about=about):
+                report = ca.identify(self.bin, runner=_runner(version="3.1\n", about=about))
+                self.assertEqual(report["identity"], "unknown")
+
     def test_a_binary_that_never_names_cursor_is_unknown_and_refused(self):
         report = ca.identify(self.bin, runner=_runner(version="acme-agent 3.1\n",
                                                       about={"name": "acme"}))

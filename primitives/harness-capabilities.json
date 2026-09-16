@@ -307,21 +307,23 @@
           "implemented": "supported",
           "verified": "unknown",
           "source": "https://cursor.com/docs/cli/headless (agent -p --output-format json --trust --force)",
-          "note": "bin/cursor_execute.py run through bin/cursor_adapter.build_dispatch; never invoked live from this repository -- tests stub the binary -- so verified stays unknown"
+          "note": "bin/cursor_execute.py run through bin/cursor_adapter.build_dispatch; never invoked live from this repository -- tests stub the binary -- so verified stays unknown. 2026-09-16: one `run` on a throwaway one-task kit while the CLI was NOT logged in: `agent -p --trust --workspace … --output-format json --force <prompt>` exited 1 in ~1 s with `Error: Authentication required. Please run 'agent login' first, or set CURSOR_API_KEY environment variable.`; the driver classified it `auth`, projected T1 `blocked` with no verify, recorded it (run 2026-09-16-765a), and spent nothing. A successful dispatch has not been seen, so verified stays unknown until the user logs in"
         },
         "identity_probe": {
           "product": "supported",
           "implemented": "supported",
-          "verified": "unknown",
+          "verified": "supported",
           "source": "https://cursor.com/docs/cli/reference/parameters (-v/--version, about --format json)",
-          "note": "polytropos capability: the generically named `agent` is dispatched to only after `--version` or `about --format json` names Cursor; unknown fails closed. The probe's output format is undocumented, so which of the two answers positively on a real install is unverified. 2026-09-16: on the maintainer's host `agent` was not on PATH (Cursor.app is installed, its CLI is not); `cursor_execute.py probe` reported `absent` and refused, which is the fail-closed branch -- the positive path stays unverified until the CLI is installed there"
+          "note": "polytropos capability: the generically named `agent` is dispatched to only after `--version` or `about --format json` identifies Cursor; unknown or absent fails closed. Verified 2026-09-16 on a real install (cliVersion 2026.09.10-fd3934a, macOS 14.4): earlier that day the binary was absent and the probe refused (`absent`); after `curl https://cursor.com/install -fsS | bash` the probe refused again (`unknown`), because the real CLI names itself nowhere -- `--version` prints a bare version and `about --format json` carries `cliVersion`, `latestStatus`, `latestVersion`, `osPlatform`, `model`, `subscriptionTier`, `userEmail`, ... with no product name in any value. The rule now accepts that schema with a string `cliVersion` (`cursor_adapter.ABOUT_SCHEMA_KEYS`), and `cursor_execute.py probe` answers `cursor (2026.09.10-fd3934a)` on this host. Only the version is kept from the payload",
+          "verified_on": "2026-09-16",
+          "client_version": "Cursor CLI 2026.09.10-fd3934a"
         },
         "read_only_dispatch": {
           "product": "supported",
           "implemented": "supported",
           "verified": "unknown",
           "source": "https://cursor.com/docs/cli/reference/parameters (--mode ask)",
-          "note": "review and verification dispatches pass --mode ask and never --force; whether ask mode refuses every write is the product's promise, not verified here"
+          "note": "review and verification dispatches pass --mode ask and never --force; whether ask mode refuses every write is the product's promise, not verified here. 2026-09-16: the documented smoke (`--mode ask`) was run on a real, logged-out install and returned the same authentication error; the flag's effect on a logged-in run is still unverified"
         },
         "model_selection": {
           "product": "supported",
@@ -342,7 +344,7 @@
           "implemented": "unsupported",
           "verified": "unknown",
           "source": "https://cursor.com/docs/cli/reference/parameters (ls, resume, status)",
-          "note": "`status` reports authentication, not a run; `ls`/`resume` address chats. No per-run status is exposed, so the adapter raises CapabilityError"
+          "note": "`status` reports authentication, not a run; `ls`/`resume` address chats. No per-run status is exposed, so the adapter raises CapabilityError. 2026-09-16: `agent status` on a real install prints `Not logged in`, confirming it reports authentication, not a run"
         },
         "cancel": {
           "product": "unknown",
