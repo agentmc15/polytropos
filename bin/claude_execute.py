@@ -633,8 +633,11 @@ def run_task(task, pricing, runner, verify_runner, prompt=None, role="implemente
                           permissions=permissions)
     attempt = (lifecycle.attempt_started(initial_kind, model_id, prompt, verify_cmd)
                if lifecycle else None)
-    dispatch_rc, dispatch_out = dispatch_status(runner(argv))
-    cls = lifecycle.attempt_finished(attempt, dispatch_rc, dispatch_out) if lifecycle else None
+    dispatch_rc, dispatch_out, dispatch_timing = dispatch_status(runner(argv))
+    cls = (lifecycle.attempt_finished(attempt, dispatch_rc, dispatch_out,
+                                      proc_outcome=dispatch_timing.get("outcome"),
+                                      duration_s=dispatch_timing.get("duration_s"))
+           if lifecycle else None)
     if dispatch_rc is not None and dispatch_rc != 0:
         # A FAILED dispatch is not an implementation failure, so it does not climb the ladder:
         # a crashed, unauthenticated or permission-denied process fails the same way on a more
@@ -666,8 +669,10 @@ def run_task(task, pricing, runner, verify_runner, prompt=None, role="implemente
                                   permissions=permissions)
             attempt = (lifecycle.attempt_started("escalation", rung, escalated_prompt,
                                                  verify_cmd) if lifecycle else None)
-            dispatch_rc, dispatch_out = dispatch_status(runner(argv))
-            cls = (lifecycle.attempt_finished(attempt, dispatch_rc, dispatch_out)
+            dispatch_rc, dispatch_out, dispatch_timing = dispatch_status(runner(argv))
+            cls = (lifecycle.attempt_finished(attempt, dispatch_rc, dispatch_out,
+                                              proc_outcome=dispatch_timing.get("outcome"),
+                                              duration_s=dispatch_timing.get("duration_s"))
                    if lifecycle else None)
             escalations.append(rung)
             model_used = rung
@@ -1141,10 +1146,11 @@ def cmd_review(args):
         print(f"phase: {args.phase}")
         print(f"dispatch: {shlex.join(argv)}")
         return
-    rc, output = default_runner(argv)
+    rc, output, timing = default_runner(argv)
     # Step 17: a review used to leave nothing behind but stdout. Recorded like any dispatch.
     record_role_dispatch(kit, generate_run_id(), "reviewer", args.phase, None, rc, output,
-                         actor="claude-code", store=args.attempt_store)
+                         actor="claude-code", store=args.attempt_store,
+                         proc_outcome=timing.get("outcome"), duration_s=timing.get("duration_s"))
     print(output)
     if rc != 0:
         sys.exit(1)

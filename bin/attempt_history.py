@@ -42,6 +42,18 @@ SOURCES = ("ledger", "notes", "role-use", "ledger+role-use")
 #: Cost bases. Never summed across each other.
 COST_BASES = ("billed", "credits", "estimated", "proxy", "model-reported")
 
+#: Duration bases. Never summed across each other (decision-improvement D05): a process's own
+#: wall-clock seconds (`proc_runner`'s `duration_s`, recorded by all four native drivers and by
+#: `workflow_eval`'s and `copilot_ralph`'s own clocks around the same dispatch call --
+#: the same physical quantity, different measuring code), the latency of a routing decision
+#: made before dispatch, and a duration a model reported about itself, are three different
+#: facts measured by three different clocks (see the authority inventory's "Duration
+#: coverage"). Only `process-wall` has a producer at this revision; `decision-latency` and
+#: `model-reported` are declared so a future producer (D09-D13's decision record; a duration
+#: field an adapter learns to parse) has a slot that already keeps it separate, rather than a
+#: field added later that conflates it with the process's own timing.
+DURATION_BASES = ("process-wall", "decision-latency", "model-reported")
+
 #: One record per attempt. Every field is observed or None; `observed` names the former.
 #:
 #: The four `*_ref` fields are the attempt's PROVENANCE and must stay exactly
@@ -56,7 +68,7 @@ RECORD_FIELDS = (
     "tier", "tier_harness", "registry_version", "ts", "result", "failure_class",
     "verify_rc", "verify_signature", "verify_failures", "artifact", "parent",
     "acceptance_ref", "policy_ref", "decision_ref", "admission_ref",
-    "attempts_recorded", "ledger_attempts", "cost", "observed",
+    "attempts_recorded", "ledger_attempts", "duration", "cost", "observed",
 )
 
 #: The subset of `RECORD_FIELDS` whose absence `summarize` counts as unknown provenance. A
@@ -135,6 +147,10 @@ def _cost(basis, usd=None, credits=None, source=""):
     return {"basis": basis, "usd": usd, "credits": credits, "source": source}
 
 
+def _duration(basis, seconds=None, source=""):
+    return {"basis": basis, "seconds": seconds, "source": source}
+
+
 def ledger_records(kit, ledger, registry):
     """One record per attempt in a kit's ledger, plus actor identity from `run.started`."""
     events = ledger.events()
@@ -174,6 +190,17 @@ def ledger_records(kit, ledger, registry):
                              else "estimated")
                     observe(rec, cost=_cost(basis, usd=float(finished["cost_usd"]),
                                             source="ledger"))
+                # decision-improvement D05: `duration_s` is the process wall-clock seconds
+                # `attempt.finished` carries -- measured by `proc_runner` on the four native
+                # drivers, or by `workflow_eval`'s/`copilot_ralph`'s own clock around the same
+                # dispatch call.
+                # A crash-closed attempt (`reconcile_open`) and every event recorded before
+                # this field existed both write no `duration_s` at all, so `observe` leaves it
+                # unset here rather than defaulting to zero.
+                if finished.get("duration_s") is not None:
+                    observe(rec, duration=_duration("process-wall",
+                                                    seconds=float(finished["duration_s"]),
+                                                    source="ledger"))
             if verify:
                 observe(rec, verify_rc=verify.get("rc"), verify_signature=verify.get("signature"),
                         verify_failures=verify.get("failures"))
@@ -509,11 +536,33 @@ def cost_totals(records):
             "note": "bases are separate facts and are never summed together"}
 
 
+def duration_totals(records):
+    """Per-basis duration totals and coverage (decision-improvement D05). Bases are never
+    added to each other."""
+    totals = {basis: {"n": 0, "seconds": None} for basis in DURATION_BASES}
+    with_duration = 0
+    for rec in records:
+        duration = rec.get("duration")
+        if not duration:
+            continue
+        basis = duration.get("basis")
+        if basis not in totals:
+            continue
+        with_duration += 1
+        totals[basis]["n"] += 1
+        seconds = duration.get("seconds")
+        if isinstance(seconds, (int, float)) and not isinstance(seconds, bool):
+            current = totals[basis]["seconds"]
+            totals[basis]["seconds"] = round((current or 0.0) + float(seconds), 6)
+    return {"by_basis": totals, "records_with_duration": with_duration, "records": len(records),
+            "note": "bases are separate facts and are never summed together"}
+
+
 def summarize(records, notes=(), coverage=None, registry=None):
     """The card: what the joined history shows, with unknowns counted, never filled."""
     registry = registry or _mod("model_registry").registry()
     by_harness = {}
-    unknown = {"harness": 0, "tier": 0, "observed_model": 0, "cost": 0}
+    unknown = {"harness": 0, "tier": 0, "observed_model": 0, "cost": 0, "duration": 0}
     unknown.update({field: 0 for field in PROVENANCE_FIELDS})
     classes = {}
     by_source = {}
@@ -529,6 +578,8 @@ def summarize(records, notes=(), coverage=None, registry=None):
             unknown["observed_model"] += 1
         if rec.get("cost") is None:
             unknown["cost"] += 1
+        if rec.get("duration") is None:
+            unknown["duration"] += 1
         for field in PROVENANCE_FIELDS:
             if rec.get(field) is None:
                 unknown[field] += 1
@@ -550,6 +601,7 @@ def summarize(records, notes=(), coverage=None, registry=None):
         "lineage": lineage(records),
         "latest": latest_state(records),
         "cost": cost_totals(records),
+        "duration": duration_totals(records),
         "coverage": coverage or {},
         "registry": registry.versions(),
         "notes": list(notes),
@@ -576,7 +628,8 @@ def render_markdown(card):
     u = card["unknown"]
     lines.append("")
     lines.append(f"unknown: harness={u['harness']} tier={u['tier']} "
-                 f"observed_model={u['observed_model']} cost={u['cost']}  "
+                 f"observed_model={u['observed_model']} cost={u['cost']} "
+                 f"duration={u['duration']}  "
                  f"(counted, never filled)")
     lines.append("unknown provenance: " + " ".join(
         f"{field.removesuffix('_ref')}={u.get(field, 0)}" for field in PROVENANCE_FIELDS)
@@ -600,6 +653,14 @@ def render_markdown(card):
             usd = "n/a" if t["usd"] is None else f"${t['usd']:.4f}"
             lines.append(f"- {basis}: n={t['n']} usd={usd}")
     lines.append(f"  {c['note']}")
+    d = card["duration"]
+    lines.append("")
+    lines.append(f"## Duration ({d['records_with_duration']} of {d['records']} records carry one)")
+    for basis, t in d["by_basis"].items():
+        if t["n"]:
+            seconds = "n/a" if t["seconds"] is None else f"{t['seconds']:.3f}s"
+            lines.append(f"- {basis}: n={t['n']} seconds={seconds}")
+    lines.append(f"  {d['note']}")
     if card["notes"]:
         lines.append("")
         lines.append("## Notes")

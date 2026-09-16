@@ -90,7 +90,7 @@ PYTHONPATH=tests python3 -m unittest test_decision_provenance.AttemptProvenanceT
 ### D05 — Duration coverage
 - id: D05
 - title: Duration coverage
-- status: pending
+- status: done
 - model: sonnet
 - depends: D04
 **Brief.** Own attempt projection and `tests/test_decision_duration.py:DurationCoverageTests`. Record wall/decision duration basis, timeout, cancellation, censoring and external unknown without inferring free retries or refunds.

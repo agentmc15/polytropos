@@ -552,7 +552,15 @@ def run_task(task, pricing, runner, verify_runner, prompt=None, role="implemente
             telemetry = {}
         observed_model = telemetry.get("actual_model") if isinstance(telemetry, dict) else None
         observed_role = telemetry.get("actual_role") if isinstance(telemetry, dict) else None
+        # decision-improvement D05: `telemetry` is `default_runner`'s own vehicle for what
+        # `proc_runner` measured (see its docstring) -- an injected test runner that returns a
+        # bare 2-tuple, or `None`, carries neither, and both read back as unmeasured rather
+        # than zero.
+        proc_outcome = telemetry.get("outcome") if isinstance(telemetry, dict) else None
+        duration_s = telemetry.get("duration_s") if isinstance(telemetry, dict) else None
         failure_class = (lifecycle.attempt_finished(attempt, dispatch_rc, dispatch_output,
+                                                    proc_outcome=proc_outcome,
+                                                    duration_s=duration_s,
                                                     observed_model=observed_model)
                          if lifecycle else None)
         observed_provenance = telemetry.get("provenance") if isinstance(telemetry, dict) else None
@@ -851,6 +859,15 @@ def default_runner(argv, cwd=None, timeout=None):
     The environment is reduced to this provider's own variables plus the base set, so the
     machine's unrelated credentials are not handed to a coding agent. `POLYTROPOS_DISPATCH_ENV`
     (comma-separated NAMES) widens it on a host that needs a variable the list has not learned.
+
+    decision-improvement D05: unlike the other three drivers, this runner is its own -- it does
+    not go through `kit_contract.provider_runner` -- so widening that shared function does not
+    reach Codex.
+    `telemetry` therefore carries `duration_s` and `outcome` alongside the model attestation
+    `attest_runtime_model` already put there: the SAME `proc_runner` result this function
+    already measured, just not previously returned. `attest_runtime_model` itself is untouched
+    and still returns exactly `{}` or `{"actual_model", "provenance"}` when called directly
+    (`tests/test_codex_execute_policy.py`); the timing keys are added here, once, after it runs.
     """
     started = datetime.now(timezone.utc)
     pr = _pr()
@@ -869,7 +886,9 @@ def default_runner(argv, cwd=None, timeout=None):
     if not result["terminal"] and result["detail"]:
         stderr = f"{stderr}\n{result['detail']}" if stderr else result["detail"]
     output = DispatchOutput(result["stdout"], stderr)
-    telemetry = attest_runtime_model(output.stdout, started)
+    telemetry = dict(attest_runtime_model(output.stdout, started))
+    telemetry["duration_s"] = result["duration_s"]
+    telemetry["outcome"] = result["outcome"]
     return result["rc"], output, telemetry
 
 
@@ -1675,7 +1694,8 @@ def cmd_review(args):
     # Step 17: the same run id in both records, so the history joins them as one dispatch.
     record_role_dispatch(Path(args.kit), run_id, "verifier", args.phase,
                          assignment["model_id"], rc, output, actor="codex",
-                         store=args.attempt_store, observed_model=telemetry.get("actual_model"))
+                         store=args.attempt_store, observed_model=telemetry.get("actual_model"),
+                         duration_s=telemetry.get("duration_s"))
     print(output)
     if rc != 0:
         sys.exit(1)
@@ -1761,7 +1781,7 @@ def cmd_accept(args):
     record_role_dispatch(Path(args.kit), run_id, "orchestrator", args.phase,
                          assignment["model_id"], rc, output, actor="codex",
                          store=args.attempt_store, observed_model=telemetry.get("actual_model"),
-                         result=verdict or "failed")
+                         result=verdict or "failed", duration_s=telemetry.get("duration_s"))
     print(output)
     if verdict == "rejected" and rc == 0:
         rc = 1

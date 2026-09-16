@@ -540,6 +540,20 @@ def priced_usd(cost):
     return 0.0
 
 
+def _accrue_wall(total, extra):
+    """Add a stage's measured `wall_seconds` to a running total without coercing "never
+    measured" into "measured zero" (decision-improvement D05). `extra` is `None` for a stage
+    that was skipped before any dispatch (routing refusal, a budget stop, a reused prior
+    verdict) -- genuinely nothing to add, not an unknown -- and is left out rather than treated
+    as `+= 0.0`. `total`
+    stays `None` for as long as nothing has ever been added to it, so a trial or a variant that
+    never dispatched anything reports `wall_seconds: None` (unmeasured) rather than `0.0`
+    (measured and took no time), the same distinction `cost_totals` keeps for money."""
+    if extra is None:
+        return total
+    return (total or 0.0) + extra
+
+
 # ---- routing ---------------------------------------------------------------------------------------------------
 
 def route_stage(adapter, pricing, variant, task, role, profile):
@@ -896,7 +910,7 @@ class Evaluation:
                "stages": [], "routing": {}, "patch": None, "oracles": None, "solved": None,
                "accepted": None, "acceptance_by": None, "incorrect_acceptance": False,
                "review": None, "kit": None, "resume": None, "privacy": None, "excluded": None,
-               "skipped": None, "wall_seconds": 0.0, "adjudication": None,
+               "skipped": None, "wall_seconds": None, "adjudication": None,
                "robustness": {k: None for k in ROBUSTNESS}}
         routed = route_stage(self.adapter, self.pricing, variant, task, "implementer", task["size_profile"])
         rec["routing"]["implement"] = {"model": routed["model"], "decision": routed["decision"],
@@ -928,7 +942,7 @@ class Evaluation:
                 rec["skipped"] = stage["skipped"]
                 rec["reason"] = stage["reason"]
                 return rec
-            rec["wall_seconds"] += stage.get("wall_seconds") or 0.0
+            rec["wall_seconds"] = _accrue_wall(rec["wall_seconds"], stage.get("wall_seconds"))
             observed = stage.get("observed_model")
             rec["model_observed"] = observed
             if observed is not None and observed != model:
@@ -940,7 +954,8 @@ class Evaluation:
                 review = self._review_stage(ledger, trial, task, variant, patch, rec)
                 rec["stages"].append(review)
                 if not review.get("skipped"):
-                    rec["wall_seconds"] += review.get("wall_seconds") or 0.0
+                    rec["wall_seconds"] = _accrue_wall(rec["wall_seconds"],
+                                                       review.get("wall_seconds"))
             rec["oracles"] = self._grade(task, patch, work_dir)
             rec["solved"] = rec["oracles"]["tests"].get("passed") is True
             if rec["oracles"]["touched_tests"]:
@@ -1013,7 +1028,7 @@ class Evaluation:
         admission = kc.BudgetAdmission(plan_budget, used) if plan_budget else None
         kc.project_status(kit_dir / "TASKS.md", tid, "in-progress")
         recon = kc.reconcile_task(lifecycle, info, verify, ktask["verify"])
-        stage = {"stage": "implement", "model": model, "skipped": None, "wall_seconds": 0.0,
+        stage = {"stage": "implement", "model": model, "skipped": None, "wall_seconds": None,
                  "cost": None, "rc": None, "observed_model": None}
         if recon["mode"] == "resolved":
             result = recon["result"]
@@ -1160,14 +1175,14 @@ def _variant_summary(variant_id, recs, floor, repeats):
                 "review_parsed": (sum(1 for r in reviews if r["review"].get("parsed")) / len(reviews))
                 if reviews else None}
     totals = empty_totals()
-    wall = 0.0
+    wall = None
     interventions = 0
     robustness = {k: 0 for k in ROBUSTNESS}
     for r in recs:
         for st in r.get("stages") or []:
             if st.get("cost"):
                 add_cost(totals, st["cost"])
-        wall += r.get("wall_seconds") or 0.0
+        wall = _accrue_wall(wall, r.get("wall_seconds"))
         if r.get("adjudication"):
             interventions += 1
         rb_ = r.get("robustness") or {}
@@ -1191,8 +1206,10 @@ def _variant_summary(variant_id, recs, floor, repeats):
         "interval_95": wilson(solved, n), "below_floor": n < floor,
         "acceptances": len(accepted), "incorrect_acceptance": incorrect,
         "escaped_defects": incorrect, "review_rejected_solved": review_reject_solved,
-        "interventions": interventions, "wall_seconds": round(wall, 3),
-        "mean_wall_seconds": round(wall / n, 3) if n else None, "usage": totals,
+        "interventions": interventions,
+        "wall_seconds": round(wall, 3) if wall is not None else None,
+        "mean_wall_seconds": round(wall / n, 3) if (wall is not None and n) else None,
+        "usage": totals,
         "coverage": coverage, "stability": stability, "unstable_tasks": unstable,
         "excluded": excluded, "robustness": robustness,
     }
@@ -1226,9 +1243,14 @@ def build_card(envelope):
     rankable = summaries and all(not s["below_floor"] for s in summaries) and repeats >= 2
     ranking = None
     if rankable:
-        ranking = [s["variant"] for s in sorted(summaries, key=lambda s: (-(s["rate"] or 0),
-                                                                          s["incorrect_acceptance"],
-                                                                          s["wall_seconds"]))]
+        # `wall_seconds` is `None` (decision-improvement D05) when every live trial resolved
+        # without a new dispatch (an already-passing resume) -- no measured time to prefer on,
+        # so it sorts LAST on this tie-break rather than crashing the comparison or being read
+        # as fastest;
+        # the same convention `repo_bench._daily_driver` uses for an unmeasured median.
+        ranking = [s["variant"] for s in sorted(summaries, key=lambda s: (
+            -(s["rate"] or 0), s["incorrect_acceptance"],
+            s["wall_seconds"] if s["wall_seconds"] is not None else float("inf")))]
     labels = list(envelope.get("labels") or [])
     if not rankable:
         labels.append(NOT_A_RANKING)

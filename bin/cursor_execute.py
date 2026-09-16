@@ -172,6 +172,7 @@ def run_task(task, runner, verify_runner, prompt=None, model=None, cursor_bin=BI
     observed = parsed["observed_model"]
     if lifecycle:
         cls = lifecycle.attempt_finished(attempt, rc, output, proc_outcome=proc.get("outcome"),
+                                         duration_s=proc.get("duration_s"),
                                          observed_model=observed)
     else:
         cls = (_CONTRACT._al().classify_dispatch(rc, output, proc_outcome=proc.get("outcome"))
@@ -323,7 +324,8 @@ def cmd_review(args):
     record_role_dispatch(kit, generate_run_id(), "reviewer", args.phase, args.model, rc, output,
                          actor=ACTOR, store=args.attempt_store,
                          observed_model=parsed["observed_model"],
-                         proc_outcome=proc.get("outcome"))
+                         proc_outcome=proc.get("outcome"),
+                         duration_s=proc.get("duration_s"))
     print(output)
     if rc != 0:
         sys.exit(1)

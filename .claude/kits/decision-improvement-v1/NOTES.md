@@ -287,3 +287,72 @@ usage or cost output", which the live run falsified — inherited, belongs to th
 
 reviewer: P1 model=opus findings=10 confirmed=4 result=accepted
 defect: D01 kind=stale-plan-decision
+
+## Phase 2
+
+### D05 — Duration coverage
+
+17 tests, verify exit 0, suite 4282/0/2, all gates 0. D02's 25 goldens and D04's 26 provenance
+tests pass UNMODIFIED (`git diff --stat` on both test files empty). `bin/proc_runner.py` and
+`bin/attempt_ledger.py` byte-identical to HEAD — the brief's "change only `bin/proc_runner.py`"
+instruction aimed at the wrong file and was correctly not followed literally.
+`attempt_ledger.record_finished` already had a `duration_s` parameter with no caller filling it.
+
+**A FIFTH boundary existed.** D05 checked the corrected four-boundary claim structurally instead
+of trusting it, and found `kit_scheduler._work` dropping `duration_s` although
+`StubDispatcher` (line 396) and `CursorDispatcher` (line 426) both already return the full
+`proc_runner` result as their third element. One additive kwarg on an existing call. The lesson
+generalizes: a corrected claim is still a claim, and this kit's corrections have themselves been
+wrong twice. Verify counts structurally.
+
+**The ranking change is a FIX, not a regression — the opposite of what it looked like.** Before
+D05, an un-dispatched stage's `wall_seconds` was coerced to `0.0`, which made a variant that was
+never timed sort FIRST in the tie-break — it read as the *fastest*. `_accrue_wall` leaves the
+total `None` until something real accrues, and `build_card` sorts `None` as `float("inf")`, i.e.
+last. Existing MEASURED data is unaffected: primary (`-rate`) and secondary
+(`incorrect_acceptance`) keys are untouched and a measured total's value is identical to before.
+The convention is already in use at `repo_bench.py:5186`; `workflow_eval.py:1253` now matches it.
+`tests/test_workflow_eval.py` (52 tests, three of them ranking-specific) pass unmodified.
+
+**`codex_execute.default_runner` merges into a COPY** — `dict(attest_runtime_model(...))` then
+two keys added — so `attest_runtime_model`'s own pinned contract (`{}` or
+`{"actual_model","provenance"}`) is provably unchanged and `test_codex_execute_policy.py`'s 34
+tests pass unmodified. Mutation-proven load-bearing: reverting the merge yields
+`KeyError: 'duration_s'`.
+
+**`dispatch_status` now normalises 2-tuple, 3-tuple AND `None`**, returning `(rc, output, timing)`
+with `timing={}` when unmeasured — so an older or external runner returning a 2-tuple still
+works. All four call sites updated (`claude_execute.py:636,672`, `copilot_execute.py:716,766`),
+plus the two direct-unpack sites (`claude_execute.py:1149`, `copilot_execute.py:1466`). An AST
+scan for any other two-name unpack of a `*runner(...)` call found only `verify_runner` calls,
+which are a structurally distinct `exec_policy` contract and untouched.
+
+**Carry-forward — a D03 directive is only HALF met, recorded rather than resolved in a test
+docstring.** D03's inventory says "two zero-coercions D05 must not preserve". The `workflow_eval`
+half is fixed. The `copilot_ralph.py:226-227` half is NOT, and the deferral is technically sound
+but leaves the directive open: those values feed real arithmetic and formatting —
+`copilot_ralph.py:351` computes `prior["elapsed_s"] + (clock() - started_at) >= max_elapsed`, and
+lines 318/337/457/458/466 format with `:.4f` — so a bare `None` would raise `TypeError` the
+moment a `--max-elapsed-seconds` run resumes or a status line prints. Making them `None`-safe
+restructures Ralph's stop-condition and runway logic, which is spend-limiting code and a
+different task from "own attempt projection". D05 correctly did NOT write a test asserting the
+coercions are right, because that would bless them. **Whoever takes this must treat it as
+financial-safety code, not a formatting fix.**
+
+**`DURATION_BASES` forward-declares three bases where only `process-wall` has a producer** —
+the same idiom D04 used for `policy_ref`/`decision_ref`. `duration_totals()` never sums across
+bases, and `summarize`'s `unknown["duration"]` counts an unmeasured duration rather than hiding
+it. A never-measured duration reads `None` end-to-end, including through a crash-closed
+`reconcile_open` attempt, which passes no `duration_s` at all.
+
+Process note: D05 declined to claim a full-suite result it had not seen finish, and separately
+caught its own collateral damage — a blanket `sed` fixing its citations also rewrote an unrelated
+pre-existing `PLAN D5` line in `bin/codex_execute.py` belonging to a DIFFERENT kit, which it
+found by diffing against HEAD before finalizing and restored. Verified: that token sequence is
+identical to HEAD in all eight changed `bin/` files. `PLAN D<n>` is an ambiguous token across
+kits — cite `decision-improvement D05`, never a bare `PLAN D5`.
+
+outcome: D05 model=sonnet attempts=1 result=pass review=clean run=2026-09-16-aa6e
+agent: D05 id=a592177 role=implementer model=sonnet
+agent: D05 id=aecc920 role=verifier model=sonnet findings=1 confirmed=1 result=accepted
+defect: D05 kind=contradictory-acceptance

@@ -709,10 +709,17 @@ def set_status(text, task_id, new_status):
     raise ValueError(f"no '- status:' line in task {task_id!r}")
 
 def dispatch_status(value):
-    """Normalise what a dispatch runner returned -> `(rc, output)`.
+    """Normalise what a dispatch runner returned -> `(rc, output, timing)`.
 
-    `(rc, output)` is the production contract (`default_runner` always returns one) and `rc` is
-    then AUTHORITATIVE: a non-zero exit is a failed dispatch, whatever a later check says.
+    `(rc, output, timing)` is the production contract (`default_runner` always returns one) and
+    `rc` is then AUTHORITATIVE: a non-zero exit is a failed dispatch, whatever a later check
+    says. `timing` is the `proc_runner` result dict when the runner supplied one
+    (decision-improvement D05) -- carrying `duration_s` and the named `outcome`
+    (`ok`/`failed`/`timeout`/`cancelled`/`missing-executable`/...) a caller passes on to
+    `TaskRun.attempt_finished` so a timeout is recorded as a timeout rather than collapsed into
+    a generic failure. A 2-tuple (the shape
+    every existing test's injected runner returns) normalises to `timing={}`, which reads back
+    as unmeasured -- never as a zero-second dispatch.
 
     `None` means the runner declined to report -- the shape injected fixtures use. That is
     recorded as UNKNOWN (`rc is None`), never as success. Unknown does not by itself block
@@ -720,9 +727,12 @@ def dispatch_status(value):
     non-zero exit is.
     """
     if value is None:
-        return None, ""
+        return None, "", {}
+    if len(value) == 3:
+        rc, output, timing = value
+        return rc, output or "", timing if isinstance(timing, dict) else {}
     rc, output = value
-    return rc, output or ""
+    return rc, output or "", {}
 
 def generate_run_id(now=None):
     """One content-free `run=` id per driver invocation: `<UTC-date>-<4 hex>` (PLAN D8).
@@ -1641,6 +1651,15 @@ def provider_runner(provider, label=None):
     The environment is reduced to this provider's own variables plus the base set, so the
     machine's unrelated credentials are not handed to a coding agent. `POLYTROPOS_DISPATCH_ENV`
     (comma-separated NAMES) widens it on a host that needs a variable the list has not learned.
+
+    Returns `(rc, output, timing)` -- widened from the historical `(rc, output)`
+    (decision-improvement D05) so a caller can record what `proc_runner` measured without
+    re-deriving it: `timing` IS the full `proc_runner` result dict (`duration_s`, `outcome`,
+    `terminal`, `timed_out`, among others),
+    the same shape `cursor_execute.default_runner` already returns as its third element. Every
+    existing caller that unpacked `(rc, output) = runner(argv)` went through `dispatch_status`,
+    which still accepts and normalises this shape (see below); nothing that only reads index 0
+    or 1 is affected by the extra element.
     """
     name = label or f"{provider} dispatch"
 
@@ -1656,7 +1675,7 @@ def provider_runner(provider, label=None):
         output = result["output"]
         if not result["terminal"] and result["detail"]:
             output = f"{output}\n{result['detail']}" if output else result["detail"]
-        return result["rc"], output
+        return result["rc"], output, result
 
     return default_runner
 
@@ -2095,7 +2114,8 @@ def start_task_lifecycle(kit_dir, task, run_id, actor, store=None, break_claim=F
 
 
 def record_role_dispatch(kit_dir, run_id, role, phase, model, rc, output, actor,
-                         store=None, observed_model=None, result=None, proc_outcome=None):
+                         store=None, observed_model=None, result=None, proc_outcome=None,
+                         duration_s=None):
     """Record a phase review or acceptance dispatch in the attempt ledger -> attempt id.
 
     Reviews are not tasks: nothing is claimed and nothing is projected. What was missing (step
@@ -2104,6 +2124,10 @@ def record_role_dispatch(kit_dir, run_id, role, phase, model, rc, output, actor,
     `phase-<n>` with op `review` (or `acceptance` for the orchestrator's verdict), the same
     shape as every other attempt, so the cross-harness history can join it with Codex's typed
     role-use record for the same run.
+
+    `duration_s` (decision-improvement D05) is the same optional, absent-means-unknown
+    wall-clock figure every other attempt carries -- a review or acceptance dispatch is a real
+    process with real timing, and it was the one dispatch shape with no way to record it at all.
     """
     ledger = open_ledger(kit_dir, store=store)
     task_id = f"phase-{phase}"
@@ -2117,7 +2141,7 @@ def record_role_dispatch(kit_dir, run_id, role, phase, model, rc, output, actor,
         cls = al.classify_dispatch(rc, output, proc_outcome=proc_outcome)
         outcome = proc_outcome or ("ok" if rc == 0 else "failed")
     ledger.record_finished(run_id, task_id, attempt, outcome, rc, output, cls=cls,
-                           observed_model=observed_model, result=result)
+                           observed_model=observed_model, result=result, duration_s=duration_s)
     return attempt
 
 

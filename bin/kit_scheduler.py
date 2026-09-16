@@ -768,7 +768,8 @@ class Scheduler:
         proc = proc if isinstance(proc, dict) else {}
         with self._lock:
             cls = lifecycle.attempt_finished(attempt, rc, output or "",
-                                             proc_outcome=proc.get("outcome"))
+                                             proc_outcome=proc.get("outcome"),
+                                             duration_s=proc.get("duration_s"))
         after = index_tree(ws)
         e["write_set"] = write_set(e["index_before"], after)
         e["revision"] = read_revision(ws, self._tasks_for_revision())
