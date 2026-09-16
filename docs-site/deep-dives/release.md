@@ -103,7 +103,7 @@ Contract versions are read from the module that owns each one; package versions 
 
 | Package | Version |
 |---|---|
-| Claude Code plugin | polytropos 0.5.3 |
+| Claude Code plugin | polytropos 0.6.0 |
 | Local marketplace | polytropos-local |
 | Codex package | polytropos 0.5.0+codex.20260906003447 |
 | Codex marketplace | polytropos-local |
