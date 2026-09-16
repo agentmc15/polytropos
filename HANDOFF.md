@@ -182,6 +182,35 @@ which rows a client release invalidates and writes nothing. If a later session p
 - A new `docs/*.md` still moves the census pins (now 29 / 31 / 73 and 30 / 32 / 74).
 - `CLAUDE.md` has 8 bytes of headroom under its 16,000-byte ceiling; trim before adding.
 
+### Live verification on 2026-09-16 (after the roadmap)
+
+On the user's go-ahead, step 2 of the post-roadmap list (Cursor) and step 3 (one live Claude
+run) were done; step 4 (the bounded evaluation) waits on a target repository.
+
+- **Cursor.** `agent` is not on the host's PATH (Cursor.app is installed; its CLI is not).
+  `cursor_execute.py probe` reported `absent` and refused -- the fail-closed branch, observed for
+  real -- and every Cursor row stays `unknown`. Installing the CLI is the user's own step.
+- **Claude Code 2.1.273.** A throwaway project under the session scratchpad with a one-task kit
+  (`m.py` returns 1, the test wants 2; `budget: max-dispatches=2 max-escalations=1`). The dry run
+  found the driver reading `.claude/agents/<slug>-<role>.md` from THIS checkout only, so a kit in
+  its own project could not be driven at all -- fixed on branch `verify/claude-live-smoke`
+  (`claude_execute.agent_roots`: workspace, then the project the kit path implies, then this
+  repo; `AgentRootsTests`). Then, with the nested-session variables (`CLAUDECODE`,
+  `CLAUDE_CODE_*`) unset so the child saw a user's terminal: `run --task T1 --exec-mode
+  enforced` dispatched Sonnet once, rc 0 in ~20 s, the one-line edit landed, the confined
+  verify went red -> green, the task was projected done, ten ledger events recorded (run
+  `2026-09-16-60c2`); `review --phase 1` ran with `--allowedTools=Bash Read Grep Glob` and no
+  blanket grant, rc 0 in ~40 s, `REVIEW VERDICT=accept`, tree byte-identical, recorded as run
+  `2026-09-16-2c48` role=reviewer. Registry rows re-dated with `client_version`: `dispatch`,
+  `tool_pin`, `confined_verify`, `durable_attempts`, `independent_review`.
+- **What the live run showed the ledger does not carry yet.** `duration_s` is null on both
+  attempts (the drivers' `(rc, output)` runners drop `proc_runner`'s timing); the verify
+  events do not say which `--exec-mode` ran; the review dispatch pins no model and plain-text
+  output attests none (`model: null`, `observed_model: null`). None blocks a release; each is a
+  small follow-up, and the registry notes name them.
+- **What was NOT verified.** The dead-run resume path (stubs only), escalation (the first
+  attempt passed), any Codex or Copilot row, and the workflow-evaluation adapters.
+
 ### Step 26's own deliberate limits
 
 - **Nothing ran live.** The gate reads the registry; it does not verify anything itself. Every

@@ -12,31 +12,36 @@
           "implemented": "supported",
           "verified": "supported",
           "source": "vendor CLI documentation",
-          "verified_on": "2026-09-06",
-          "note": "one authorized live invocation, scoped to validating flag handling; tests never invoke the real CLI"
+          "verified_on": "2026-09-16",
+          "note": "one authorized live `bin/claude_execute.py run` on 2026-09-16 (UTC) against a one-task kit in a throwaway project on the maintainer's macOS 14.4 host, run 2026-09-16-60c2 in an explicit --attempt-store: `claude -p --model <sonnet-tier id from data/pricing.json> --dangerously-skip-permissions <prompt>` returned rc 0 in ~20 s, the one-line edit the brief asked for landed and nothing else changed, the task was projected done with no escalation. The 2026-09-06 verification (flag handling only) is superseded. Tests never invoke the real CLI",
+          "client_version": "Claude Code 2.1.273"
         },
         "durable_attempts": {
           "product": "not-applicable",
           "implemented": "supported",
-          "verified": "unknown",
+          "verified": "supported",
           "source": "bin/attempt_ledger.py, bin/kit_contract.py TaskRun",
-          "note": "polytropos capability, not a product one: every dispatch is recorded before and after it runs, a dead run's open attempt is closed as unknown and reconciled by re-running the check, budget usage carries across runs, tasks are claimed with O_EXCL. Exercised with stub executables and temp stores only; never run against the live CLI, so verified stays unknown"
+          "note": "polytropos capability, not a product one. Live on 2026-09-16 (the run above): claim.taken, run.started, roster.checked, verify.precheck, attempt.started, attempt.finished, verify.finished, task.projected, run.finished, claim.released were recorded outside the tree, and the review's attempt (run 2026-09-16-2c48, role reviewer) likewise. The dead-run path -- an open attempt closed as unknown and reconciled by re-running the check -- was exercised with stub executables and temp stores only. `duration_s` was null on both live attempts: the drivers' runners drop proc_runner's timing (follow-up)",
+          "verified_on": "2026-09-16",
+          "client_version": "Claude Code 2.1.273"
         },
         "tool_pin": {
           "product": "supported",
           "implemented": "supported",
           "verified": "supported",
           "source": "vendor CLI documentation (--allowedTools)",
-          "verified_on": "2026-09-06",
-          "note": "the `--allowedTools=<space-joined>` form is REQUIRED: the variadic form swallows the following positional, which silently consumed the prompt on every review dispatch. This row is why the registry has a verified column"
+          "verified_on": "2026-09-16",
+          "note": "the `--allowedTools=<space-joined>` form is REQUIRED: the variadic form swallows the following positional, which silently consumed the prompt on every review dispatch (found 2026-09-06). Re-verified 2026-09-16: `review --phase 1` dispatched `claude -p '--allowedTools=Bash Read Grep Glob' <prompt>` with no blanket grant, the reviewer received the prompt (it produced a phase review and a `REVIEW VERDICT=` line) and the tree was byte-identical afterwards. This row is why the registry has a verified column",
+          "client_version": "Claude Code 2.1.273"
         },
         "confined_verify": {
           "product": "not-applicable",
           "implemented": "supported",
           "verified": "supported",
           "source": "bin/exec_policy.py, macOS sandbox-exec",
-          "verified_on": "2026-09-06",
-          "note": "polytropos capability, not a product one: verify commands run under an OS boundary. macOS only -- enforced mode refuses on Linux and Windows rather than downgrading"
+          "verified_on": "2026-09-16",
+          "note": "polytropos capability, not a product one: verify commands run under an OS boundary. Re-verified 2026-09-16 in the live run above with the default `--exec-mode enforced`: `exec_policy check` reported the sandbox-exec backend, the precheck was red (rc 1) before the dispatch and the verify green (rc 0) after it, and enforced mode refuses rather than downgrading when no backend exists. macOS only -- enforced mode refuses on Linux and Windows. The ledger's verify events do not yet record which mode ran (follow-up)",
+          "client_version": "macOS 14.4 sandbox-exec (Darwin 23.4.0)"
         },
         "confined_dispatch": {
           "product": "unsupported",
@@ -62,9 +67,11 @@
         "independent_review": {
           "product": "not-applicable",
           "implemented": "supported",
-          "verified": "unknown",
+          "verified": "supported",
           "source": "bin/claude_execute.py review; bin/kit_contract.py ROLE_SUPPORT",
-          "note": "phase-end review dispatched with a restricted permission profile and recorded in the attempt ledger. Never run against the live CLI from this repository, so verified stays unknown"
+          "note": "phase-end review dispatched with a restricted permission profile and recorded in the attempt ledger. Live on 2026-09-16: `review --phase 1` on the throwaway kit returned rc 0 in ~40 s with `REVIEW VERDICT=accept`, was recorded as run 2026-09-16-2c48 role=reviewer op=review, and left the tree byte-identical. The review argv pins no model (`model: null` in the ledger; the CLI's default ran) and plain-text output attests none (`observed_model: null`); the verdict line is recorded beside the grade, never as it",
+          "verified_on": "2026-09-16",
+          "client_version": "Claude Code 2.1.273"
         },
         "extended_roles": {
           "product": "not-applicable",
@@ -307,7 +314,7 @@
           "implemented": "supported",
           "verified": "unknown",
           "source": "https://cursor.com/docs/cli/reference/parameters (-v/--version, about --format json)",
-          "note": "polytropos capability: the generically named `agent` is dispatched to only after `--version` or `about --format json` names Cursor; unknown fails closed. The probe's output format is undocumented, so which of the two answers positively on a real install is unverified"
+          "note": "polytropos capability: the generically named `agent` is dispatched to only after `--version` or `about --format json` names Cursor; unknown fails closed. The probe's output format is undocumented, so which of the two answers positively on a real install is unverified. 2026-09-16: on the maintainer's host `agent` was not on PATH (Cursor.app is installed, its CLI is not); `cursor_execute.py probe` reported `absent` and refused, which is the fail-closed branch -- the positive path stays unverified until the CLI is installed there"
         },
         "read_only_dispatch": {
           "product": "supported",

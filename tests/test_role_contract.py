@@ -288,12 +288,21 @@ class SupportTests(unittest.TestCase):
             with self.subTest(harness=harness):
                 rows = ha.registry_capabilities(harness)
                 self.assertEqual(ha.effective(rows["extended_roles"]), ha.UNSUPPORTED)
+                self.assertIn("ROLE_SUPPORT", rows["extended_roles"]["source"])
+        # Independent review: implemented on every driver, run live on exactly one. Claude's
+        # row was verified on 2026-09-16 (one authorized `review --phase 1` on a throwaway kit,
+        # recorded in the ledger); it must carry the date it was run. The others stay unknown
+        # until someone runs them -- a row is never rounded up to match its neighbour.
+        claude = ha.registry_capabilities("claude-code")
+        self.assertEqual(ha.effective(claude["independent_review"]), ha.SUPPORTED)
+        self.assertTrue(claude["independent_review"]["verified_on"])
+        for harness in ("codex", "copilot", "cursor"):
+            with self.subTest(harness=harness):
+                rows = ha.registry_capabilities(harness)
                 self.assertEqual(ha.effective(rows["independent_review"]), ha.UNKNOWN,
                                  "implemented but never run live")
-                self.assertIn("ROLE_SUPPORT", rows["extended_roles"]["source"])
         cursor = ha.registry_capabilities("cursor")
         self.assertEqual(ha.effective(cursor["extended_roles"]), ha.UNSUPPORTED)
-        self.assertEqual(ha.effective(cursor["independent_review"]), ha.UNKNOWN)
 
 
 # ---- 4. the pre-dispatch check on every driver ----------------------------------------------------

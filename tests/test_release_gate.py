@@ -404,8 +404,17 @@ class RegistryFindingsTests(unittest.TestCase):
             self.assertEqual(rg.registry_findings(self._root_with(tmp, dated)), [])
 
     def test_an_older_verification_without_a_version_is_not_rewritten_or_flagged(self):
-        findings = rg.registry_findings(REPO_ROOT)
-        self.assertFalse(any("claude-code/dispatch" in f for f in findings))
+        """A row verified before the gate existed recorded no client version and is not
+        backfilled; the rule binds only from CLIENT_VERSION_REQUIRED_FROM onward. (Until
+        2026-09-16 this test read the real claude-code/dispatch row, which carried exactly that
+        shape; the live run re-dated it, so the shape is pinned on a temp registry now.)"""
+        def older(reg):
+            row = reg["harnesses"]["codex"]["capabilities"]["dispatch"]
+            row.update(verified="supported", verified_on="2026-09-06")
+            row.pop("client_version", None)
+        with tempfile.TemporaryDirectory() as tmp:
+            findings = rg.registry_findings(self._root_with(tmp, older))
+        self.assertFalse(any("codex/dispatch" in f for f in findings), findings)
 
     def test_a_cited_capability_missing_from_the_registry_is_a_finding(self):
         def drop(reg):

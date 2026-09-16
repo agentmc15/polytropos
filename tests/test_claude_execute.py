@@ -439,6 +439,58 @@ class BuildDispatchTests(unittest.TestCase):
         self.assertNotIsInstance(argv, str)
 
 
+# ---- 3b. where a kit's agents are looked for (2026-09-15) ------------------------------------
+
+class AgentRootsTests(unittest.TestCase):
+    """The first live run against a kit in a throwaway project found the driver reading agents
+    from this checkout only. The workspace is asked first, then the kit's own project, then this
+    repository -- and a miss names every path that was tried."""
+
+    def test_workspace_agents_win_over_this_repo(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = _write_agent_bundle(tmp, "wskit", "implementer", PREAMBLE_FIXTURE_BODY)
+            kit = project / ".claude" / "kits" / "wskit"
+            kit.mkdir(parents=True)
+            with tempfile.TemporaryDirectory() as other:
+                with mock.patch.object(ce, "REPO_ROOT", Path(other)):
+                    roots = ce.agent_roots(kit, workspace=project)
+                    self.assertEqual(roots[0], project)
+                    body, fields = ce.load_role_spec("implementer", "wskit", roots)
+            self.assertIn("Fixture kit-agent preamble body.", body)
+
+    def test_the_kit_path_implies_its_project_when_cwd_is_elsewhere(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = _write_agent_bundle(tmp, "pkit", "reviewer", PREAMBLE_FIXTURE_BODY)
+            kit = project / ".claude" / "kits" / "pkit"
+            kit.mkdir(parents=True)
+            with tempfile.TemporaryDirectory() as elsewhere:
+                roots = ce.agent_roots(kit, workspace=elsewhere)
+            self.assertIn(project.resolve(), [r.resolve() for r in roots])
+            body, _ = ce.load_role_spec("reviewer", "pkit", roots)
+            self.assertIn("Fixture kit-agent preamble body.", body)
+
+    def test_this_repo_stays_the_fallback_for_its_own_kits(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            fixture_repo_root = _write_agent_bundle(tmp, "ownkit", "implementer", PREAMBLE_FIXTURE_BODY)
+            with tempfile.TemporaryDirectory() as bare:
+                kit = Path(bare) / "ownkit"
+                kit.mkdir()
+                with mock.patch.object(ce, "REPO_ROOT", fixture_repo_root):
+                    roots = ce.agent_roots(kit, workspace=bare)
+                    self.assertEqual(roots, [fixture_repo_root])
+                    body, _ = ce.load_role_spec("implementer", "ownkit", roots)
+            self.assertIn("Fixture kit-agent preamble body.", body)
+
+    def test_a_miss_names_every_root_it_looked_at(self):
+        with tempfile.TemporaryDirectory() as a, tempfile.TemporaryDirectory() as b:
+            with self.assertRaises(FileNotFoundError) as caught:
+                ce.load_role_spec("implementer", "nokit", [Path(a), Path(b)])
+            message = str(caught.exception)
+            self.assertIn(a, message)
+            self.assertIn(b, message)
+            self.assertIn(" or ", message)
+
+
 # ---- 4. preamble composition ------------------------------------------------------------------
 
 class PreambleCompositionTests(unittest.TestCase):
