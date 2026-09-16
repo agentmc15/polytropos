@@ -21,6 +21,11 @@ Two blockers were cleared by the orchestrator, both outside any task's scope, bo
   `tests/test_primitives_doc_adversarial.py`, with `HANDOFF.md` entry 28 recording it. The
   tripwires are re-armed at the new counts, never disabled. This is a brief defect because the
   task's acceptance says "no code changes" while its mandated deliverable forces this edit.
+  D03 then added a second `docs/*.md` and the pins moved again, 30/32/74 -> 31/33/75 with the
+  "one more" targets at 32/34/76 (`HANDOFF.md` entry 29, which also records that
+  `docs_build build` does NOT update `mkdocs.yml` — its nav is hand-maintained and a new
+  deep-dive page needs a nav line or `test_docs_site.NavCoverageTests` fails as a seventh
+  failure beyond the six pins).
 - **BL1, inherited from `origin/main`.** `test_lessons_promote` hardcoded
   `REPO_ROOT/journal/promotions`, but `bin/lessons_promote.py:93` resolves that store through
   `runtime_data`, which returns the in-tree path only when it exists and has content. A fresh
@@ -70,10 +75,14 @@ Carry-forward for later tasks:
   edit it, since it is not D01's file. Its owner should reconcile: 183 and 283 are falsified by
   `8d1b7be`, and 219's CLI clause by `fd80734`. IDE and cloud Cursor modes genuinely remain
   unrun, as do escalation and dead-run resume.
-- **Drift hazard, unfixed by design**: `kit_contract.parse_plan_routing` (line 835) validates a
-  PLAN.md `routing:` line against its own `PLAN_ROUTING_KEYS` tuple, independent of
-  `routing_policy`'s `POLICIES`/`PREFERENCES`. The two vocabularies can drift with nothing
-  failing.
+- **Routing vocabulary — CORRECTED by the phase 1 review; the earlier note here was wrong.**
+  An unknown `routing:` word does NOT drift silently: `codex_execute.py:1401-1405` checks
+  `policy` and `preference` against `POLICIES`/`PREFERENCES` bound from `routing_policy`
+  (`codex_execute.py:232-233`) and `sys.exit(2)`s before anything dispatches. The comment at
+  `kit_contract.py:919-920` says exactly that, and the earlier note cited its existence without
+  reading it — the same defect this file warns about below. The REAL hazard is different and
+  narrower: `kit_contract.parse_plan_routing` silently IGNORES an unrecognised token, so a
+  fourth routing dimension added to `routing_policy` would be dropped without a word.
 
 outcome: D01 model=opus attempts=2 result=retry-pass review=revised run=2026-09-16-aa6e
 agent: D01 id=a4a14bf role=implementer model=opus
@@ -109,12 +118,31 @@ Two frozen asymmetries that constrain later tasks:
 as owners.
 
 Carry-forward that later tasks depend on:
-- **D05's real target is one function.** `kit_contract.provider_runner.default_runner`
-  (~1559-1571) returns `(rc, output)` and discards `proc_runner`'s `duration_s`, `outcome` and
-  `timed_out`; `claude_execute.py:544` and `copilot_execute.py:244` both bind it. That is the
-  structural cause of `duration_s` being null everywhere, not four separate driver bugs.
-  `cursor_execute.run_task` (line 174) passes only `proc_outcome` — a pure call-site omission
-  and the cheapest fix.
+- **D05 has FOUR boundaries, not one — CORRECTED by the phase 1 review.** An earlier note here
+  said "one function"; that was a lossy compression of D03's inventory, which is the accurate
+  source. Cite symbols, not the line numbers below, which have already moved once:
+  1. `kit_contract.provider_runner`'s `default_runner` returns `(rc, output)` and discards
+     `proc_runner`'s `duration_s`/`outcome`/`timed_out`. Bound by `claude_execute.py:544` and
+     `copilot_execute.py:244`.
+  2. **`codex_execute.default_runner` has its OWN runner** — it calls `pr.run(...)` and returns
+     `result["rc"], output, telemetry`, discarding `duration_s` in the same function that
+     measured it. Widening `provider_runner` alone does NOT reach Codex.
+  3. `cursor_execute.default_runner` returns the whole result dict and `run_task` drops it,
+     passing only `proc_outcome` — a pure call-site omission, the cheapest of the four.
+  4. **`attempt_history` has no duration field at all** — `RECORD_FIELDS` has no slot and
+     `observe` raises `KeyError` on an unknown key, so even a recorded duration cannot reach a
+     report. D05's acceptance ("report separates latency/wall") depends on closing this one.
+  Two traps a naive "just widen `default_runner`" fix hits immediately: `kit_contract.
+  dispatch_status` unpacks `rc, output = value` (a 3-tuple raises `ValueError`), and
+  `claude_execute.py:1144` / `copilot_execute.py:1461` each unpack `rc, output =
+  default_runner(argv)` directly.
+- **`bin/proc_runner.py` is already correct** — it emits `duration_s`, `outcome`, `terminal` and
+  `timed_out`. D05's brief says "change only `bin/proc_runner.py` result plumbing"; that aims at
+  the wrong file. The consumers are what drop the values.
+- **"null everywhere" is loose.** `workflow_eval.py:850`/`:859` and `copilot_ralph.py:383` each
+  DO pass a `duration_s` from their own clock. It is the four native drivers that drop it.
+- A third zero-coercion beyond the two named above: `workflow_eval.py:1016` is a SECOND
+  `"wall_seconds": 0.0` seed, on the implement stage.
 - **D04's seam is narrower than it looks.** `AttemptLedger.record_started` takes `**extra` but
   `TaskRun.attempt_started` (~1854) does not forward it, and `record_projected` (~372) has no
   `**extra` at all. Both are serial shared-module edits.
@@ -212,3 +240,50 @@ Carry-forward:
 outcome: D04 model=opus attempts=1 result=pass review=clean run=2026-09-16-aa6e
 agent: D04 id=a5bc6b8 role=implementer model=opus
 agent: D04 id=a88799a role=verifier model=sonnet findings=0 confirmed=0 result=accepted
+
+## Phase 1 review
+
+Verdict: accepted with findings. No `done` status reversed; no architecture drift, no authority
+duplication, no downgrade of completed work. Extension boundaries clean — no new module under
+`bin/`, `runtime_data.STORES` untouched, `primitives/harness-capabilities.json` not in the phase
+diff at all, so the six Cursor rows could not have been downgraded. The reviewer independently
+mutation-proved both load-bearing guards (bumping `LEDGER_VERSION` → 3 failures; dropping a name
+from `PROVENANCE_FIELDS` → 1 failure + 1 error).
+
+It also adjudicated the two pieces of maintenance the ORCHESTRATOR did outside any task, which
+the orchestrator should not certify itself:
+- **Census pins re-armed, not weakened.** All six assertions are still `assertEqual`; adding one
+  `docs/*.md` to a temp copy fails 5 of 7 census tests. Both bumps recorded in `HANDOFF.md`
+  entries 28 and 29 per entry 14's precedent.
+- **The `test_lessons_promote` repair made the guard STRICTLY STRONGER.** Three product
+  mutations trip it, including `_store_default("journal")` → `PLUGIN_ROOT / "journal"` — writing
+  inside the tree, an invariant violation that the OLD assertion would have PASSED. The repair
+  also stops the test reaching the user's real journal store, which the old version could.
+
+Four findings were corrected before Phase 2 dispatch; all were prose, no code:
+1. **The routing-drift claim was FALSE** and stood in three places (both D01 documents and this
+   file). `codex_execute.py:1401-1405` validates `policy`/`preference` against `POLICIES`/
+   `PREFERENCES` and exits 2 before dispatch. The document cited a `kit_contract` comment as
+   evidence whose own text says exactly that — cited for its existence, not read. FOURTH
+   instance of this kit's recurring defect, and the first one the orchestrator committed itself.
+2. **Two plan documents still said BL1 "is the full suite's single failure"** in the present
+   tense, after it had been repaired. Every task is handed those documents, so a Phase 2
+   implementer would have read the false version first. Now past-tense with an explicit
+   correction.
+3. **The withdrawn `duration_ms` claim still stood in `REPO-ASSESSMENT.md`** — the one document
+   D05 reads. Withdrawn there too. `HANDOFF.md:306` carries the same unqualified claim and is
+   INHERITED, not this phase's: two tracked documents at this HEAD disagree, and HANDOFF's owner
+   should reconcile.
+4. **"D05's real target is one function" was wrong** — an orchestrator over-compression of D03's
+   inventory, which correctly names four boundaries. Corrected above. This one mattered most: a
+   D05 implementer acting on it would have widened `provider_runner`, watched Claude and Copilot
+   start reporting duration, and shipped believing Codex was fixed when it was not.
+
+Carried, not fixed: line-citation rot across the inventory (eight citations into files D04 later
+modified are stale at HEAD — mitigated because the document stamps its revision, and the fix is
+to cite symbols); `SECURITY.md:225` says IDE/cloud "remain `unsupported`" where the registry's
+`verified` axis reads `unknown`; `cursor_adapter.py:283-285` still says the CLI "documents no
+usage or cost output", which the live run falsified — inherited, belongs to that adapter's owner.
+
+reviewer: P1 model=opus findings=10 confirmed=4 result=accepted
+defect: D01 kind=stale-plan-decision

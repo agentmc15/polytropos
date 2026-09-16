@@ -95,9 +95,17 @@ they always did.
 A drift hazard sits beside that, and it is worth naming on its own. `bin/kit_contract.py` does not
 load `routing_policy` either; its only mention is a prose comment at line 831, and
 `parse_plan_routing` is a self-contained regex over its own
-`PLAN_ROUTING_KEYS = ("policy", "preference", "profile")` at line 835. So a PLAN.md `routing:` line
-is validated against a vocabulary independent of `routing_policy`'s own `POLICIES` and
-`PREFERENCES`, and the two can drift apart with nothing failing.
+`PLAN_ROUTING_KEYS = ("policy", "preference", "profile")` (cited by symbol; the line moved).
+
+**Correction, phase 1 review, 2026-09-16.** The sentence that stood here said the two vocabularies
+"can drift apart with nothing failing". That is false. `bin/codex_execute.py:1401-1405` checks the
+resolved `policy` and `preference` against `POLICIES`/`PREFERENCES`, bound from `routing_policy` at
+`bin/codex_execute.py:232-233`, and `sys.exit(2)`s with the valid list before anything is
+dispatched. The comment this document cited as evidence says so in as many words — it was cited for
+its existence, not read, which is the same defect that produced the false import list corrected
+above. The real hazard is narrower: `parse_plan_routing` silently IGNORES an unrecognised token, so
+a FOURTH routing dimension added to `routing_policy` would be dropped without a word. That is a
+gap in the parser's coverage, not a validation gap in the three keys it does know.
 
 A second consequence bears directly on this kit's first hypothesis: unknown-class dispatch failures
 still climb the ladder on Codex, while Claude's driver stops on any failed dispatch. The two are not
