@@ -40,8 +40,8 @@ of Phase D (named routing policies; the role contract; fresh, bounded code-graph
 lean entry points and scoped lessons; the Cursor adapter; artifact-aware scheduling with
 opt-in bounded concurrency), and all of Phase E (workflow evaluation with a reviewed,
 versioned, reversible policy process; the release gate). Steps 16–25 landed on 2026-09-12/13
-and step 26 on 2026-09-15, on branch `harden/roadmap-steps-16-26`, one commit each. The branch is unpushed and unmerged;
-merging it is the user's call. What remains after step 26 is external validation — the
+and step 26 on 2026-09-15, on branch `harden/roadmap-steps-16-26`, one commit each, then fast-forwarded into `main` and pushed
+on 2026-09-15 on the user's go-ahead. What remains after step 26 is external validation — the
 prepared live commands in `docs/RELEASE.md` — and that is a person's, not a session's.
 
 | Step | What it closed |
@@ -175,8 +175,7 @@ The 26 steps are implemented. What a session cannot do is in `docs/RELEASE.md` u
 not run": the Cursor identity smoke, one authorised live `run` per driver, the bounded workflow
 evaluation, the bounded benchmark. Each records into a registry row by hand (`verified`,
 `verified_on`, `client_version`, the command in the note) — `release_gate.py reverify` lists
-which rows a client release invalidates and writes nothing. Merging `harden/roadmap-steps-16-26`
-into `main` and pushing are the user's calls. If a later session picks this up:
+which rows a client release invalidates and writes nothing. If a later session picks this up:
 
 - `python3 bin/release_gate.py check` first; then `check --run` if there is time (it runs the
   whole contract map in-process, several minutes).
@@ -672,8 +671,9 @@ Each is recorded in `SECURITY.md` rather than hidden. None is a surprise; all ar
   run, keeping a `.polytropos-bak` of each. That is the honest cost of no longer overwriting
   silently, but it is visible and worth expecting.
 - **Merged.** `harden/roadmap-steps-01-15` was fast-forwarded into `main` and pushed on
-  2026-09-12. Step 16 starts on a fresh branch off `main`; the commit rule forbids committing on
-  `main` directly.
+  2026-09-12, and `harden/roadmap-steps-16-26` (steps 16–26) the same way on 2026-09-15. Any
+  further work starts on a fresh branch off `main`; the commit rule forbids committing on `main`
+  directly.
 
 ---
 
