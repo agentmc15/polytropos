@@ -27,3 +27,9 @@ The first such full run exposed two existing issues: the lessons-promotion test 
 Neither the passing rerun nor these environment accommodations repair the underlying test assumption or concurrency race. They are explicitly recorded in the architecture and whole-repository assessment for D01 reconciliation. No runtime code was changed to obtain the pass.
 
 Planning helpers were requested through host subagents using policy-selected worker tiers. This was outside the execution driver's enforcement boundary; requested assignments are not independently observed runtime identity. No task outcome or attempt ledger was fabricated for planning.
+
+## Training-data planning extension validation
+
+The earlier checks above describe the original delivery. After the RSI and training-data plan extensions, V1 contains 34 pending tasks in eight phases; D31–D34 run before the original release tasks, with D28 depending on D34. The standalone document now contains 21 source blocks.
+
+For this documentation-only extension, native V1, its Codex planning mirror and the RSI research task graphs validated; the interactive V1 roster retained independent verification and review. The 34-task native/mirror identity, status and dependency records match. All native/mirror verification commands passed shell syntax checks. All 21 embedded sources matched their files and SHA-256 entries, and git diff --check passed. No proposed runtime tests were executed, no data was collected/exported, and no training was run. The original full-suite result above is not validation of these future features.

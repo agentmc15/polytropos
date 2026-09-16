@@ -1,6 +1,6 @@
 # Polytropos decision and improvement — Claude Code execution handoff
 
-Prepared against main `aab755378975e9191db6ced16ee07a27a414af21`. This is the self-contained planning artifact requested by the user, with two releases, phased native kits and a loadable repository-assessment skill. Implementation has not been dispatched. Source attachments' embedded prompts were treated as planning input, not authorization to execute them.
+Prepared against main `aab755378975e9191db6ced16ee07a27a414af21`. This is the self-contained planning artifact requested by the user, with two product releases, phased native kits, a loadable repository-assessment skill, and a separately selected RSI research extension. Implementation has not been dispatched. Source attachments' embedded prompts were treated as planning input, not authorization to execute them.
 
 ## Load this document into Claude Code
 
@@ -8,7 +8,7 @@ Use the current Polytropos plugin's planning/execution workflow. If the reposito
 
 Suggested initial instruction:
 
-> Read this handoff and current repository instructions. Reconcile HEAD against the recorded main baseline and preserve completed work. When I ask you to execute, use `/polytropos:execute decision-improvement-v1`, starting with D01, with independent task verification and phase review. Preserve the legacy default. Complete the selected V1 offline scope and report any blocked live gates. Do not automatically start optional advice, Release 2, paid experiments or policy activation.
+> Read this handoff and current repository instructions. Reconcile HEAD against the recorded main baseline and preserve completed work. When I ask you to execute, use `/polytropos:execute decision-improvement-v1`, starting with D01 and following the dependency graph through all 34 tasks (including D31–D34 before handoff), with independent task verification and phase review. Preserve the legacy default. Complete the selected V1 offline scope and report any blocked live gates. Do not automatically start optional advice, Release 2, paid experiments or policy activation.
 
 A request to review the handoff is planning-only. A request to execute V1 authorizes ordinary implementation/verification/local branch commits within its scope, not the separate gated actions. Later explicit authorization carries forward and does not need to be re-requested.
 
@@ -27,9 +27,11 @@ To use the assessment skill now, ask Claude Code to read `tasks/kits/decision-im
 ## Contents and authority
 
 - Shared architecture, initial whole-Polytropos assessment and guardrails.
-- Release 1: seven phases, thirty pending tasks in the native Claude kit.
-- Optional V1 advice: four separately selected tasks; R08 decision families and M01 research deferred with prerequisites.
+- Release 1: eight phases, thirty-four pending tasks in the native Claude kit.
+- Optional V1 advice: four separately selected tasks; R08 decision families deferred; M01 research now has eight planned tasks in four phases, with separate entry gates.
 - Release 2: optional Jev kit, separately authorized and evaluated.
+- Required V1 training-data setup: snapshots, reviewed labels, eligibility, protected splits and versioned local exports; training remains separate.
+- RSI research extension: backend lineage, protected experiments, evolving-improver comparison and evidence criteria.
 - Portable assess-improvement skill and its report/brief template.
 - Per-release implementer, verifier and reviewer agents.
 
@@ -37,7 +39,7 @@ The Claude kits own future execution status. The repository also carries a Codex
 
 ## Source traceability
 
-R00 maps to baseline/ADR; R01 to remaining provenance/accounting deltas on completed steps16–18; R02 to profile/manifests; R03/R04 to contracts/providers/legacy policy; R06/R07 to measurement and recovery protocol; R09/R10 to proposals/approval/activation; R11 to conformance/release. R05 and calibration fitting are in optional advice; R08 families and M01 are later gated scopes. J01–J03 map to the optional second release, with a separate final evidence refresh task. The assessment skill adds reusable applicability/no-fit analysis and a whole-Polytropos pilot requested by the user.
+R00 maps to baseline/ADR; R01 to remaining provenance/accounting deltas on completed steps16–18; R02 to profile/manifests; R03/R04 to contracts/providers/legacy policy; R06/R07 to measurement and recovery protocol; R09/R10 to proposals/approval/activation; R11 to conformance/release. R05 and calibration fitting are in optional advice; R08 families remain later gated scopes; M01 is specified in the embedded recursive-improvement planning kit. J01–J03 map to the optional second release, with a separate final evidence refresh task. The assessment skill adds reusable applicability/no-fit analysis and a whole-Polytropos pilot requested by the user.
 
 The supplied roadmap and accompanying chat are design sources. Their historical `7fc5996` baseline and instruction to start original step16 are superseded by the actual main reconciliation. Vendor/research claims motivate hypotheses only; no speculative Jev API or claimed speedup was imported. The original 26-step roadmap was not independently supplied here; current HANDOFF and source code provide its reconciliation.
 
@@ -170,6 +172,14 @@ Before running a kit, ensure `python3` resolves to Python 3.12 or newer: this ma
 Each task receives its full brief, this plan, guardrails, and relevant artifacts. Execute owns NOTES.md and all outcome/attempt evidence; the architect creates none. Run focused verification for each task and the repository-required full suite/docs gates at green commit boundaries. Independent verification reruns the checks; phase review inspects drift and authority violations; final acceptance is separate.
 
 Unresolved facts should become scoped blockers or revised briefs. Do not declare a task done just because a broad suite passes while its named feature/test is absent. Existing completed implementation may satisfy a task only after the executor independently verifies its exact acceptance and records the reconciliation through the normal execution process.
+
+## RSI research extension (M01)
+
+See `tasks/kits/recursive-improvement/PLAN.md` and `TASKS.md` for the ledger relationships, generation lineage, protected evaluation and three-arm recursive experiment. V1 should retain extension seams for these records, without implementing the research loop implicitly. The extension reuses the existing storage and approval authorities, is independent of Jev, and separates offline mechanism completion from demonstrated recursive gains.
+
+## Fine-tuning data readiness in V1
+
+`TRAINING-DATA.md` specifies decision-time capture, independently reviewed labels, eligibility/retention/revocation, grouped dataset partitions, reproducible export and readiness reporting. D31–D34 make this setup required before V1 release; D28 depends on D34. Keep existing task IDs. Collection in future eligible runs and actual training have distinct scope. No private transcript backfill, external upload or trainer is implicit.
 ````
 <!-- END FILE tasks/kits/decision-improvement/PLAN.md -->
 
@@ -271,11 +281,13 @@ workflow: reviewed
 
 Read `tasks/kits/decision-improvement/PLAN.md` for the complete architecture, baseline, protocol, release gates and design rationale. Read `tasks/kits/decision-improvement/REPO-ASSESSMENT.md` for the initial whole-repository application and `GUARDRAILS.md` for execution fences. All are supplied in the standalone Markdown handoff.
 
-This native kit's TASKS.md is the execution status authority. Its seven phases cover baseline, evidence/isolation, typed decisions, recovery evaluation, proposal/promotion, assessment skill and release. Every task begins pending; execute owns NOTES.md and attempt evidence. The Codex mirror is a planning projection, not another run.
+This native kit's TASKS.md is the execution status authority. Its eight phases cover baseline, evidence/isolation, typed decisions, recovery evaluation, proposal/promotion, assessment skill, training-data preparation and release. Every task begins pending; execute owns NOTES.md and attempt evidence. The Codex mirror is a planning projection, not another run.
 
 Use the standing implementer/verifier/reviewer trio and separate final acceptance. No optional roles are declared. Implementation tier intent is each task's model field; it overrides the agent default. Resolve actual models through current Claude pricing/policy data. The coordinating frontier does not replace ordinary workers. Shared-module changes run sequentially; phase review precedes the next phase.
 
 Start D01 after the user requests execution. Preserve newer completed work and all unrelated edits. Ordinary per-task work can continue through V1's offline scope; live probes, protected trials, activation and Release 2 are explicit later actions. Without verified enforcement and exact evaluation/approval gates, runtime canary/active transitions refuse. Optional advice and family expansion live in OPTIONAL-TASKS.md and do not block the core.
+
+Training-data setup is required V1 work: follow `tasks/kits/decision-improvement/TRAINING-DATA.md` and D31–D34 before the D28–D30 release checks. There are 34 tasks; execute dependencies rather than numeric ranges. Training itself remains separate.
 ````
 <!-- END FILE .claude/kits/decision-improvement-v1/PLAN.md -->
 
@@ -760,14 +772,82 @@ for finding in r['findings']:
 VERIFY
 ```
 
-## Phase 7 — V1 handoff
+## Phase 7 — Training-data preparation
+
+Read `tasks/kits/decision-improvement/TRAINING-DATA.md`. Collection/export setup is required V1 scope; actual training and data transfers are separate actions. D31–D34 run before D28–D30; IDs are retained for compatibility.
+
+### D31 — Decision-time snapshots and training example contracts
+- id: D31
+- title: Decision-time snapshots and training example contracts
+- status: pending
+- model: opus
+- depends: D06, D09, D14
+
+**Brief.** Own bin/training_data.py snapshot/schema seam, bounded artifact integration and tests/test_training_data.py SnapshotTests. Follow TRAINING-DATA.md. Reconcile existing root-cause classes and label taxonomy; add opt-in capture hooks through existing decision/attempt owners with source IDs, capture boundaries and redaction before persistence. This is not general transcript logging.
+
+**Acceptance.** Exact input-time evidence is immutable; late labels cannot change input; missing historical fields stay unknown; disabled collection preserves legacy behavior; secrets, oversize payloads and unknown eligibility cannot be persisted as training content.
+
+**Verify.**
+```bash
+PYTHONPATH=tests python3 -m unittest test_training_data.SnapshotTests
+```
+
+### D32 — Reviewed labels and eligibility lifecycle
+- id: D32
+- title: Reviewed labels and eligibility lifecycle
+- status: pending
+- model: opus
+- depends: D31
+
+**Brief.** Extend training_data through existing private-store authority with label review/correction, evidence linkage, eligibility, retention and revocation; add LabelEligibilityTests. Keep raw operational labels and provider suggestions separate from adjudicated targets. Handle ambiguity, multiple causes, disagreement and successful/no-failure examples under explicit schemas.
+
+**Acceptance.** Unsupported claims remain unresolved; future actions are separate from original inputs; unknown use rights refuse export; expiry and revocation invalidate dependent exports and identify downstream artifacts without claiming model unlearning.
+
+**Verify.**
+```bash
+PYTHONPATH=tests python3 -m unittest test_training_data.LabelEligibilityTests
+```
+
+### D33 — Grouped dataset splits and reproducible local exports
+- id: D33
+- title: Grouped dataset splits and reproducible local exports
+- status: pending
+- model: opus
+- depends: D32
+
+**Brief.** Reuse D06 partitions/exposure ownership for related-defect grouping and duplicate handling. Implement deterministic local JSONL exports and immutable manifests with provenance, label versions, sampling/exclusion counts and content identities; add DatasetExportTests. Train only from eligible development records and keep audit metadata separate from model inputs.
+
+**Acceptance.** Related attempts cannot cross protected splits; exposed or revoked examples refuse; future-answer leakage and missing source references fail; repeated export is deterministic; no network or training action occurs.
+
+**Verify.**
+```bash
+PYTHONPATH=tests python3 -m unittest test_training_data.DatasetExportTests
+```
+
+### D34 — Collection readiness and operator runbook
+- id: D34
+- title: Collection readiness and operator runbook
+- status: pending
+- model: opus
+- depends: D33
+
+**Brief.** Own docs/TRAINING-DATA-READINESS.md, ReadinessTests in tests/test_training_data.py, source release-gate mappings and integration coverage. Demonstrate capture-to-review-to-export and revocation using synthetic temp stores. Document enable/disable, eligible-run scope, retention, destination restrictions, dataset quality checks and future checkpoint links.
+
+**Acceptance.** V1 ships working collection/export setup with an explicit readiness report; no arbitrary dataset-size threshold; negative cases and disabled mode pass; synthetic tests are not training readiness; no model download, training, private backfill or upload.
+
+**Verify.**
+```bash
+PYTHONPATH=tests python3 -m unittest test_training_data.ReadinessTests
+```
+
+## Phase 8 — V1 handoff
 
 ### D28 — Jev-free matrix
 - id: D28
 - title: Jev-free matrix
 - status: pending
 - model: opus
-- depends: D24, D27
+- depends: D24, D27, D34
 **Brief.** Own release matrix and `tests/test_decision_release_matrix.py:JevFreeMatrixTests`. Matrix harness/client/OS/adapter/enforcement/mode/fallback; canary/active unavailable absent D23 evidence and Cursor adaptive unsupported pending independent proof.
 
 Extend `bin/release_gate.py`, `primitives/harness-capabilities.json` and source `docs/RELEASE.md` through its generator. Prove no Jev import/key/SDK/network is needed on startup, rules/replay or rollback. Compare baseline conformance across all four adapters separately; adaptive support only for verified scope. Current Cursor implementation must not be reimplemented or mislabeled absent just because its adaptive profile is unavailable.
@@ -802,7 +882,7 @@ PYTHONPATH=tests python3 -m unittest test_decision_release_matrix.JevFreeConform
 - depends: D29
 **Brief.** Own `docs/DECISION-IMPROVEMENT-V1-HANDOFF.md`; state supported facts, rollback and gaps; defer R08 families, shadow/calibration, concurrency, Cursor adaptive and Jev. Source roadmap never authorizes V2.
 
-Report the actual accepted commit, feature/support matrix, mechanical versus live-ready status, rollback/migration procedure, remaining operator inputs and authorized-but-unrun checks. Link existing evidence without reconstructing records. Concurrency and existing Cursor implementation remain intact; only new adaptive extensions are deferred. Identify optional O tasks, R08 families, separate J release and M01 research, with entry gates rather than an automatic queue.
+Report the actual accepted commit, feature/support matrix, mechanical versus live-ready status, rollback/migration procedure, remaining operator inputs and authorized-but-unrun checks. Link existing evidence without reconstructing records. Concurrency and existing Cursor implementation remain intact; only new adaptive extensions are deferred. Include the D34 collection/export readiness report and capture configuration; distinguish shipped setup from authorized data collection and actual training. Identify optional O tasks, R08 families, separate J release and M01 research, with entry gates rather than an automatic queue.
 
 **Acceptance.** Exact facts; live gaps; defer register; no authorization token; no release action.
 **Verify.**
@@ -927,6 +1007,8 @@ Each resulting kit needs a trigger, bounded input, fallback, immutable candidate
 ## Meta-improvement research (M01)
 
 Defer until the fixed improvement procedure repeatedly produces validated transferable gains. Version the procedure separately and compare original/candidate from identical initial policy/evidence under matched total budgets, including failed proposals and evaluation. Evaluate multiple trajectories on unseen tasks for successor quality, retained capability, regressions, transfer, operator effort and resources per validated gain. Keep final audit and acceptance outside candidate control. Changing a provider or accepting one proposal is not evidence of effective recursive improvement; this research does not depend on Jev.
+
+M01 is now specified in `tasks/kits/recursive-improvement/PLAN.md` and `TASKS.md`: eight pending tasks across four phases. Those records/backend tasks may be prepared offline after V1 contracts stabilize; the live research prerequisites above remain mandatory. This is a separately selected research extension, not an automatic continuation of V1 or Jev V2.
 ````
 <!-- END FILE tasks/kits/decision-improvement/OPTIONAL-TASKS.md -->
 
@@ -1368,19 +1450,280 @@ Independently verify exactly the assigned task against its acceptance, not the i
 ````
 <!-- END FILE .claude/agents/decision-improvement-v2-verifier.md -->
 
+## File: `tasks/kits/recursive-improvement/PLAN.md`
+
+<!-- BEGIN FILE tasks/kits/recursive-improvement/PLAN.md -->
+````markdown
+# Bounded recursive improvement — research extension M01
+
+autonomy: advisory
+workflow: reviewed
+
+## Scope and entry gates
+
+This is a planning extension to decision-improvement V1, independent of optional Jev V2 and model training. It specifies infrastructure and a research protocol, not a claim that RSI exists or will succeed. All tasks are pending. Current repository instructions and explicit user authorization control execution; reading or implementing this plan does not authorize paid experiments or activation. Prior explicit authorization remains valid within its recorded scope.
+
+Reconcile current HEAD before implementation. V1's accepted contracts, provenance, partition/exposure tracking, protected execution profile, experiment protocol and promotion/rollback mechanisms are prerequisites for integration. Schema and offline fixture design may proceed before empirical success; live recursive trials require repeated transferable gains from the fixed improvement procedure. If that evidence or a protected profile is absent, report the research gate blocked; do not manufacture gains or weaken the gate.
+
+This Codex planning kit uses worker intents. For Claude Code execution, materialize an equivalent native reviewed kit with current harness model aliases and implementer, independent verifier and phase-reviewer roles. Preserve these task IDs and select one execution-status authority; do not execute two mirrors. Validate the native DAG and interactive roster before dispatch. Each phase ends with independent review; coordinator acceptance remains separate. No live CLI appears in verification commands.
+
+## Reuse the backend rather than create a second authority
+
+Current attempt_ledger stores JSONL execution events; attempt_history projects their history; runtime_data owns private storage; workflow_eval owns workflow trials and reviewed routing-policy versions. Those policy files are currently pull-only, and unrestricted workers can write user-owned files outside the checkout. Neither a hash nor an out-of-tree path is an isolation boundary. Audit the then-current implementation before changing it; some V1 deltas may already be present.
+
+Reuse these owners and V1's proposal/bundle/partition contracts. A new recursive_improvement module may coordinate experiments and produce derived reports, but must not duplicate attempts, budget admission, acceptance or pricing. JSON/JSONL is sufficient initially; a relational database is not a prerequisite. Any later SQL index is a rebuildable projection with schema migrations, never a competing source of truth.
+
+## Required persistent records and relationships
+
+| Record | Required identity and evidence |
+| --- | --- |
+| Experiment protocol | ID, schema/content version, frozen objective and success margin, arms, starting snapshot, task-group partitions, evaluator/profile versions, model pins, generation and replication schedule, stopping rules, total resource caps and authorization reference |
+| System generation | ID, experiment/arm/replicate, parent generation IDs, code and bundle hashes, improver version, pinned model/harness/environment, accepted change and evaluation references; generation zero has an explicit empty parent list |
+| Improver version | Immutable artifact/hash describing failure selection, hypothesis generation and experiment selection; parent version, originating proposal and acceptance; distinguish requested, dispatched and observed model identity |
+| Proposal and experiment | Hypothesis, targeted component, authoring generation/improver, exact candidate diff/hash, baseline/control snapshots, development-evidence references, rejection or acceptance and reason; preserve failed proposals |
+| Evaluation and exposure | Protocol/arm/replicate/generation/trial IDs, existing attempt IDs, task-group and partition versions, every authorized data exposure, evaluator version, outcomes, uncertainty, regressions, contamination/invalidity reasons and audit evidence |
+| Resource and intervention account | All proposal, implementation, retry, evaluation, review and failed/unknown work linked to existing attempts; separate measured usage, estimates, subscription proxies and unknowns; elapsed time and human interventions with their scope |
+| Promotion and rollback | Exact candidate and parent identities, scoped approval/evaluation references, active version transition and rollback target, recorded before use; inherited versions pinned for each running experiment |
+
+Use existing immutable artifact stores where available. New event types are versioned and validated. Parent/reference identity must resolve, cycles and cross-arm parentage refuse, duplicate delivery is idempotent, and accepted state must be reconstructible after a crash. Do not promise exactly-once external model calls: unknown dispatch outcomes remain unknown, retain budget reservations, and are not silently replayed. Historical missing fields stay unknown. Corrupt or unresolved research evidence invalidates the affected claim rather than being silently omitted.
+
+## Experimental design
+
+Three arms start from the same system and evidence: A freezes the system; B improves task workflows using a fixed improvement procedure; C may also change its improvement procedure. Arms never borrow candidates, evaluation feedback or discoveries from each other during a replicate. Freeze base-model versions where possible; a provider change or unattested identity is a reported confound, not an inherited gain.
+
+B and C receive matched total resource ceilings that include improvement overhead and unsuccessful searches. Report A's actual spend separately; do not pad it with useless work to manufacture equality. Use identical outcome-evaluation budgets and task distributions across arms. Counterbalance task order, repeat independently, and predeclare a statistically justified sample size, generation count, practical success margin, regression tolerance and stopping rule before observing promotion/audit outcomes. Unknown resource coverage cannot establish efficiency. A cap applies across generations, not afresh at every child run.
+
+Separate development, calibration when applicable, promotion and final-audit groups using V1's ownership. Related defects stay in one group. Keep final-audit tasks and labels outside candidate access and record exposure, including summaries and feedback. Reusing an audit set to select the next candidate retires it from audit status. Repeated testing must follow the frozen analysis/stopping plan; no cherry-picked generations or optional stopping after a lucky win.
+
+Measure independent task success and defects, retained capability, transfer to unfamiliar repositories/tasks, total resources and human effort. A research claim requires a practically meaningful C-versus-B advantage across the predeclared independent trajectories, with uncertainty and complete failures reported. Improvements must persist into successors, and controlled reversion of improver changes must support causal attribution. Compare against A as context, not as a substitute for C-versus-B. Classify outcomes as unsupported, inconclusive, regression, or evidence supporting bounded recursive improvement within the tested domain. No result establishes general intelligence growth, unbounded acceleration or smarter model weights.
+
+## Boundary and activation
+
+Candidates may edit only explicitly permitted workflow/improver components. The independent evaluator, hidden datasets, ledger writer authority, resource admission and approval rules remain outside their writable/readable scope as appropriate. Sentinel tests must demonstrate the named deployment profile enforces this against candidate attempts. If it cannot, remain offline/advisory. Approval records alone are not authentication; reuse the actual external approval boundary. Promotion uses V1's exact-content approval and pinned activation/rollback path; a research result never activates a global default by itself.
+
+## Verification and evidence posture
+
+Offline tests use temporary stores and fake providers and prove only mechanisms. The modules and test classes in TASKS.md are future deliverables. Live evidence is a separate operator-approved campaign with explicit data eligibility, budgets and a protected profile. R08 can complete with an honest offline handoff while the empirical RSI gate remains blocked or inconclusive. Do not mark RSI demonstrated merely because all implementation tasks passed.
+
+## Training-data integration
+
+Consume V1 D31–D34 and `tasks/kits/decision-improvement/TRAINING-DATA.md` when a campaign includes a trainable model. Reference dataset manifests, eligibility/exposure history and parent checkpoints; account for data curation, training, failed jobs and evaluation. The researcher cannot write its own gold labels or bypass export checks. Training-enabled campaigns need a separately selected trainer and approved resource/data scope; the workflow-only RSI experiment remains possible without model training.
+````
+<!-- END FILE tasks/kits/recursive-improvement/PLAN.md -->
+
+## File: `tasks/kits/recursive-improvement/TASKS.md`
+
+<!-- BEGIN FILE tasks/kits/recursive-improvement/TASKS.md -->
+````markdown
+# Recursive improvement research tasks
+
+All tasks are pending planning briefs; see PLAN.md for cross-kit entry gates, selected execution authority and live-experiment boundaries. Model fields are Codex worker intents. Proposed tests are implementation deliverables, not currently passing evidence.
+
+## Phase 1 — Records and lineage
+
+### R01 — Backend ownership and versioned lineage contract
+- id: R01
+- title: Backend ownership and versioned lineage contract
+- status: pending
+- model: strong
+- depends: (none)
+
+**Brief.** Reconcile V1 and current backend; document field ownership and migration in this PLAN. Implement strict generation, improver and experiment contracts in bin/recursive_improvement.py, referencing V1 contracts rather than copying them. Add tests/test_recursive_improvement.py ContractTests.
+
+**Acceptance.** Reject missing identities, cycles, cross-arm parents, invalid schemas and mutable hash mismatches; old absent data remains unknown.
+
+**Verify.**
+```bash
+PYTHONPATH=tests python3 -m unittest test_recursive_improvement.ContractTests
+```
+
+### R02 — Durable links, recovery and history projection
+- id: R02
+- title: Durable links, recovery and history projection
+- status: pending
+- model: strong
+- depends: R01
+
+**Brief.** Extend attempt_ledger, attempt_history and existing proposal storage only where needed for research references; build derived lineage through recursive_improvement. Add LedgerTests with crash, duplicate delivery, corrupt event and missing-artifact fixtures.
+
+**Acceptance.** History rebuilds from owning records; duplicate events do not double-count; unknown dispatch is not rerun or refunded; unresolved evidence cannot pass a claim gate.
+
+**Verify.**
+```bash
+PYTHONPATH=tests python3 -m unittest test_recursive_improvement.LedgerTests
+```
+
+## Phase 2 — Protocol and evaluation integrity
+
+### R03 — Frozen protocol and cross-generation budgets
+- id: R03
+- title: Frozen protocol and cross-generation budgets
+- status: pending
+- model: strong
+- depends: R02
+
+**Brief.** Extend existing admission/workflow_eval seams with immutable protocol identity and aggregate campaign accounting. Add ProtocolTests covering generation-level and campaign-level resource records, all three arms, interventions, model drift and predeclared analysis parameters.
+
+**Acceptance.** No dispatch without protocol and admission; child runs cannot reset campaign caps; failed research work remains charged; mixed units and unknown costs are never summed into fictitious dollars.
+
+**Verify.**
+```bash
+PYTHONPATH=tests python3 -m unittest test_recursive_improvement.ProtocolTests
+```
+
+### R04 — Evaluation exposure and protected profile integration
+- id: R04
+- title: Evaluation exposure and protected profile integration
+- status: pending
+- model: strong
+- depends: R03
+
+**Brief.** Reuse V1 grouped partitions, exposure registry and execution profile. Add BoundaryTests for cross-arm leakage, related-defect overlap, reused audit feedback and attempted edits to evaluator, ledger or budget authority. Fake-runner tests exercise refusal, not real-profile certification.
+
+**Acceptance.** Absent protection refuses live trials; exposed audit tasks retire; tampering invalidates evidence; real sentinel evidence is required before claiming a live boundary.
+
+**Verify.**
+```bash
+PYTHONPATH=tests python3 -m unittest test_recursive_improvement.BoundaryTests
+```
+
+## Phase 3 — Improver and experimental runner
+
+### R05 — Versioned improver candidates and controlled succession
+- id: R05
+- title: Versioned improver candidates and controlled succession
+- status: pending
+- model: strong
+- depends: R04
+
+**Brief.** Implement bounded proposal generation orchestration using existing approved provider/admission seams, with deterministic fixtures offline. Candidate scope includes failure selection and experiment design, not evaluation or authority. Reuse V1 exact-content acceptance, pinned runs and rollback; add SuccessionTests.
+
+**Acceptance.** Rejected candidates never become parents; B cannot edit its improver; C can only inherit accepted versions; no implicit global activation; resumed runs retain their versions and budgets.
+
+**Verify.**
+```bash
+PYTHONPATH=tests python3 -m unittest test_recursive_improvement.SuccessionTests
+```
+
+### R06 — Three-arm replicated experiment runner
+- id: R06
+- title: Three-arm replicated experiment runner
+- status: pending
+- model: strong
+- depends: R05
+
+**Brief.** Extend workflow_eval with campaign orchestration, independent replicates, counterbalanced scheduling, fixed-procedure and evolving-procedure arms. Add ExperimentTests using synthetic fixtures whose expected effects are known; record these as synthetic.
+
+**Acceptance.** Arms share only initial conditions; gains do not leak across replicates; order and missing outcomes are recorded; stop/resume preserves assignment and cumulative spend.
+
+**Verify.**
+```bash
+PYTHONPATH=tests python3 -m unittest test_recursive_improvement.ExperimentTests
+```
+
+## Phase 4 — Evidence and handoff
+
+### R07 — Independent analysis and attribution report
+- id: R07
+- title: Independent analysis and attribution report
+- status: pending
+- model: strong
+- depends: R06
+
+**Brief.** Implement derived campaign reports with predeclared primary endpoint, C-versus-B effect and uncertainty, practical margin, task-group dependence, regressions, transfer, interventions and total cost. Add AnalysisTests with no-effect, real-effect, confounded, censored and selective-reporting fixtures; implement controlled improver reversion comparisons.
+
+**Acceptance.** A-only gains cannot pass RSI criteria; single lucky trajectories and changed models do not pass; insufficient power/coverage returns inconclusive; all failed and stopped trajectories appear.
+
+**Verify.**
+```bash
+PYTHONPATH=tests python3 -m unittest test_recursive_improvement.AnalysisTests
+```
+
+### R08 — Research handoff and empirical readiness gate
+- id: R08
+- title: Research handoff and empirical readiness gate
+- status: pending
+- model: strong
+- depends: R07
+
+**Brief.** Publish current capability matrix, campaign protocol template and operator runbook; integrate checks into existing release_gate without making research success a normal product requirement. Add ReadinessTests and document selected execution status, evidence locations and rollback. Prepare a live campaign only if prerequisites and explicit authorization are present; otherwise report the exact missing evidence.
+
+**Acceptance.** Separate infrastructure complete from campaign authorized and bounded RSI supported; no synthetic test or approved proposal is reported as empirical RSI. No Jev or training dependency.
+
+**Verify.**
+```bash
+PYTHONPATH=tests python3 -m unittest test_recursive_improvement.ReadinessTests
+```
+````
+<!-- END FILE tasks/kits/recursive-improvement/TASKS.md -->
+
+## File: `tasks/kits/decision-improvement/TRAINING-DATA.md`
+
+<!-- BEGIN FILE tasks/kits/decision-improvement/TRAINING-DATA.md -->
+````markdown
+# Training-data preparation — Release 1 infrastructure
+
+## Purpose and authority
+
+D31–D34 set up collection and export for a future small open-weights specialist. They are mandatory V1 infrastructure tasks, not a model-training job. Begin with failure classification. Snapshot capture can be used in eligible authorized runs once implemented; enabling capture must have a declared collection scope and retention policy. Do not silently backfill private transcripts or upload data to a provider. Building the feature does not authorize a training run, paid collection, Jev calls or deployment. Existing explicit authorization applies to its actual scope.
+
+These tasks run before the V1 handoff and before the first live improvement experiment. Keep the original D01–D30 IDs stable; appended IDs D31–D34 are scheduled by dependencies, not numeric order. The native Claude TASKS.md owns execution status. Synthetic fixtures prove mechanics, not model quality or data sufficiency.
+
+## Minimum example contract
+
+Every record has an example ID, schema version, source attempt/decision references, task/defect group, repository revision and capture boundary. Preserve data already owned by attempt_ledger, runtime_data, decision contracts and partition/exposure storage through references; do not introduce a competing execution ledger. Use an optional bin/training_data.py for validation, adjudication and derived dataset exports, with immutable bounded artifacts owned by the existing private-store authority. Raw transcript logging is not required.
+
+| Record | Required fields and semantics |
+| --- | --- |
+| Decision-time input | Timestamp and sequence/event boundary; bounded task statement, relevant code/context, observed error and tool state, available constraints; field provenance and evidence artifact hashes; exact decision question and schema/taxonomy version |
+| Cause target | Reviewed label or explicitly unresolved/unknown/multiple-cause status; primary and contributing causes when supported; evidence references, label method, reviewer identity, disagreement and resolution history |
+| Subsequent action/outcome | Action actually attempted, permitted alternatives if known, verification evidence, success/failure/unknown, retries and human intervention; distinguish observed outcome from an optimal-action label |
+| Reproducibility | Harness, requested/dispatched/observed model identity, prompt/policy/code versions, capture and labeling tooling versions; absent old fields stay unknown |
+| Resources | Existing usage records and basis, elapsed time, review effort and completeness; preserve estimates, measured use, subscription proxies and unknowns separately |
+| Eligibility | Owner-approved collection/use scope, permitted training/export purpose, source/license restrictions, redaction status, retention/expiry and revocation state; unknown eligibility excludes export |
+| Dataset placement | Related-task group, development/calibration/promotion/final-audit partition identity and version, exposure history, dataset membership and split-assignment version |
+
+Input and label are different artifacts. Later reproduction or review may establish a cause, but cannot alter the historical input snapshot. Never place a later successful patch, reviewer diagnosis, future test result or reference answer in the deployed model's training input if unavailable at decision time. Missing historical snapshots are not reconstructed as exact observations. Exclude unsafe examples or explicitly segregate them from fine-tuning-ready exports.
+
+## Labeling and collection behavior
+
+Start with a versioned taxonomy: environment/infrastructure, missing context, implementation error, configuration/permission, multiple causes and unknown. D31 must reconcile overlap with existing failure classes; keep root cause distinct from symptoms such as a nonzero test exit. Define inclusion rules, counterexamples and an abstention policy before labeling. Preserve the original operational classification as an observation, not an adjudicated target.
+
+Review disputed causes, record correction history, and exclude unresolved disagreements from supervised targets unless the selected task explicitly models ambiguity. A model or Jev suggestion is a candidate label, never independently verified truth. Use real evidence such as reproduction, tool failure stage and independent review. Successful attempts may provide negative/no-failure examples only under a compatible explicitly defined question; do not force them into a failure-cause taxonomy.
+
+Retain eligible failures, successful recoveries, abstentions, censored outcomes and human corrections. Capture selection/sampling policy and counts for included, dropped, redacted and unlabeled examples, including exclusions by cause. Avoid success-only training or equating untried proposals with failures. A recovery that succeeded is not proof it was the best recovery; learning action choice requires controlled alternative trials or appropriately qualified evidence. Experiment-ranking labels require observed experiment outcomes and full cost, not the proposer’s enthusiasm.
+
+## Partition, privacy and export rules
+
+Use V1 grouped immutable partitions and exposure records. All retries, near-duplicate snippets, related defects and derivative/synthetic variants share an assigned group; record detection method and unresolved grouping uncertainty. Dataset construction only reads authorized development material; keep calibration, promotion and final audit inaccessible to training exporters. A future protocol may use explicitly separate development validation splits, but must never relabel final-audit material as training while preserving an independent-audit claim. Record feedback exposure as well as raw access.
+
+Redact before persistence, use bounded allowlisted fields, and fail closed when content cannot be retained safely. Keep artifacts outside commits, docs, packages and public telemetry under private-store controls. Export only with explicit purpose/destination eligibility. Withdrawal or expiry excludes future exports, invalidates affected manifests, and identifies downstream training artifacts; deleting a file does not prove removal from already trained weights. Preserve only permitted minimal revocation provenance, never secrets in tombstones. No external transfer is part of V1.
+
+Create deterministic local JSONL examples and a versioned manifest: input and target schema, example/content hashes, source IDs, label versions, permitted-use metadata, grouping/split versions, exclusions, dataset statistics, exporter version and parent dataset. Keep label rationale/provenance out of model inputs. Separate training payload from audit metadata and protected evaluators. The manifest identifies content; it does not establish access enforcement. Refuse missing sources, stale labels, revoked eligibility, ambiguous groups crossing splits and future-information leakage.
+
+## Readiness and later training
+
+Produce a data-readiness report with label agreement, category coverage, unknown/exclusion rates, sampling bias, duplication, partition/exposure checks, provenance completeness and resource coverage. Do not invent a minimum sample count or claim training readiness from fixture counts. Use a pilot and learning curves on separate development validation to choose a collection target; preserve protected final evaluation.
+
+The operator handoff must show a local example from authorized synthetic data: capture → label/review → assign eligible development group → validate → export → inspect manifest → revoke and refuse re-export. Document feature-disabled behavior and commands for enabling scoped capture in future authorized runs. No credentials, model downloads, training, deployment or real private-data collection are required for this demonstration.
+
+Later training must bind parent checkpoint, dataset manifest, training recipe/software/seed, compute budget and outcome to RSI generation lineage. V1 prepares this interface but does not implement a trainer or assert gains. Context ranking, recovery choice and experiment selection require separately validated targets; failure-classification data cannot silently become labels for those jobs.
+````
+<!-- END FILE tasks/kits/decision-improvement/TRAINING-DATA.md -->
+
 ## File integrity
 
 SHA-256 checksums identify the exact planned file contents, not runtime trust or approval.
 
 | File | SHA-256 |
 | --- | --- |
-| `tasks/kits/decision-improvement/PLAN.md` | `8b21ad67a1345312366e0d81eb7755693cc382d52057ddc15794c0240ef59806` |
+| `tasks/kits/decision-improvement/PLAN.md` | `45130b3d981cef9ba08befc84b4c6489202a891a5c65cf6dc6163669b023383c` |
 | `tasks/kits/decision-improvement/REPO-ASSESSMENT.md` | `6f8c9224f93f656b0ad09c0da30a7e1cf176b5027ffa140d1464e1105d3b3a0f` |
 | `tasks/kits/decision-improvement/GUARDRAILS.md` | `5ddf2af456b477b4d002be1f6ae2b632ec3dde5d0bb3fa87944ec2694353228c` |
-| `.claude/kits/decision-improvement-v1/PLAN.md` | `44c0dfe78a4dd102e3401cc5e9cc50e85c46fe35d67c0def8ed85955e514fbf5` |
-| `.claude/kits/decision-improvement-v1/TASKS.md` | `4c62eaf5a9c8c8b334be02e8c44c2bad0e2a25ee9efba2b02ba701e5a6a3bae9` |
+| `.claude/kits/decision-improvement-v1/PLAN.md` | `c55051a39afcbf1aac3883328312c892a8ec3031ac1f26751a0b008523c53efe` |
+| `.claude/kits/decision-improvement-v1/TASKS.md` | `6f6dfd70a80451fff5b69dfc798e7d35a1708ef3075a1b7e6254200b9d493e92` |
 | `.claude/kits/decision-improvement-v1/GUARDRAILS.md` | `5ddf2af456b477b4d002be1f6ae2b632ec3dde5d0bb3fa87944ec2694353228c` |
-| `tasks/kits/decision-improvement/OPTIONAL-TASKS.md` | `76fb63000ab61e6049c830d75edf026d78c2ac34c7007b4ff8eeea3450480524` |
+| `tasks/kits/decision-improvement/OPTIONAL-TASKS.md` | `0c412b0a52061bd353c2a0378afba986c1d51035f49fa08f86de1fd0f7ea6959` |
 | `.claude/kits/decision-improvement-v2/PLAN.md` | `0c511728285a49e46ada1129319f1bdb0e35696c733c3c45d724b21ef64db78c` |
 | `.claude/kits/decision-improvement-v2/TASKS.md` | `3d3e3b942da0b9cddae8679f118821c3eb51a63346c59ff94a80137db7fce543` |
 | `.claude/kits/decision-improvement-v2/GUARDRAILS.md` | `5ddf2af456b477b4d002be1f6ae2b632ec3dde5d0bb3fa87944ec2694353228c` |
@@ -1392,3 +1735,6 @@ SHA-256 checksums identify the exact planned file contents, not runtime trust or
 | `.claude/agents/decision-improvement-v2-implementer.md` | `306a8bbc49cd567fa504eed5a55d23df39c1e3a7b466bff63b45b0319eb9b10f` |
 | `.claude/agents/decision-improvement-v2-reviewer.md` | `cecd09fe6b97c6614083d9994e232639de669f85adbca85b805bfc0198b9ce1b` |
 | `.claude/agents/decision-improvement-v2-verifier.md` | `1369aa878ae4ceeda8001ca52d76cf011266eb8ef45c86a0f25da173df200307` |
+| `tasks/kits/recursive-improvement/PLAN.md` | `1d35e50f00f505e7d62c44ac8271cab81b504df98f5c4a33994be9cba77981ab` |
+| `tasks/kits/recursive-improvement/TASKS.md` | `44a67534be22adc8d41fcd8df1669da3ca5ce771193c5e9e6387f0b4d8018da2` |
+| `tasks/kits/decision-improvement/TRAINING-DATA.md` | `57310eefe67a0a1b648d84299b96a63296dbc6f8192df86e508aa57837035ee7` |

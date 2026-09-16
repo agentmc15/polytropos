@@ -86,3 +86,5 @@ Each resulting kit needs a trigger, bounded input, fallback, immutable candidate
 ## Meta-improvement research (M01)
 
 Defer until the fixed improvement procedure repeatedly produces validated transferable gains. Version the procedure separately and compare original/candidate from identical initial policy/evidence under matched total budgets, including failed proposals and evaluation. Evaluate multiple trajectories on unseen tasks for successor quality, retained capability, regressions, transfer, operator effort and resources per validated gain. Keep final audit and acceptance outside candidate control. Changing a provider or accepting one proposal is not evidence of effective recursive improvement; this research does not depend on Jev.
+
+M01 is now specified in `tasks/kits/recursive-improvement/PLAN.md` and `TASKS.md`: eight pending tasks across four phases. Those records/backend tasks may be prepared offline after V1 contracts stabilize; the live research prerequisites above remain mandatory. This is a separately selected research extension, not an automatic continuation of V1 or Jev V2.

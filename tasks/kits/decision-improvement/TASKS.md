@@ -479,14 +479,82 @@ for finding in r['findings']:
 VERIFY
 ```
 
-## Phase 7 — V1 handoff
+## Phase 7 — Training-data preparation
+
+Read `tasks/kits/decision-improvement/TRAINING-DATA.md`. Collection/export setup is required V1 scope; actual training and data transfers are separate actions. D31–D34 run before D28–D30; IDs are retained for compatibility.
+
+### D31 — Decision-time snapshots and training example contracts
+- id: D31
+- title: Decision-time snapshots and training example contracts
+- status: pending
+- model: strong
+- depends: D06, D09, D14
+
+**Brief.** Own bin/training_data.py snapshot/schema seam, bounded artifact integration and tests/test_training_data.py SnapshotTests. Follow TRAINING-DATA.md. Reconcile existing root-cause classes and label taxonomy; add opt-in capture hooks through existing decision/attempt owners with source IDs, capture boundaries and redaction before persistence. This is not general transcript logging.
+
+**Acceptance.** Exact input-time evidence is immutable; late labels cannot change input; missing historical fields stay unknown; disabled collection preserves legacy behavior; secrets, oversize payloads and unknown eligibility cannot be persisted as training content.
+
+**Verify.**
+```bash
+PYTHONPATH=tests python3 -m unittest test_training_data.SnapshotTests
+```
+
+### D32 — Reviewed labels and eligibility lifecycle
+- id: D32
+- title: Reviewed labels and eligibility lifecycle
+- status: pending
+- model: strong
+- depends: D31
+
+**Brief.** Extend training_data through existing private-store authority with label review/correction, evidence linkage, eligibility, retention and revocation; add LabelEligibilityTests. Keep raw operational labels and provider suggestions separate from adjudicated targets. Handle ambiguity, multiple causes, disagreement and successful/no-failure examples under explicit schemas.
+
+**Acceptance.** Unsupported claims remain unresolved; future actions are separate from original inputs; unknown use rights refuse export; expiry and revocation invalidate dependent exports and identify downstream artifacts without claiming model unlearning.
+
+**Verify.**
+```bash
+PYTHONPATH=tests python3 -m unittest test_training_data.LabelEligibilityTests
+```
+
+### D33 — Grouped dataset splits and reproducible local exports
+- id: D33
+- title: Grouped dataset splits and reproducible local exports
+- status: pending
+- model: strong
+- depends: D32
+
+**Brief.** Reuse D06 partitions/exposure ownership for related-defect grouping and duplicate handling. Implement deterministic local JSONL exports and immutable manifests with provenance, label versions, sampling/exclusion counts and content identities; add DatasetExportTests. Train only from eligible development records and keep audit metadata separate from model inputs.
+
+**Acceptance.** Related attempts cannot cross protected splits; exposed or revoked examples refuse; future-answer leakage and missing source references fail; repeated export is deterministic; no network or training action occurs.
+
+**Verify.**
+```bash
+PYTHONPATH=tests python3 -m unittest test_training_data.DatasetExportTests
+```
+
+### D34 — Collection readiness and operator runbook
+- id: D34
+- title: Collection readiness and operator runbook
+- status: pending
+- model: strong
+- depends: D33
+
+**Brief.** Own docs/TRAINING-DATA-READINESS.md, ReadinessTests in tests/test_training_data.py, source release-gate mappings and integration coverage. Demonstrate capture-to-review-to-export and revocation using synthetic temp stores. Document enable/disable, eligible-run scope, retention, destination restrictions, dataset quality checks and future checkpoint links.
+
+**Acceptance.** V1 ships working collection/export setup with an explicit readiness report; no arbitrary dataset-size threshold; negative cases and disabled mode pass; synthetic tests are not training readiness; no model download, training, private backfill or upload.
+
+**Verify.**
+```bash
+PYTHONPATH=tests python3 -m unittest test_training_data.ReadinessTests
+```
+
+## Phase 8 — V1 handoff
 
 ### D28 — Jev-free matrix
 - id: D28
 - title: Jev-free matrix
 - status: pending
 - model: strong
-- depends: D24, D27
+- depends: D24, D27, D34
 **Brief.** Own release matrix and `tests/test_decision_release_matrix.py:JevFreeMatrixTests`. Matrix harness/client/OS/adapter/enforcement/mode/fallback; canary/active unavailable absent D23 evidence and Cursor adaptive unsupported pending independent proof.
 
 Extend `bin/release_gate.py`, `primitives/harness-capabilities.json` and source `docs/RELEASE.md` through its generator. Prove no Jev import/key/SDK/network is needed on startup, rules/replay or rollback. Compare baseline conformance across all four adapters separately; adaptive support only for verified scope. Current Cursor implementation must not be reimplemented or mislabeled absent just because its adaptive profile is unavailable.
@@ -521,7 +589,7 @@ PYTHONPATH=tests python3 -m unittest test_decision_release_matrix.JevFreeConform
 - depends: D29
 **Brief.** Own `docs/DECISION-IMPROVEMENT-V1-HANDOFF.md`; state supported facts, rollback and gaps; defer R08 families, shadow/calibration, concurrency, Cursor adaptive and Jev. Source roadmap never authorizes V2.
 
-Report the actual accepted commit, feature/support matrix, mechanical versus live-ready status, rollback/migration procedure, remaining operator inputs and authorized-but-unrun checks. Link existing evidence without reconstructing records. Concurrency and existing Cursor implementation remain intact; only new adaptive extensions are deferred. Identify optional O tasks, R08 families, separate J release and M01 research, with entry gates rather than an automatic queue.
+Report the actual accepted commit, feature/support matrix, mechanical versus live-ready status, rollback/migration procedure, remaining operator inputs and authorized-but-unrun checks. Link existing evidence without reconstructing records. Concurrency and existing Cursor implementation remain intact; only new adaptive extensions are deferred. Include the D34 collection/export readiness report and capture configuration; distinguish shipped setup from authorized data collection and actual training. Identify optional O tasks, R08 families, separate J release and M01 research, with entry gates rather than an automatic queue.
 
 **Acceptance.** Exact facts; live gaps; defer register; no authorization token; no release action.
 **Verify.**

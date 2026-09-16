@@ -123,3 +123,11 @@ Before running a kit, ensure `python3` resolves to Python 3.12 or newer: this ma
 Each task receives its full brief, this plan, guardrails, and relevant artifacts. Execute owns NOTES.md and all outcome/attempt evidence; the architect creates none. Run focused verification for each task and the repository-required full suite/docs gates at green commit boundaries. Independent verification reruns the checks; phase review inspects drift and authority violations; final acceptance is separate.
 
 Unresolved facts should become scoped blockers or revised briefs. Do not declare a task done just because a broad suite passes while its named feature/test is absent. Existing completed implementation may satisfy a task only after the executor independently verifies its exact acceptance and records the reconciliation through the normal execution process.
+
+## RSI research extension (M01)
+
+See `tasks/kits/recursive-improvement/PLAN.md` and `TASKS.md` for the ledger relationships, generation lineage, protected evaluation and three-arm recursive experiment. V1 should retain extension seams for these records, without implementing the research loop implicitly. The extension reuses the existing storage and approval authorities, is independent of Jev, and separates offline mechanism completion from demonstrated recursive gains.
+
+## Fine-tuning data readiness in V1
+
+`TRAINING-DATA.md` specifies decision-time capture, independently reviewed labels, eligibility/retention/revocation, grouped dataset partitions, reproducible export and readiness reporting. D31–D34 make this setup required before V1 release; D28 depends on D34. Keep existing task IDs. Collection in future eligible runs and actual training have distinct scope. No private transcript backfill, external upload or trainer is implicit.
