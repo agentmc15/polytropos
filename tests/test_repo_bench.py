@@ -1501,6 +1501,65 @@ def _classify_test_runner(cmd, cwd):
     return 0, "OK"
 
 
+class MutationCandidateOrderTests(unittest.TestCase):
+    """2026-09-16: the first real target (322 YAML, 170 Markdown, 42 Python files; `.claude/`
+    and `docs/` first in tree order) would have spent every examined site on prose. Source
+    code is examined first, data after code, prose last, and the order is stable. Prose is
+    ordered, not dropped: a `.txt` golden file is a real site, and `NonUtf8FileTests` needs
+    the latin-1 `legacy.txt` to be READ so its skip is noted."""
+
+    PATHS = [".claude/agents/a.md", ".github/ci.yml", "README.md", "cli/main.py", "docs/x.md",
+             "kb/v.yaml", "recommender/core.py", "tests/test_core.py", "web/app.js",
+             "logo.png", "notes.rst", "CHANGELOG.txt", "config.toml", "spec/thing.spec.js"]
+
+    def test_code_first_then_data_then_prose_never_tests_or_binaries(self):
+        ordered = rb.order_mutation_candidates(self.PATHS)
+        self.assertEqual(ordered, ["cli/main.py", "recommender/core.py", "web/app.js",
+                                   ".github/ci.yml", "kb/v.yaml", "config.toml",
+                                   ".claude/agents/a.md", "README.md", "docs/x.md",
+                                   "notes.rst", "CHANGELOG.txt"])
+        for p in ordered:
+            self.assertFalse(p.lower().endswith(rb.BINARY_SUFFIXES), p)
+            self.assertFalse(rb._matches_test_pattern(p, rb.DEFAULT_TEST_PATTERNS), p)
+        # Prose is a strict suffix of the order: every prose path sits after every other.
+        first_prose = next(i for i, p in enumerate(ordered)
+                           if p.lower().endswith(rb.PROSE_SUFFIXES))
+        self.assertTrue(all(p.lower().endswith(rb.PROSE_SUFFIXES)
+                            for p in ordered[first_prose:]))
+        self.assertFalse(any(p.lower().endswith(rb.PROSE_SUFFIXES)
+                             for p in ordered[:first_prose]))
+
+    def test_order_is_stable_and_tree_order_is_kept_within_each_group(self):
+        once = rb.order_mutation_candidates(self.PATHS)
+        again = rb.order_mutation_candidates(list(self.PATHS))
+        self.assertEqual(once, again)
+        code = [p for p in once if p.lower().endswith(rb.SOURCE_SUFFIXES)]
+        self.assertEqual(code, [p for p in self.PATHS if p in code])
+
+    def test_prose_first_in_tree_order_no_longer_starves_the_scan(self):
+        # A repository whose first tree entries are prose full of " and " must still admit
+        # the code mutation the fixture is built around, under the same site bound.
+        with tempfile.TemporaryDirectory() as td:
+            td = Path(td)
+            repo = td / "target"
+            head = build_general_fixture_repo(repo)
+            (repo / "AAA-NOTES.md").write_text(
+                "".join(f"line {i}: this and that and the other\n" for i in range(50))
+            )
+            subprocess.run(["git", "add", "AAA-NOTES.md"], cwd=repo, check=True,
+                           capture_output=True)
+            subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@example.invalid",
+                            "commit", "-q", "-m", "prose first"], cwd=repo, check=True,
+                           capture_output=True)
+            head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo, check=True,
+                                  capture_output=True, text=True).stdout.strip()
+            tasks, _notes = rb.mine_general_tasks(
+                repo, head, test_cmd="run-tests", test_runner=_classify_test_runner,
+                scratch_dir=td / "scratch", limit=1,
+            )
+            self.assertEqual([t["task_id"] for t in tasks], ["mut-1-calc"])
+
+
 class GeneralModeMinerTests(unittest.TestCase):
     def test_missing_test_cmd_raises_value_error(self):
         with tempfile.TemporaryDirectory() as td:

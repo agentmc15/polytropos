@@ -104,30 +104,38 @@
         "dispatch": {
           "product": "supported",
           "implemented": "supported",
-          "verified": "unknown",
+          "verified": "supported",
           "source": "vendor CLI documentation",
-          "note": "never invoked live from this repository -- tests stub every dispatch"
+          "note": "Verified 2026-09-16 on the maintainer's ChatGPT-plan install (macOS 14.4): one authorized `bin/codex_execute.py run --task T1 --exec-mode enforced` on a throwaway one-task kit dispatched `codex exec --json --model <mid-tier id from data/pricing.codex.json> --sandbox workspace-write <prompt>` under the reserved policy, rc 0 in ~73 s; the one-line edit landed and nothing else changed; the confined verify passed; T1 projected done (run 2026-09-16-1565). The turn's `turn.completed` usage block and `turn_context` model were parsed. Tests never invoke the real CLI",
+          "verified_on": "2026-09-16",
+          "client_version": "codex-cli 0.153.3"
         },
         "durable_attempts": {
           "product": "not-applicable",
           "implemented": "supported",
-          "verified": "unknown",
+          "verified": "supported",
           "source": "bin/attempt_ledger.py, bin/kit_contract.py TaskRun",
-          "note": "polytropos capability, not a product one: every dispatch is recorded before and after it runs, a dead run's open attempt is closed as unknown and reconciled by re-running the check, budget usage carries across runs, tasks are claimed with O_EXCL. Exercised with stub executables and temp stores only; never run against the live CLI, so verified stays unknown"
+          "note": "polytropos capability, not a product one: every dispatch is recorded before and after it runs, a dead run's open attempt is closed as unknown and reconciled by re-running the check, budget usage carries across runs, tasks are claimed with O_EXCL. Live 2026-09-16: the run's events and the review's attempt were recorded outside the tree in the named --attempt-store, with `observed_model` filled from the rollout on both; the dead-run path was exercised with stub executables and temp stores only; `duration_s` is null on live attempts (follow-up shared by every driver)",
+          "verified_on": "2026-09-16",
+          "client_version": "codex-cli 0.153.3"
         },
         "sandbox_read_only": {
           "product": "supported",
           "implemented": "supported",
-          "verified": "unknown",
+          "verified": "supported",
           "source": "vendor CLI documentation (--sandbox read-only)",
-          "note": "review and acceptance are pinned read-only and extra arguments cannot override it. The flag's runtime effect has not been verified here"
+          "note": "review and acceptance are pinned read-only and extra arguments cannot override it. Live 2026-09-16: `review --phase 1` ran `codex exec --json --model <strong-tier id> --sandbox read-only` for ~52 s, rc 0; the reviewer ran read-only commands (rg, git status, sed, the unittest) and the tree was byte-identical afterwards. Whether a write attempt would be refused inside the sandbox was not exercised: nothing tried one",
+          "verified_on": "2026-09-16",
+          "client_version": "codex-cli 0.153.3"
         },
         "structured_events": {
           "product": "supported",
           "implemented": "supported",
-          "verified": "unknown",
+          "verified": "supported",
           "source": "vendor CLI documentation (exec --json)",
-          "note": "thread.started / item.completed / turn.completed are parsed; model attestation falls back to unknown when no correlated record appears"
+          "note": "vendor CLI documentation (exec --json), verified 2026-09-16: thread.started / item.started / item.completed (command_execution, agent_message, collab_tool_call) / turn.completed with a `usage` block were all observed on a live run and a live review; the model attestation correlated the rollout's turn_context to the dispatched id (`actual_provenance=correlated-rollout-turn_context`), so `observed_model` equalled `dispatched_model` on both. After the stream the CLI printed `Reading additional input from stdin...` to stdout once, harmlessly",
+          "verified_on": "2026-09-16",
+          "client_version": "codex-cli 0.153.3"
         },
         "async_tools": {
           "product": "unknown",
@@ -162,9 +170,11 @@
         "independent_review": {
           "product": "not-applicable",
           "implemented": "supported",
-          "verified": "unknown",
+          "verified": "supported",
           "source": "bin/codex_execute.py review/accept; bin/kit_contract.py ROLE_SUPPORT",
-          "note": "phase-end independent verification (review, read-only sandbox, strong worker) and orchestrator acceptance (accept), both recorded as typed role-use records and in the attempt ledger. Never run live from this repository"
+          "note": "phase-end independent verification (review, read-only sandbox, strong worker) and orchestrator acceptance (accept), both recorded as typed role-use records and in the attempt ledger. Live 2026-09-16 on a throwaway kit: `review --phase 1` (strong tier, ~52 s, rc 0, typed record with the rollout-attested model) and `accept --phase 1` (frontier tier, ~110 s, rc 0, terminal message ending `POLYTROPOS_ACCEPTANCE: accepted`, result recorded `accepted`), tree byte-identical after both. The FIRST `accept` refused (exit 2, 'no successful independent Sol review record'): the review had written role-use.jsonl into the kit after computing the fingerprint it recorded, and the fingerprint hashed every untracked file, so no live review could ever certify its own workspace. Fixed the same day (`review_evidence_fingerprint` excludes the driver's own records, like NOTES.md); the second `accept` is the verification. The compatibility review prompt asks for no verdict marker, so a review's `result` stays null by design and only `accept` carries one",
+          "verified_on": "2026-09-16",
+          "client_version": "codex-cli 0.153.3"
         },
         "extended_roles": {
           "product": "not-applicable",
@@ -197,16 +207,20 @@
         "dispatch": {
           "product": "supported",
           "implemented": "supported",
-          "verified": "unknown",
+          "verified": "supported",
           "source": "vendor CLI documentation",
-          "note": "never invoked live from this repository, by invariant: a real call spends the user's AI Credits"
+          "note": "Verified 2026-09-16 on the maintainer's logged-in install (macOS 14.4): one authorized `bin/copilot_execute.py run --task T1 --exec-mode enforced` on a throwaway one-task kit dispatched `copilot --agent implementer --allow-all-tools -p <prompt>` with no model pinned, rc 0 in ~17 s; the one-line edit landed and nothing else changed; the confined verify passed; T1 projected done (run 2026-09-16-7d16). The CLI's summary footer reports `AI Credits`, token counts, and a resume id, which the driver does not read (follow-up); model used is recorded as `agent default`. Tests never invoke the real CLI, by invariant",
+          "verified_on": "2026-09-16",
+          "client_version": "GitHub Copilot CLI 1.0.80"
         },
         "durable_attempts": {
           "product": "not-applicable",
           "implemented": "supported",
-          "verified": "unknown",
+          "verified": "supported",
           "source": "bin/attempt_ledger.py, bin/kit_contract.py TaskRun",
-          "note": "polytropos capability, not a product one: every dispatch is recorded before and after it runs, a dead run's open attempt is closed as unknown and reconciled by re-running the check, budget usage carries across runs, tasks are claimed with O_EXCL. Exercised with stub executables and temp stores only; never run against the live CLI, so verified stays unknown"
+          "note": "polytropos capability, not a product one: every dispatch is recorded before and after it runs, a dead run's open attempt is closed as unknown and reconciled by re-running the check, budget usage carries across runs, tasks are claimed with O_EXCL. Live 2026-09-16: the run's ten events and the review's two were recorded outside the tree in the named --attempt-store; the dead-run path was exercised with stub executables and temp stores only; `duration_s` is null on live attempts (follow-up shared by every driver)",
+          "verified_on": "2026-09-16",
+          "client_version": "GitHub Copilot CLI 1.0.80"
         },
         "tool_pin": {
           "product": "unknown",
@@ -229,9 +243,11 @@
         "independent_review": {
           "product": "not-applicable",
           "implemented": "supported",
-          "verified": "unknown",
+          "verified": "supported",
           "source": "bin/copilot_execute.py review; bin/kit_contract.py ROLE_SUPPORT",
-          "note": "phase-end review dispatched to the reviewer agent without the blanket tool grant and recorded in the attempt ledger. Never run live from this repository"
+          "note": "phase-end review dispatched to the reviewer agent without the blanket tool grant and recorded in the attempt ledger. Live 2026-09-16: `review --phase 1` dispatched `copilot --agent reviewer -p <prompt>` (permissions: restricted, no blanket grant), rc 0 in ~40 s, the reviewer reported it changed nothing and the tree was byte-identical; recorded as run 2026-09-16-ae3d role=reviewer op=review with no verdict line (`result: null`); the grade came from the verify alone",
+          "verified_on": "2026-09-16",
+          "client_version": "GitHub Copilot CLI 1.0.80"
         },
         "extended_roles": {
           "product": "not-applicable",

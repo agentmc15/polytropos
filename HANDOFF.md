@@ -226,6 +226,38 @@ run) were done; step 4 (the bounded evaluation) waits on a target repository.
   blanket grant, rc 0 in ~40 s, `REVIEW VERDICT=accept`, tree byte-identical, recorded as run
   `2026-09-16-2c48` role=reviewer. Registry rows re-dated with `client_version`: `dispatch`,
   `tool_pin`, `confined_verify`, `durable_attempts`, `independent_review`.
+- **Copilot CLI 1.0.80 (logged in as the user).** On a third throwaway kit: `run --task T1
+  --exec-mode enforced` dispatched `copilot --agent implementer --allow-all-tools -p …` once,
+  rc 0 in ~17 s, edit landed, confined verify passed, T1 done (run `2026-09-16-7d16`); `review
+  --phase 1` dispatched `copilot --agent reviewer -p …` with no blanket grant, rc 0 in ~40 s,
+  tree byte-identical (run `2026-09-16-ae3d`). The CLI's summary footer prints `AI Credits`,
+  token counts, and a resume id that the driver does not read (follow-up); the model is
+  recorded as `agent default`. Rows verified: `dispatch`, `durable_attempts`,
+  `independent_review`; `tool_pin` unchanged (no per-tool flag exists).
+- **codex-cli 0.153.3 (ChatGPT plan).** On a fourth throwaway kit: `run` dispatched `codex exec
+  --json --model <mid tier> --sandbox workspace-write …` under the reserved policy, rc 0 in
+  ~73 s, the rollout's `turn_context` attested the model (run `2026-09-16-1565`); `review
+  --phase 1` ran the strong tier under `--sandbox read-only`, rc 0 in ~52 s, typed role-use
+  record written. Then `accept --phase 1` REFUSED (exit 2, "no successful independent Sol
+  review record"): `review_evidence_fingerprint` hashed every untracked file except NOTES.md,
+  and the review had just written `role-use.jsonl` into the kit after computing the fingerprint
+  it recorded -- so on a real workspace no review could ever certify itself. Moving the file
+  aside reproduced the recorded hash exactly. Fixed: the driver's own records are excluded
+  (`test_the_reviews_own_typed_record_does_not_move_the_fingerprint`). The second `accept`
+  ran the frontier tier, ~110 s, `POLYTROPOS_ACCEPTANCE: accepted`, result recorded. Rows
+  verified: `dispatch`, `structured_events`, `sandbox_read_only`, `durable_attempts`,
+  `independent_review`. Observed and left alone: the CLI prints `Reading additional input from
+  stdin...` after the JSON stream; the compatibility review prompt asks for no verdict marker,
+  so a review's `result` is null by design; untracked `__pycache__` bytes are part of the
+  fingerprint (stable while the source is, fragile otherwise).
+- **General-mode mining on a real target.** `ai-stack-advisor` (322 YAML, 170 Markdown, 42
+  Python files) sorts `.claude/` and `docs/` before any package, and the operators match
+  English (" and " -> " or "), so the `limit * 4` site bound would have been spent on prose and
+  nothing admitted. `repo_bench.order_mutation_candidates` now examines source code first,
+  data after, prose last (`MutationCandidateOrderTests`) -- last, not never: a `.txt` golden
+  file is a real site, and the undecodable-file note (F4) needs the file read. The repo's suite is green on a
+  history-free copy with its own venv and `PYTHONPATH=.` (the venv's editable install would
+  otherwise import the ORIGINAL tree, not the sandbox's): 284 passed, 1 xfailed, ~67 s.
 - **What the live runs showed the ledger does not carry yet.** `duration_s` is null on every
   live attempt on both harnesses (the drivers' `(rc, output)` runners drop `proc_runner`'s
   timing, and Cursor's JSON even reports `duration_ms`); the verify events do not say which
@@ -235,8 +267,8 @@ run) were done; step 4 (the bounded evaluation) waits on a target repository.
   `model` field, so `observed_model` stays null. None blocks a release; each is a small
   follow-up, and the registry notes name them.
 - **What was NOT verified.** The dead-run resume path (stubs only), escalation (every first
-  attempt passed), Cursor's `--model` selection and its IDE/cloud modes, any Codex or Copilot
-  row, and the workflow-evaluation adapters.
+  attempt passed), Cursor's `--model` selection and its IDE/cloud modes, concurrent dispatch,
+  and the workflow-evaluation adapters.
 
 ### Step 26's own deliberate limits
 

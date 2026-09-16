@@ -178,6 +178,10 @@ class MatrixTests(unittest.TestCase):
             root = Path(tmp)
             (root / "primitives").mkdir()
             registry = json.loads((REPO_ROOT / "primitives" / "harness-capabilities.json").read_text())
+            # The real codex rows carry a client version since the 2026-09-16 live run; the
+            # shape under test is a harness with none, so strip them on the temp copy first.
+            for row in registry["harnesses"]["codex"]["capabilities"].values():
+                row.pop("client_version", None)
             (root / "primitives" / "harness-capabilities.json").write_text(json.dumps(registry))
             before = rg.harness_matrix(root, with_binaries=False)
             self.assertEqual(before["codex"]["client_version"], "not recorded")
@@ -265,8 +269,10 @@ class StubVersusInstalledTests(unittest.TestCase):
         passing = lambda ids: {"ran": len(ids), "failures": 0, "errors": 0, "skipped": 0,
                                "ok": True, "detail": ""}
         resolver = lambda ids: {tid: 1 for tid in ids}
+        # `status` is a codex row nobody has run (its dispatch row was verified live on
+        # 2026-09-16, which is exactly why this test must not lean on it).
         one = ({"id": "dispatch-failure", "title": "D", "steps": "07", "claim": "c",
-                "capabilities": {"codex": ("dispatch",)},
+                "capabilities": {"codex": ("status",)},
                 "tests": {"codex": ("test_x.T.test_a",)}},)
         with mock.patch.object(rg, "CONTRACTS", one):
             report = rg.contracts_report(REPO_ROOT, run=True, resolver=resolver, runner=passing)
@@ -391,8 +397,9 @@ class RegistryFindingsTests(unittest.TestCase):
 
     def test_a_verification_since_the_gate_must_name_the_client_version(self):
         def undated(reg):
-            reg["harnesses"]["codex"]["capabilities"]["dispatch"].update(
-                verified="supported", verified_on=str(date.today()))
+            row = reg["harnesses"]["codex"]["capabilities"]["dispatch"]
+            row.update(verified="supported", verified_on=str(date.today()))
+            row.pop("client_version", None)
         with tempfile.TemporaryDirectory() as tmp:
             findings = rg.registry_findings(self._root_with(tmp, undated))
         self.assertTrue(any("codex/dispatch" in f and "client_version" in f for f in findings), findings)
@@ -425,7 +432,9 @@ class RegistryFindingsTests(unittest.TestCase):
 
     def test_a_dateless_supported_row_is_a_finding(self):
         def dateless(reg):
-            reg["harnesses"]["copilot"]["capabilities"]["dispatch"].update(verified="supported")
+            row = reg["harnesses"]["copilot"]["capabilities"]["dispatch"]
+            row.update(verified="supported")
+            row.pop("verified_on", None)
         with tempfile.TemporaryDirectory() as tmp:
             findings = rg.registry_findings(self._root_with(tmp, dateless))
         self.assertTrue(any("copilot/dispatch" in f and "verified_on" in f for f in findings), findings)
@@ -454,10 +463,15 @@ class ReverifyTests(unittest.TestCase):
 
 class ReleaseDocTests(unittest.TestCase):
     def test_block_is_deterministic_and_carries_no_date_or_revision(self):
+        """Registry `verified_on` dates are data and may equal today; what must not leak is
+        the build date itself, so the render is compared under a different clock."""
         one = rg.render_block(REPO_ROOT)
         two = rg.render_block(REPO_ROOT)
         self.assertEqual(one, two)
-        self.assertNotIn(str(date.today()), one.replace("2026-09-13", ""))  # registry dates are data
+        with mock.patch.object(rg, "date") as fake_date:
+            fake_date.today.return_value = date(2001, 1, 1)
+            self.assertEqual(rg.render_block(REPO_ROOT), one)
+        self.assertNotIn("2001-01-01", one)
         self.assertIsNone(re.search(r"\b[0-9a-f]{40}\b", one))
         self.assertTrue(one.startswith(rg.BLOCK_START))
         self.assertTrue(one.rstrip().endswith(rg.BLOCK_END))

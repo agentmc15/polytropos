@@ -1162,6 +1162,25 @@ MUTATION_OPERATORS = (
     ("amp-amp-to-pipe-pipe", "&&", "||"),
 )
 
+#: Suffixes of source code, mutated FIRST in general mode. 2026-09-16: the first real target
+#: (a Python project whose tree is 322 YAML + 170 Markdown + 42 Python files, with `.claude/`
+#: and `docs/` sorting before any package) would have spent the whole `limit * 4` site bound
+#: on " and " -> " or " inside prose and admitted nothing, because `git ls-tree` order is
+#: alphabetical and the operators match English. A bug the suite catches lives in code far
+#: more often than in data, so code files are examined first; data files (YAML, JSON, TOML)
+#: still follow, because a flipped flag in a fixture is a real bug when a test reads it.
+SOURCE_SUFFIXES = (
+    ".py", ".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx", ".go", ".rs", ".java", ".kt", ".rb",
+    ".c", ".h", ".cc", ".cpp", ".hpp", ".cs", ".swift", ".php", ".scala", ".sh",
+)
+
+#: Suffixes examined LAST in general mode: prose. A textual operator applied to a sentence
+#: almost never yields a bug a test suite can catch, and every site spent there is a full
+#: suite run, so prose is reached only when code and data have not used up the site bound.
+#: Not dropped outright: a `.txt` golden file a test compares against IS a real site, and an
+#: undecodable prose file must still be met and noted (F4), not silently never read.
+PROSE_SUFFIXES = (".md", ".markdown", ".rst", ".txt", ".adoc")
+
 #: Suffixes skipped when enumerating mutation candidates -- binary/asset files a textual
 #: operator can never sensibly touch.
 BINARY_SUFFIXES = (
@@ -1224,6 +1243,28 @@ def _first_matching_operator(line):
     return None
 
 
+def order_mutation_candidates(paths):
+    """The files general-mode mining may mutate, in the order it examines them.
+
+    Test files and binaries drop out. Source files (`SOURCE_SUFFIXES`) come first, in tree
+    order; data (YAML, JSON, TOML, templates) follows, in tree order; prose
+    (`PROSE_SUFFIXES`) comes last, in tree order, so it is reached only when the site bound
+    is not already spent on code and data. Stable and total: the same tree yields the same
+    order on every run, which the mined task ids and the "bound truncated the scan" note
+    both depend on.
+    """
+    kept = [
+        p for p in paths
+        if p.strip()
+        and not _matches_test_pattern(p, DEFAULT_TEST_PATTERNS)
+        and not p.lower().endswith(BINARY_SUFFIXES)
+    ]
+    code = [p for p in kept if p.lower().endswith(SOURCE_SUFFIXES)]
+    prose = [p for p in kept if p.lower().endswith(PROSE_SUFFIXES)]
+    data = [p for p in kept if p not in code and p not in prose]
+    return code + data + prose
+
+
 def mine_general_tasks(
     target_repo, commit, limit=8, test_cmd=None, test_runner=None,
     scratch_dir=None, git_runner=None,
@@ -1231,8 +1272,9 @@ def mine_general_tasks(
     """Mine synthetic mutation-repair tasks (PLAN D4, mode B).
 
     Requires `test_cmd` -- there is no mutation-repair fallback without one (D4); raises
-    `ValueError` otherwise. Enumerates source files from `commit` (skipping
-    `DEFAULT_TEST_PATTERNS` and `BINARY_SUFFIXES`), scans their content for operator sites,
+    `ValueError` otherwise. Enumerates files from `commit` in the order
+    `order_mutation_candidates` gives (tests and binaries skipped; source code, then data,
+    then prose), scans their content for operator sites,
     and for each candidate mutation builds its OWN scratch sandbox via `make_sandbox` off the
     same `commit` (no target history, exactly like issue-replay's sandboxes), applies the
     single-line mutation, and runs `test_cmd` through `test_runner` (injectable
@@ -1259,12 +1301,7 @@ def mine_general_tasks(
         target_repo, "ls-tree", "-r", "--name-only", commit, git_runner=git_runner
     )
     _require_ok(rc, names_out, f"git ls-tree in {target_repo}")
-    candidate_paths = [
-        p for p in names_out.splitlines()
-        if p.strip()
-        and not _matches_test_pattern(p, DEFAULT_TEST_PATTERNS)
-        and not p.lower().endswith(BINARY_SUFFIXES)
-    ]
+    candidate_paths = order_mutation_candidates(names_out.splitlines())
 
     #: F8 (Phase 1 review, carried into T4): filled in by `_scan` below so the caller can
     #: tell "the bound truncated the scan" apart from "the repo simply ran out of sites" --

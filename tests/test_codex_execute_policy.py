@@ -192,6 +192,46 @@ true
             third = ce.review_evidence_fingerprint(kit, tasks_text, "1")
             self.assertNotEqual(second, third)
 
+    def test_the_reviews_own_typed_record_does_not_move_the_fingerprint(self):
+        """2026-09-16, the first live Codex review: `append_role_use` writes role-use.jsonl
+        into the kit AFTER the fingerprint it records was computed, and the fingerprint hashed
+        every untracked file, so `accept` found every review stale and could never succeed on
+        a real workspace. The driver's own records are excluded like NOTES.md; a change to the
+        work itself still moves it."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            kit = root / ".claude" / "kits" / "fixture"
+            kit.mkdir(parents=True)
+            tasks_text = """## Phase 1 — test
+### T1 — done
+- status: done
+- model: mid
+- depends: (none)
+- independent: no
+**Brief.** done
+**Verify.**
+```bash
+true
+```
+"""
+            (kit / "TASKS.md").write_text(tasks_text)
+            (kit / "PLAN.md").write_text("goal\n")
+            (root / "m.py").write_text("def f():\n    return 2\n")
+            subprocess.run(["git", "init", "-q", str(root)], check=True)
+            subprocess.run(["git", "-C", str(root), "add", "."], check=True)
+            subprocess.run(["git", "-C", str(root), "-c", "user.name=Fixture",
+                            "-c", "user.email=fixture@example.invalid", "commit", "-qm", "A"],
+                           check=True)
+            before = ce.review_evidence_fingerprint(kit, tasks_text, "1")
+            ce.append_role_use(kit, "1", "verifier", None, "sol", 0,
+                               evidence_fingerprint=before, report="reviewed")
+            self.assertTrue((kit / ce.ROLE_USE_FILENAME).exists())
+            after_record = ce.review_evidence_fingerprint(kit, tasks_text, "1")
+            self.assertEqual(before, after_record, "the driver's own record is not evidence")
+            self.assertTrue(ce._role_use_succeeded(kit, "1", "verifier", after_record))
+            (root / "m.py").write_text("def f():\n    return 3\n")
+            self.assertNotEqual(after_record, ce.review_evidence_fingerprint(kit, tasks_text, "1"))
+
     def test_missing_verify_fails_before_dispatch(self):
         runner = mock.Mock()
         with self.assertRaises(ce.PolicyError):

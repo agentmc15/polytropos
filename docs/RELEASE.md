@@ -24,18 +24,19 @@ client by invariant, because a real call spends the user's credits.
 
 An argv fixture is therefore not a verified OS sandbox, a green suite is not a verified client,
 and a registry row that reads `unknown` means no. The gate reports both columns side by side so
-that neither can stand in for the other. As of this page's last build, the installed-client
-verification on record is Claude Code 2.1.273 on 2026-09-16: one authorized live `run` of a
-one-task kit in a throwaway project (dispatch, the confined verify, the attempt ledger) and one
-`review --phase 1` of it (the restricted tool pin, the independent review), each recorded in the
-ledger with the client version in its registry row; and Cursor CLI 2026.09.10-fd3934a, the
-same day, after the CLI was installed, found to name itself nowhere (its `about` schema is the
-identity now), refused once while logged out (classified `auth`, nothing spent), and then, once
-the user had logged in, driven through one `run` and one `--mode ask` review on a throwaway kit:
-identity probe, dispatch, read-only dispatch, structured events, durable attempts, and
-independent review. Its JSON result carries token usage the adapter does not read yet and no
-model name. Every Codex and Copilot row is still `unknown` or `unsupported`, and the block
-below says which.
+that neither can stand in for the other. As of this page's last build, every real harness has
+been run live once, on 2026-09-16, on the user's own account against a throwaway one-task kit:
+Claude Code 2.1.273 (dispatch, the confined verify, the attempt ledger, the restricted tool pin,
+the independent review), Cursor CLI 2026.09.10-fd3934a (identity probe, dispatch, read-only
+dispatch, structured events, durable attempts, independent review), codex-cli 0.153.3 (dispatch
+with the rollout-attested model, structured events, the read-only sandbox, durable attempts,
+review and acceptance), and GitHub Copilot CLI 1.0.80 (dispatch, durable attempts, the restricted
+review). Each row carries that date and client version. What is still `unknown` is what no run
+exercised -- escalation, the dead-run resume path, Cursor's `--model` and IDE/cloud modes,
+concurrent dispatch, and every workflow-evaluation adapter -- and the block below says which.
+Two defects the live runs found are fixed in the same branch: the Claude driver read a kit's
+agents from this checkout only, and Codex's acceptance could never recognise a live review
+because the review's own record moved the fingerprint it had recorded.
 
 ## Running the gate
 
@@ -67,11 +68,10 @@ and unimplemented modes stay visible rather than being presented as parity.
 
 ## What remains external validation
 
-- **No vendor client but Claude Code and Cursor has been run from this repository.** Codex and
-  Copilot dispatch, review pinning, structured events, and every workflow-evaluation adapter are
-  implemented against vendor documentation and exercised through stubs only; Cursor's were
-  run live on 2026-09-16 and are recorded above. The prepared commands at the end of the block
-  are how the rest changes, one row at a time. Two things the live Claude run showed the ledger does not yet
+- **Every vendor client has now been run once, and once is not much.** Each driver made one
+  dispatch and one review on a trivial task; escalation, resume after a dead run, and the
+  workflow-evaluation adapters have not run against any client. The prepared commands at the
+  end of the block are how the rest changes, one row at a time. Two things the live Claude run showed the ledger does not yet
   carry: the attempt's duration (the drivers' runners drop it) and the mode the verify ran
   under (enforced or trusted-host); both are follow-ups, not release blockers.
 - **The execution boundary is macOS Seatbelt only.** `--exec-mode enforced` refuses on Linux and
@@ -134,8 +134,8 @@ Three answers per capability, never collapsed: does the product support it, has 
 | Harness | Driver | Binary | Client mode | Client version | Latest evidence | Rows |
 |---|---|---|---|---|---|---|
 | Claude Code | `bin/claude_execute.py` | `claude` | cli (claude -p) | Claude Code 2.1.273, macOS 14.4 sandbox-exec (Darwin 23.4.0) | 2026-09-16 | 5 verified / 2 unknown / 4 unsupported |
-| OpenAI Codex CLI | `bin/codex_execute.py` | `codex` | cli (codex exec --json) | not recorded | none | 0 verified / 7 unknown / 6 unsupported |
-| GitHub Copilot CLI | `bin/copilot_execute.py` | `copilot` | cli (copilot -p) | not recorded | none | 0 verified / 5 unknown / 4 unsupported |
+| OpenAI Codex CLI | `bin/codex_execute.py` | `codex` | cli (codex exec --json) | codex-cli 0.153.3 | 2026-09-16 | 5 verified / 2 unknown / 6 unsupported |
+| GitHub Copilot CLI | `bin/copilot_execute.py` | `copilot` | cli (copilot -p) | GitHub Copilot CLI 1.0.80 | 2026-09-16 | 3 verified / 2 unknown / 4 unsupported |
 | Cursor CLI | `bin/cursor_execute.py (bin/cursor_adapter.py)` | `agent` | cli (agent -p) | Cursor CLI 2026.09.10-fd3934a | 2026-09-16 | 6 verified / 6 unknown / 7 unsupported |
 | Stub (conformance target; runs nothing) | `bin/harness_adapter.py StubAdapter; bin/kit_scheduler.py StubDispatcher` | none | none | not recorded | 2026-09-13 | 3 verified / 0 unknown / 2 unsupported |
 
@@ -174,15 +174,15 @@ Three answers per capability, never collapsed: does the product support it, has 
 | async_tools | unknown | unsupported | unknown |  |  | unsupported |
 | cancel | unknown | supported | unknown |  |  | unknown |
 | concurrent_dispatch | not-applicable | unsupported | unknown |  |  | unsupported |
-| dispatch | supported | supported | unknown |  |  | unknown |
-| durable_attempts | not-applicable | supported | unknown |  |  | unknown |
+| dispatch | supported | supported | supported | 2026-09-16 | codex-cli 0.153.3 | supported |
+| durable_attempts | not-applicable | supported | supported | 2026-09-16 | codex-cli 0.153.3 | supported |
 | effort_per_turn | unknown | unsupported | unknown |  |  | unsupported |
 | extended_roles | not-applicable | unsupported | unknown |  |  | unsupported |
-| independent_review | not-applicable | supported | unknown |  |  | unknown |
+| independent_review | not-applicable | supported | supported | 2026-09-16 | codex-cli 0.153.3 | supported |
 | mid_turn_steering | unknown | unsupported | unknown |  |  | unsupported |
-| sandbox_read_only | supported | supported | unknown |  |  | unknown |
+| sandbox_read_only | supported | supported | supported | 2026-09-16 | codex-cli 0.153.3 | supported |
 | status | unknown | unsupported | unknown |  |  | unsupported |
-| structured_events | supported | supported | unknown |  |  | unknown |
+| structured_events | supported | supported | supported | 2026-09-16 | codex-cli 0.153.3 | supported |
 | workflow_evaluation | not-applicable | supported | unknown |  |  | unknown |
 
 #### GitHub Copilot CLI
@@ -197,10 +197,10 @@ Three answers per capability, never collapsed: does the product support it, has 
 |---|---|---|---|---|---|---|
 | cancel | unknown | supported | unknown |  |  | unknown |
 | concurrent_dispatch | not-applicable | unsupported | unknown |  |  | unsupported |
-| dispatch | supported | supported | unknown |  |  | unknown |
-| durable_attempts | not-applicable | supported | unknown |  |  | unknown |
+| dispatch | supported | supported | supported | 2026-09-16 | GitHub Copilot CLI 1.0.80 | supported |
+| durable_attempts | not-applicable | supported | supported | 2026-09-16 | GitHub Copilot CLI 1.0.80 | supported |
 | extended_roles | not-applicable | unsupported | unknown |  |  | unsupported |
-| independent_review | not-applicable | supported | unknown |  |  | unknown |
+| independent_review | not-applicable | supported | supported | 2026-09-16 | GitHub Copilot CLI 1.0.80 | supported |
 | status | unknown | unsupported | unknown |  |  | unsupported |
 | tool_pin | unknown | unsupported | unknown |  |  | unsupported |
 | workflow_evaluation | not-applicable | supported | unknown |  |  | unknown |
@@ -279,8 +279,8 @@ a failed, crashed, or refused dispatch is classified and never counted as succes
 | Harness | Stub conformance | Installed client |
 |---|---|---|
 | claude-code | `test_claude_execute.DispatchAndReadinessTests.test_a_failed_dispatch_does_not_become_done_on_a_passing_check` (1); `test_claude_execute.DispatchAndReadinessTests.test_a_failed_dispatch_does_not_climb_the_escalation_ladder` (1); `test_claude_execute.DispatchAndReadinessTests.test_a_runner_that_reports_nothing_is_unknown_not_success` (1); `test_claude_execute.DispatchAndReadinessTests.test_verification_failure_after_a_successful_dispatch_still_escalates` (1) | verified 2026-09-16: dispatch=supported |
-| codex | `test_codex_execute_policy.ReservedRecoveryTests.test_dispatch_failure_cannot_become_success_from_passing_verify` (1); `test_codex_execute_policy.ReservedRecoveryTests.test_runner_oserror_becomes_audited_failure` (1); `test_codex_execute_policy.ReservedRecoveryTests.test_runtime_policy_mismatch_blocks_without_unlocking_recovery` (1) | unknown: dispatch=unknown |
-| copilot | `test_copilot_execute.DispatchAndReadinessTests.test_a_failed_dispatch_does_not_become_done_on_a_passing_check` (1); `test_copilot_execute.DispatchAndReadinessTests.test_a_failed_dispatch_does_not_climb_the_escalation_ladder` (1); `test_attempt_ledger.RalphDurableLoopTests.test_an_environment_failure_stops_the_loop_after_one_tick` (1) | unknown: dispatch=unknown |
+| codex | `test_codex_execute_policy.ReservedRecoveryTests.test_dispatch_failure_cannot_become_success_from_passing_verify` (1); `test_codex_execute_policy.ReservedRecoveryTests.test_runner_oserror_becomes_audited_failure` (1); `test_codex_execute_policy.ReservedRecoveryTests.test_runtime_policy_mismatch_blocks_without_unlocking_recovery` (1) | verified 2026-09-16: dispatch=supported |
+| copilot | `test_copilot_execute.DispatchAndReadinessTests.test_a_failed_dispatch_does_not_become_done_on_a_passing_check` (1); `test_copilot_execute.DispatchAndReadinessTests.test_a_failed_dispatch_does_not_climb_the_escalation_ladder` (1); `test_attempt_ledger.RalphDurableLoopTests.test_an_environment_failure_stops_the_loop_after_one_tick` (1) | verified 2026-09-16: dispatch=supported |
 | cursor | `test_cursor_execute.FailureTests.test_a_dispatch_failure_is_classified_blocked_and_never_verified` (1); `test_cursor_execute.FailureTests.test_a_logged_out_cli_is_named_and_recorded` (1); `test_cursor_execute.IdentityRefusalTests` (3) | verified 2026-09-16: dispatch=supported, identity_probe=supported |
 | stub | `test_kit_scheduler.BatchTests.test_a_dispatch_failure_and_a_verify_failure_are_each_blocked_and_nothing_is_applied` (1); `test_workflow_eval.DirectWorkflowTests.test_a_dispatch_failure_is_classified_and_not_graded_as_solved` (1) | verified 2026-09-06: dispatch=supported |
 | shared | `test_attempt_ledger.ClassificationTests` (2); `test_attempt_ledger.FailureClassAtTheDriverTests.test_a_logged_out_cli_is_classified_recorded_and_not_escalated` (1); `test_proc_runner_wiring.DriverDispatchTests.test_a_missing_binary_comes_back_as_a_result_not_an_exception` (1); `test_proc_runner_wiring.DriverDispatchTests.test_a_stalled_dispatch_is_bounded_rather_than_waited_on` (1) | n/a |
@@ -318,8 +318,8 @@ review and verification dispatches carry the harness's documented restricted for
 | Harness | Stub conformance | Installed client |
 |---|---|---|
 | claude-code | `test_claude_execute.RolePermissionTests` (9) | verified 2026-09-16: tool_pin=supported, independent_review=supported |
-| codex | `test_codex_execute.BuildDispatchTests.test_default_does_not_change_approval_mode_or_bypass_sandbox` (1); `test_codex_execute.EndToEndRunHappyPathTests.test_review_with_stub_uses_supported_sandbox_without_mutating_kit` (1); `test_codex_execute_policy.DriverPolicyBoundaryTests.test_extra_args_cannot_override_model_profile_or_model_config` (1) | unknown: sandbox_read_only=unknown, independent_review=unknown |
-| copilot | `test_copilot_execute.ReviewPermissionTests` (3) | unknown: tool_pin=unknown, independent_review=unknown |
+| codex | `test_codex_execute.BuildDispatchTests.test_default_does_not_change_approval_mode_or_bypass_sandbox` (1); `test_codex_execute.EndToEndRunHappyPathTests.test_review_with_stub_uses_supported_sandbox_without_mutating_kit` (1); `test_codex_execute_policy.DriverPolicyBoundaryTests.test_extra_args_cannot_override_model_profile_or_model_config` (1) | verified 2026-09-16: sandbox_read_only=supported, independent_review=supported |
+| copilot | `test_copilot_execute.ReviewPermissionTests` (3) | unknown: tool_pin=unknown, independent_review=supported |
 | cursor | `test_cursor_adapter.DispatchArgvTests.test_read_only_dispatch_uses_mode_ask_and_never_force` (1); `test_cursor_adapter.DispatchArgvTests.test_extra_args_that_would_override_the_recorded_choice_are_refused` (1); `test_cursor_execute.ReviewTests.test_a_review_is_read_only_recorded_and_leaves_the_kit_alone` (1); `test_cursor_execute.ReadyTaskTests.test_extra_args_that_would_change_the_recorded_choice_are_refused_before_probe` (1) | verified 2026-09-16: read_only_dispatch=supported, independent_review=supported |
 | stub | `test_workflow_eval.AdapterTests.test_each_review_form_is_the_harness_documented_read_only_shape` (1); `test_workflow_eval.AdapterTests.test_every_adapter_builds_a_dispatch_and_a_read_only_review_with_the_prompt_verbatim` (1) | polytropos's own |
 | shared | `test_role_contract.VocabularyTests.test_read_only_roles_hold_no_write_grant_and_write_roles_hold_exactly_theirs` (1); `test_kit_contract.AdapterConformanceTests.test_an_unsupported_operation_raises_rather_than_returning_a_fake_answer` (1); `test_repo_bench.JudgePermissionTests` (4) | n/a |
@@ -331,8 +331,8 @@ a worker's edit to its own task block is detected and recorded; the ledger and e
 | Harness | Stub conformance | Installed client |
 |---|---|---|
 | claude-code | `test_attempt_ledger.ClaimAtTheDriverTests` (3); `test_attempt_ledger.ProjectionFromFreshReadTests.test_a_worker_that_flipped_its_own_status_is_overwritten_and_reported` (1) | verified 2026-09-16: durable_attempts=supported |
-| codex | `test_attempt_ledger.ClaimAtTheDriverTests` (3); `test_attempt_ledger.ProjectionFromFreshReadTests.test_a_worker_that_flipped_its_own_status_is_overwritten_and_reported` (1) | unknown: durable_attempts=unknown |
-| copilot | `test_attempt_ledger.ClaimAtTheDriverTests` (3); `test_attempt_ledger.ProjectionFromFreshReadTests.test_a_worker_that_flipped_its_own_status_is_overwritten_and_reported` (1) | unknown: durable_attempts=unknown |
+| codex | `test_attempt_ledger.ClaimAtTheDriverTests` (3); `test_attempt_ledger.ProjectionFromFreshReadTests.test_a_worker_that_flipped_its_own_status_is_overwritten_and_reported` (1) | verified 2026-09-16: durable_attempts=supported |
+| copilot | `test_attempt_ledger.ClaimAtTheDriverTests` (3); `test_attempt_ledger.ProjectionFromFreshReadTests.test_a_worker_that_flipped_its_own_status_is_overwritten_and_reported` (1) | verified 2026-09-16: durable_attempts=supported |
 | cursor | `test_cursor_execute.ResumeTests.test_a_task_another_live_run_holds_is_refused` (1); `test_attempt_ledger.ClaimAtTheDriverTests` (3) | verified 2026-09-16: durable_attempts=supported |
 | stub | `test_kit_scheduler.SecurityTests` (3); `test_kit_scheduler.RevisionTests.test_a_proposal_touching_acceptance_is_refused_whole` (1); `test_workflow_eval.DirectWorkflowTests.test_touching_test_paths_is_recorded_as_tampering_and_never_buys_a_grade` (1) | polytropos's own |
 | shared | `test_kit_graph.PlanDriftTests` (3); `test_attempt_ledger.ClaimTests` (2); `test_attempt_ledger.StoreLocationTests` (2) | n/a |
@@ -370,8 +370,8 @@ a dead run's open attempt is closed as unknown, reconciled by re-running the che
 | Harness | Stub conformance | Installed client |
 |---|---|---|
 | claude-code | `test_attempt_ledger.CrashAfterDispatchTests` (3); `test_attempt_ledger.CrashBeforeProjectionTests.test_a_recorded_verdict_is_projected_not_re_earned` (1) | verified 2026-09-16: durable_attempts=supported |
-| codex | `test_attempt_ledger.CrashAfterDispatchTests` (3); `test_attempt_ledger.CrashBeforeProjectionTests.test_a_recorded_verdict_is_projected_not_re_earned` (1) | unknown: durable_attempts=unknown |
-| copilot | `test_attempt_ledger.CrashAfterDispatchTests` (3); `test_attempt_ledger.CrashBeforeProjectionTests.test_a_recorded_verdict_is_projected_not_re_earned` (1); `test_attempt_ledger.RalphDurableLoopTests.test_a_second_run_resumes_iteration_count_spend_and_history` (1); `test_attempt_ledger.RalphDurableLoopTests.test_two_loops_on_one_goal_cannot_run_at_once` (1) | unknown: durable_attempts=unknown |
+| codex | `test_attempt_ledger.CrashAfterDispatchTests` (3); `test_attempt_ledger.CrashBeforeProjectionTests.test_a_recorded_verdict_is_projected_not_re_earned` (1) | verified 2026-09-16: durable_attempts=supported |
+| copilot | `test_attempt_ledger.CrashAfterDispatchTests` (3); `test_attempt_ledger.CrashBeforeProjectionTests.test_a_recorded_verdict_is_projected_not_re_earned` (1); `test_attempt_ledger.RalphDurableLoopTests.test_a_second_run_resumes_iteration_count_spend_and_history` (1); `test_attempt_ledger.RalphDurableLoopTests.test_two_loops_on_one_goal_cannot_run_at_once` (1) | verified 2026-09-16: durable_attempts=supported |
 | cursor | `test_cursor_execute.ResumeTests` (3); `test_attempt_ledger.CrashAfterDispatchTests` (3) | verified 2026-09-16: durable_attempts=supported |
 | stub | `test_kit_scheduler.ResumeTests` (2); `test_workflow_eval.KitWorkflowTests.test_a_dead_attempt_is_settled_without_replay_and_the_resume_is_recorded` (1); `test_workflow_eval.KitWorkflowTests.test_finished_work_left_by_a_dead_run_is_recognised_and_not_redispatched` (1) | polytropos's own |
 | shared | `test_attempt_ledger.RetryContextTests.test_context_is_bounded_names_unknown_attempts_and_the_trend` (1); `test_kit_graph.ReadinessTests.test_naming_the_interrupted_task_resumes_it` (1); `test_kit_graph.FrontierAndStateTests.test_interrupted_outranks_ready_because_nothing_here_schedules` (1); `test_kit_graph.DiamondThroughTheDriverTests.test_a_dead_runs_task_is_resumed_by_name_and_never_walked_past` (1) | n/a |
