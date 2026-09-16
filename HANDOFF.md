@@ -256,8 +256,33 @@ run) were done; step 4 (the bounded evaluation) waits on a target repository.
   nothing admitted. `repo_bench.order_mutation_candidates` now examines source code first,
   data after, prose last (`MutationCandidateOrderTests`) -- last, not never: a `.txt` golden
   file is a real site, and the undecodable-file note (F4) needs the file read. The repo's suite is green on a
-  history-free copy with its own venv and `PYTHONPATH=.` (the venv's editable install would
-  otherwise import the ORIGINAL tree, not the sandbox's): 284 passed, 1 xfailed, ~67 s.
+  history-free copy with its own venv: 284 passed, 1 xfailed, ~67 s. The test command is
+  `env PYTHONPATH=. <repo>/.venv/bin/python -m pytest -q -p no:cacheprovider`. Correcting
+  `ab2a42a`, which said the venv's editable install "would otherwise import the ORIGINAL
+  tree": that is true only for the bare `pytest` console script (its `.pth` names the original
+  checkout and the script's own dir leads `sys.path`); under `python -m pytest` the sandbox cwd
+  already leads `sys.path` and wins with or without `PYTHONPATH` -- checked with `python -I`
+  from a sandbox copy, which resolves every package to the original tree, and without `-I`,
+  which resolves every package to the copy. Keep the variable; it is belt-and-braces, not magic.
+- **The first real evaluation plan (free) and what it found.** `workflow_eval.py plan --repo
+  ai-stack-advisor --harness claude --models sonnet,haiku --workflows direct,reviewed,kit
+  --policies pinned --repeats 2 --limit 6` ran 2026-09-16 01:10-01:38 UTC (28 min, all of it
+  the target's suite once per site) and dispatched nothing. Issue-replay found 0 usable pairs;
+  general mode examined its full bound of 24 sites and admitted ONE task (`mut-1-aistack`, XS):
+  23 mutations left the suite green. The 24 sites were 19 in `cli/aistack.py` and 5 in
+  `kb/audit.py`, and most were not code at all -- `True` inside click decorator arguments,
+  and ` and ` / `==` inside docstrings and help strings -- because the line scanner matches
+  operator text anywhere in a source line. The one RED site was `if __name__ == "__main__":`
+  flipped to `!=`, which runs the CLI at import; a discriminating bug by the oracle's rule and a
+  trivial one by any other. So the priced plan (est. $0.48 over 16 dispatches, 16 check runs,
+  wall cap 8 h) is a pipeline smoke, not a routing verdict: one task is below the evidence
+  floor of 5 per variant, and `propose` would refuse it by design. Two follow-ups, neither
+  started: a token-aware site scan for Python (stdlib `tokenize`; skip COMMENT and STRING
+  tokens, naive elsewhere) so the bound is spent on operators, and the fact that tree order
+  within code puts `cli/` before `recommender/`, so the tested core is never reached under a
+  small `--limit`. Also worth knowing before a live run: `run --live` re-mines from scratch in
+  its own temp dir, so the plan's 28 minutes repeat before the first dispatch. The plan card is
+  in this session's scratchpad (`asa-plan.json`); it is deterministic and reproducible.
 - **What the live runs showed the ledger does not carry yet.** `duration_s` is null on every
   live attempt on both harnesses (the drivers' `(rc, output)` runners drop `proc_runner`'s
   timing, and Cursor's JSON even reports `duration_ms`); the verify events do not say which
@@ -306,10 +331,12 @@ run) were done; step 4 (the bounded evaluation) waits on a target repository.
 
 ### Step 25's own deliberate limits
 
-- **Nothing ran live.** Every adapter's argv is its driver's documented shape and every dollar
+- **Nothing has dispatched live.** Every adapter's argv is its driver's documented shape and every dollar
   figure is an estimate at the harness's own rates; the registry's `workflow_evaluation` rows
   are `verified: unknown` for all four real harnesses and `supported` only for the stub. The
-  bounded plan in `docs/WORKFLOW-EVAL.md` is a command, not a result.
+  bounded plan in `docs/WORKFLOW-EVAL.md` is a command, not a result. One `plan` has run on a
+  real target (2026-09-16, above): it mined one task, so a live run of it would verify the
+  pipeline, not produce an applicable verdict.
 - **`solved` is the tests oracle and only that.** The full-patch diagnostic and the blind
   judge stay repo_bench's; the evaluator does not dispatch a judge. A reviewer's verdict, the
   kit's own check, and an adjudication are recorded beside `solved`, never in it.
