@@ -1,4 +1,4 @@
-# Handoff — roadmap implementation, steps 01–25
+# Handoff — roadmap implementation, steps 01–26 (complete)
 
 **As of 2026-09-07.** Steps 01–15 are committed as a single change set on top of `fb40925`:
 66 files modified, 17 added, +5,485 / −1,860 lines. Full suite green: **3,727 tests, OK
@@ -33,14 +33,16 @@ user instructions outrank rule files; delegate in parallel by default).
 
 ## Where things stand
 
-**Steps 01–25 are done.** That is all of Phase A (input/artifact/acceptance boundaries), all of
+**All 26 steps are done.** That is all of Phase A (input/artifact/acceptance boundaries), all of
 Phase B (the execution boundary and the P0/P1 security remediation), all of Phase C (the
-shared runtime: durable attempts, cross-harness evidence, the validated execution DAG), and
-all of Phase D (named routing policies; the role contract; fresh, bounded code-graph
-grounding; lean entry points and scoped lessons; the Cursor adapter; artifact-aware
-scheduling with opt-in bounded concurrency), and the first half of Phase E (workflow
-evaluation with a reviewed, versioned, reversible policy process). Steps 16–25 landed on
-2026-09-12/13 on branch `harden/roadmap-steps-16-26`, one commit each. Step 26 remains.
+shared runtime: durable attempts, cross-harness evidence, the validated execution DAG), all
+of Phase D (named routing policies; the role contract; fresh, bounded code-graph grounding;
+lean entry points and scoped lessons; the Cursor adapter; artifact-aware scheduling with
+opt-in bounded concurrency), and all of Phase E (workflow evaluation with a reviewed,
+versioned, reversible policy process; the release gate). Steps 16–25 landed on 2026-09-12/13
+and step 26 on 2026-09-15, on branch `harden/roadmap-steps-16-26`, one commit each. The branch is unpushed and unmerged;
+merging it is the user's call. What remains after step 26 is external validation — the
+prepared live commands in `docs/RELEASE.md` — and that is a person's, not a session's.
 
 | Step | What it closed |
 |---|---|
@@ -69,6 +71,7 @@ evaluation with a reviewed, versioned, reversible policy process). Steps 16–25
 | 23 | A real Cursor adapter on the shared runtime (`bin/cursor_adapter.py` + `bin/cursor_execute.py`): the generically named `agent` binary identified before any dispatch (`--version`, then `about --format json`; unknown or absent fails closed before a claim or a write); `agent -p --output-format json --trust --workspace … [--model …] --force` for implementation and `--mode ask` for review, with overriding extra flags refused; IDE, CLI, and cloud modes reported separately (product / implemented / verified, all `verified: unknown`); a project-scoped `.cursor/` bundle (skill, implementer, read-only verifier) with an ownership-aware, manifest-backed, no-clobber installer (`harness_select install --harness cursor --project`) and a `doctor` that diagnoses ambient files carrying another harness's commands; `data/pricing.cursor.json` as Cursor's own empty roster, usage unknown, `usd: null` on every block; no ladder; the shared conformance (ready, dispatch failure, verify failure, budget stop, resume, roster gap, review) through a stub; `kit_contract.budget_gate` and `append_run_note` extracted for adapters; the anti-triplication guard now spans four drivers |
 | 24 | Artifact-aware scheduling and opt-in bounded concurrency (`bin/kit_scheduler.py` + step-24 additions to `bin/kit_contract.py` / `bin/attempt_ledger.py`): every acceptance records the artifact version accepted and the upstream versions it rested on (`task.projected` carries `artifact` and `upstream`); `evidence_freshness` names a done task `stale` when a dependency was re-accepted with a different artifact (`unknown` for legacy or non-git, disclosed, never rounded); `graph_state`/`readiness` keep dependents of a stale acceptance out of the frontier, every driver's selection sees it, `status`/`graph` print the stale clause, `kit_contract.py freshness` reports and `refresh` re-verifies in place with zero attempts; the scheduler (sequential by default, `--max-parallel` ≤ 8 opt-in) claims a batch atomically, admits it in ONE budget decision, runs each task in its own copy of the tree under the store, measures write sets, integrates from a manifest (paths, verdicts, bounded diagnostics; never a transcript), keeps and names conflicts (two writers, or a user change during the batch) without applying or resetting, verifies every integrated task again on the merged tree, records kit edits from a worker as `security.violation`, refuses proposals that touch acceptance, records dependency proposals and applies them only under `--accept-revisions` after revalidation, sizes the manifest against the integrating model's own long-context field (the recorded amendment), cancels what has not started with zero-attempt `result=cancelled` lines and settles dead runs first; `stub` and `cursor` are the dispatchers; `ROLE_SUPPORT["stub"]` and `concurrent_dispatch` registry rows added |
 | 25 | Workflow evaluation (`bin/workflow_eval.py` on the repo-bench seam; `repo_bench.mine_tasks` lifted out of `build_plan` unchanged): complete workflows compared on the same held-out tasks from the same clean snapshots — `direct`, `reviewed` (an independent read-only review whose verdict is recorded beside the grade), `kit` (the task as a one-task kit on the contract: claim, admission, the repository's own check under the execution boundary, projection, resume) — under pinned or routed (`reserved` / `adaptive`, decision recorded) models and instruction versions, counterbalanced repeats; five adapters (claude, codex, copilot, cursor, stub) each built from its own driver's argv and its own pricing file, with a read-only review form; every dispatch in the attempt ledger and joined through `attempt_history` with registry tiers; `solved` from the tests oracle alone; accepted completion with Wilson intervals, incorrect acceptances, interventions, wall-clock, coverage, stability, strata, usage per basis never summed (reported / estimated / proxy / credits / unpriced; only priced bases count against `--max-usd`); security outcomes recorded (incorrect acceptance, tampering, policy violation, capability refusal, budget overshoot, resume, privacy redaction by kind); a priced plan naming hard caps that is never dispatched; `prefs/routing-policy.json` changed only through `propose` (refused below floor, single repeat, or on reserved tasks) → named `review` → `apply` (refused unreviewed or stale) with every version kept and `rollback`; the `evals` store; `workflow_evaluation` registry rows |
+| 26 | The release gate (`bin/release_gate.py` + `docs/RELEASE.md`): the supported matrix computed from the evidence and never typed — contract versions read from their owning modules, package and toolchain versions from the manifests, `cached_date` and roster size per pricing file, every registry row's three states with its date and (from now on) the client version a verification ran against, `ROLE_SUPPORT` per harness, the historical primitive matrix summarised and left unrewritten; eleven shared contracts each mapped to the tests that prove them through a stub per harness beside the registry rows a real client would have to verify (STUB CONFORMANCE and INSTALLED-CLIENT VERIFICATION never merged; `check` refuses a test id that resolves to nothing and `--run` runs the map in-process); the packaging review (every `runtime_data.STORES` name needs its root-anchored ignore rule, no tracked file under a store or matching a junk pattern, every top-level path has a role, the plugin manifest and marketplace agree, the workflow's actions are SHA-pinned with deploy credentials only in the deploy job, every site package hashed); the checklist, migration and rollback notes, re-evaluation triggers, and prepared-not-run live commands as data, every cited `bin/X.py sub` resolved against the script's own parser; `reverify --harness --released` partitions rows by date and edits nothing; the marked block of `docs/RELEASE.md` is the deterministic render and drifts fail `check` (exit 3). Reconciled: PRIVACY.md (three stores missing from its table and its test; the step-13 closure of the plugin-cache runtime hazard), GRAPH-ENGINEERING.md (four drivers; 3-of-4 prompt attribution; opt-in concurrency beside sequential default), DAILY-JOURNAL.md (three of four pricing files); `tests/test_privacy_layout.py` now derives its list from `runtime_data.STORES`; the marketplace description matched to `plugin.json` |
 
 ### New modules, and what each is the *one place* for
 
@@ -154,31 +157,65 @@ evaluation with a reviewed, versioned, reversible policy process). Steps 16–25
   `adjudicate`), and the policy process (`build_proposal`, `review_proposal`,
   `apply_proposal`, `rollback_policy`, `policy_report`). `repo_bench.mine_tasks` is the
   miner it calls; it forks none of repo_bench's oracles, sandboxes, or ceilings.
+- `bin/release_gate.py` — the one place release claims are computed: `HARNESS_FACTS`,
+  `VERSION_SOURCES`, `CONTRACTS` (the contract → harness → test-id map, with the registry
+  rows each cell cites), `LEGACY_TESTS`, `NO_REAL_CLI_TESTS`, `CHECKLIST`, `MIGRATION_NOTES`,
+  `REEVALUATION_TRIGGERS`, `PREPARED_COMMANDS`, `TREE_ROLES`, `FORBIDDEN_TRACKED`;
+  `contract_versions`, `package_versions`, `harness_matrix`, `historical_matrix`,
+  `contracts_report` (`resolve_test_ids` / `run_test_ids`, both injectable),
+  `packaging_review` (tracked list injectable), `registry_findings`, `reverify`,
+  `command_findings`, `render_block` / `build_release_doc` / `check_release_doc`,
+  `run_check`. Read-only git through `proc_runner` (`GIT_READ_VERBS`), nothing else spawned.
 
 ---
 
-## Next: step 26 — validate the supported release matrix; publish only measured guarantees
+## Next: nothing in the roadmap — what remains is external validation
 
-The release gate. Run the focused suites each change affects and the repository's own
-integration and docs gates. Confirm every advertised adapter / client / OS mode passes its
-applicable shared contracts: dispatch failure, dependency readiness, verification isolation, role
-permissions, protected state, verdict provenance, budget admission, interruption and resume,
-filesystem confinement, installation ownership, privacy eligibility. Distinguish STUB conformance
-from installed-client verification -- an argv fixture is not a verified OS sandbox, and
-`primitives/harness-capabilities.json` already says which is which; keep it that way. Regenerate
-the owned mirrors. Preserve the historical primitive matrix (`primitives/harness-matrix.json`)
-and publish the current operational support separately: versions, evidence dates, known gaps,
-migration and rollback instructions. Review packaging so private runtime stores and unintended
-artifacts stay out. Retain no-clobber upgrades and compatibility with legacy kits. Produce a
-release checklist with the evidence behind each guarantee and the unresolved limits. Prepare the
-optional bounded installed-client smoke and live workflow-evaluation commands (step 23's
-`doctor` smoke; step 25's `plan … --live --max-usd --max-dispatches`) WITHOUT running them,
-installing into real homes, pushing, publishing, or changing account settings. Record how a
-future harness or model release triggers targeted capability and workflow re-evaluation. Never
-add a permanent instruction after a failure and never promote a routing default automatically.
+The 26 steps are implemented. What a session cannot do is in `docs/RELEASE.md` under "Prepared,
+not run": the Cursor identity smoke, one authorised live `run` per driver, the bounded workflow
+evaluation, the bounded benchmark. Each records into a registry row by hand (`verified`,
+`verified_on`, `client_version`, the command in the note) — `release_gate.py reverify` lists
+which rows a client release invalidates and writes nothing. Merging `harden/roadmap-steps-16-26`
+into `main` and pushing are the user's calls. If a later session picks this up:
 
-Exit gate: release claims match demonstrated behaviour; unknown host capabilities, unrun live
-checks, and unimplemented modes stay visible rather than presented as parity.
+- `python3 bin/release_gate.py check` first; then `check --run` if there is time (it runs the
+  whole contract map in-process, several minutes).
+- A new `docs/*.md` still moves the census pins (now 29 / 31 / 73 and 30 / 32 / 74).
+- `CLAUDE.md` has 8 bytes of headroom under its 16,000-byte ceiling; trim before adding.
+
+### Step 26's own deliberate limits
+
+- **Nothing ran live.** The gate reads the registry; it does not verify anything itself. Every
+  real-harness row stays `unknown` or `unsupported` except Claude's three from 2026-09-06.
+- **Client versions are `not recorded` everywhere.** The 2026-09-06 Claude verification wrote
+  none and is not backfilled (that would be hand-authoring evidence). A `verified: supported`
+  row dated on or after 2026-09-13 must carry `client_version` or `check` fails
+  (`CLIENT_VERSION_REQUIRED_FROM`); older rows are exempt and say so.
+- **The contract map is a curated table, not a discovery.** `CONTRACTS` names the tests that
+  prove each contract per harness; `check` proves those ids exist and `--run` proves they pass,
+  but a new test proving a contract joins the map only when someone adds it.
+- **`check` does not run the map by default.** Resolving ids takes seconds; running them takes
+  minutes and spawns the drivers' stub executables. `--run` is the opt-in.
+- **Packaging is reviewed, not built.** There is no package artifact to inspect: the plugin is
+  installed from this directory, so the review is of the tracked tree, the ignore rules, the
+  manifests, the workflow, and the lock file. The Codex package version line
+  (`0.5.0+codex.…`) differs from the plugin version and is reported as a note, not a finding,
+  because rewriting it changes the ownership keys of every installed Codex copy.
+- **The generated block carries no revision or date.** Determinism is what lets `check` fail
+  on drift; the live `check` output carries the sha, commit date, and dirty count instead.
+- **The map is only as good as its ids, and the gate already caught one.** The first populated
+  map named `test_kit_graph.ReadinessTests.test_interrupted_outranks_ready…`; the method lives in
+  `FrontierAndStateTests`. `check` reported it as resolving to no test before any run, which is
+  the failure mode the resolver exists for. The verification-isolation row had no per-driver
+  evidence at all until `test_proc_runner_wiring.DriverVerifyWiringTests` pinned that every
+  driver builds its verify runner from `exec_policy` with the parsed `--exec-mode` and exposes
+  `trusted-host` as the one opt-out; the boundary's behaviour itself stays `test_exec_policy`'s.
+- **`harness_update.py check` exits 3 on this machine and that is not a repository finding.** Its
+  `data` section is up-to-date; the `claude` and `copilot` sections describe the user's installed
+  homes, which lag an unmerged branch. The checklist row cites the `data` section, not the exit.
+- **Doc reconciliation covered the three pages the roadmap named plus README and SECURITY.**
+  Other deep-dives written before the Cursor adapter still say "three harnesses" where they
+  describe their own kit's history; those are records of the kit, not present-tense claims.
 
 ### Step 25's own deliberate limits
 
@@ -572,6 +609,24 @@ These cost real time to discover. All are still live.
    into every other module and every subprocess they spawn: the first full run of step 25
    moved `test_lessons_promote`'s default `journal/promotions` path out of the tree and
    failed a test that had nothing to do with the change. Trap 7's block is the pattern.
+23. **Every command the release checklist cites goes through `release_gate.command_findings`.**
+   Its first run caught its own data naming `lessons_store.py record` (the subcommand is
+   `observe`). A script without `build_parser` (`runtime_data`, `kit_contract`,
+   `sync_pricing_refs`) is checked for existence only, so cite its subcommands carefully.
+24. **A YAML comment that mentions a credential reads as a grant to a line-based check.** The
+   workflow's header comment names `pages: write` and `id-token: write`; the packaging review
+   strips comments first (`_strip_yaml_comments`, not a YAML parser) and a test pins that a
+   comment is not a grant.
+25. **`tests/test_privacy_layout.PRIVATE_DIRS` is `runtime_data.STORES` now.** It had stopped at
+   five while the engines had eight stores. Adding a store means: `runtime_data.STORES`, a
+   root-anchored `.gitignore` rule, the CLAUDE.md store list, PRIVACY.md's table — and
+   `release_gate.py packaging` names the missing rule before the privacy test does.
+26. **The census pins moved again**: 29 sources / 31 page-map keys / 73 pages, and the
+   "one more" targets 30 / 32 / 74 (step 26, `docs/RELEASE.md`).
+27. **The generated block of `docs/RELEASE.md` must stay deterministic.** No date, revision,
+   dirty count, interpreter version, or test result goes into `render_block`; those live in
+   the live `check` output. `binary_name` loads four driver modules to read parser defaults,
+   which is deterministic but not free — `harness_matrix(with_binaries=False)` where speed matters.
 
 ---
 
@@ -586,8 +641,10 @@ Each is recorded in `SECURITY.md` rather than hidden. None is a surprise; all ar
   downgrading silently.
 - **Benchmark candidates and judges are not confined.** `repo_bench` builds history-free
   sandboxes and withholds reference tests structurally, but dispatch runs with driver privileges.
-- **Role names are not permissions on Claude and Copilot.** Review dispatch carries a full
-  permission grant; no citable per-tool flag was found for Copilot and inventing one was refused.
+- **Role names are not permissions.** Since step 06 no review dispatch carries a blanket grant
+  (this bullet used to say the opposite; `SECURITY.md` was corrected on 2026-09-12 and this line
+  on 2026-09-13). What remains: Copilot has no citable per-tool flag, so its restricted review is
+  only the absence of `--allow-all-tools`; inventing a narrower pin was refused.
 - **Execution state is not tamper-proof.** The attempt ledger is outside the workspace, so the
   confined verify path cannot reach it; a dispatch is unconfined and a worker with the user's
   privileges can write anywhere the user can. `TASKS.md`/`NOTES.md`/markers stay in the tree; a
@@ -625,7 +682,9 @@ Each is recorded in `SECURITY.md` rather than hidden. None is a surprise; all ar
 ```bash
 cd /Users/michaelcave/Developer/reposV2/polytropos
 python3 -m unittest discover -s tests          # expect OK (2 skipped), ~4 min; the count is in the last commit that changed it
-git log --oneline -11                          # steps 16–25 on top of the merged 01–15
+git log --oneline -12                          # steps 16–26 on top of the merged 01–15
+python3 bin/release_gate.py check              # the release gate: registry, contract ids, packaging, commands, doc block
+python3 bin/release_gate.py contracts          # stub conformance beside installed-client verification, per contract
 python3 bin/runtime_data.py where              # where your stores resolved to
 python3 bin/harness_adapter.py                 # what each harness can actually do
 python3 bin/attempt_ledger.py demo             # crash / resume / progress walkthrough, temp dir only

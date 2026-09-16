@@ -293,15 +293,16 @@ class CensusBumpTripwireTests(unittest.TestCase):
     one more docs/*.md file in a temp copy must break them (29/31/73), not
     sail through unfalsified. 2026-09-13: every pin moved by one when step 23
     added docs/CURSOR-HARNESS.md, again when step 24 added
-    docs/KIT-SCHEDULER.md, and again when step 25 added docs/WORKFLOW-EVAL.md."""
+    docs/KIT-SCHEDULER.md, again when step 25 added docs/WORKFLOW-EVAL.md, and again
+    when step 26 added docs/RELEASE.md (29 / 31 / 73)."""
 
     def test_pinned_counts_match_the_real_tree(self):
         docs_build = _load("_t8_docs_build_real", BIN_DIR / "docs_build.py")
         md_sources = sorted((REPO_ROOT / "docs").glob("*.md"))
-        self.assertEqual(len(md_sources), 28)
+        self.assertEqual(len(md_sources), 29)
         page_map = docs_build.deep_dive_page_map(REPO_ROOT)
-        self.assertEqual(len(page_map), 30)
-        self.assertEqual(len(docs_build.expected_pages(REPO_ROOT)), 72)
+        self.assertEqual(len(page_map), 31)
+        self.assertEqual(len(docs_build.expected_pages(REPO_ROOT)), 73)
 
     def test_one_more_doc_breaks_the_pinned_counts(self):
         docs_build = _load("_t8_docs_build_copy", BIN_DIR / "docs_build.py")
@@ -311,16 +312,16 @@ class CensusBumpTripwireTests(unittest.TestCase):
                 shutil.copytree(REPO_ROOT / name, tmp / name)
 
             md_before = sorted((tmp / "docs").glob("*.md"))
-            self.assertEqual(len(md_before), 28)
-            self.assertEqual(len(docs_build.expected_pages(tmp)), 72)
+            self.assertEqual(len(md_before), 29)
+            self.assertEqual(len(docs_build.expected_pages(tmp)), 73)
 
             (tmp / "docs" / "ZZZ-STUB.md").write_text("# Stub\n\nStub content.\n", encoding="utf-8")
 
             md_after = sorted((tmp / "docs").glob("*.md"))
-            self.assertEqual(len(md_after), 29, "one more doc must move the pinned 28 -> 29")
+            self.assertEqual(len(md_after), 30, "one more doc must move the pinned 29 -> 30")
             page_map_after = docs_build.deep_dive_page_map(tmp)
-            self.assertEqual(len(page_map_after), 31, "one more doc must move the pinned 30 -> 31")
-            self.assertEqual(len(docs_build.expected_pages(tmp)), 73, "one more doc must move the pinned 72 -> 73")
+            self.assertEqual(len(page_map_after), 32, "one more doc must move the pinned 31 -> 32")
+            self.assertEqual(len(docs_build.expected_pages(tmp)), 74, "one more doc must move the pinned 73 -> 74")
 
 
 class DocHygieneAcceptanceTests(unittest.TestCase):

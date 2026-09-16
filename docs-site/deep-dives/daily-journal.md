@@ -143,9 +143,10 @@ stand-in.
 
 ## The harness plan (advisory)
 
-`bin/journal_advisor.py` turns the digest's per-source reports plus the three pricing files
-(`data/pricing.json`, `data/pricing.copilot.json`, `data/pricing.codex.json` — never merged,
-no rates hardcoded, no rates borrowed from one harness's file for another) into
+`bin/journal_advisor.py` turns the digest's per-source reports plus three of the four pricing
+files (`data/pricing.json`, `data/pricing.copilot.json`, `data/pricing.codex.json` — never
+merged, no rates hardcoded, no rates borrowed from one harness's file for another;
+`data/pricing.cursor.json` is an empty roster and the Cursor source is deferred, below) into
 `signals.harness`: for each harness (Claude Code, Copilot CLI, Codex CLI) it reports today's
 actual usage plus a cheap-tier and a mid-tier task-cost estimate for two comparable task
 sizes, all derived from those pricing files at run time, plus a ready-to-paste command

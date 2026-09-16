@@ -193,5 +193,52 @@ class ConfinedRunTests(unittest.TestCase):
             self.assertEqual(result["outcome"], pr.OUTCOME_BAD_WORKDIR)
 
 
+class DriverVerifyWiringTests(unittest.TestCase):
+    """Every kit driver builds its verify runner from the execution boundary (step 05) with the
+    mode the user parsed, and exposes `trusted-host` as the one named opt-out.
+
+    2026-09-15 (roadmap step 26): the release gate's verification-isolation row had no
+    per-driver evidence -- the boundary's own behaviour is test_exec_policy's, but nothing
+    proved a driver reaches it. What a driver can get wrong is not calling it, or calling it
+    with a mode of its own choosing, so this pins the call site and the flag on each driver.
+    """
+
+    DRIVERS = ("claude_execute", "copilot_execute", "codex_execute", "cursor_execute")
+
+    def _boundary_of(self, module):
+        loader = getattr(module, "_ep", None) or module._CONTRACT._ep
+        return loader()
+
+    def test_every_driver_builds_its_verify_runner_from_the_boundary(self):
+        for name in self.DRIVERS:
+            with self.subTest(driver=name):
+                source = (ROOT / "bin" / f"{name}.py").read_text(encoding="utf-8")
+                sites = [line for line in source.splitlines()
+                         if "_ep().verify_runner(" in line and "mode=args.exec_mode" in line]
+                self.assertEqual(
+                    len(sites), 1,
+                    f"{name}: expected exactly one verify runner built from the boundary with "
+                    f"the parsed --exec-mode, found {len(sites)}",
+                )
+                boundary = self._boundary_of(_load(name))
+                self.assertEqual(Path(boundary.__file__).name, "exec_policy.py")
+                self.assertTrue(callable(boundary.verify_runner))
+
+    def test_every_driver_exposes_exec_mode_with_trusted_host_as_the_named_opt_out(self):
+        for name in self.DRIVERS:
+            with self.subTest(driver=name):
+                parser = _load(name).build_parser()
+                run_parser = None
+                for action in parser._actions:
+                    choices = getattr(action, "choices", None)
+                    if isinstance(choices, dict) and "run" in choices:
+                        run_parser = choices["run"]
+                self.assertIsNotNone(run_parser, f"{name}: no `run` subcommand")
+                flag = [a for a in run_parser._actions if "--exec-mode" in a.option_strings]
+                self.assertEqual(len(flag), 1, f"{name}: `run` has no --exec-mode")
+                self.assertEqual(tuple(flag[0].choices), ("enforced", "trusted-host"))
+                self.assertEqual(flag[0].default, "enforced")
+
+
 if __name__ == "__main__":
     unittest.main()

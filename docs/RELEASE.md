@@ -1,0 +1,545 @@
+# Release gate — the supported matrix, and what "supported" is allowed to mean
+
+`bin/release_gate.py` is the one place this repository's release claims are computed. It reads
+the capability registry, the contract version constants, the manifests, the pricing files, the
+ignore rules, the workflow, and a map from each shared contract to the tests that prove it, and
+it renders the block below. Nothing in that block is typed by hand: `python3 bin/release_gate.py
+build` rewrites it and `python3 bin/release_gate.py check` fails when it has drifted, when a
+registry row is malformed, when a test the map names no longer exists, when a private store
+has lost its ignore rule, or when a command the checklist cites has been renamed.
+
+## Two kinds of evidence, never merged
+
+Every cell of the contract table below has two columns, and they answer different questions.
+
+**Stub conformance** says that a named test drove a driver through a stub executable and a
+temporary store, and the shared contract held: the dispatch failure was classified, the invalid
+graph refused with nothing written, the dead attempt was closed as unknown and not replayed. That
+is evidence about polytropos's own code, and the suite produces it on every run.
+
+**Installed-client verification** says that a person ran the vendor's client on a date and wrote
+the result into `primitives/harness-capabilities.json`, with the client version it was run
+against. That is evidence about a host, and the suite cannot produce it: every test stubs the
+client by invariant, because a real call spends the user's credits.
+
+An argv fixture is therefore not a verified OS sandbox, a green suite is not a verified client,
+and a registry row that reads `unknown` means no. The gate reports both columns side by side so
+that neither can stand in for the other. As of this page's last build, the only installed-client
+verification on record is one authorized Claude Code invocation, scoped to flag handling; every
+other real-harness row is `unknown` or `unsupported`, and the block below says which.
+
+## Running the gate
+
+```bash
+python3 bin/release_gate.py check                 # registry, contract ids, packaging, commands, this block; exit 3 on drift
+python3 bin/release_gate.py check --run           # the same, plus every mapped test run in-process
+python3 bin/release_gate.py matrix                # operational support per harness (--json)
+python3 bin/release_gate.py contracts --run       # the evidence table alone
+python3 bin/release_gate.py packaging             # what the package carries; findings fail
+python3 bin/release_gate.py checklist             # checklist, migration notes, triggers, prepared commands
+python3 bin/release_gate.py reverify --harness codex --released 2026-10-01   # what a client release invalidates; edits nothing
+python3 bin/release_gate.py build                 # rewrite the generated block below
+```
+
+`check` spawns nothing but read-only git verbs through `bin/proc_runner.py`; `--run` adds this
+repository's own test loader, in-process. No subcommand reads a home directory, opens a private
+store, contacts a vendor, or edits a registry row.
+
+## What a release is here
+
+A release is a version bump in `.claude-plugin/plugin.json` on a tree where the full suite is
+green, both documentation generators' `check` and this gate's `check` exit 0, and the generated
+mirrors are rebuilt. The plugin is installed from this directory through its own local
+marketplace, so "publishing" is `claude plugin update` followed by the prune runbook in
+[PRIVACY.md](PRIVACY.md), both run by a person: no engine here pushes, installs into a home
+directory, or refreshes the plugin cache. The roadmap's exit gate is the rule this page serves:
+release claims match demonstrated behaviour, and unknown host capabilities, unrun live checks,
+and unimplemented modes stay visible rather than being presented as parity.
+
+## What remains external validation
+
+- **No vendor client has been run from this repository** beyond the one Claude Code invocation
+  above. Codex, Copilot, and Cursor dispatch, review pinning, structured events, and the workflow
+  evaluation adapters are implemented against vendor documentation and exercised through stubs
+  only. The prepared commands at the end of the block are how that changes, one row at a time.
+- **The execution boundary is macOS Seatbelt only.** `--exec-mode enforced` refuses on Linux and
+  Windows rather than downgrading; model dispatch itself is unconfined on every harness.
+- **`mkdocs build --strict` runs only in CI.** The locked toolchain targets Linux; the drift gate
+  that runs before it passes locally.
+- **Repository settings** (Pages source, Dependabot, secret scanning) are configured by a person;
+  `SECURITY.md` names them.
+- **A first live workflow evaluation** is what gives a routing proposal evidence. Until one runs,
+  every dollar in a plan is an estimate at the harness's own rates and no proposal can clear the
+  floor.
+
+<!-- release-gate:start -->
+<!-- Generated by `python3 bin/release_gate.py build` from the capability registry, the contract map, the manifests, and the pricing files. Do not edit by hand; `release_gate.py check` fails on drift. -->
+
+### Versions
+
+Contract versions are read from the module that owns each one; package versions from the manifests; `cached_date` from each pricing file.
+
+| Contract | Owner | Version |
+|---|---|---|
+| task contract | `bin/kit_contract.py` | `polytropos.task/1` |
+| adapter contract | `bin/harness_adapter.py` | `polytropos.adapter/1` |
+| attempt ledger | `bin/attempt_ledger.py` | `polytropos.attempts/1` |
+| attempt history | `bin/attempt_history.py` | `polytropos.attempt-history/1` |
+| model registry | `bin/model_registry.py` | `polytropos.model-registry/1` |
+| routing decision | `bin/routing_policy.py` | `polytropos.routing/1` |
+| graph grounding | `bin/graph_ground.py` | `polytropos.grounding/1` |
+| graph provenance sidecar | `bin/graph_ground.py` | `polytropos.graph-provenance/1` |
+| integration manifest | `bin/kit_scheduler.py` | `polytropos.integration-manifest/1` |
+| workflow evaluation | `bin/workflow_eval.py` | `polytropos.workflow-eval/1` |
+| policy proposal | `bin/workflow_eval.py` | `polytropos.policy-proposal/1` |
+| routing policy file | `bin/workflow_eval.py` | `polytropos.routing-policy/1` |
+| lessons store | `bin/lessons_store.py` | `polytropos.lessons/2` |
+| release gate | `bin/release_gate.py` | `polytropos.release-gate/1` |
+
+| Package | Version |
+|---|---|
+| Claude Code plugin | polytropos 0.5.3 |
+| Local marketplace | polytropos-local |
+| Codex package | polytropos 0.5.0+codex.20260906003447 |
+| Codex marketplace | polytropos-local |
+| Capability registry schema | polytropos-harness-capabilities/v1 |
+| Historical primitive matrix | polytropos-harness-matrix/v1 pinned at aesop 9c4108ee8ca3 (aesop's own pin: June–July 2026) |
+| Primitive model schema | polytropos-primitives/v1 |
+| Site toolchain (locked) | mkdocs 1.6.1, mkdocs-material 9.7.7 |
+| Python floor | 3.11 (stdlib only) |
+
+| Harness | Pricing file | cached_date | Models |
+|---|---|---|---|
+| claude-code | `data/pricing.json` | 2026-07-24 | 7 |
+| codex | `data/pricing.codex.json` | 2026-09-05 | 7 |
+| copilot | `data/pricing.copilot.json` | 2026-09-05 | 26 |
+| cursor | `data/pricing.cursor.json` | 2026-09-13 | 0 |
+
+### Operational support by harness
+
+Three answers per capability, never collapsed: does the product support it, has polytropos implemented it, has anyone run it on a real client and dated the run. `Client version` is what that run recorded; `not recorded` means no verification has named one. A stub's `supported` rows are about the stub.
+
+| Harness | Driver | Binary | Client mode | Client version | Latest evidence | Rows |
+|---|---|---|---|---|---|---|
+| Claude Code | `bin/claude_execute.py` | `claude` | cli (claude -p) | not recorded | 2026-09-06 | 3 verified / 4 unknown / 4 unsupported |
+| OpenAI Codex CLI | `bin/codex_execute.py` | `codex` | cli (codex exec --json) | not recorded | none | 0 verified / 7 unknown / 6 unsupported |
+| GitHub Copilot CLI | `bin/copilot_execute.py` | `copilot` | cli (copilot -p) | not recorded | none | 0 verified / 5 unknown / 4 unsupported |
+| Cursor CLI | `bin/cursor_execute.py (bin/cursor_adapter.py)` | `agent` | cli (agent -p) | not recorded | none | 0 verified / 12 unknown / 7 unsupported |
+| Stub (conformance target; runs nothing) | `bin/harness_adapter.py StubAdapter; bin/kit_scheduler.py StubDispatcher` | none | none | not recorded | 2026-09-13 | 3 verified / 0 unknown / 2 unsupported |
+
+#### Claude Code
+
+- Install: `claude plugin install polytropos@polytropos-local`
+- Bundle: `skills/ (the plugin itself)`
+- Review form: restricted `--allowedTools` profile (never the blanket grant)
+- Pricing: `data/pricing.json` (`cached_date` 2026-07-24, 7 models)
+- Evaluation adapter: `workflow_eval.claude_adapter`
+
+| Capability | Product | Implemented | Verified | On | Client | Effective |
+|---|---|---|---|---|---|---|
+| cancel | unknown | supported | unknown |  |  | unknown |
+| concurrent_dispatch | not-applicable | unsupported | unknown |  |  | unsupported |
+| confined_dispatch | unsupported | unsupported | unsupported | 2026-09-06 |  | unsupported |
+| confined_verify | not-applicable | supported | supported | 2026-09-06 |  | supported |
+| dispatch | supported | supported | supported | 2026-09-06 |  | supported |
+| durable_attempts | not-applicable | supported | unknown |  |  | unknown |
+| extended_roles | not-applicable | unsupported | unknown |  |  | unsupported |
+| independent_review | not-applicable | supported | unknown |  |  | unknown |
+| status | unknown | unsupported | unknown |  |  | unsupported |
+| tool_pin | supported | supported | supported | 2026-09-06 |  | supported |
+| workflow_evaluation | not-applicable | supported | unknown |  |  | unknown |
+
+#### OpenAI Codex CLI
+
+- Install: `python3 bin/harness_select.py install --harness codex`
+- Bundle: `codex/`
+- Review form: `--sandbox read-only`, extra arguments cannot override it
+- Pricing: `data/pricing.codex.json` (`cached_date` 2026-09-05, 7 models)
+- Evaluation adapter: `workflow_eval.codex_adapter`
+
+| Capability | Product | Implemented | Verified | On | Client | Effective |
+|---|---|---|---|---|---|---|
+| async_tools | unknown | unsupported | unknown |  |  | unsupported |
+| cancel | unknown | supported | unknown |  |  | unknown |
+| concurrent_dispatch | not-applicable | unsupported | unknown |  |  | unsupported |
+| dispatch | supported | supported | unknown |  |  | unknown |
+| durable_attempts | not-applicable | supported | unknown |  |  | unknown |
+| effort_per_turn | unknown | unsupported | unknown |  |  | unsupported |
+| extended_roles | not-applicable | unsupported | unknown |  |  | unsupported |
+| independent_review | not-applicable | supported | unknown |  |  | unknown |
+| mid_turn_steering | unknown | unsupported | unknown |  |  | unsupported |
+| sandbox_read_only | supported | supported | unknown |  |  | unknown |
+| status | unknown | unsupported | unknown |  |  | unsupported |
+| structured_events | supported | supported | unknown |  |  | unknown |
+| workflow_evaluation | not-applicable | supported | unknown |  |  | unknown |
+
+#### GitHub Copilot CLI
+
+- Install: `python3 bin/harness_select.py install --harness copilot`
+- Bundle: `copilot/.github/`
+- Review form: the reviewer agent without `--allow-all-tools` (no narrower pin exists)
+- Pricing: `data/pricing.copilot.json` (`cached_date` 2026-09-05, 26 models)
+- Evaluation adapter: `workflow_eval.copilot_adapter`
+
+| Capability | Product | Implemented | Verified | On | Client | Effective |
+|---|---|---|---|---|---|---|
+| cancel | unknown | supported | unknown |  |  | unknown |
+| concurrent_dispatch | not-applicable | unsupported | unknown |  |  | unsupported |
+| dispatch | supported | supported | unknown |  |  | unknown |
+| durable_attempts | not-applicable | supported | unknown |  |  | unknown |
+| extended_roles | not-applicable | unsupported | unknown |  |  | unsupported |
+| independent_review | not-applicable | supported | unknown |  |  | unknown |
+| status | unknown | unsupported | unknown |  |  | unsupported |
+| tool_pin | unknown | unsupported | unknown |  |  | unsupported |
+| workflow_evaluation | not-applicable | supported | unknown |  |  | unknown |
+
+#### Cursor CLI
+
+- Install: `python3 bin/harness_select.py install --harness cursor --project DIR`
+- Bundle: `cursor/`
+- Review form: `--mode ask`, never `--force`
+- Pricing: `data/pricing.cursor.json` (`cached_date` 2026-09-13, 0 models)
+- Evaluation adapter: `workflow_eval.cursor_adapter`
+
+| Capability | Product | Implemented | Verified | On | Client | Effective |
+|---|---|---|---|---|---|---|
+| ambient_diagnosis | not-applicable | supported | unknown |  |  | unknown |
+| cancel | unknown | unsupported | unknown |  |  | unsupported |
+| cli_sandbox | supported | unsupported | unknown |  |  | unsupported |
+| cloud_mode | supported | unsupported | unknown |  |  | unsupported |
+| concurrent_dispatch | not-applicable | supported | unknown |  |  | unknown |
+| dispatch | supported | supported | unknown |  |  | unknown |
+| durable_attempts | not-applicable | supported | unknown |  |  | unknown |
+| extended_roles | not-applicable | unsupported | unknown |  |  | unsupported |
+| ide_mode | supported | unsupported | unknown |  |  | unsupported |
+| identity_probe | supported | supported | unknown |  |  | unknown |
+| independent_review | not-applicable | supported | unknown |  |  | unknown |
+| model_selection | supported | supported | unknown |  |  | unknown |
+| read_only_dispatch | supported | supported | unknown |  |  | unknown |
+| skill_files | supported | supported | unknown |  |  | unknown |
+| status | unknown | unsupported | unknown |  |  | unsupported |
+| structured_events | supported | supported | unknown |  |  | unknown |
+| subagent_files | supported | supported | unknown |  |  | unknown |
+| usage_report | unknown | unsupported | unknown |  |  | unsupported |
+| workflow_evaluation | not-applicable | supported | unknown |  |  | unknown |
+
+#### Stub (conformance target; runs nothing)
+
+- Install: not installable; a conformance target
+- Bundle: none
+- Review form: canned result
+- Pricing: none
+- Evaluation adapter: `workflow_eval.stub_adapter`
+
+| Capability | Product | Implemented | Verified | On | Client | Effective |
+|---|---|---|---|---|---|---|
+| cancel | unsupported | unsupported | unsupported |  |  | unsupported |
+| concurrent_dispatch | not-applicable | supported | supported | 2026-09-13 |  | supported |
+| dispatch | supported | supported | supported | 2026-09-06 |  | supported |
+| status | unsupported | unsupported | unsupported |  |  | unsupported |
+| workflow_evaluation | not-applicable | supported | supported | 2026-09-13 |  | supported |
+
+### Role support by harness
+
+From `kit_contract.ROLE_SUPPORT`: `sequenced` means the driver runs the role in its loop, `partial` means part of the role's job runs without an agent, `unsupported` means a kit that declares it is refused or disclosed before dispatch.
+
+| Role | Claude Code | OpenAI Codex CLI | GitHub Copilot CLI | Cursor CLI | Stub |
+|---|---|---|---|---|---|
+| implementer | sequenced | sequenced | sequenced | sequenced | sequenced |
+| verifier | partial | partial | partial | partial | partial |
+| reviewer | sequenced | sequenced | sequenced | sequenced | unsupported |
+| scout | unsupported | unsupported | unsupported | unsupported | unsupported |
+| test-author | unsupported | unsupported | unsupported | unsupported | unsupported |
+| second-verifier | unsupported | unsupported | unsupported | unsupported | unsupported |
+| red-team | unsupported | unsupported | unsupported | unsupported | unsupported |
+| security-auditor | unsupported | unsupported | unsupported | unsupported | unsupported |
+| docs-editor | unsupported | unsupported | unsupported | unsupported | unsupported |
+| synthesizer | unsupported | unsupported | unsupported | unsupported | unsupported |
+
+### Shared contracts: stub conformance beside installed-client verification
+
+Left column per harness: the tests that drive the driver through a stub executable and a temp store, with how many test cases each id resolves to. Right column: the registry rows a real client would have to verify, and their state. A contract with no registry row is polytropos's own, and the stub column is the whole of its evidence.
+
+#### Dispatch failure (steps 07, 19)
+
+a failed, crashed, or refused dispatch is classified and never counted as success; an auth, config, permission, or infrastructure failure stops the ladder.
+
+| Harness | Stub conformance | Installed client |
+|---|---|---|
+| claude-code | `test_claude_execute.DispatchAndReadinessTests.test_a_failed_dispatch_does_not_become_done_on_a_passing_check` (1); `test_claude_execute.DispatchAndReadinessTests.test_a_failed_dispatch_does_not_climb_the_escalation_ladder` (1); `test_claude_execute.DispatchAndReadinessTests.test_a_runner_that_reports_nothing_is_unknown_not_success` (1); `test_claude_execute.DispatchAndReadinessTests.test_verification_failure_after_a_successful_dispatch_still_escalates` (1) | verified 2026-09-06: dispatch=supported |
+| codex | `test_codex_execute_policy.ReservedRecoveryTests.test_dispatch_failure_cannot_become_success_from_passing_verify` (1); `test_codex_execute_policy.ReservedRecoveryTests.test_runner_oserror_becomes_audited_failure` (1); `test_codex_execute_policy.ReservedRecoveryTests.test_runtime_policy_mismatch_blocks_without_unlocking_recovery` (1) | unknown: dispatch=unknown |
+| copilot | `test_copilot_execute.DispatchAndReadinessTests.test_a_failed_dispatch_does_not_become_done_on_a_passing_check` (1); `test_copilot_execute.DispatchAndReadinessTests.test_a_failed_dispatch_does_not_climb_the_escalation_ladder` (1); `test_attempt_ledger.RalphDurableLoopTests.test_an_environment_failure_stops_the_loop_after_one_tick` (1) | unknown: dispatch=unknown |
+| cursor | `test_cursor_execute.FailureTests.test_a_dispatch_failure_is_classified_blocked_and_never_verified` (1); `test_cursor_execute.FailureTests.test_a_logged_out_cli_is_named_and_recorded` (1); `test_cursor_execute.IdentityRefusalTests` (3) | unknown: dispatch=unknown, identity_probe=unknown |
+| stub | `test_kit_scheduler.BatchTests.test_a_dispatch_failure_and_a_verify_failure_are_each_blocked_and_nothing_is_applied` (1); `test_workflow_eval.DirectWorkflowTests.test_a_dispatch_failure_is_classified_and_not_graded_as_solved` (1) | verified 2026-09-06: dispatch=supported |
+| shared | `test_attempt_ledger.ClassificationTests` (2); `test_attempt_ledger.FailureClassAtTheDriverTests.test_a_logged_out_cli_is_classified_recorded_and_not_escalated` (1); `test_proc_runner_wiring.DriverDispatchTests.test_a_missing_binary_comes_back_as_a_result_not_an_exception` (1); `test_proc_runner_wiring.DriverDispatchTests.test_a_stalled_dispatch_is_bounded_rather_than_waited_on` (1) | n/a |
+
+#### Dependency readiness (steps 18, 24)
+
+an invalid graph refuses with zero dispatches and zero writes; one readiness rule; a stale acceptance keeps its dependents out of the frontier.
+
+| Harness | Stub conformance | Installed client |
+|---|---|---|
+| claude-code | `test_claude_execute.DispatchAndReadinessTests.test_explicit_selection_obeys_the_same_dependency_rule_as_automatic` (1); `test_claude_execute.DispatchAndReadinessTests.test_a_nonexistent_dependency_is_named` (1); `test_claude_execute.DispatchAndReadinessTests.test_automatic_selection_explains_an_empty_frontier` (1); `test_kit_graph.ZeroDispatchOnInvalidGraphTests` (4) | polytropos's own |
+| codex | `test_codex_execute_policy.ReadinessParityTests` (4); `test_codex_execute_policy.DriverPolicyBoundaryTests.test_explicit_task_with_unfinished_dependency_is_ineligible` (1); `test_kit_graph.ZeroDispatchOnInvalidGraphTests` (4) | polytropos's own |
+| copilot | `test_copilot_execute.DispatchAndReadinessTests.test_a_nonexistent_dependency_is_named` (1); `test_copilot_execute.DispatchAndReadinessTests.test_an_unknown_task_id_is_named` (1); `test_copilot_execute.DispatchAndReadinessTests.test_completed_work_is_not_silently_repeated` (1); `test_kit_graph.ZeroDispatchOnInvalidGraphTests` (4) | polytropos's own |
+| cursor | `test_cursor_execute.ReadyTaskTests.test_a_ready_task_is_dispatched_once_verified_and_projected_done` (1); `test_kit_graph.ZeroDispatchOnInvalidGraphTests` (4); `test_kit_scheduler.DriverFreshnessTests.test_a_driver_refuses_a_task_whose_upstream_acceptance_is_stale` (1) | polytropos's own |
+| stub | `test_kit_scheduler.FreshnessTests` (5) | polytropos's own |
+| shared | `test_kit_graph.ValidateGraphTests` (11); `test_kit_graph.ReadinessTests` (13); `test_kit_graph.FrontierAndStateTests` (7); `test_kit_contract.ReadinessTests` (5) | n/a |
+
+#### Verification isolation (steps 05)
+
+verify commands run under bin/exec_policy.py; trusted-host is the sole opt-out and reports itself; macOS Seatbelt is the only backend.
+
+| Harness | Stub conformance | Installed client |
+|---|---|---|
+| claude-code | `test_proc_runner_wiring.DriverVerifyWiringTests` (2) | verified 2026-09-06: confined_verify=supported |
+| codex | `test_proc_runner_wiring.DriverVerifyWiringTests` (2) | polytropos's own |
+| copilot | `test_proc_runner_wiring.DriverVerifyWiringTests` (2); `test_proc_runner_wiring.RalphVerifyTests.test_ralphs_verify_line_no_longer_runs_in_the_parent_shell` (1) | polytropos's own |
+| cursor | `test_proc_runner_wiring.DriverVerifyWiringTests` (2) | polytropos's own |
+| stub | `test_kit_scheduler.SecurityTests.test_a_worker_cannot_reach_the_main_tree_or_another_copy` (1) | polytropos's own |
+| shared | `test_exec_policy.EnforcementTests` (12); `test_exec_policy.FailClosedTests.test_enforced_without_a_backend_refuses_rather_than_running` (1); `test_exec_policy.FailClosedTests.test_trusted_host_is_reported_as_itself_not_as_enforcement` (1); `test_exec_policy.VerifyRunnerTests` (2); `test_exec_policy.BackendDetectionTests.test_darwin_reports_sandbox_exec` (1); `test_proc_runner_wiring.ConfinedRunTests` (2) | n/a |
+
+#### Role permissions (steps 06, 20)
+
+review and verification dispatches carry the harness's documented restricted form and extra flags cannot override it; a declared role a driver cannot run is refused or disclosed.
+
+| Harness | Stub conformance | Installed client |
+|---|---|---|
+| claude-code | `test_claude_execute.RolePermissionTests` (9) | unknown: tool_pin=supported, independent_review=unknown |
+| codex | `test_codex_execute.BuildDispatchTests.test_default_does_not_change_approval_mode_or_bypass_sandbox` (1); `test_codex_execute.EndToEndRunHappyPathTests.test_review_with_stub_uses_supported_sandbox_without_mutating_kit` (1); `test_codex_execute_policy.DriverPolicyBoundaryTests.test_extra_args_cannot_override_model_profile_or_model_config` (1) | unknown: sandbox_read_only=unknown, independent_review=unknown |
+| copilot | `test_copilot_execute.ReviewPermissionTests` (3) | unknown: tool_pin=unknown, independent_review=unknown |
+| cursor | `test_cursor_adapter.DispatchArgvTests.test_read_only_dispatch_uses_mode_ask_and_never_force` (1); `test_cursor_adapter.DispatchArgvTests.test_extra_args_that_would_override_the_recorded_choice_are_refused` (1); `test_cursor_execute.ReviewTests.test_a_review_is_read_only_recorded_and_leaves_the_kit_alone` (1); `test_cursor_execute.ReadyTaskTests.test_extra_args_that_would_change_the_recorded_choice_are_refused_before_probe` (1) | unknown: read_only_dispatch=unknown, independent_review=unknown |
+| stub | `test_workflow_eval.AdapterTests.test_each_review_form_is_the_harness_documented_read_only_shape` (1); `test_workflow_eval.AdapterTests.test_every_adapter_builds_a_dispatch_and_a_read_only_review_with_the_prompt_verbatim` (1) | polytropos's own |
+| shared | `test_role_contract.VocabularyTests.test_read_only_roles_hold_no_write_grant_and_write_roles_hold_exactly_theirs` (1); `test_kit_contract.AdapterConformanceTests.test_an_unsupported_operation_raises_rather_than_returning_a_fake_answer` (1); `test_repo_bench.JudgePermissionTests` (4) | n/a |
+
+#### Protected state (steps 05, 16, 24)
+
+a worker's edit to its own task block is detected and recorded; the ledger and every store live outside the tree; claims are O_EXCL; a worker's kit edit under the scheduler is a recorded violation.
+
+| Harness | Stub conformance | Installed client |
+|---|---|---|
+| claude-code | `test_attempt_ledger.ClaimAtTheDriverTests` (3); `test_attempt_ledger.ProjectionFromFreshReadTests.test_a_worker_that_flipped_its_own_status_is_overwritten_and_reported` (1) | unknown: durable_attempts=unknown |
+| codex | `test_attempt_ledger.ClaimAtTheDriverTests` (3); `test_attempt_ledger.ProjectionFromFreshReadTests.test_a_worker_that_flipped_its_own_status_is_overwritten_and_reported` (1) | unknown: durable_attempts=unknown |
+| copilot | `test_attempt_ledger.ClaimAtTheDriverTests` (3); `test_attempt_ledger.ProjectionFromFreshReadTests.test_a_worker_that_flipped_its_own_status_is_overwritten_and_reported` (1) | unknown: durable_attempts=unknown |
+| cursor | `test_cursor_execute.ResumeTests.test_a_task_another_live_run_holds_is_refused` (1); `test_attempt_ledger.ClaimAtTheDriverTests` (3) | unknown: durable_attempts=unknown |
+| stub | `test_kit_scheduler.SecurityTests` (3); `test_kit_scheduler.RevisionTests.test_a_proposal_touching_acceptance_is_refused_whole` (1); `test_workflow_eval.DirectWorkflowTests.test_touching_test_paths_is_recorded_as_tampering_and_never_buys_a_grade` (1) | polytropos's own |
+| shared | `test_kit_graph.PlanDriftTests` (3); `test_attempt_ledger.ClaimTests` (2); `test_attempt_ledger.StoreLocationTests` (2) | n/a |
+
+#### Verdict provenance (steps 01, 09, 24)
+
+acceptance depends on the typed verdict ledger and fails closed on an absent, malformed, or conflicting verdict; completion is bound to current, task-appropriate evidence.
+
+| Harness | Stub conformance | Installed client |
+|---|---|---|
+| claude-code | `test_claude_execute.EndToEndTautologicalVerifyTests` (3); `test_claude_execute.EvidenceKindTests` (8) | polytropos's own |
+| codex | `test_codex_execute_policy.DriverPolicyBoundaryTests.test_absent_malformed_conflicting_and_interrupted_results_fail_closed` (1); `test_codex_execute_policy.DriverPolicyBoundaryTests.test_acceptance_verdict_comes_only_from_a_correlated_terminal_message` (1); `test_codex_execute_policy.DriverPolicyBoundaryTests.test_a_corrupt_ledger_line_degrades_to_unproven` (1); `test_codex_execute_policy.DriverPolicyBoundaryTests.test_legacy_notes_are_readable_but_never_prove_success` (1); `test_codex_execute_policy.DriverPolicyBoundaryTests.test_a_report_quoting_driver_fields_cannot_forge_a_review` (1); `test_codex_execute_policy.DriverPolicyBoundaryTests.test_accept_without_a_machine_verdict_fails_closed_with_a_reason` (1); `test_codex_execute_policy.DriverPolicyBoundaryTests.test_typed_record_rejects_non_integer_and_boolean_exit_codes` (1); `test_codex_execute_policy.DriverPolicyBoundaryTests.test_later_review_supersedes_old_success_and_fingerprint_must_match` (1) | polytropos's own |
+| copilot | `test_copilot_execute.EndToEndPlanBudgetStopTests.test_budget_stop_is_not_recorded_when_the_task_already_has_a_verdict` (1); `test_attempt_history.HistoryIsNeverCollapsedTests.test_a_budget_stop_never_supersedes_a_verdict_in_the_projection` (1) | polytropos's own |
+| cursor | `test_cursor_execute.BudgetStopTests.test_a_budget_stop_never_displaces_a_recorded_verdict` (1) | polytropos's own |
+| stub | `test_workflow_eval.ReviewedWorkflowTests` (3); `test_kit_scheduler.ManifestTests.test_the_manifest_carries_artifacts_and_verdicts_but_no_transcript` (1) | polytropos's own |
+| shared | `test_kit_verify_hook.FreshnessTests` (5); `test_kit_verify_hook.PrecheckTautologicalTests` (4); `test_kit_graph.TransitionTests.test_project_status_refuses_a_verdict_with_no_dispatch_and_writes_nothing` (1); `test_attempt_history.HistoryIsNeverCollapsedTests` (3) | n/a |
+
+#### Budget admission (steps 08, 16)
+
+every consuming operation is admitted before dispatch, refusals are recorded, a dead attempt still counts, and a proxy figure never enters a priced total.
+
+| Harness | Stub conformance | Installed client |
+|---|---|---|
+| claude-code | `test_claude_execute.BudgetAdmissionTests` (7); `test_claude_execute.ParsePlanBudgetTests` (5); `test_claude_execute.EndToEndPlanBudgetStopTests` (5) | polytropos's own |
+| codex | `test_codex_execute.EndToEndPlanBudgetStopTests` (5); `test_codex_execute.PlanBudgetExhaustedTests` (3); `test_codex_execute.ParsePlanBudgetTests` (4) | polytropos's own |
+| copilot | `test_copilot_execute.BudgetAdmissionTests` (7); `test_copilot_ralph.SpendAdmissionTests` (6); `test_copilot_budget.BudgetLedgerTests.test_blocked_run_is_excluded_from_net_never_credited_a4` (1); `test_copilot_budget.BudgetLedgerTests.test_not_counted_rows_skipped_from_every_total_t8` (1) | polytropos's own |
+| cursor | `test_cursor_execute.BudgetStopTests.test_a_reached_plan_budget_stops_before_the_probe_and_the_dispatch` (1) | polytropos's own |
+| stub | `test_kit_scheduler.AdmissionTests.test_one_admission_decision_covers_the_batch` (1); `test_kit_scheduler.SecurityTests.test_a_worker_cannot_grant_itself_budget` (1); `test_workflow_eval.CeilingAndCapTests` (4); `test_workflow_eval.KitWorkflowTests.test_a_kit_whose_budget_is_spent_by_dead_attempts_refuses_and_records_the_budget_outcome` (1) | polytropos's own |
+| shared | `test_attempt_ledger.BudgetCarriesAcrossRunsTests.test_attempts_the_notes_file_never_saw_still_count_against_the_cap` (1); `test_repo_bench.WouldExceedCeilingTests.test_missing_ceiling_is_a_refusal_not_a_permissive_default` (1); `test_repo_bench.CostCeilingStopTests` (5) | n/a |
+
+#### Interruption and resume (steps 16)
+
+a dead run's open attempt is closed as unknown, reconciled by re-running the check, and never replayed; finished work is recognised without a dispatch.
+
+| Harness | Stub conformance | Installed client |
+|---|---|---|
+| claude-code | `test_attempt_ledger.CrashAfterDispatchTests` (3); `test_attempt_ledger.CrashBeforeProjectionTests.test_a_recorded_verdict_is_projected_not_re_earned` (1) | unknown: durable_attempts=unknown |
+| codex | `test_attempt_ledger.CrashAfterDispatchTests` (3); `test_attempt_ledger.CrashBeforeProjectionTests.test_a_recorded_verdict_is_projected_not_re_earned` (1) | unknown: durable_attempts=unknown |
+| copilot | `test_attempt_ledger.CrashAfterDispatchTests` (3); `test_attempt_ledger.CrashBeforeProjectionTests.test_a_recorded_verdict_is_projected_not_re_earned` (1); `test_attempt_ledger.RalphDurableLoopTests.test_a_second_run_resumes_iteration_count_spend_and_history` (1); `test_attempt_ledger.RalphDurableLoopTests.test_two_loops_on_one_goal_cannot_run_at_once` (1) | unknown: durable_attempts=unknown |
+| cursor | `test_cursor_execute.ResumeTests` (3); `test_attempt_ledger.CrashAfterDispatchTests` (3) | unknown: durable_attempts=unknown |
+| stub | `test_kit_scheduler.ResumeTests` (2); `test_workflow_eval.KitWorkflowTests.test_a_dead_attempt_is_settled_without_replay_and_the_resume_is_recorded` (1); `test_workflow_eval.KitWorkflowTests.test_finished_work_left_by_a_dead_run_is_recognised_and_not_redispatched` (1) | polytropos's own |
+| shared | `test_attempt_ledger.RetryContextTests.test_context_is_bounded_names_unknown_attempts_and_the_trend` (1); `test_kit_graph.ReadinessTests.test_naming_the_interrupted_task_resumes_it` (1); `test_kit_graph.FrontierAndStateTests.test_interrupted_outranks_ready_because_nothing_here_schedules` (1); `test_kit_graph.DiamondThroughTheDriverTests.test_a_dead_runs_task_is_resumed_by_name_and_never_walked_past` (1) | n/a |
+
+#### Filesystem confinement (steps 02, 10)
+
+every write, read, or delete into a caller-selected root goes through bin/safe_paths.py; benchmark patch, reference-test, and artifact escapes are refused.
+
+| Harness | Stub conformance | Installed client |
+|---|---|---|
+| claude-code | none mapped | polytropos's own |
+| codex | none mapped | polytropos's own |
+| copilot | none mapped | polytropos's own |
+| cursor | `test_cursor_adapter.InstallTests.test_a_destination_escaping_the_project_is_refused_not_written` (1) | polytropos's own |
+| stub | `test_kit_scheduler.SnapshotTests.test_a_snapshot_copies_files_keeps_modes_skips_links_and_excluded_dirs` (1); `test_kit_scheduler.ConflictTests.test_a_file_the_user_changed_during_the_batch_is_never_overwritten` (1) | polytropos's own |
+| shared | `test_safe_paths.ContainmentTests` (10); `test_safe_paths.RelativePathTests` (2); `test_safe_paths.IdentifierTests` (3); `test_kit_verify_hook.TaskIdConfinementTests` (3); `test_repo_bench.SubstrateConfinementTests` (7); `test_repo_bench.RunLoopSafetyTests.test_the_run_never_writes_the_real_store` (1); `test_repo_bench.RunLoopSafetyTests.test_target_repo_is_byte_identical_after_a_full_run` (1); `test_repo_bench.OracleTestsTests.test_blob_lands_in_the_substrate_and_never_in_the_candidate_sandbox` (1) | n/a |
+
+#### Installation ownership (steps 11, 23)
+
+an installer classifies every destination, never overwrites what it does not own, restates the precondition when it writes, rolls back only its own bytes, and fails a stale plan safe.
+
+| Harness | Stub conformance | Installed client |
+|---|---|---|
+| claude-code | `test_harness_select.ClaudeCodeInstallCliTests.test_claude_code_install_writes_nothing_and_prints_marketplace_message` (1) | polytropos's own |
+| codex | `test_install_ownership.CodexStalePlanTests` (4) | polytropos's own |
+| copilot | `test_install_ownership.CopilotFirstInstallTests` (4); `test_install_ownership.CopilotReinstallAndUpgradeTests` (4); `test_install_ownership.CopilotPreservationTests` (3); `test_install_ownership.CopilotRollbackTests` (3); `test_install_ownership.CopilotSymlinkTests` (2); `test_install_ownership.CopilotAdoptionTests` (2) | polytropos's own |
+| cursor | `test_cursor_adapter.InstallTests` (8) | unknown: skill_files=unknown, subagent_files=unknown |
+| stub | none mapped | polytropos's own |
+| shared | `test_harness_select.DetectTests` (1); `test_harness_select.InstallCopilotDryRunTests` (1); `test_harness_select.InstallCopilotIdempotenceTests` (1); `test_install_ownership.SafeCreateTests` (4) | n/a |
+
+#### Privacy eligibility (steps 13, 22)
+
+free text is redacted and bounded before it is persisted or dispatched and reported by kind and count; recall is eligibility-gated and budgeted; the digest carries metadata only; harness homes are read-only.
+
+| Harness | Stub conformance | Installed client |
+|---|---|---|
+| claude-code | none mapped | polytropos's own |
+| codex | none mapped | polytropos's own |
+| copilot | none mapped | polytropos's own |
+| cursor | none mapped | polytropos's own |
+| stub | `test_workflow_eval.DirectWorkflowTests.test_a_credential_in_the_statement_is_redacted_before_dispatch_and_counted_by_kind` (1); `test_workflow_eval.PlanTests.test_a_statement_with_a_credential_shape_is_labelled_and_never_quoted` (1); `test_workflow_eval.DirectWorkflowTests.test_the_prompt_is_leak_free_and_the_store_is_written_only_after_every_dispatch` (1) | polytropos's own |
+| shared | `test_privacy_primitives.RedactionTests` (7); `test_privacy_primitives.DataHomeTests` (3); `test_privacy_primitives.ResolutionTests` (4); `test_privacy_primitives.PrivateCreationTests` (2); `test_privacy_primitives.RetentionTests` (3); `test_privacy_layout.PrivacyLayoutTests` (6); `test_memory_recall.GateTests` (2); `test_memory_recall.BudgetTests` (3); `test_memory_recall.ProvenanceAndScopeTests` (7); `test_lessons_store.RecallTests` (8); `test_lessons_store.CompatibilityTests.test_the_module_dispatches_nothing_and_reads_no_home` (1); `test_attempt_ledger.LedgerRecordTests.test_verify_tails_are_redacted_before_they_are_stored` (1); `test_journal_collect.ContentHygieneTests.test_transcript_text_marker_never_reaches_the_written_digest` (1); `test_journal_summarize.IsolatedSummaryDispatchTests` (5); `test_journal_collect.ReadOnlyProofTests.test_source_and_kit_trees_are_byte_identical_only_journal_dir_gains_files` (1); `test_journal_sources.ReadOnlyProofTests.test_combined_fixture_tree_is_byte_identical_after_run_adapters` (1); `test_copilot_usage.ReadOnlyProofTests.test_fixture_home_bytes_unchanged_and_no_new_files` (1); `test_codex_usage.ReadOnlyProofTests.test_temp_home_file_tree_byte_identical_after_run` (1); `test_kit_verify_hook.StaticSafetyTests.test_module_never_calls_path_home` (1) | n/a |
+
+#### Legacy kits
+
+`test_kit_graph.LegacyKitsTests.test_every_kit_parses_and_every_unfinished_kit_is_valid` (1); `test_role_contract.GrammarTests.test_every_legacy_kit_parses_and_the_two_with_roles_resolve_as_extended` (1); `test_kit_scheduler.FreshnessTests.test_a_legacy_acceptance_is_unknown_not_stale_and_status_says_nothing_alarming` (1); `test_codex_execute_policy.DriverPolicyBoundaryTests.test_legacy_notes_are_readable_but_never_prove_success` (1); `test_lessons_store.RecallTests.test_a_legacy_entry_is_a_candidate_never_a_rule` (1); `test_copilot_execute.PrefsAwareLadderTests.test_prefs_none_identical_to_legacy` (1); `test_kit_contract.LedgerFieldTests` (2); `test_attempt_history.UnknownStaysUnknownTests.test_a_notes_line_takes_its_harness_from_the_ledger_run_it_projects` (1); `test_harness_select.InstallCopilotAgentsOnlyBackwardCompatTests.test_agents_only_bundle_with_no_skills_dir_installs_cleanly` (1); `test_routing_scorecard.BudgetStopKeyOptionalityTests.test_field_less_legacy_kit_quality_has_no_budget_stop_key` (1); `test_role_ledger.MarginalTests.test_legacy_line_no_marginal_key_parses_with_marginal_none` (1)
+
+#### No real client is ever spawned
+
+`test_proc_runner_wiring.OneRunnerTests` (2); `test_claude_execute.DryRunSpawnsNothingTests` (3); `test_claude_execute.ReviewDryRunTests.test_review_dry_run_prints_dispatch_and_spawns_nothing` (1); `test_codex_execute.DryRunSpawnsNothingTests.test_dry_run_never_touches_subprocess_and_leaves_kit_untouched` (1); `test_copilot_execute.DryRunSpawnsNothingTests.test_dry_run_never_touches_subprocess_and_leaves_tasks_file_untouched` (1); `test_copilot_ralph.CliSafetySmokeTests.test_demo_and_dry_run_spawn_nothing` (1); `test_copilot_budget.BudgetLedgerTests.test_budget_command_never_dispatches_writes_or_loads_pricing_or_prefs` (1); `test_cursor_execute.DryRunTests.test_dry_run_prints_the_argv_and_spawns_nothing_not_even_the_probe` (1); `test_cursor_execute.ReviewTests.test_a_review_dry_run_spawns_nothing` (1); `test_cursor_execute.SourceHygieneTests.test_help_runs_offline` (1); `test_cursor_adapter.RegistryAndPricingTests.test_the_demo_and_help_run_offline` (1); `test_cursor_adapter.RegistryAndPricingTests.test_the_adapter_carries_no_process_primitive_of_its_own` (1); `test_cursor_adapter.InstallTests.test_doctor_reports_without_spawning_anything_but_the_named_stub` (1); `test_kit_scheduler.DryRunAndCliTests.test_dry_run_claims_nothing_copies_nothing_spawns_nothing` (1); `test_kit_scheduler.DryRunAndCliTests.test_the_demo_runs_offline` (1); `test_kit_scheduler.DryRunAndCliTests.test_the_module_carries_no_shell_strings_and_no_bare_subprocess` (1); `test_workflow_eval.CliTests.test_demo_runs_offline_and_spends_nothing` (1); `test_workflow_eval.AdapterTests.test_the_module_names_no_model_id_and_carries_no_process_primitive` (1); `test_attempt_ledger.RalphDurableLoopTests.test_demo_and_dry_run_still_spawn_nothing` (1); `test_plugin_staleness.SourceHygieneTests.test_no_real_cli_invocation_outside_comments` (1); `test_telemetry_snapshot.SourceLawTests.test_no_process_spawning_tokens_anywhere_in_the_source` (1); `test_repo_bench.RunLoopSafetyTests.test_every_cell_was_dispatched_through_the_injected_stub` (1); `test_release_gate.ModuleShapeTests.test_module_carries_no_process_primitive_or_home_path` (1); `test_graph_ground.SourceHygieneTests.test_the_module_never_invokes_graphify_or_spawns_on_its_own` (1); `test_graph_brief.SourceIntrospectionTests.test_no_home_dir_or_network_or_subprocess_primitives_in_any_function` (1); `test_lessons_promote.NoDispatchImportTests.test_source_has_no_subprocess_or_execute_module_imports` (1); `test_journal_schedule.ModuleSafetyTests.test_module_has_no_subprocess` (1); `test_routing_policy.DriverCommandLineTests.test_dry_run_under_each_policy_previews_the_decision_and_spawns_nothing` (1)
+
+### Historical primitive matrix (unchanged)
+
+`primitives/harness-matrix.json` (polytropos-harness-matrix/v1) is aesop's product-support matrix pinned at commit `9c4108ee8ca3` (aesop's own pin: June–July 2026). It answers "does the product have this primitive", not "can a driver rely on it", and it is not rewritten by this gate.
+
+| Harness | Goal mode | Native | Fallback |
+|---|---|---|---|
+| antigravity | scheduled | instructions, loop, skill, state | agent, command, hook, mcp, permissions |
+| claude-code | native | agent, command, hook, instructions, loop, mcp, permissions, skill, state | none |
+| codex | native | agent, command, instructions, loop, mcp, permissions, skill, state | hook |
+| copilot | ralph | agent, command, instructions, mcp, skill, state | hook, loop, permissions |
+| cursor | ralph | instructions, mcp, state | agent, command, hook, loop, permissions, skill |
+| vscode | ralph | mcp, state | agent, command, hook, instructions, loop, permissions, skill |
+
+### What the package carries
+
+Every top-level tracked path and its role. `packaging` fails on a path with no role, a tracked file under a private store, or a store without its root-anchored ignore rule.
+
+| Path | Role |
+|---|---|
+| `.agents` | Codex marketplace manifest (packaging) |
+| `.claude` | this repository's own kits and agents: development history, not installed by the plugin |
+| `.claude-plugin` | Claude Code plugin manifest and local marketplace (packaging) |
+| `.codex-plugin` | Codex plugin manifest (packaging) |
+| `.github` | the docs-site CI workflow |
+| `.gitignore` | packaging: root-anchored rules for every private store |
+| `CLAUDE.md` | executor guardrails, loaded into every session |
+| `HANDOFF.md` | work record for the next session |
+| `LICENSE` | packaging |
+| `README.md` | documentation source |
+| `SECURITY.md` | documentation source: what is and is not a boundary |
+| `SETUP.md` | documentation source |
+| `bin` | engines, stdlib-only |
+| `codex` | Codex bundle (codex/prompts/ is a generated mirror) |
+| `copilot` | Copilot bundle |
+| `copilot-docs` | generated mirror (bin/copilot_docs.py) |
+| `cursor` | Cursor bundle |
+| `data` | pricing files, one per harness: the numeric source of truth |
+| `docs` | documentation source (docs/RELEASE.md carries this gate's generated block) |
+| `docs-site` | generated mirror (bin/docs_build.py) |
+| `docs-src` | documentation fragments and the hash-locked site toolchain |
+| `mkdocs.yml` | site configuration |
+| `primitives` | capability registry, historical primitive matrix, primitive model |
+| `skills` | plugin skills: runtime behaviour |
+| `tasks` | legacy kit ledgers and the lessons file, committed by design |
+| `tests` | the suite |
+
+| Private store | Ignore rule |
+|---|---|
+| `attempts/` | present |
+| `benchruns/` | present |
+| `evals/` | present |
+| `journal/` | present |
+| `memory/` | present |
+| `prefs/` | present |
+| `telemetry/` | present |
+| `trends/` | present |
+
+### Release checklist
+
+Each guarantee names the evidence behind it and what stays unresolved. Every command below is resolved by `check`, so a renamed subcommand fails the gate.
+
+| Guarantee | Evidence | Unresolved |
+|---|---|---|
+| The full suite is green on this tree | `python3 -m unittest discover -s tests` from the repo root, exit 0; the count is quoted only in the commit that changed it | a green suite says the units work; it does not say a vendor client was run |
+| Every advertised harness passes the eleven shared contracts through a stub | `python3 bin/release_gate.py contracts --run`: every mapped test id resolves and passes; the table below names them per harness | stub conformance only; the installed-client column is the registry's, and it reads `unknown` for every real harness capability nobody has run |
+| Unknown host capabilities stay visible | `python3 bin/harness_adapter.py` prints every row with its three states; `harness_adapter.requires` treats `unknown` as no | a row becomes `supported` only when someone runs the client, records the date and the client version in the row, and commits that edit by hand |
+| Both generated documentation mirrors and the Codex prompt mirrors are current | `python3 bin/docs_build.py check`, `python3 bin/copilot_docs.py check`, `python3 bin/sync_codex_surfaces.py check`, `python3 bin/sync_pricing_refs.py --check`, and this gate's `check` (the marked block of docs/RELEASE.md), all exit 0 | `mkdocs build --strict` runs only in CI; the lock targets Linux |
+| Private runtime stores cannot be committed and default outside the tree | `python3 bin/release_gate.py packaging` finds no store without a root-anchored ignore rule and no tracked file under one; `tests/test_privacy_layout.py` pins the same for every `runtime_data.STORES` name | a plugin install copies the whole directory and ignores `.gitignore`; a legacy in-tree store is copied with it -- the prune runbook in docs/PRIVACY.md is manual by design |
+| Packaging manifests agree and the build supply chain is pinned | `packaging`: the Claude plugin manifest and its marketplace agree on name and description, every GitHub Action is pinned to a full commit SHA, deploy credentials exist only in the deploy job, every site package carries a sha256 | the Codex package carries its own version line and is bumped by hand beside the plugin version |
+| No-clobber upgrades and legacy kits keep working | the installation-ownership contract row, plus the legacy-kit tests named below | an install made before the ownership manifest existed classifies as unmanaged when it differs; `--adopt-existing` is the one-run remedy and keeps a backup |
+| Pricing is one file per harness and no generated mirror has drifted | the `data` section of `python3 bin/harness_update.py check` reports up-to-date with zero stale mirrors and every docs label ok (read-only; it also ages each `cached_date`) | the card's exit code also covers the user's installed Claude and Copilot homes, which drift from an unmerged branch by design; prices are labelled snapshots and their age is reported, never corrected here |
+| Routing defaults changed only by a reviewed, versioned proposal | `python3 bin/workflow_eval.py policy` lists the version in force and its journal; no driver reads the file (a test fails if one starts to) | no live evaluation has run, so no proposal has evidence behind it yet |
+| Nothing here ran a paid call, wrote a home directory, or pushed | the invariants in CLAUDE.md, the no-real-CLI tests named below, and this gate's own process list (read-only git, in-process unittest) | the optional live commands below are prepared and stay unrun until a person runs them on their own account |
+
+### Migration and rollback
+
+| Surface | Forward | Back |
+|---|---|---|
+| Runtime stores (memory, telemetry, journal, benchruns, prefs, trends, attempts, evals) | `python3 bin/runtime_data.py where`; an in-tree store keeps being used; `python3 bin/runtime_data.py migrate --store NAME --apply` copies it out and never deletes the original | delete the copy; the original was never touched. `export` copies anywhere; `forget` lists before it deletes and deletes only with `--apply` |
+| Copilot home (`~/.copilot`) | `python3 bin/harness_select.py install --harness copilot` (add `--adopt-existing` once for files installed before the ownership manifest) | each adopted file keeps a `.polytropos-bak` beside it; a run that fails midway rolls back only the bytes it wrote |
+| Codex home (`~/.codex`) | `python3 bin/harness_select.py install --harness codex`; `python3 bin/harness_select.py doctor --harness codex` diagnoses; `python3 bin/harness_update.py apply --only codex` refreshes managed copies | `python3 bin/harness_select.py restore-legacy --harness codex` restores proven legacy copies from the backup root `retire-legacy` wrote; `config.toml` is never written, so nothing there needs undoing |
+| Cursor project bundle (`.cursor/`) | `python3 bin/harness_select.py install --harness cursor --project DIR`; `python3 bin/harness_select.py doctor --harness cursor --project DIR` | the manifest at `.cursor/polytropos/install-manifest.json` names every file the installer owns; remove those and only those |
+| Claude Code plugin cache | bump `.claude-plugin/plugin.json`, then `claude plugin update polytropos@polytropos-local`, then the prune runbook in docs/PRIVACY.md | `claude plugin install` of the previous version directory; repo code never touches `~/.claude` |
+| Routing policy (`workflow_eval.POLICY_FILE` under the `prefs` store) | `python3 bin/workflow_eval.py propose` -> `review` -> `apply`; every version kept | `python3 bin/workflow_eval.py rollback --version N`; the replaced version is kept too |
+| Kits written before the contract | nothing to do: a kit without `depends:` is a chain, without a ledger its freshness is `unknown` and disclosed, and `python3 bin/kit_contract.py graph --kit DIR` names anything the validator refuses | not applicable; no kit file is rewritten by a driver |
+| Generated mirrors (docs-site/, copilot-docs/, codex/prompts/, the pricing references, the block in docs/RELEASE.md) | edit the source, then `python3 bin/docs_build.py build`, `python3 bin/copilot_docs.py build`, `python3 bin/sync_codex_surfaces.py build`, `python3 bin/sync_pricing_refs.py`, `python3 bin/release_gate.py build` | `git checkout -- <mirror>`; the mirrors carry no state of their own |
+
+### What a new harness or model release triggers
+
+Targeted re-evaluation, never automatic: nothing below edits a registry row, adds a permanent instruction, or promotes a routing default.
+
+| Trigger | Do | Never |
+|---|---|---|
+| A vendor ships a new client version | `python3 bin/release_gate.py reverify --harness NAME --released YYYY-MM-DD` lists every row whose verification predates the release; run the driver's `--dry-run`, then the documented smoke on your own account; record `verified_on` and `client_version` in the row by hand | a row is never re-dated without a run, and a failing smoke sets `verified` to `unsupported` with the date rather than deleting the row |
+| A vendor ships or retires a model | edit that harness's pricing file only (`cached_date` too); `python3 bin/sync_pricing_refs.py`; `python3 bin/harness_update.py check`; `python3 bin/model_registry.py` must resolve the new id to one tier | no price, ratio, or model id is written anywhere but the pricing file |
+| A routing default looks wrong for a model | `python3 bin/workflow_eval.py plan` on a held-out repository, then `run --live --max-usd N --max-dispatches N` on your own account, then `propose` -> `review` -> `apply` | a default is never promoted from a single repeat, from tasks that already backed the policy, or without a named review |
+| A repeated failure on one harness | `python3 bin/lessons_store.py observe` an observation with provenance and scope; `promote` only on recurrence across distinct sources or by explicit ask | no permanent instruction is added after a single failure |
+| The plugin version is bumped | `python3 bin/release_gate.py check`, both doc generators' `check`, the full suite, then the prune runbook in docs/PRIVACY.md after `claude plugin update` | a bump never rewrites a `verified_on` date |
+
+### Prepared, not run
+
+Each of these contacts a vendor with the user's own credentials or spends. They are written out so that running one is a decision, not an improvisation, and none has been run from this repository.
+
+**Cursor identity and read-only smoke.** Records: cursor `identity_probe`, `dispatch`, `read_only_dispatch` rows.
+
+```bash
+python3 bin/harness_select.py doctor --harness cursor --project DIR  # prints the smoke; never runs it
+# then, on your own account: agent -p --trust --workspace DIR --output-format json --mode ask "Reply with the single word ready"
+```
+
+**Each driver's argv, spawning nothing.** Records: that harness's `dispatch` and `durable_attempts` rows.
+
+```bash
+python3 bin/claude_execute.py run --kit DIR --dry-run; python3 bin/codex_execute.py run --kit DIR --dry-run; python3 bin/copilot_execute.py run --kit DIR --dry-run; python3 bin/cursor_execute.py run --kit DIR --dry-run
+# then, on your own account: one authorised live `run` on a kit you own, on your own account
+```
+
+**The bounded workflow evaluation.** Records: that harness's `workflow_evaluation` and `independent_review` rows; the run's card is the evidence a proposal cites.
+
+```bash
+python3 bin/workflow_eval.py plan --repo DIR --harness claude --models sonnet,haiku --workflows direct,reviewed,kit --repeats 2 --limit 6 --test-cmd "python -m pytest -q"
+# then, on your own account: the same flags with `run --live --max-usd 5 --max-dispatches 60`
+```
+
+**The bounded benchmark.** Records: nothing in the registry; the run's verdicts feed `repo_bench apply`.
+
+```bash
+python3 bin/repo_bench.py plan --repo DIR --models sonnet,haiku
+# then, on your own account: `run --live --max-usd N` with the printed plan
+```
+
+<!-- release-gate:end -->

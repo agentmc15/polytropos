@@ -8,20 +8,26 @@ the day anyone considers flipping it public.
 ## Never committed (enforced, not habitual)
 
 These live only on this machine. Each is guarded by a root-anchored `.gitignore` rule
-AND by `tests/test_privacy_layout.py`, which fails the whole suite — and therefore every
-kit task's verify command — if any of them ever becomes tracked:
+AND by `tests/test_privacy_layout.py`, whose list is `runtime_data.STORES` itself (so a new
+store cannot be added without the test covering it) and which fails the whole suite — and
+therefore every kit task's verify command — if any of them ever becomes tracked:
 
 | Surface | Contents |
 |---|---|
 | `journal/` | daily digests, summaries, inbox, plan cards, `config.json` (repo paths) |
 | `telemetry/` | dated cost/usage/routing envelopes (real dollar figures) |
 | `memory/` | user memory facts |
-| `prefs/` | model pins/excludes |
+| `prefs/` | model pins/excludes, the versioned routing policy and its proposals |
 | `trends/` | routing-history snapshots |
+| `benchruns/` | repo-bench runs: sandboxes, verdicts, dollar data |
+| `attempts/` | attempt ledgers (a legacy in-tree location; the default home is outside the tree) |
+| `evals/` | workflow-evaluation runs: trial records, ledgers, sandboxes, dollar data |
 | `value-report*.html` | generated value reports (dollars, session ids, machine paths) |
 
 Zero files under any of these have ever been committed, verified across the full git
-history (`git log --all --diff-filter=A`) on 2026-07-25.
+history (`git log --all --diff-filter=A`) on 2026-07-25 for the first five and again on
+2026-09-13 for all eight. `python3 bin/release_gate.py packaging` re-checks the ignore rules
+and the tracked tree on demand.
 
 ## Where runtime data actually lives (since step 13)
 
@@ -120,25 +126,29 @@ not cloud-synced), so the exposure is duplication and staleness rather than remo
 but every copy is one more place personal data sits, and one more thing to scrub before
 any machine migration or support bundle.
 
-There is also a latent **runtime** hazard: every store-writing script in `bin/` defaults
-its store directory to the plugin root derived from its own file location
-(`PLUGIN_ROOT / "journal"`, `/ "memory"`, `/ "telemetry"`, …). Run from the repo checkout
-that is correct; run via `${CLAUDE_PLUGIN_ROOT}` from the *installed* plugin, the plugin
-root **is the cache**, so a skill-dispatched run without an explicit `--*-dir` writes
-personal data into a versioned cache directory that the next bump strands. As of
-2026-07-25 every store file observed in the cache was an install-time copy (timestamps
-match `installedAt`), so this has not fired yet — but it is one skill dispatch away.
+There used to be a latent **runtime** hazard as well: every store-writing script in `bin/`
+defaulted its store directory to the plugin root derived from its own file location, so a
+skill dispatched from the *installed* plugin — where the plugin root **is the cache** — would
+have written personal data into a versioned cache directory that the next bump strands.
+Roadmap step 13 closed it: `bin/runtime_data.py` resolves every store to the per-user
+application-data directory, namespaced per checkout, wherever the script runs from. What
+remains is the copy channel itself. A store that already existed inside the tree before
+step 13 keeps being used there (nothing is relocated automatically) and is copied by every
+`claude plugin update` until `runtime_data.py migrate --store <name> --apply` moves it out.
+The 2026-07-25 observation — every store file in the cache was an install-time copy — is
+exactly what a legacy in-tree store still produces.
 
 Standing rules this creates:
 
 - **After every version bump / plugin refresh**: delete the personal store directories
-  (`journal/`, `prefs/`, `telemetry/`, `memory/`, `trends/`, `value-report*.html`) from
-  the fresh cache copy, and remove stale version directories. Manual by design — repo
-  code never touches `~/.claude`.
+  (every name in `runtime_data.STORES` — `journal/`, `prefs/`, `telemetry/`, `memory/`,
+  `trends/`, `benchruns/`, `attempts/`, `evals/` — plus `value-report*.html`) from the fresh
+  cache copy, and remove stale version directories. Manual by design — repo code never
+  touches `~/.claude`.
 - **Never sync, back up, or share `~/.claude`** without the same scrub; the cache holds
   whatever the stores held at install time.
-- **Open design item**: skill-dispatched store writes should anchor to the dev checkout,
-  never the plugin root, so an installed-plugin run cannot write into the cache.
+- **Migrate legacy in-tree stores out** (`python3 bin/runtime_data.py where` shows which
+  still resolve inside the tree); once none does, the prune below finds nothing to delete.
 
 ### The bump-and-prune runbook (validated 2026-07-26 on the 0.4.0 → 0.5.0 bump)
 
@@ -155,16 +165,16 @@ claude plugin update polytropos@polytropos-local
 
 # 3. LOOK at what the copy pulled in, before deleting (this is the exposure)
 C=~/.claude/plugins/cache/polytropos-local/polytropos
-for d in journal telemetry memory prefs trends; do
+for d in journal telemetry memory prefs trends benchruns attempts evals; do
   test -e "$C/<new>/$d" && echo "!! $d ($(find "$C/<new>/$d" -type f | wc -l) files)"
 done
 
 # 4. prune the fresh copy AND the superseded version directory
-rm -rf "$C/<new>"/{journal,telemetry,memory,prefs,trends} "$C/<new>"/value-report*.html
+rm -rf "$C/<new>"/{journal,telemetry,memory,prefs,trends,benchruns,attempts,evals} "$C/<new>"/value-report*.html
 rm -rf "$C/<old>"
 
 # 5. verify BOTH properties — clean, and actually current
-find "$C" \( -path '*/journal/*' -o -path '*/telemetry/*' -o -path '*/prefs/*' \) -type f
+find "$C" \( -path '*/journal/*' -o -path '*/telemetry/*' -o -path '*/prefs/*' -o -path '*/benchruns/*' -o -path '*/evals/*' \) -type f
 ls "$C"                                    # only the new version should remain
 ```
 

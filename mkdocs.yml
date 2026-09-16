@@ -139,3 +139,4 @@ nav:
     - Routing history: deep-dives/routing-history.md
     - Routing trends: deep-dives/routing-trends.md
     - Workflow evaluation: deep-dives/workflow-eval.md
+    - Release gate: deep-dives/release.md

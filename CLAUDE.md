@@ -7,8 +7,7 @@ just docs**. Edit accordingly.
 ## Invariants (violating any of these is a wrong change, even if it "works")
 
 Each rule is stated once; `docs/` and `SECURITY.md` carry the detail behind it. This file is
-loaded into every session, so keep it a list of rules — not history, not rationale, not a
-changelog.
+loaded into every session, so keep it a list of rules, not history or rationale.
 
 - **Pricing data is the single numeric source of truth — one file per harness, never merged.**
   `data/pricing.json` (Claude), `data/pricing.copilot.json`, `data/pricing.codex.json`,
@@ -125,8 +124,9 @@ changelog.
   offline set only (never `extract`/`label`/backends/`add`/`clone`/`watch`/`global`/`install`
   without explicit user opt-in). `/graphify-out/` stays gitignored.
 - **Generated documentation is never hand-edited.** `docs-site/skills/` and
-  `docs-site/deep-dives/` are written only by `bin/docs_build.py`, and `copilot-docs/` only by
-  `bin/copilot_docs.py`. Edit the SOURCE (a SKILL.md, `docs/*.md`, `README.md`, `SECURITY.md`,
+  `docs-site/deep-dives/` are written only by `bin/docs_build.py`, `copilot-docs/` only by
+  `bin/copilot_docs.py`, and the marked block of `docs/RELEASE.md` only by
+  `bin/release_gate.py build`. Edit the SOURCE (a SKILL.md, `docs/*.md`, `README.md`, `SECURITY.md`,
   `docs-src/fragments/`) and run that generator's `build`; both have drift tests that fail
   otherwise. `mkdocs.yml` + `docs-site/` are the one surface with a non-stdlib toolchain
   (mkdocs-material, installed only in CI or a throwaway venv). That toolchain is LOCKED, not
@@ -146,9 +146,9 @@ Every engine takes `--help`. `demo` / `--demo` is always synthetic, offline, and
 python3 -m unittest discover -s tests -v   # FULL SUITE — run before claiming any script task done
 
 # cost, routing, benchmarks
-python3 bin/cost_report.py --days 30                 # transcript cost report (markdown to stdout)
+python3 bin/cost_report.py --days 30                 # transcript cost report
 python3 bin/session_cost.py                          # one session's cost + all-Fable counterfactual
-python3 bin/routing_scorecard.py --demo              # routing quality; also --live/--history/--by-task/--trend/--roles
+python3 bin/routing_scorecard.py --demo              # routing quality; also --live/--history/--trend
 python3 bin/repo_bench.py demo                       # benchmark pipeline: fixture repo, stub dispatch, four oracles
 python3 bin/repo_bench.py plan --repo . --models sonnet,haiku   # priced matrix + ceiling; only `run --live --max-usd` spends
 python3 bin/workflow_eval.py demo                    # workflows compared offline; policy propose/apply/rollback
@@ -160,16 +160,16 @@ python3 bin/codex_pricing.py models --profile M      # Codex roster + burn index
 python3 bin/routing_policy.py demo                   # shape/model/effort/assurance under both policies
 python3 bin/copilot_usage.py --days 30               # reads ~/.copilot read-only
 python3 bin/codex_usage.py --days 30                 # reads ~/.codex read-only; honest unpriced fallback
-python3 bin/copilot_ralph.py --demo                  # Ralph goal-loop mock (no model, no network, no AIC)
+python3 bin/copilot_ralph.py --demo                  # Ralph goal-loop mock, offline
 
 # journal, memory, telemetry, context
 python3 bin/journal_collect.py --print               # today's digest (homes read-only; writes journal/)
 python3 bin/journal_summarize.py --dry-run           # the prompts + routed model; spawns nothing
-python3 bin/journal_askpack.py --print               # offline Teams/Outlook/Copilot-Studio ask-prompts
+python3 bin/journal_askpack.py --print               # offline ask-the-tools prompts
 python3 bin/journal_plan.py check                    # next-day runbook: cards due/overdue today
-python3 bin/memory_recall.py --demo                  # budget-capped recall: gate + stale + budget visible
+python3 bin/memory_recall.py --demo                  # budget-capped, gated recall
 python3 bin/memory_store.py review                   # staleness report over the gitignored store
-python3 bin/telemetry_snapshot.py                    # capture today's snapshots; `--list` inspects the store
+python3 bin/telemetry_snapshot.py                    # capture today's snapshots; --list inspects
 python3 bin/runtime_data.py where                    # where each store resolves; also `migrate`/`export`/`forget`
 python3 bin/context_weight.py session                # what filled this window (--harness codex|copilot); also `demo`
 
@@ -180,10 +180,11 @@ python3 bin/attempt_ledger.py demo                   # crash/resume walkthrough 
 python3 bin/attempt_history.py demo                  # every dispatch, joined across sources
 python3 bin/kit_contract.py graph --kit DIR          # DAG, frontier, stale evidence; also roster/refresh/demo
 python3 bin/graph_ground.py demo                     # freshness, impact, search fallback
-python3 bin/kit_scheduler.py demo                    # opt-in batches: copies, integrate, verify the merged tree
+python3 bin/kit_scheduler.py demo                    # opt-in batches in isolated copies
 python3 bin/docs_build.py check                      # docs-site freshness (exit 1 on drift); `build` regenerates
 python3 bin/copilot_docs.py check                    # Copilot doc center freshness; `build` regenerates
-python3 bin/primitives.py check copilot/aesop.toml   # AI-primitive manifest validation (exit 2 on findings)
+python3 bin/release_gate.py check                   # release gate: registry, contract map, packaging (exit 3)
+python3 bin/primitives.py check copilot/aesop.toml   # primitive manifest validation (exit 2)
 ```
 
 ## When executing a kit task

@@ -14,14 +14,24 @@ location is guarded here too.
 Uses `git` read-only (`ls-files`, `check-ignore`) — the repo's CLI bans cover the
 copilot/codex/claude harness CLIs, not git plumbing over the repo's own tree.
 """
+import importlib.util
 import subprocess
 import unittest
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 
-# Every personal-data surface and the root-anchored rule that must protect it.
-PRIVATE_DIRS = ("journal", "telemetry", "memory", "prefs", "trends")
+# Every personal-data surface and the root-anchored rule that must protect it. The list is
+# `runtime_data.STORES` itself (2026-09-13, step 26): the hand-kept tuple here had stopped at
+# five while the engines had grown to eight stores (benchruns, attempts, evals), so three
+# personal-data roots were ignored by .gitignore but pinned by no test. Deriving it means a
+# ninth store cannot be added without this test covering it.
+_rd_spec = importlib.util.spec_from_file_location(
+    "_privacy_runtime_data", REPO / "bin" / "runtime_data.py"
+)
+_rd = importlib.util.module_from_spec(_rd_spec)
+_rd_spec.loader.exec_module(_rd)
+PRIVATE_DIRS = tuple(_rd.STORES)
 REQUIRED_RULES = tuple(f"/{d}/" for d in PRIVATE_DIRS) + ("/value-report*.html",)
 
 
