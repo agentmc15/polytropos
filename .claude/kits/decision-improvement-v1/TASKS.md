@@ -72,7 +72,7 @@ python3 -c "from pathlib import Path; t=Path('docs/DECISION-IMPROVEMENT-AUTHORIT
 ### D04 — Attempt provenance
 - id: D04
 - title: Attempt provenance
-- status: pending
+- status: done
 - model: opus
 - depends: D02, D03
 **Brief.** Own D03’s existing attempt authority and `tests/test_decision_provenance.py:AttemptProvenanceTests`. Persist correlated acceptance/policy/decision/admission/full-version refs; load historical omissions as unknown and preserve consult/review overhead and max-dispatches meaning.

@@ -27,6 +27,7 @@ means the same thing whoever wrote it. Adding a parallel budget check or a secon
 elsewhere would recreate the problem this file exists to end.
 """
 
+import hashlib
 import json
 import os
 import re
@@ -748,12 +749,26 @@ class BudgetAdmission:
     still consumed its allowance, because the money is spent when the call is made. A failed
     consult therefore consumes consult allowance, which is the point -- an operation that can
     fail for free is an operation nobody is counting.
+
+    A GRANT NOW HAS AN IDENTITY. The only durable trace of an admission used to be indirect --
+    an attempt exists, therefore something admitted it -- so nothing could say WHICH grant
+    licensed which call, and a refused operation left no record at all beyond a NOTES.md line.
+    `admit` now mints a grant record, and `ref_for` hands the attempt ledger a pointer to it.
+    Minting is unconditional on success and impossible on refusal: a refused operation is not
+    a grant, so no reference exists for it to carry. What a cap MEANS is untouched --
+    `OPERATION_CAPS` still decides which caps a kind draws down, `max-dispatches` still counts
+    exactly initial, retry, escalation and consult, and review and acceptance still draw only
+    on `max-model-calls`.
     """
 
     def __init__(self, plan_budget, used=None):
         self.budget = dict(plan_budget or {})
         self.used = {k: int(v) for k, v in (used or {}).items()}
         self.granted = []
+        #: One record per grant issued, in order, parallel to `granted` (which stays a list of
+        #: kind words because callers and tests read it that way).
+        self.grants = []
+        self._claimed = set()
 
     def check(self, kind):
         """`(ok, reason)` without consuming anything."""
@@ -773,7 +788,80 @@ class BudgetAdmission:
         for key in OPERATION_CAPS.get(kind, ()):
             self.used[key] = self.used.get(key, 0) + 1
         self.granted.append(kind)
+        self.grants.append(self._mint(kind))
         return True, None
+
+    def _mint(self, kind):
+        """The identity of the grant just issued -> `{"id", "kind", "sha"}`.
+
+        Minted HERE, at admission, because the grant exists before the attempt does: an attempt
+        id cannot identify the allowance that licensed it. The id is content-free
+        (`secrets.token_hex`, the same rule as `generate_run_id` and `new_attempt_id`), and the
+        digest covers the grant's own content -- the operation kind, the caps it drew down, the
+        ceilings those caps carried and the counts AFTER this grant -- so two grants of the same
+        kind at different points in a ladder are distinguishable. A digest identifies content;
+        it is not a protection against anything, and nothing here treats it as one.
+        """
+        caps = list(OPERATION_CAPS.get(kind, ()))
+        material = json.dumps(
+            {
+                "kind": kind,
+                "caps": caps,
+                "budget": {k: self.budget.get(k) for k in caps},
+                "used": {k: self.used.get(k, 0) for k in caps},
+            },
+            sort_keys=True,
+        )
+        return {"id": secrets.token_hex(4), "kind": kind,
+                "sha": hashlib.sha256(material.encode("utf-8")).hexdigest()}
+
+    def ref_for(self, kind):
+        """The reference for the grant that admitted a `kind` operation, or None.
+
+        Only the most recent grant, only when it was issued for this kind, and only once. A
+        grant funds exactly ONE operation, so a second attempt claiming the same grant would be
+        a dispatch nobody admitted -- precisely the defect the per-operation gate exists to
+        prevent -- and the reference must not paper over it. Every other case answers None,
+        which reads as unknown: a correlation nobody can establish is not one to guess.
+        """
+        grant = self.grants[-1] if self.grants else None
+        if grant is None or grant["kind"] != kind or grant["id"] in self._claimed:
+            return None
+        self._claimed.add(grant["id"])
+        return _al().make_ref(grant["id"], sha=grant["sha"], version=CONTRACT_VERSION)
+
+
+def acceptance_identity(task):
+    """The content identity of what a task must satisfy -> a reference, or None.
+
+    WHAT WAS MISSING. A task's acceptance is free text in TASKS.md beside its brief, and
+    nothing recorded WHICH text a verdict was reached against. `evidence_freshness` pins the
+    ARTIFACT an acceptance was reached on -- the tree -- and says nothing about the criteria, so
+    a kit whose acceptance wording was edited after a task was accepted reads exactly like one
+    whose was not.
+
+    This is that identity: a digest over the task id, its acceptance text and the verify command
+    that checks it, stamped with this contract's version. Both halves are in it deliberately --
+    changing what the check RUNS changes what "accepted" means as surely as changing the prose
+    does. A task that declares no acceptance has no identity to record and gets None, which is
+    unknown.
+
+    It is computed from the source as it stands NOW and is never reconstructed for a record
+    written earlier. Capturing a still-existing source late is fine; an attempt recorded before
+    acceptance identities existed simply has none.
+    """
+    task = task or {}
+    acceptance = task.get("acceptance")
+    if not acceptance or not str(acceptance).strip():
+        return None
+    material = json.dumps(
+        {"task": task.get("id"), "acceptance": acceptance, "verify": task.get("verify"),
+         "contract": CONTRACT_VERSION},
+        sort_keys=True, ensure_ascii=False,
+    )
+    digest = hashlib.sha256(material.encode("utf-8")).hexdigest()
+    return _al().make_ref(digest[:16], sha=digest, version=CONTRACT_VERSION)
+
 
 def blocking_cap(plan_budget, used, kind):
     """The first cap that would refuse an operation of `kind`, or None.
@@ -1690,6 +1778,9 @@ def budget_gate(kit_dir, tasks, task, run_id, lifecycle, consult=False, role="im
     notes_text = notes_path.read_text() if notes_path.exists() else ""
     used = combined_usage(notes_text, lifecycle.ledger)
     admission = BudgetAdmission(plan_budget, used)
+    # So every attempt this lifecycle records names the grant that admitted it. Bound before
+    # the exhaustion check, because a refusal mints no grant and therefore needs no reference.
+    lifecycle.bind_admission(admission)
     exhausted_key = plan_budget_exhausted(plan_budget, used, is_consult=consult)
     if not exhausted_key:
         return admission
@@ -1799,10 +1890,17 @@ class TaskRun:
     Every consuming call a driver makes is bracketed by `attempt_started` (before) and
     `attempt_finished` (after), so the ledger always knows a call was made even when nothing
     came back. `verify_finished` records the check's verdict against the attempt it judged.
+
+    PROVENANCE IS ATTACHED HERE, ONCE. This is the one shared object every driver holds, so the
+    references an attempt carries (`attempt_ledger.PROVENANCE_REFS`) are resolved here rather
+    than threaded through four ladders: the acceptance identity comes from the task itself, the
+    admission reference from whatever `bind_admission` was given, and the policy and decision
+    pins from this run. Each can be overridden per call; each that resolves to nothing is simply
+    not written, and reads back as unknown.
     """
 
     def __init__(self, ledger, run_id, task, workspace=None, actor="driver", role=None,
-                 parent=None):
+                 parent=None, policy_ref=None, decision_ref=None):
         self.ledger = ledger
         self.run = run_id
         self.task = task
@@ -1814,7 +1912,26 @@ class TaskRun:
         # here even though the NOTES.md grammar only carries `parent=` on a success.
         self.role = role
         self.parent = parent
+        # Run-scoped provenance. `policy_ref` and `decision_ref` are pins a caller supplies:
+        # nothing in this repository mints either yet, so today they are None on every run and
+        # every attempt records them as unknown. That is the honest state, not a placeholder --
+        # the bundle and decision contracts that would mint them do not exist at this revision.
+        self.policy_ref = policy_ref
+        self.decision_ref = decision_ref
+        self.admission = None
         self._al = _al()
+
+    def bind_admission(self, admission):
+        """Correlate this task's attempts with the grants that admit them -> the admission.
+
+        The grant is minted by `BudgetAdmission.admit` immediately BEFORE the attempt exists, so
+        the reference can only flow admission -> attempt. Binding is how the shared contract
+        picks it up without every driver threading a reference through its own ladder. A run
+        that binds nothing, or a kit that declares no budget and therefore has no admission,
+        records no admission reference -- which reads as unknown, never as "unadmitted".
+        """
+        self.admission = admission
+        return admission
 
     def begin(self, break_claim=False):
         """Claim the task and close whatever a dead run left open -> what was found."""
@@ -1851,11 +1968,29 @@ class TaskRun:
                 found = ev
         return found
 
-    def attempt_started(self, op, model, prompt=None, verify_cmd=None, effort=None):
+    def attempt_started(self, op, model, prompt=None, verify_cmd=None, effort=None,
+                        acceptance_ref=None, policy_ref=None, decision_ref=None,
+                        admission_ref=None):
+        """Record an attempt before it is dispatched -> its attempt id.
+
+        Each `*_ref` defaults to what this run can establish and is overridable per call. The
+        admission reference is read from the bound admission for THIS operation kind and is
+        claimed once, so an attempt cannot inherit the grant that funded the one before it.
+        """
+        if acceptance_ref is None:
+            acceptance_ref = acceptance_identity(self.task)
+        if admission_ref is None and self.admission is not None:
+            admission_ref = self.admission.ref_for(op)
+        if policy_ref is None:
+            policy_ref = self.policy_ref
+        if decision_ref is None:
+            decision_ref = self.decision_ref
         return self.ledger.record_started(
             self.run, self.task_id, op, model, prompt=prompt, verify_cmd=verify_cmd,
             artifact=self.fingerprint(), role=self.role, parent=self.parent,
             requested_model=self.task.get("model"), effort=effort, actor=self.actor,
+            acceptance_ref=acceptance_ref, policy_ref=policy_ref,
+            decision_ref=decision_ref, admission_ref=admission_ref,
         )
 
     def attempt_finished(self, attempt, rc, output, proc_outcome=None, duration_s=None,
@@ -1889,22 +2024,30 @@ class TaskRun:
         return self._al.retry_context(self.history(), verify_cmd=verify_cmd,
                                       include_tail=include_tail)
 
-    def project(self, status, result=None, outcome_line=False, note=""):
+    def project(self, status, result=None, outcome_line=False, note="", acceptance_ref=None):
         """Record the projection; an acceptance also binds the artifact versions (step 24).
 
         `artifact` is this workspace's fingerprint now (None when git cannot say), and
         `upstream` is each dependency's latest accepted artifact, read from the ledger at
         this moment -- so a later re-acceptance of a dependency with a different artifact is
         detectable as stale evidence on this task.
+
+        `acceptance_ref` completes that pair with the criteria side: the artifact says which
+        tree the verdict was reached on, the reference says which acceptance text and verify
+        command it was reached against. It defaults to the task's own identity now, and a task
+        that declares no acceptance records none.
         """
         artifact = self.fingerprint() if outcome_line else None
         upstream = None
         if outcome_line and status == "done":
             upstream = {dep: self.ledger.latest_artifact(dep)
                         for dep in (self.task.get("depends") or [])}
+        if acceptance_ref is None:
+            acceptance_ref = acceptance_identity(self.task)
         self.ledger.record_projected(self.run, self.task_id, status, result=result,
                                      outcome_line=outcome_line, note=note,
-                                     artifact=artifact, upstream=upstream)
+                                     artifact=artifact, upstream=upstream,
+                                     acceptance_ref=acceptance_ref)
 
     def end(self, status="finished", reason=""):
         """Record the run's end and release the claim. Idempotent: a driver calls it on

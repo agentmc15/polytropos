@@ -15,7 +15,10 @@ WHAT THIS IS. A read-only JOIN over those sources into one record per attempt (`
 with two rules that do the work: every field is either observed or `None`, and `observed`
 lists which -- so a missing observation stays missing rather than defaulting; and history is
 never collapsed. `latest_state` is a PROJECTION computed from the history, kept beside it, so
-a rerun's pass and the failure before it are both there to read.
+a rerun's pass and the failure before it are both there to read. The same two rules govern the
+provenance references an attempt may carry (`PROVENANCE_FIELDS`): a reference nobody recorded
+is `None` and is COUNTED as unknown by `summarize`, because a reference that is merely missing
+from a card is indistinguishable from one that was never asked for.
 
 WHAT IT REFUSES. It does not price anything: cost rides in from the records that carried one,
 under its own basis (`COST_BASES`), and bases are never summed together -- an estimated dollar
@@ -40,13 +43,27 @@ SOURCES = ("ledger", "notes", "role-use", "ledger+role-use")
 COST_BASES = ("billed", "credits", "estimated", "proxy", "model-reported")
 
 #: One record per attempt. Every field is observed or None; `observed` names the former.
+#:
+#: The four `*_ref` fields are the attempt's PROVENANCE and must stay exactly
+#: `attempt_ledger.PROVENANCE_REFS` -- the ledger owns which references an event may carry, this
+#: tuple owns which the record projects, and `tests/test_decision_provenance.py` fails if the two
+#: ever drift. They are listed literally here for the same reason every other field is: `observe`
+#: raises `KeyError` for a key absent from this tuple, so a reference written to the ledger and
+#: missing from here could not be projected at all.
 RECORD_FIELDS = (
     "kit", "run", "task", "attempt", "source", "harness", "op", "role", "phase",
     "requested_model", "dispatched_model", "observed_model", "effort",
     "tier", "tier_harness", "registry_version", "ts", "result", "failure_class",
     "verify_rc", "verify_signature", "verify_failures", "artifact", "parent",
+    "acceptance_ref", "policy_ref", "decision_ref", "admission_ref",
     "attempts_recorded", "ledger_attempts", "cost", "observed",
 )
+
+#: The subset of `RECORD_FIELDS` whose absence `summarize` counts as unknown provenance. A
+#: reference nothing recorded has to be DISCLOSED, not silently missing: a record that simply
+#: lacks the field looks identical to one that carries nothing, and only the count tells the
+#: reader which question was never answered.
+PROVENANCE_FIELDS = ("acceptance_ref", "policy_ref", "decision_ref", "admission_ref")
 
 #: What each driver calls itself in `run.started` -> the harness whose pricing file it reads.
 ACTOR_HARNESS = {"claude-code": "claude", "codex": "codex", "copilot": "copilot",
@@ -144,6 +161,11 @@ def ledger_records(kit, ledger, registry):
                     dispatched_model=started.get("model"), effort=started.get("effort"),
                     ts=started.get("ts"), artifact=started.get("artifact"),
                     parent=started.get("parent"))
+            # Provenance rides the `attempt.started` line, read through its one owner so this
+            # module never re-derives the reference shape. Absent stays absent: `observe`
+            # declines a None, so an attempt recorded before these existed is counted as
+            # unknown by `summarize` rather than filled in here.
+            observe(rec, **_mod("attempt_ledger").provenance(started))
             if finished:
                 observe(rec, observed_model=finished.get("observed_model"),
                         failure_class=finished.get("class"))
@@ -492,6 +514,7 @@ def summarize(records, notes=(), coverage=None, registry=None):
     registry = registry or _mod("model_registry").registry()
     by_harness = {}
     unknown = {"harness": 0, "tier": 0, "observed_model": 0, "cost": 0}
+    unknown.update({field: 0 for field in PROVENANCE_FIELDS})
     classes = {}
     by_source = {}
     for rec in records:
@@ -506,6 +529,9 @@ def summarize(records, notes=(), coverage=None, registry=None):
             unknown["observed_model"] += 1
         if rec.get("cost") is None:
             unknown["cost"] += 1
+        for field in PROVENANCE_FIELDS:
+            if rec.get(field) is None:
+                unknown[field] += 1
         if rec.get("failure_class"):
             classes[rec["failure_class"]] = classes.get(rec["failure_class"], 0) + 1
         h = by_harness.setdefault(harness, {"records": 0, "tiers": {}})
@@ -552,6 +578,9 @@ def render_markdown(card):
     lines.append(f"unknown: harness={u['harness']} tier={u['tier']} "
                  f"observed_model={u['observed_model']} cost={u['cost']}  "
                  f"(counted, never filled)")
+    lines.append("unknown provenance: " + " ".join(
+        f"{field.removesuffix('_ref')}={u.get(field, 0)}" for field in PROVENANCE_FIELDS)
+        + "  (no reference recorded; unknown, never inferred)")
     if card["failure_classes"]:
         lines.append("failure classes: " + ", ".join(
             f"{k}={v}" for k, v in sorted(card["failure_classes"].items())))

@@ -162,3 +162,53 @@ outcome: D03 model=opus attempts=2 result=retry-pass review=revised run=2026-09-
 agent: D03 id=a3f1cd5 role=implementer model=opus
 agent: D03 id=a1de6a2 role=verifier model=sonnet findings=3 confirmed=3 result=revised
 defect: D03 kind=unspecified-path
+
+### D04 — Attempt provenance
+
+Four optional refs (`acceptance_ref`, `policy_ref`, `decision_ref`, `admission_ref`) on
+`attempt.started`, plus `acceptance_ref` on `task.projected`. Six files: `attempt_ledger`,
+`attempt_history`, `kit_contract`, and ONE line each in three drivers
+(`lifecycle.bind_admission(admission)` at `claude_execute.py:958`, `codex_execute.py:1507`,
+`copilot_execute.py:1135`); Cursor gets it through the shared `budget_gate`
+(`kit_contract.py:1783`). 26 tests. Verify exit 0, suite 4265/0/2, all gates 0.
+
+**The LEDGER_VERSION trap was avoided, and the mechanism is worth reusing.** The constant stays
+`polytropos.attempts/1` — the diff adds only comment lines near it. What makes that safe is
+`validated_refs` OMITTING a `None` ref rather than writing an explicit null, so a line written
+today without provenance is BYTE-IDENTICAL to one written before the feature existed. Nothing
+ever has to distinguish "written without one" from "written before there were any". The verifier
+confirmed this by writing an event both ways and diffing the bytes, and confirmed read-time-only
+behavior with its own hand-seeded pre-D04 stream (not the implementer's fixture): bytes unchanged
+after `events`/`task_history`/`usage`/`unprojected`, all four refs reading `None`.
+
+A ref is `{"id", "sha", "v"}` where `v` is the REFERENCED contract's version, never the ledger's.
+Acceptance and admission refs carry `kit_contract.CONTRACT_VERSION`, which already has a
+`release_gate.VERSION_SOURCES` row — **no new version constant, so `docs/RELEASE.md` needed no
+regeneration.** Later tasks adding a ref should follow that: version the referenced object, never
+the envelope.
+
+Carry-forward:
+- **`policy_ref` and `decision_ref` have NO producer** and every attempt records them unknown,
+  because D09's decision contract and D11's bundle contract do not exist. The seam accepts one
+  when they arrive. D04 deliberately did NOT wire `prefs/routing-policy.json` as a policy ref —
+  GUARDRAILS forbids a preference file silently becoming a bundle, and that is exactly how it
+  would have begun. D11/D13 must supply a real bundle identity, not reuse the prefs file.
+- **`ref_for` consumes its grant: one grant funds one operation.** No path today admits once and
+  dispatches twice — the verifier traced every `admit`/`attempt_started` pairing in all four
+  drivers. A future caller that does will get `None`, which is the honest answer rather than a
+  fabricated correlation. Do not "fix" that into reuse.
+- **Four `BudgetAdmission` builders remain unbound**: `kit_scheduler.py:524` and `:627`,
+  `workflow_eval.py:1013`, `copilot_ralph.py:314`. Their attempts read admission unknown. Each is
+  a one-line `bind_admission` when a later task needs it. D18/D20 touch `workflow_eval` and may.
+- **`record_role_dispatch` (`kit_contract.py:2097`) attaches no refs** — review and acceptance
+  dispatches have no `TaskRun` and no admission. Pre-existing since step 17, left alone on
+  purpose: the brief says preserve review overhead, not re-scope it.
+- **The acceptance ref's `id` is content-derived (`sha[:16]`)** unlike run/attempt/grant ids,
+  which stay content-free. Safe only because no ref reaches a committed surface — independently
+  traced: `build_outcome_line` has no ref parameter, `append_run_note` builds from `result` keys
+  none of which is a ref name, and zero hits for the four names in any driver's `append_note`.
+  **If a later task ever puts a ref on a NOTES.md line, that rule breaks.**
+
+outcome: D04 model=opus attempts=1 result=pass review=clean run=2026-09-16-aa6e
+agent: D04 id=a5bc6b8 role=implementer model=opus
+agent: D04 id=a88799a role=verifier model=sonnet findings=0 confirmed=0 result=accepted

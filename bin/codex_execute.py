@@ -1502,6 +1502,9 @@ def cmd_run(args):
         # the same numbers INTO the run, so every escalation rung asks again instead of the
         # ladder spending freely on one entry-time grant.
         admission = BudgetAdmission(plan_budget, used)
+        # Correlate every attempt this task records with the grant that admitted it; the
+        # reference is resolved inside the shared contract, not threaded through the ladder.
+        lifecycle.bind_admission(admission)
         exhausted_key = plan_budget_exhausted(plan_budget, used, is_consult=bool(args.parent))
         if exhausted_key:
             cap = plan_budget[exhausted_key]
