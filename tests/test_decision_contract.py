@@ -960,6 +960,26 @@ class DecisionValueValidationTests(unittest.TestCase):
                 self.refusal("value-invalid", dc.parse_result,
                              result_payload(request, answers={key: answer(raw=raw)}), request)
 
+    def test_a_negative_distribution_entry_is_refused_on_its_own_merits(self):
+        # The sibling upper-bound case above needed a boundary value to escape the sum check.
+        # The LOWER bound needs a third outcome to escape the UPPER one: with only two entries
+        # summing to 1, a negative entry forces its partner above 1, so `>1` fires first and
+        # `minimum=0` is never reached. Independent verification showed that deleting
+        # `minimum=0` left the whole 4450-test suite green. Three outcomes let a negative entry
+        # sit alongside partners that are each in range and still sum to 1.0, so this case can
+        # only be refused by the lower bound itself.
+        ordinal = ordinal_question(dependencies=[])
+        request = self.request(questions=[ordinal],
+                               questions_sha=dc.questions_digest(_specs([ordinal])))
+        key = request.questions[0].qualified_id
+        raw = {"none": -0.1, "some": 0.6, "all": 0.5}
+        self.assertEqual(sum(raw.values()), 1.0, "the sum check must not be what refuses this")
+        self.assertTrue(all(v <= 1 for v in raw.values()),
+                        "no entry may exceed 1, or the upper bound would refuse it instead")
+        self.refusal("value-invalid", dc.parse_result,
+                     result_payload(request, answers={key: answer(outcome="some", raw=raw)}),
+                     request)
+
     def test_a_distribution_entry_that_is_non_finite_or_boolean_is_refused(self):
         request = self.request()
         key = request.questions[0].qualified_id

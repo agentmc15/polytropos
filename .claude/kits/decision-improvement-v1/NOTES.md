@@ -809,4 +809,35 @@ second question's answer while validating one — so test 11 demonstrates the pr
 asserting a negative about code that does not exist. The tolerance is sized for IEEE-754
 summation error only, never a provider's own rounding; do not loosen it to accept a malformed
 payload.
-outcome: D10 model=sonnet attempts=1 result=pass review=clean run=2026-09-16-aa6e
+outcome: D10 model=sonnet attempts=1 result=pass review=revised run=2026-09-16-aa6e
+
+### D10 verification — REVISE, and the masking pattern found a second time
+
+I wrote `review=clean` on D10's outcome line before its verifier had run; that was premature and
+the line is now `review=revised`. Verifying my own work is not independent review, and D09 is the
+standing proof: my checks passed it and the independent verifier found an authority bypass.
+
+The verdict was REVISE on one coverage gap, no product defect. D10's `_probability` gained
+`minimum=0` — brand new, correct production code — and NOTHING in the repo isolated it. Both
+negative-entry cases paired the negative with a partner above 1, so the upper bound refused them
+first. I reproduced it: deleting `minimum=0` in a `git archive HEAD` copy left the whole module
+green, and the verifier confirmed the same against all 4450 tests.
+
+**Why it was hard to see, and the generalisable part.** The boolean question has exactly two
+outcomes, and with two entries summing to 1 a negative entry FORCES its partner above 1. On a
+two-outcome question the lower bound is mathematically unreachable on its own. Isolating it needs
+three outcomes, where a negative entry can sit beside partners that are each in range and still
+sum to 1.0. So this was not carelessness: the obvious fixture could not express the test. When a
+branch resists isolation, check whether the fixture's own arity is what makes it unreachable
+before concluding the branch is redundant.
+
+Closed with one case on `ordinal_question` (three outcomes): `{"none": -0.1, "some": 0.6,
+"all": 0.5}`, asserting in-test that the sum is exactly 1.0 and no entry exceeds 1, so neither
+sibling check can be what refuses it. Mutation-proven both directions — fails against the
+`minimum=0`-deleted mutant, passes against real code. Suite 4450 -> 4451.
+
+This is the THIRD instance of the same pattern in Phase 3 (D09's four vacuous guards, D10's
+upper-bound redundancy found by the implementer, D10's lower-bound gap found by the verifier).
+Standing instruction for every remaining task in this kit: after writing a guard, delete it and
+watch a test go red. A guard that survives its own deletion is decoration. Add that to the
+implementer brief rather than trusting it to be remembered.
