@@ -220,7 +220,7 @@ PYTHONPATH=tests python3 -m unittest test_decision_provider.RulesReplayProviderT
 ### D13 — Legacy policy selection
 - id: D13
 - title: Legacy policy selection
-- status: pending
+- status: done
 - model: opus
 - depends: D02, D12
 **Brief.** Own `bin/decision_policy.py`, driver seam and `tests/test_decision_policy.py:LegacySelectionTests`. Implement pure selection/reason codes/rejections with legacy default and fresh capability/admission recheck; no active pointer consumption before D23.

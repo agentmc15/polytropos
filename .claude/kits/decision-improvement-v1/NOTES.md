@@ -1000,3 +1000,101 @@ Carry-forward:
   already carries. A digest identifies content; it does not protect against a rewrite by someone
   who could write the file in the first place.
 outcome: D12 model=sonnet attempts=1 result=pass review=pending run=2026-09-16-aa6e
+
+## D13 — Legacy policy selection (opus, depends D02, D12) — Phase 3 complete
+
+`bin/decision_policy.py` 500 -> 1240 lines; D11's half is byte-identical, verified by diffing the
+first 500 lines against 998d433. New `tests/test_decision_policy.py:LegacySelectionTests`, 86
+tests. Suite 4541 -> 4627. No version constant, deliberately: `ActionSelection` is an in-memory
+return value feeding `build_record`, which already carries `CONTRACT_VERSION`; nothing here is
+persisted, so there is no stored shape to version. If D23 persists a selection, that is when it
+earns one.
+
+**The D02 golden trap held.** I pinned `tests/test_decision_legacy.py` by checksum BEFORE dispatch
+and told the implementer the pin existed. md5 is `8404232d...` before and after and
+`git diff --numstat` on it is empty. The combined verify moved 1 -> 0 without a golden changing.
+
+**The seam shape, corrected again — and my brief was the thing that was wrong.** I told D13 that
+`routing_policy.py` has three direct loaders and implied all three were deciders. Reading shows
+they are not three of a kind: `codex_policy.py` decides and `codex_execute.py` dispatches under it
+(the only place a routing decision precedes a real dispatch); `workflow_eval.py:579` (`route_stage`)
+DOES call `rp.decide`, but for offline variant comparison and it spends nothing; and
+`release_gate.py:1004` merely loads the module to read a version constant off it — not a decision
+seam at all. Claude and Copilot reach routing by neither path: their seam is `resolve_model` plus
+`escalation_ladder` from their own pricing files, and Cursor has no ladder at all
+(`cursor_execute.py:157` is `model or task.get("model")`). So there are TWO seam shapes, not four,
+and two adapters wrap exactly those. Neither is wired to anything, and
+`test_nothing_in_this_repository_calls_the_selection_or_either_seam` sweeps `bin/*.py` and asserts
+the caller list is empty, so the day someone wires it that test is the signal.
+
+**"A high-confidence result never overrides a hard denial" is structural, and I proved it myself.**
+`_admissible(action, facts)` has exactly two parameters — there is no argument through which a
+probability, a calibrated number or a vendor confidence could arrive; a test pins the parameter
+list, so adding `result=None` trips it. I ran the behaviour directly: raw 1.0, calibrated 1.0 and
+vendor_confidence 1.0 recommending a DENIED action leaves `selected` at the baseline with reason
+`advice-inadmissible`, and the rejection carries the denial's own reason (`excluded`), not a
+generic one. Control: the identical answer with vendor_confidence 0.0 behaves identically, so
+confidence is unread in BOTH directions rather than merely capped.
+
+`denial_reasons()` is derived by SUBTRACTION — `routing_policy.FILTERS` minus `ranked-lower` — so
+a filter added to the router is hard here automatically. That fails closed rather than needing
+someone to remember. A test patches `rp.FILTERS` with an invented filter and asserts it lands on
+the denial side with no edit to this module.
+
+80 mutations, 0 survivors. Three survived the first correct run and all three were examined:
+`_mode`'s vocabulary check was masked by an identical check in `__post_init__` (fixed by
+validating the caller's own argument BEFORE the state, which is also the better order); `_in_force`'s
+source check survived only because the fixture lacked a digest, and with a proper fixture its
+deletion lets a resolution claiming an activation read as in-force and SUCCEED SILENTLY — the
+dangerous case; and `tuple(dict.fromkeys(codes))` genuinely proved nothing and was REMOVED rather
+than disclosed, because de-duplicating would have silenced the `duplicate-entry` guard beneath it.
+**A guard that hides another guard is worse than no guard** — add that to the standing instruction.
+
+**The implementer's mutation harness caught a defect in ITSELF, which is the control lesson again.**
+Its first run had all 80 mutants die with the same `SyntaxError` and ZERO failing test names —
+which by exit code alone reads as 80 guards caught. Cause: it passed a restricted `PATH`, picked up
+system python 3.9 instead of the repo's 3.12, and the run proved nothing. It ran the unmutated
+control first, saw the control was also broken, and discarded the run. This is the same discipline
+I failed on D11.
+
+Two defects the tests found in its own code, same root cause: `selection_state` COERCED its
+arguments before validating them. `dict(denials or {})` on a list raised a bare `ValueError`
+instead of a contract refusal, and `list(reserved)` on a model-id string silently became a list of
+its letters. The coercion answered the question before the contract could. **`runtime_facts` in
+D11 has the same latent shape** (`dict(components)`, `list(capabilities)` before `_runtime` runs).
+Out of D13's scope and NOT fixed — carry it to whoever touches D11 next.
+
+Vocabulary: `SELECTION_REASONS` (20 codes) is disjoint from D11's `RESOLUTION_REASONS`, asserted by
+test. One deliberate exception on the record: `legacy` appears in both `SELECTION_MODES` and
+`RESOLUTION_SOURCES`, and the test asserts the intersection is EXACTLY `["legacy"]` rather than
+forcing them apart — it names one fact, the frozen existing behaviour, and two spellings would be
+two things to keep in step for no gain. The fourth coordinator check was renamed `budget` ->
+`budget_admission` because `budget` is in `BANNED_FIELDS` and a check outcome spelled that way
+would collide with the ban.
+
+Carry-forward: zero production callers (the chain is D20/D23); `select_action` requires a PARSED
+result and refuses a payload dict, so a caller holding `decision_provider.evaluate()` output must
+run `parse_result` first — name this in the D20/D23 wiring; and `ActionSelection.recommended` is
+NOT the field `DecisionRecord` carries under that name — the record reports what the provider said,
+always, while this is narrower (the advice the selection was entitled to consider, `None` when the
+result answered a different world). They diverge on a stale result. Documented in the dataclass,
+but the name collision is a trap.
+
+### The intermittent suite failure — second sighting, name STILL lost, and how to catch it
+
+My first full-suite run at this tree reported `FAILED (errors=1, skipped=2)`. **I lost the test
+name because I piped the run through `grep` for the summary line.** Four consecutive runs since
+are green (one re-run plus three captured to files), so the tree is green and this is a
+green-boundary commit, but the failure is real and this is the SECOND sighting — D09's implementer
+saw one and also could not name it.
+
+What this does and does not establish: D09's sighting happened when D13's code did not exist, so
+D13 did not cause it. It is NOT attributed to the PLAN's known unreproduced scheduler/TASKS
+atomic-write race, because there is still no evidence for that — only the absence of another
+candidate, which is not evidence.
+
+**Standing instruction, since this has now cost two chances:** never pipe a full-suite run through
+`grep` when the point is to catch a failure. Redirect the whole run to a file
+(`python3 -m unittest discover -s tests > run.log 2>&1`) and grep the FILE. A summary line is
+worth nothing without the traceback above it, and the traceback is what both sightings lost.
+outcome: D13 model=opus attempts=1 result=pass review=pending run=2026-09-16-aa6e
