@@ -196,6 +196,8 @@ present and are not.
     list with no grouping of related defect variants, no content identity, and no exposure or
     retirement record. That is D06's gap, and `repo_bench` already owns the content identities the
     manifest would cite.
+
+    **Correction, D08 phase-2 review, 2026-09-16.** Item 10 is no longer true and its citation has rotted. D06 implemented exactly this: `build_manifest`/`verify_manifest` content-address the pool into grouped partitions, `MANIFEST_VERSION` sits on the referenced object, and manifests persist under `<run_dir>/manifests/` rather than the evaluation-store root. The `workflow_eval.py:1126` citation points at the pre-D06 revision this document stamps (`71bb3ae`) and is off by roughly 1200 lines against HEAD. The gap is closed; the numbered item is kept because this is an inventory of a stamped revision, not a live description.
 11. **The proposal lifecycle has four states**, set in `build_proposal`, `review_proposal` and
     `apply_proposal`: `proposed`, `accepted`, `rejected`, `applied`. The shared PLAN's vocabulary —
     draft, offline-valid, evaluated, approved, canary, active, retired, rolled-back,

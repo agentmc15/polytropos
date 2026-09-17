@@ -1784,10 +1784,17 @@ def select_cohort(store_dir, manifest, partition, *, cohort=None, items=None, pu
 # `protected_profile_status`, `run_sentinels`, `certify_profile` -- but nothing in this repo
 # calls any of it yet: a protected live trial (D18) and an autopromotion (D23) are the two future
 # callers that will reach a provider runner while claiming that boundary applies. Before either
-# exists, this is the one chokepoint they must both pass through first.
+# exists, this is the AVAILABILITY question they must both answer first.
 #
-# WHAT THIS DOES NOT DO. It invents no new isolation mechanism, no new evidence shape and no
-# fallback. `require_protected_trial` asks D07's own `ProfileStatus.require_enforced` the exact
+# WHAT THIS DOES NOT DO -- READ THIS BEFORE WIRING IT. It applies NO confinement. Nothing in this
+# section constructs a `ProtectedProfile`, builds a `ProtectedLayout`, or calls `wrap_argv`;
+# `ProtectedProfile` appears in this file only in prose -- this comment and the docstring that
+# tells a caller how to adapt to it -- and in no executable line. `gate_protected_dispatch`
+# hands `argv` to the runner it was given, verbatim and unwrapped, so on a host where D07's profile
+# IS enforceable it dispatches exactly as unconfined as the runner itself is. Passing through this
+# gate confines nothing; it only establishes that a boundary COULD be applied here, and the caller
+# owns actually applying one. It also invents no new isolation mechanism, no new evidence shape and
+# no fallback. `require_protected_trial` asks D07's own `ProfileStatus.require_enforced` the exact
 # question D07 already answers, and an unavailable answer raises the SAME `SandboxUnavailable`
 # with the SAME "NO trusted-host fallback" wording, only prefixed with which purpose was
 # refused -- so a caller cannot mistake a refused autopromotion for a refused trial, and nothing
@@ -1840,6 +1847,32 @@ def protected_trial_evidence(profile=None, status=None):
     return evidence
 
 
+def _unavailable_classes(ep, status):
+    """Every `SandboxUnavailable` class `status.require_enforced()` could actually raise.
+
+    `bin/exec_policy.py` is loaded as a SEPARATE module object in several places --
+    `bin/kit_contract.py`, `bin/copilot_ralph.py` and `bin/kit_verify_hook.py` each build their
+    own via `spec_from_file_location`, and this module's `_ep()` loads it under the spec name
+    `polytropos_exec_policy`. Each load defines a DISTINCT `SandboxUnavailable` class object, so
+    a `ProfileStatus` handed in by a caller that loaded D07 through a different loader raises
+    THAT loader's class, which `except _ep().SandboxUnavailable` does not catch. The refusal
+    still refuses either way -- nothing dispatches -- but the purpose prefix, the `.evidence`
+    attachment and therefore the envelope label and note are all silently lost.
+
+    So resolve the exact class the bound method will raise, out of the module globals its own
+    function object closes over, and catch that alongside ours. This deliberately does NOT widen
+    the catch to `Exception`: an unrelated `AttributeError` or `TypeError` from a malformed
+    status must keep propagating as itself, not be redressed as a profile refusal.
+    """
+    classes = [ep.SandboxUnavailable]
+    method = getattr(type(status), "require_enforced", None)
+    foreign = (getattr(method, "__globals__", None) or {}).get("SandboxUnavailable")
+    if (isinstance(foreign, type) and issubclass(foreign, BaseException)
+            and foreign not in classes):
+        classes.append(foreign)
+    return tuple(classes)
+
+
 def require_protected_trial(purpose, profile=None, status=None):
     """Refuse `purpose` (`PROTECTED_LIVE_TRIAL` or `AUTOPROMOTION`) unless D07's named profile is
     enforced HERE, raising BEFORE returning -- so a caller that places its provider runner call
@@ -1847,15 +1880,19 @@ def require_protected_trial(purpose, profile=None, status=None):
     trusted-host fallback: `status.require_enforced()` is D07's own refusal, worded with that
     guarantee, and this function only prefixes which purpose was refused and attaches the typed
     evidence to the raised exception as `.evidence`, so a caller can carry it into its own
-    result owner without recomputing it. Never call this from an offline or manual path --
-    they do not need it and it does not need them."""
+    result owner without recomputing it. A `status` built through a DIFFERENT loader's copy of
+    `bin/exec_policy.py` raises that copy's `SandboxUnavailable`; `_unavailable_classes` resolves
+    it so the prefix and the evidence survive the crossing (the re-raised refusal is always this
+    module's own class, so a caller catches `_ep().SandboxUnavailable` either way). Returning
+    grants no confinement -- see `gate_protected_dispatch`. Never call this from an offline or
+    manual path -- they do not need it and it does not need them."""
     ep = _ep()
     profile = profile or ep.DEFAULT_PROTECTED_PROFILE
     status = ep.protected_profile_status(profile) if status is None else status
     evidence = protected_trial_evidence(profile, status=status)
     try:
         status.require_enforced()
-    except ep.SandboxUnavailable as exc:
+    except _unavailable_classes(ep, status) as exc:
         refusal = ep.SandboxUnavailable(f"{purpose} refused -- {exc}")
         refusal.evidence = evidence
         raise refusal from exc
@@ -1866,11 +1903,22 @@ def carry_protected_evidence(envelope, evidence, purpose=PROTECTED_LIVE_TRIAL):
     """Append profile/refusal evidence into the SAME `labels`/`notes` an `Evaluation.run()`
     envelope already carries every other run-level caveat in (`"partial (cost-ceiling)"`,
     `"overspend: ..."`, `"aborted: ..."`) -- the existing result owner, never a second store or
-    a new top-level key."""
+    a new top-level key.
+
+    The enforced-path label says ENFORCED, never "certified", and says out loud that this gate
+    did not certify anything. Only `exec_policy.certify_profile` earns that word, over a real
+    `run_sentinels` report, and this path deliberately calls neither -- `protected_trial_evidence`
+    sets `certified=None` on exactly this branch, and the note below prints it. An envelope that
+    asserted certification in its label and denied it in its note would be a contradiction a
+    reader of `render_card_markdown`'s `## labels` section cannot see past. `protected_profile_status`
+    is a platform/backend/usability answer whose own probe docstring says it is not a boundary;
+    "enforceable here" is the most this text may claim."""
     if evidence["mode"] is None:
         label = f"{purpose}: profile {evidence['profile']!r} unavailable ({evidence['reason']})"
     else:
-        label = f"{purpose}: profile {evidence['profile']!r} certified ({evidence['status']})"
+        label = (f"{purpose}: profile {evidence['profile']!r} enforced ({evidence['status']}) -- "
+                 f"NOT certified by this gate; certification is exec_policy.certify_profile's "
+                 f"over a sentinel report, and this path ran none")
     envelope.setdefault("labels", []).append(label)
     envelope.setdefault("notes", []).append(
         f"{purpose} sentinel outcomes: {evidence['sentinel_outcomes']}; "
@@ -1879,15 +1927,33 @@ def carry_protected_evidence(envelope, evidence, purpose=PROTECTED_LIVE_TRIAL):
     return envelope
 
 
-def run_protected_dispatch(purpose, runner, argv, cwd, *, profile=None, status=None,
-                           envelope=None):
-    """The one chokepoint a protected live trial or an autopromotion calls to reach a provider
-    runner. `require_protected_trial` runs FIRST; `runner` is invoked only if it returns without
-    raising -- an unavailable profile therefore never reaches `runner` at all. When `envelope`
-    is given (an `Evaluation.run()`-shaped dict with `labels`/`notes`), the evidence is carried
-    into IT on both the refused and the enforced path, through `carry_protected_evidence`, never
-    into a second store. Offline synthetic analysis and manual proposal drafting never call this
-    function: they dispatch through the ordinary `Evaluation.runner`, or nothing at all."""
+def gate_protected_dispatch(purpose, runner, argv, cwd, *, profile=None, status=None,
+                            envelope=None):
+    """Availability gate in front of one provider dispatch. THIS APPLIES NO CONFINEMENT.
+
+    What it does: `require_protected_trial` runs FIRST, so an unavailable D07 profile refuses
+    before `runner` is reached at all, and the typed evidence is carried into `envelope`'s own
+    `labels`/`notes` (via `carry_protected_evidence`) on both the refused and the enforced path,
+    never into a second store.
+
+    What it does NOT do: it does not confine anything. It constructs no `ProtectedProfile`,
+    builds no `ProtectedLayout`, and never calls `exec_policy.wrap_argv`. It calls
+    `runner(argv, cwd)` with `argv` verbatim, so the dispatch is exactly as confined as `runner`
+    itself already is and no more. CONFINEMENT IS THE SUPPLIED RUNNER'S RESPONSIBILITY. Returning
+    from this function means "a boundary could be enforced on this host", never "a boundary was
+    applied to this dispatch"; a caller that reads it as the latter ships a real, unconfined,
+    money-spending dispatch under an envelope that says the profile is enforced.
+
+    Adapting a real boundary to it: `exec_policy.ProtectedProfile.run` has the signature
+    `(role, argv, timeout=..., cwd=None)`, while this gate's `runner` contract is the two-
+    positional `(argv, cwd)` every other runner seam in this module uses. They do not match, so
+    a caller wiring genuine confinement must adapt between them itself -- bind the role (and any
+    timeout) and pass something like `lambda argv, cwd: profile.run(role, argv, cwd=cwd)`, having
+    created `ProtectedLayout.REQUIRED_DIRS` first, since `exec_policy` creates nothing outside its
+    own tempfile trees. Handing this gate a bare provider runner is the unconfined case.
+
+    Offline synthetic analysis and manual proposal drafting never call this function: they
+    dispatch through the ordinary `Evaluation.runner`, or nothing at all."""
     ep = _ep()
     profile = profile or ep.DEFAULT_PROTECTED_PROFILE
     status = ep.protected_profile_status(profile) if status is None else status

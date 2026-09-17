@@ -571,3 +571,115 @@ tree byte-identical myself (`git diff --numstat` = 126/0, 251/0, 1/1; 106 tests 
 verifier briefs must say "temporary copies only" explicitly.
 outcome: D08 model=sonnet attempts=1 result=pass review=clean run=2026-09-16-aa6e
 defect: D08 kind=process-guardrail verifier brief told a verifier to mutate tracked sources in place; GUARDRAILS requires temporary copies. Tree restored and confirmed byte-identical.
+
+## Carry-forward for Phase 3 — four repo-wide sweeps will capture the new `bin/` modules
+
+D04-D08 only added functions to files that already existed. D09 (`bin/decision_contract.py`),
+D11 (`bin/decision_policy.py`) and D12 (`bin/decision_provider.py`) are the kit's first NEW
+`bin/` files, and four existing tests glob `bin/*.py` and will sweep them in automatically. All
+four are real invariants; none may be weakened to make a new module pass.
+
+1. `tests/test_decision_evaluation_manifest.py:733` — THE TRAP. It filters on a raw substring of
+   the whole file text (`'"evals"' in p.read_text()`), comments and docstrings included, then
+   asserts exact equality with `["runtime_data.py", "workflow_eval.py"]`. A new `bin/` module
+   that merely writes the word "evals" in a DOCSTRING breaks it, with no code involved. Verified:
+   the string `# ... persisted into the "evals" store` matches the filter. Say "the evaluation
+   store" in prose instead. If this goes red during Phase 3, the cause is almost certainly a
+   comment, not a second writer — do not relax the assertion, which is the one-writer guard.
+2. `tests/test_workflow_eval.py:944` — no `bin/*.py` except `workflow_eval.py` may contain the
+   `POLICY_FILE` literal, which is `"routing-policy.json"`. D11 and D13 both own
+   `bin/decision_policy.py`; naming that file even in a comment explaining that it is NOT read
+   trips this. D13's "no active pointer consumption before D23" already points the right way.
+3. `tests/test_decision_provenance.py:557` — every `ATTEMPT_KINDS` literal must be appended from
+   exactly one module. A new module passing a colliding string constant to `append(...)` or
+   `_record(...)` registers as a second writer.
+4. `tests/test_proc_runner_wiring.py:52` — no `subprocess.run/Popen/call/check_output` anywhere
+   in `bin/*.py` outside `proc_runner.py` without an EXEMPT_SPAWNS entry. Phase 3 is pure
+   contract/policy code and should spawn nothing.
+
+Found by derivation before Phase 3 dispatched, not by a red suite afterwards.
+
+## Phase 2 review — accepted with findings, three corrected in-phase
+
+Six findings. No `done` status reversed: the phase is architecturally sound, the four tasks
+compose, no shared authority was duplicated, and the reviewer independently reproduced D07's
+central claim on this host (`exec_policy.py sentinels` exit 0, 19 kernel denials each attributed
+by an unconfined control leg plus a permission-class errno, 2 allowed legs as positive control,
+controller trees byte-intact). It also mutation-proved the version precedent load-bearing:
+bumping `MANIFEST_VERSION` on a `git archive HEAD` copy moved `release_gate check` from exit 0
+to exit 3. `bin/attempt_ledger.py` is byte-identical across 7e0c823..c9ea1a3, so `LEDGER_VERSION`
+was never endangered.
+
+Two HIGH findings were real overclaims in exactly the surface the D08 carry-forward aims D18 and
+D23 at. I re-derived both from source before acting, because acting on an unre-derived claim is
+this kit's documented recurring defect:
+
+- **F1 — the gate applies no confinement.** `run_protected_dispatch` calls `runner(argv, cwd)`
+  with argv verbatim; it never builds a `ProtectedProfile` or `ProtectedLayout` and never calls
+  `wrap_argv`. `ProtectedProfile` appears in `bin/workflow_eval.py` only in the comment at 1783.
+  Its docstring nonetheless read as though passing through it confined the dispatch. Wiring it
+  as-written on a certified host yields a real unconfined money-spending dispatch labelled
+  certified. It is an availability gate, and must say so.
+- **F2 — the enforced-path label claimed "certified" over evidence saying otherwise.** The label
+  at 1873 said `certified (...)` on the `mode is not None` branch while 1830 sets `certified=None`
+  on that same branch, so the envelope asserted and denied certification in adjacent fields.
+  "Enforced" is not "certified": only `certify_profile` earns the word and this path never calls
+  it. The reviewer mutation-proved the text unconstrained — replacing it with `SAFE-AND-PROTECTED`
+  left 54/54 and 52/52 green. `labels` reaches a user-facing card through `render_card_markdown`.
+- **F3 (MEDIUM) — evidence carry fails open across module loaders.** `require_protected_trial`
+  catches `_ep().SandboxUnavailable`, but a status built by a different loader raises a different
+  class object, so the refusal escapes the handler: no purpose prefix, no `.evidence`, no label,
+  no note. Fail-closed on safety (nothing dispatches) but silent on D08's own acceptance. Three
+  modules already build their own `exec_policy` object via `spec_from_file_location`.
+
+Carried forward, not fixed: F4, D06's held-out controller and D08's isolation gate never compose
+and nothing names the pairing, so a D18 wiring only the gate gets a "certified" envelope over a
+cohort with zero held-out evidence; F5, `results.json` carries partition counts without the
+enforcement disclaimer reaching the envelope; F6, one stale present-tense item at
+`docs/DECISION-IMPROVEMENT-AUTHORITY-INVENTORY.md:189-193` with a citation off by ~1200 lines.
+
+Also confirmed by the reviewer and worth acting on in Phase 3: `attempt_history.DURATION_BASES`
+already reserves `"decision-latency"` for the decision record — produce that basis through
+`_duration(...)` rather than inventing a second duration field. And `bin/routing_policy.py` has
+exactly three direct loaders, with only the Codex driver dispatching under a routing decision,
+so D13's "wrap the native driver selection seams" is NOT four symmetric seams: Claude and Copilot
+reach routing by neither path.
+reviewer: P2 model=opus findings=6 confirmed=3 result=accepted
+
+### Phase 2 corrections applied (F1, F2, F3, F6)
+
+`run_protected_dispatch` is now `gate_protected_dispatch`, and its docstring leads with
+`THIS APPLIES NO CONFINEMENT.` Two paired tests keep prose and code from drifting apart: one
+asserts the required disclaimer phrases, the other walks the function's AST and asserts it
+references none of `wrap_argv`/`ProtectedProfile`/`ProtectedLayout`/`run_confined` and that the
+bare runner call's positional args are exactly `["argv", "cwd"]`. So wiring real confinement here
+later forces the docstring to be rewritten in the same edit — the pairing is the point.
+
+The enforced-path label now reads `enforced (...) -- NOT certified by this gate; certification is
+exec_policy.certify_profile's over a sentinel report, and this path ran none`, constrained by
+`assertEqual` on the exact text plus `assertNotRegex` on the old defective shape and an
+`assertIn("certified=None", ...)` tying label and note together. Mutation-proven twice, including
+against the reviewer's own `SAFE-AND-PROTECTED` substitution.
+
+F3's cross-loader fix resolves the class the bound method will actually raise out of
+`type(status).require_enforced.__globals__`, because `spec_from_file_location` modules are never
+registered in `sys.modules` and that closure is the only reliable handle. The catch widened to
+exactly that class, not to `Exception`: a companion test passes a status-shaped object whose
+`require_enforced` raises `TypeError` and asserts the `TypeError` surfaces as itself rather than
+being redressed as a profile refusal.
+
+**Carry-forward for D18/D23, now the binding one.** `gate_protected_dispatch` performs a dispatch
+through the supplied runner and ledgers NOTHING. The repo invariant requires every dispatch to be
+recorded in `bin/attempt_ledger.py` before and after it runs. Whichever task wires this gate owes
+both: open the ledger entry before the call and close it after, AND supply a runner that actually
+confines, because the gate does not. Deliberately not added here — nothing calls the gate, so
+there is no dispatch to record, and speculative ledger calls in an uncalled function are the
+wrong fix.
+
+F6 closed: `docs/DECISION-IMPROVEMENT-AUTHORITY-INVENTORY.md` item 10 carries a dated correction
+in D06's established convention rather than a rewrite, since the document is an inventory of a
+stamped revision (`71bb3ae`) and not a live description. Mirror regenerated. The census pin at
+`tests/test_docs_build_adversarial.py:750` counts FILES (31) and was untouched, because this added
+content and no file.
+
+F4 and F5 remain carried forward for D18 and the assessment phase.
