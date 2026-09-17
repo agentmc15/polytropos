@@ -417,6 +417,15 @@ class RulesReplayProviderTests(unittest.TestCase):
             replayed_result = dc.parse_result(replayed_payload, req)
             self.refusal("value-invalid", dp.record_result, tmp, req, replayed_result,
                          provider="rules")
+            # The line above re-records under the identity recorded at the top of this test, so
+            # create-once refuses it whether or not the replay-note guard exists -- it does not
+            # isolate that guard. The case that does is a NEW identity: nothing is stored under
+            # it, so create-once cannot fire, and the note check is the only thing standing
+            # between a cache hit and a phantom historical observation for a decision that was
+            # never actually evaluated. Independent verification found the guard deletable with
+            # the whole suite green precisely because this case was missing.
+            self.refusal("value-invalid", dp.record_result, tmp, req, replayed_result,
+                         provider="rules", bundle_sha="a" * 64)
 
     def test_recording_a_result_uncorrelated_to_the_request_is_refused(self):
         req = request()

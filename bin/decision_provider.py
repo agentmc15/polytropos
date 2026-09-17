@@ -37,6 +37,21 @@ carry-forward note). What it does NOT pin is WHICH ONE of the eligible providers
 model that provider used, which policy bundle was in force, or which calibrator -- those four
 are this module's own parameters, folded on top of `request.sha()` in `replay_key`.
 
+WHAT `request.sha()` ALSO PINS, WHICH THE PLAN DOES NOT LIST, AND WHY IT MATTERS.
+`DecisionRequest.sha()` covers the WHOLE request, so it additionally folds in `correlation_id`,
+`run`, `task` and `attempt`. Those four identify the OCCASION, not the decision situation. Two
+requests identical in every respect the plan lists -- same state digest, same questions, same
+alternatives, same eligibility -- therefore key DIFFERENTLY when only their correlation id
+differs, and a correlation id is ordinarily fresh per call. So `replay` as keyed here hits only
+when a caller re-asks with the very same request object, not when the same situation recurs.
+
+That is conservative rather than wrong: a narrower key can only miss, never produce a false hit
+on a different situation, so no stored answer is ever served for a decision it did not answer.
+But a coordinator wiring this expecting a cache should know it will almost always abstain. Making
+replay hit across recurring situations means keying on a NARROWER digest than `request.sha()`,
+which is a change to what identity means and belongs to whoever owns that decision -- not to a
+silent edit here. Recorded in the kit's NOTES for D20/D23.
+
 A cache MISS is not a failure this module raises; it is `abstain`, because "nothing was ever
 recorded for this exact identity" is itself unremarkable and non-fatal. A request whose
 `eligibility.project` differs from what was recorded therefore produces a DIFFERENT
@@ -272,6 +287,11 @@ def replay_key(request, *, provider, model=None, bundle_sha=None, calibrator_ref
     bundle's digest was in force (`None` for the legacy default), and which calibrator (`None`
     for none). Two calls that agree on all of this are the same call; any difference is a
     different one, keyed separately.
+
+    `request.sha()` ALSO folds in `correlation_id`, `run`, `task` and `attempt`, which identify
+    the occasion rather than the situation -- so this key distinguishes two otherwise identical
+    decision situations asked under different correlation ids. See the module docstring: that is
+    conservative, never a false hit, but it means replay rarely hits in practice.
     """
     _require_request(request, "replay key")
     _require_provider(request, provider, "replay key")

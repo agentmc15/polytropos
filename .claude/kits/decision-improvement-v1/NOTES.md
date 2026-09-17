@@ -999,7 +999,7 @@ Carry-forward:
   record into a self-consistent forged digest — the same non-guarantee every hash in this kit
   already carries. A digest identifies content; it does not protect against a rewrite by someone
   who could write the file in the first place.
-outcome: D12 model=sonnet attempts=1 result=pass review=pending run=2026-09-16-aa6e
+outcome: D12 model=sonnet attempts=1 result=pass review=revised run=2026-09-16-aa6e
 
 ## D13 — Legacy policy selection (opus, depends D02, D12) — Phase 3 complete
 
@@ -1097,7 +1097,7 @@ candidate, which is not evidence.
 `grep` when the point is to catch a failure. Redirect the whole run to a file
 (`python3 -m unittest discover -s tests > run.log 2>&1`) and grep the FILE. A summary line is
 worth nothing without the traceback above it, and the traceback is what both sightings lost.
-outcome: D13 model=opus attempts=1 result=pass review=pending run=2026-09-16-aa6e
+outcome: D13 model=opus attempts=1 result=pass review=clean run=2026-09-16-aa6e
 
 ### D13 verification — ACCEPT, and it found a real defect in D11's shipped code
 
@@ -1138,3 +1138,60 @@ from the values it validated, so coercing first could only ever hide a caller's 
 is strictly a deletion. New test goes through `runtime_facts`, not `_runtime`, because that is
 where the coercion was. Mutation-proven: control green, restoring the coercion fails 3 subtests.
 Suite 4627 -> 4628.
+
+### D12 verification — REVISE. The "33 mutations, 0 survivors" claim did NOT hold up
+
+The verifier disclosed that its OWN first batch of 15 mutations was worthless: a hand-built `PATH`
+resolved `python3` to a pre-3.10 interpreter, so every run failed INCLUDING the unmutated control.
+It discarded the batch and redid it. That is the third time this exact trap has appeared in this
+kit — D13's implementer hit it, I hit a variant of it on D11 — and every time the unmutated
+control run is what exposed it. **A mutation batch without a green control is not evidence.**
+
+Redone correctly, two of fourteen branches were deletable with all 38 tests green:
+
+1. `_evaluate_rules`'s invented-category guard is masked by D09's own `_answer()`, which enforces
+   the identical rule and is reached through D12's internal self-check. The test asserts only the
+   error code, which D09 supplies for free, so it proves nothing about D12's own branch. Low
+   severity: the outcome is identical either way and it is genuine defense-in-depth. Left in place
+   and now named as redundant rather than removed, matching how D12 already disclosed its
+   self-check.
+2. **`record_result`'s anti-laundering guard was deletable with the suite green** — the serious
+   one, because it contradicts the headline of my own commit 998d433 ("never let a replay pass as
+   a fresh observation"). The only test re-recorded under the SAME identity already stored, so
+   create-once fired first and masked the deletion entirely.
+
+I reproduced both halves myself. On shipped code the cross-identity case IS refused, so the
+product was always correct — the defect was purely that no test could tell. With the guard
+removed, recording a replayed result under a NEW identity (same request, different `bundle_sha`)
+SUCCEEDS, and a later replay of that identity returns a confident answer for a decision that was
+never evaluated. Create-once cannot catch it, because nothing exists under that key yet.
+
+Fixed by extending the existing test with the new-identity case. Mutation-proven: control green,
+guard removed fails 1. Before the fix it failed 0.
+
+**The pattern, stated once more because it has now bitten at three different layers.** A guard can
+be masked by a sibling check (D10), by a check in a DIFFERENT MODULE reached through a self-check
+(D12's invented-category), or by an earlier guard on the same call path that the test's own fixture
+happens to trigger first (D12's anti-laundering). Non-emptiness does not detect any of them. Only
+deleting the branch does — and only against a control you have proven green.
+
+### A real design finding for D20/D23 — replay as keyed will almost never hit
+
+`replay_key` is `request.sha()` plus provider/model/bundle_sha/calibrator. But
+`DecisionRequest.sha()` digests the WHOLE request, so it also folds in `correlation_id`, `run`,
+`task` and `attempt` — none of which the shared PLAN lists among replay-identity components. I
+verified directly: two requests identical in every PLAN-listed respect (same state digest, same
+questions, same alternatives, same eligibility) produce DIFFERENT keys when only `correlation_id`
+differs, and likewise for `run`, `attempt` and `task`.
+
+A correlation id is ordinarily fresh per call. So replay hits only when a caller re-asks with the
+very same request object, never when the same SITUATION recurs — which is what a cache is for.
+
+This is conservative, not wrong: a narrower key can only miss, never serve a stored answer for a
+situation it did not answer. No safety issue. But a coordinator wiring this expecting a cache will
+find it abstains almost always. Making replay hit across recurring situations means keying on a
+narrower digest than `request.sha()`, which changes what identity MEANS — an architect decision,
+not a silent edit. Both docstrings in `bin/decision_provider.py` described `sha()`'s coverage while
+omitting these four fields; that false description is corrected, and the limitation is now stated
+where a wiring task will read it.
+defect: D12 kind=unspecified-path replay_key inherits correlation_id/run/task/attempt from DecisionRequest.sha(); the shared PLAN does not list them as replay-identity components, so replay rarely hits. Conservative, not unsafe. Needs an architect decision before D20/D23 wire a coordinator.
