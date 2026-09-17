@@ -511,3 +511,63 @@ Carry-forward:
 outcome: D07 model=opus attempts=1 result=pass review=clean run=2026-09-16-aa6e
 agent: D07 id=a641cf9 role=implementer model=opus
 agent: D07 id=ab0d1bd role=verifier model=sonnet findings=0 confirmed=0 result=accepted
+
+## D08 — Offline-only fence (sonnet, depends D07)
+
+Four module-level gate functions in `bin/workflow_eval.py:1780-1903`
+(`protected_trial_evidence`, `require_protected_trial`, `carry_protected_evidence`,
+`run_protected_dispatch`) plus `UnavailableProfileTests` (16 tests) beside D07's class.
+Both files purely additive: `git diff --numstat` = 126/0 and 251/0, so D07's
+`ProtectedProfileSentinelTests` is byte-identical.
+
+Proven both ways, as the brief required. Runtime: `_RaisingRunner` raises if invoked, so a
+refusal that leaked would surface as a loud AssertionError, not a silently-ignored return
+value. Structural: an AST walk of the whole module. I re-derived the structural claim myself
+rather than trusting the test — the only bare `runner(...)` call in `bin/workflow_eval.py` is
+line 1902 inside `run_protected_dispatch`, and the gate call at 1895 precedes it. No `mode`
+parameter on any of the four, carrying D07's precedent forward.
+
+**Carry-forward for D18 and D23 — the gate has ZERO production callers.** The four functions
+are called only by each other; nothing in `Evaluation`, `cmd_run`, or `repo_bench` reaches
+them. That is correct scope for D08, but it means D08's guarantees hold at the function level
+and have never executed inside a real `Evaluation.run()`. D18 (protected live trial) and D23
+(activation) each own their integration and must wire this chokepoint themselves; neither may
+treat D08's green suite as evidence that a protected path is actually gated in production.
+This is also why `SECURITY.md:198-199` ("Nothing dispatches through it yet") is still true and
+was correctly left unedited — verified by call-graph derivation, not by reading the prose.
+
+**Carry-forward for any task importing both modules.** The test file's own `ep` (spec name
+`exec_policy_boundary`) and `wf._ep()` (spec name `polytropos_exec_policy`) load the same
+source as two DISTINCT module objects, so their `SandboxUnavailable` / `ProfileStatus` classes
+are not the same class object and `isinstance` fails across them. Build and catch through one
+loader only.
+
+`protected_trial_evidence` deliberately leaves `certified`/`sentinel_outcomes` as `None` on the
+enforced path — it does not re-run D07's sentinel battery per dispatch, so it never manufactures
+a certification it did not earn. A caller wanting fresh certification calls D07's
+`run_sentinels`/`certify_profile` itself.
+
+Nothing in the new section opens a file, touches a store, or persists anything, so D06's
+evals-store-root flake cannot recur and `bin/workflow_eval.py` stays the one persister.
+
+The vacuous-AST hole was the specific risk I asked the verifier to attack: an AST test that
+loops over collected nodes and asserts each one passes trivially if the collection is ever
+empty, reporting green while constraining nothing. It is closed by one line —
+`assertTrue(finder.hits, ...)` before the loop. The verifier constructed the empty case
+(renaming the bare `runner(...)` call so the walk finds zero nodes) and confirmed the guard
+fails loudly, while the same test without that line would PASS on empty hits. Any later task
+adding an AST-derived structural check must carry the same non-empty guard.
+
+Verification: verify command 16/16; the seven prior modules 235/235 unmodified; full suite
+4383 (baseline 4367 + 16), 2 skipped; `docs_build`/`copilot_docs`/`sync_codex_surfaces`/
+`release_gate` exit 0; `harness_update` exit 3, pre-existing. Independent verifier: ACCEPT,
+six of six claims CONFIRMED, no REFUTED findings.
+
+Process defect, mine: I briefed the verifier to mutation-prove by editing tracked sources in
+place and restoring afterwards. GUARDRAILS requires verifier mutation checks to use temporary
+copies. It had already mutated `bin/workflow_eval.py` before my correction reached it; it
+restored from backup and reported the mutation rather than concealing it, and I confirmed the
+tree byte-identical myself (`git diff --numstat` = 126/0, 251/0, 1/1; 106 tests green). Future
+verifier briefs must say "temporary copies only" explicitly.
+outcome: D08 model=sonnet attempts=1 result=pass review=clean run=2026-09-16-aa6e
+defect: D08 kind=process-guardrail verifier brief told a verifier to mutate tracked sources in place; GUARDRAILS requires temporary copies. Tree restored and confirmed byte-identical.

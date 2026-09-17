@@ -31,13 +31,16 @@ loopback socket this process opens and closes. No model is dispatched, no harnes
 invoked, no real home directory or store is read, and nothing is installed.
 """
 
+import ast
 import importlib.util
 import inspect
+import io
 import os
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 SPEC = importlib.util.spec_from_file_location(
@@ -55,6 +58,17 @@ requires_enforcement = unittest.skipUnless(
     f"sentinels cannot run, and the certification test below asserts they therefore certify "
     f"nothing",
 )
+
+#: D08's target module, loaded the same way as `ep` above -- a SEPARATE module object. That
+#: matters: `wf._ep()` is `bin/workflow_eval.py`'s own loaded copy of `bin/exec_policy.py`, not
+#: this file's `ep`. The two copies define distinct `SandboxUnavailable`/`ProfileStatus` classes,
+#: so a status or exception built from `ep` cannot cross into `wf`'s except clauses (proven
+#: below). Tests that need a specific unavailable reason build the status through `wf._ep()`;
+#: everything else passes a bare profile name and lets `wf` resolve its own status internally.
+WF_SPEC = importlib.util.spec_from_file_location(
+    "workflow_eval_boundary", ROOT / "bin" / "workflow_eval.py")
+wf = importlib.util.module_from_spec(WF_SPEC)
+WF_SPEC.loader.exec_module(wf)
 
 _LIVE = {}
 _DATA_HOME = None
@@ -581,6 +595,243 @@ class ProtectedProfileSentinelTests(unittest.TestCase):
             with self.assertRaises(ep.SandboxUnavailable) as caught:
                 ep.run_confined(["/bin/echo", "hi"], policy, mode="enforced", backend=None)
             self.assertIn("trusted-host", str(caught.exception))
+
+
+class _RaisingRunner:
+    """A runner that RAISES if ever invoked -- a canned return value is too weak a witness that
+    a provider runner was never reached; this makes the failure loud and unmistakable."""
+
+    def __init__(self):
+        self.calls = []
+
+    def __call__(self, argv, cwd):
+        self.calls.append((argv, cwd))
+        raise AssertionError(f"provider runner reached: argv={argv!r} cwd={cwd!r}")
+
+
+class UnavailableProfileTests(unittest.TestCase):
+    """decision-improvement D08: `bin/workflow_eval.py`'s protected-trial/autopromotion gate.
+
+    D07 built an available boundary that nothing calls yet. This proves the ONE chokepoint a
+    future protected live trial (D18) or autopromotion (D23) must pass through first: an
+    unavailable profile refuses BEFORE any provider runner is reached, never falls back to
+    trusted-host, carries its evidence into the run envelope's own fields, and never claims a
+    certification this per-dispatch check did not itself run -- while offline synthetic analysis
+    and manual proposal drafting keep working, at zero cost, whether or not D07 is available.
+    """
+
+    maxDiff = None
+
+    # -- runtime proof: the gate raises BEFORE any runner is reached ---------------------------
+
+    def test_a_protected_live_trial_is_refused_before_any_runner_is_reached(self):
+        runner = _RaisingRunner()
+        with self.assertRaises(wf._ep().SandboxUnavailable):
+            wf.run_protected_dispatch(wf.PROTECTED_LIVE_TRIAL, runner, ["/bin/echo", "hi"], ".",
+                                      profile="container")
+        self.assertEqual(runner.calls, [])
+
+    def test_autopromotion_is_refused_before_any_runner_is_reached(self):
+        runner = _RaisingRunner()
+        with self.assertRaises(wf._ep().SandboxUnavailable):
+            wf.run_protected_dispatch(wf.AUTOPROMOTION, runner, ["/bin/echo", "hi"], ".",
+                                      profile="container")
+        self.assertEqual(runner.calls, [])
+
+    def test_no_runner_is_reached_for_any_missing_enforcement_requirement(self):
+        """Drives several distinct D07 refusal reasons -- not-implemented, unknown-profile,
+        platform-mismatch -- through the SAME gate, each with its own loud runner."""
+        wf_ep = wf._ep()
+        cases = {
+            "not-implemented": ("container", None),
+            "unknown-profile": ("no-such-profile", None),
+            "platform-mismatch": (
+                "darwin-seatbelt",
+                wf_ep.protected_profile_status("darwin-seatbelt", platform="linux"),
+            ),
+        }
+        for reason, (profile, status) in cases.items():
+            with self.subTest(reason=reason):
+                runner = _RaisingRunner()
+                with self.assertRaises(wf_ep.SandboxUnavailable):
+                    wf.run_protected_dispatch(wf.PROTECTED_LIVE_TRIAL, runner,
+                                              ["/bin/echo", "hi"], ".",
+                                              profile=profile, status=status)
+                self.assertEqual(runner.calls, [])
+
+    # -- no trusted-host fallback, ever ---------------------------------------------------------
+
+    def test_the_refusal_message_reuses_d07s_own_no_fallback_wording(self):
+        with self.assertRaises(wf._ep().SandboxUnavailable) as caught:
+            wf.require_protected_trial(wf.PROTECTED_LIVE_TRIAL, profile="container")
+        message = str(caught.exception)
+        self.assertTrue(message.startswith(f"{wf.PROTECTED_LIVE_TRIAL} refused -- "), message)
+        self.assertIn("NO trusted-host fallback", message)
+        self.assertIn("container", message)
+
+    def test_autopromotion_refusal_names_itself_not_the_trial(self):
+        with self.assertRaises(wf._ep().SandboxUnavailable) as caught:
+            wf.require_protected_trial(wf.AUTOPROMOTION, profile="container")
+        message = str(caught.exception)
+        self.assertTrue(message.startswith(f"{wf.AUTOPROMOTION} refused -- "), message)
+        self.assertNotIn(f"{wf.PROTECTED_LIVE_TRIAL} refused", message)
+
+    def test_the_gate_functions_have_no_mode_parameter_to_offer_a_way_around_it(self):
+        for func in (wf.require_protected_trial, wf.run_protected_dispatch,
+                    wf.protected_trial_evidence):
+            with self.subTest(func=func.__name__):
+                self.assertNotIn("mode", inspect.signature(func).parameters)
+
+    # -- refusal evidence is typed and carried into the EXISTING result owner ------------------
+
+    def test_the_raised_refusal_carries_typed_evidence_for_the_caller_to_record(self):
+        wf_ep = wf._ep()
+        with self.assertRaises(wf_ep.SandboxUnavailable) as caught:
+            wf.require_protected_trial(wf.AUTOPROMOTION, profile="container")
+        evidence = caught.exception.evidence
+        self.assertEqual(evidence["profile"], "container")
+        self.assertEqual(evidence["status"], wf_ep.PROFILE_UNAVAILABLE)
+        self.assertIsNone(evidence["mode"])
+        self.assertEqual(evidence["reason"], "not-implemented")
+        self.assertEqual(evidence["sentinel_outcomes"], ["unavailable"])
+        self.assertFalse(evidence["certified"])
+        self.assertEqual(evidence["sentinel_count"], len(wf_ep.sentinels_for("container")))
+
+    def test_carry_protected_evidence_writes_only_into_the_envelopes_existing_labels_and_notes(self):
+        evidence = wf.protected_trial_evidence("container")
+        envelope = {"labels": ["existing label"], "notes": ["existing note"], "run_id": "r1"}
+        returned = wf.carry_protected_evidence(envelope, evidence, wf.PROTECTED_LIVE_TRIAL)
+        self.assertIs(returned, envelope)
+        self.assertEqual(envelope["labels"][0], "existing label")
+        self.assertEqual(len(envelope["labels"]), 2)
+        self.assertIn("unavailable", envelope["labels"][1])
+        self.assertEqual(len(envelope["notes"]), 2)
+        # No second store, no new top-level key -- the same fields every other run-level caveat
+        # (cost-ceiling, overspend, aborted) already lands in.
+        self.assertEqual(set(envelope), {"labels", "notes", "run_id"})
+
+    def test_run_protected_dispatch_carries_refusal_evidence_into_the_given_envelope(self):
+        envelope = {"labels": [], "notes": []}
+        runner = _RaisingRunner()
+        with self.assertRaises(wf._ep().SandboxUnavailable):
+            wf.run_protected_dispatch(wf.AUTOPROMOTION, runner, ["/bin/echo", "hi"], ".",
+                                      profile="container", envelope=envelope)
+        self.assertEqual(runner.calls, [])
+        self.assertEqual(len(envelope["labels"]), 1)
+        self.assertIn("unavailable", envelope["labels"][0])
+        self.assertEqual(len(envelope["notes"]), 1)
+        self.assertEqual(set(envelope), {"labels", "notes"})
+
+    # -- no live-ready claim ---------------------------------------------------------------------
+
+    def test_an_unavailable_gate_never_reads_as_live_ready(self):
+        evidence = wf.protected_trial_evidence("container")
+        for value in evidence.values():
+            self.assertNotIn("live-ready", str(value).lower())
+            self.assertNotIn("live ready", str(value).lower())
+        self.assertNotIn("live_ready", evidence)
+
+    def test_the_gate_never_self_certifies_on_the_enforced_path_either(self):
+        """Even where this host enforces, a per-dispatch check does not itself run the sentinel
+        battery or claim certification -- that claim is D07's own (`certify_profile`), earned
+        once per host/profile, never manufactured here on every trial."""
+        evidence = wf.protected_trial_evidence(status=STATUS)
+        if ENFORCED:
+            self.assertIsNone(evidence["certified"])
+            self.assertIsNone(evidence["sentinel_outcomes"])
+            self.assertEqual(evidence["mode"], "enforced")
+        else:
+            self.assertIsNone(evidence["mode"])
+
+    # -- offline synthetic analysis and manual drafting are unaffected, and cost nothing --------
+
+    def test_offline_demo_dispatches_nothing_and_is_unaffected_by_an_unavailable_profile(self):
+        """`_demo()` is workflow_eval's OWN offline synthetic-analysis path: a stub adapter, no
+        real CLI, and it already calls `build_proposal` internally. It must keep working exactly
+        as it always has whether or not D07's profile is available, because it never asks."""
+        self.assertFalse(wf._ep().protected_profile_status("container").enforced)
+        out = io.StringIO()
+        with mock.patch.object(wf, "default_runner",
+                               side_effect=AssertionError("a real dispatch path was reached")):
+            code = wf._demo(out=out)
+        self.assertEqual(code, 0)
+        text = out.getvalue()
+        self.assertIn("nothing dispatched a model", text)
+        self.assertIn("propose refused", text)  # build_proposal ran, unaffected by the profile
+
+    # -- structural proof: the dispatch call site is downstream of the gate --------------------
+
+    def test_the_gate_call_precedes_the_runner_call_in_run_protected_dispatch(self):
+        source = (ROOT / "bin" / "workflow_eval.py").read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        fn = next(n for n in ast.walk(tree)
+                 if isinstance(n, ast.FunctionDef) and n.name == "run_protected_dispatch")
+        gate_call = next(n for n in ast.walk(fn) if isinstance(n, ast.Call)
+                         and isinstance(n.func, ast.Name)
+                         and n.func.id == "require_protected_trial")
+        runner_call = next(n for n in ast.walk(fn) if isinstance(n, ast.Call)
+                           and isinstance(n.func, ast.Name) and n.func.id == "runner")
+        self.assertLess(gate_call.lineno, runner_call.lineno,
+                        "the gate must run before the dispatch it guards")
+
+    def test_no_bare_runner_call_exists_outside_the_gated_chokepoint(self):
+        """Structural: the ONLY place in `bin/workflow_eval.py` that calls a bare `runner(...)`
+        (as opposed to `self.runner(...)`, `git_runner(...)`, `test_runner(...)` or
+        `verify_runner(...)`) is `run_protected_dispatch`. A future edit that adds a second
+        protected dispatch path bypassing the gate would add a second such call site, and this
+        fails the moment it does."""
+        source = (ROOT / "bin" / "workflow_eval.py").read_text(encoding="utf-8")
+        tree = ast.parse(source)
+
+        class _Finder(ast.NodeVisitor):
+            def __init__(self):
+                self.stack = []
+                self.hits = []
+
+            def visit_FunctionDef(self, node):  # noqa: N802 -- ast.NodeVisitor's own naming
+                self.stack.append(node.name)
+                self.generic_visit(node)
+                self.stack.pop()
+
+            def visit_Call(self, node):  # noqa: N802
+                if isinstance(node.func, ast.Name) and node.func.id == "runner":
+                    self.hits.append((self.stack[-1] if self.stack else None, node.lineno))
+                self.generic_visit(node)
+
+        finder = _Finder()
+        finder.visit(tree)
+        self.assertTrue(finder.hits, "expected at least one bare runner(...) call site")
+        for fn_name, lineno in finder.hits:
+            self.assertEqual(fn_name, "run_protected_dispatch",
+                            f"a bare runner(...) call at line {lineno} bypasses the gate "
+                            f"(found inside {fn_name!r})")
+
+    def test_manual_proposal_functions_never_reference_the_protected_profile_gate(self):
+        """Structural counterpart to the demo runtime proof: the manual report/proposal
+        workbench does not merely happen to skip the gate today, it never names it."""
+        source = (ROOT / "bin" / "workflow_eval.py").read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        forbidden = {"require_protected_trial", "run_protected_dispatch",
+                    "protected_trial_evidence", "carry_protected_evidence", "_ep"}
+        for name in ("build_proposal", "review_proposal", "apply_proposal", "rollback_policy"):
+            with self.subTest(function=name):
+                fn = next(n for n in ast.walk(tree)
+                         if isinstance(n, ast.FunctionDef) and n.name == name)
+                called = {n.func.id for n in ast.walk(fn)
+                         if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)}
+                overlap = called & forbidden
+                self.assertFalse(overlap, f"{name} references the protected gate: {overlap}")
+
+    # -- the gate is independent of Evaluation, not a method on it ------------------------------
+
+    def test_the_gate_functions_are_plain_module_functions_not_evaluation_methods(self):
+        for name in ("require_protected_trial", "protected_trial_evidence",
+                    "run_protected_dispatch", "carry_protected_evidence"):
+            with self.subTest(name=name):
+                func = getattr(wf, name)
+                self.assertNotIn("self", inspect.signature(func).parameters)
+                self.assertFalse(hasattr(wf.Evaluation, name),
+                                f"{name} must not be an Evaluation method")
 
 
 if __name__ == "__main__":

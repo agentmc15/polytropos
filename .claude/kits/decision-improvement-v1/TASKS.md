@@ -138,7 +138,7 @@ PYTHONPATH=tests python3 -m unittest test_decision_experiment_boundary.Protected
 ### D08 — Offline-only fence
 - id: D08
 - title: Offline-only fence
-- status: pending
+- status: done
 - model: sonnet
 - depends: D07
 **Brief.** Own profile/workflow gate and `tests/test_decision_experiment_boundary.py:UnavailableProfileTests`. Permit offline synthetic analysis and manual drafts when D07 is unavailable, but refuse protected live trials/autopromotion and record skipped sentinels.

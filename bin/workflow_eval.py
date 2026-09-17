@@ -1777,6 +1777,132 @@ def select_cohort(store_dir, manifest, partition, *, cohort=None, items=None, pu
     return sorted(chosen)
 
 
+# =================================================================================================
+# PROTECTED TRIAL / AUTOPROMOTION GATE (decision-improvement D08)
+#
+# WHY THIS EXISTS. D07 (`bin/exec_policy.py`) built an available boundary -- `ProtectedProfile`,
+# `protected_profile_status`, `run_sentinels`, `certify_profile` -- but nothing in this repo
+# calls any of it yet: a protected live trial (D18) and an autopromotion (D23) are the two future
+# callers that will reach a provider runner while claiming that boundary applies. Before either
+# exists, this is the one chokepoint they must both pass through first.
+#
+# WHAT THIS DOES NOT DO. It invents no new isolation mechanism, no new evidence shape and no
+# fallback. `require_protected_trial` asks D07's own `ProfileStatus.require_enforced` the exact
+# question D07 already answers, and an unavailable answer raises the SAME `SandboxUnavailable`
+# with the SAME "NO trusted-host fallback" wording, only prefixed with which purpose was
+# refused -- so a caller cannot mistake a refused autopromotion for a refused trial, and nothing
+# here reads `unavailable` as permission to run unconfined. Offline synthetic analysis (`_demo`,
+# `build_plan`, an ordinary `Evaluation` run through `self.runner`) and manual proposal drafting
+# (`build_proposal`/`review_proposal`/`apply_proposal`/`rollback_policy`) call NEITHER this gate
+# nor a protected profile at all, so an unavailable D07 profile never blocks and is never
+# consulted by them.
+#
+# WHAT "RECORD SKIPPED SENTINELS" MEANS HERE. `protected_trial_evidence` calls D07's OWN
+# `run_sentinels` on the unavailable path and passes its report through unreshaped -- the owning
+# engine for sentinel evidence is `bin/exec_policy.py`, never this module. `run_sentinels`
+# spawns nothing at all when the profile is unavailable (see `bin/exec_policy.py`): it returns
+# immediately with every sentinel named and marked `"unavailable"`. On an enforced profile this
+# function does NOT re-run the sentinel battery per dispatch -- that is a one-time, host-level
+# certification D07's own suite already performs, not a per-trial cost.
+# =================================================================================================
+
+#: The two purposes this gate refuses. Not an enum D07 needs to know about -- a plain word that
+#: ends up in the refusal message and in the carried evidence, so a reader can tell them apart.
+PROTECTED_LIVE_TRIAL = "protected live trial"
+AUTOPROMOTION = "autopromotion"
+
+
+def protected_trial_evidence(profile=None, status=None):
+    """Typed, non-dispatching evidence for one named D07 profile. Never runs a model, a harness
+    CLI or a provider runner. On an unavailable profile it calls D07's `run_sentinels`, which
+    performs no live legs at all and returns immediately with every sentinel named and marked
+    `unavailable` -- the cheap, honest 'record skipped sentinels' a refusal carries. On an
+    enforced profile it reports the typed status only, without re-running the sentinel battery."""
+    ep = _ep()
+    profile = profile or ep.DEFAULT_PROTECTED_PROFILE
+    status = ep.protected_profile_status(profile) if status is None else status
+    evidence = {
+        "profile": profile, "status": status.status, "mode": status.mode,
+        "reason": status.reason, "missing": list(status.missing),
+        "enforcement_label": ep.NOT_ISOLATION_LABEL,
+    }
+    if status.enforced:
+        evidence.update(certified=None, sentinel_outcomes=None, sentinel_count=None)
+        return evidence
+    report = ep.run_sentinels(profile, status=status)
+    certification = ep.certify_profile(report)
+    evidence.update(
+        certified=certification["certified"],
+        sentinel_outcomes=sorted({row["outcome"] for row in report["sentinels"]}),
+        sentinel_count=len(report["sentinels"]),
+        enforcement_label=report["enforcement_label"],
+    )
+    return evidence
+
+
+def require_protected_trial(purpose, profile=None, status=None):
+    """Refuse `purpose` (`PROTECTED_LIVE_TRIAL` or `AUTOPROMOTION`) unless D07's named profile is
+    enforced HERE, raising BEFORE returning -- so a caller that places its provider runner call
+    after this one structurally cannot reach it on the unavailable path. There is no
+    trusted-host fallback: `status.require_enforced()` is D07's own refusal, worded with that
+    guarantee, and this function only prefixes which purpose was refused and attaches the typed
+    evidence to the raised exception as `.evidence`, so a caller can carry it into its own
+    result owner without recomputing it. Never call this from an offline or manual path --
+    they do not need it and it does not need them."""
+    ep = _ep()
+    profile = profile or ep.DEFAULT_PROTECTED_PROFILE
+    status = ep.protected_profile_status(profile) if status is None else status
+    evidence = protected_trial_evidence(profile, status=status)
+    try:
+        status.require_enforced()
+    except ep.SandboxUnavailable as exc:
+        refusal = ep.SandboxUnavailable(f"{purpose} refused -- {exc}")
+        refusal.evidence = evidence
+        raise refusal from exc
+    return evidence
+
+
+def carry_protected_evidence(envelope, evidence, purpose=PROTECTED_LIVE_TRIAL):
+    """Append profile/refusal evidence into the SAME `labels`/`notes` an `Evaluation.run()`
+    envelope already carries every other run-level caveat in (`"partial (cost-ceiling)"`,
+    `"overspend: ..."`, `"aborted: ..."`) -- the existing result owner, never a second store or
+    a new top-level key."""
+    if evidence["mode"] is None:
+        label = f"{purpose}: profile {evidence['profile']!r} unavailable ({evidence['reason']})"
+    else:
+        label = f"{purpose}: profile {evidence['profile']!r} certified ({evidence['status']})"
+    envelope.setdefault("labels", []).append(label)
+    envelope.setdefault("notes", []).append(
+        f"{purpose} sentinel outcomes: {evidence['sentinel_outcomes']}; "
+        f"certified={evidence['certified']}; {evidence['enforcement_label']}"
+    )
+    return envelope
+
+
+def run_protected_dispatch(purpose, runner, argv, cwd, *, profile=None, status=None,
+                           envelope=None):
+    """The one chokepoint a protected live trial or an autopromotion calls to reach a provider
+    runner. `require_protected_trial` runs FIRST; `runner` is invoked only if it returns without
+    raising -- an unavailable profile therefore never reaches `runner` at all. When `envelope`
+    is given (an `Evaluation.run()`-shaped dict with `labels`/`notes`), the evidence is carried
+    into IT on both the refused and the enforced path, through `carry_protected_evidence`, never
+    into a second store. Offline synthetic analysis and manual proposal drafting never call this
+    function: they dispatch through the ordinary `Evaluation.runner`, or nothing at all."""
+    ep = _ep()
+    profile = profile or ep.DEFAULT_PROTECTED_PROFILE
+    status = ep.protected_profile_status(profile) if status is None else status
+    try:
+        evidence = require_protected_trial(purpose, profile=profile, status=status)
+    except ep.SandboxUnavailable as exc:
+        if envelope is not None:
+            carry_protected_evidence(envelope, exc.evidence, purpose)
+        raise
+    if envelope is not None:
+        carry_protected_evidence(envelope, evidence, purpose)
+    result = runner(argv, cwd)
+    return result, evidence
+
+
 class Evaluation:
     """One run: every trial through its workflow, graded by the same oracle, recorded."""
 
