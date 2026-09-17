@@ -156,7 +156,7 @@ PYTHONPATH=tests python3 -m unittest test_decision_experiment_boundary.Unavailab
 ### D09 — Strict contract parser
 - id: D09
 - title: Strict contract parser
-- status: pending
+- status: done
 - model: opus
 - depends: D04, D06
 **Brief.** Own `bin/decision_contract.py` and `tests/test_decision_contract.py:DecisionRequestValidationTests`. Implement QuestionSpec, DecisionRequest/Result/Record with duplicate-key-safe parsing and correlation/snapshot/schema validation; reject executable fields.

@@ -113,6 +113,7 @@ Contract versions are read from the module that owns each one; package versions 
 | routing policy file | `bin/workflow_eval.py` | `polytropos.routing-policy/1` |
 | lessons store | `bin/lessons_store.py` | `polytropos.lessons/2` |
 | protected profile sentinels | `bin/exec_policy.py` | `polytropos.sentinels/1` |
+| decision contract | `bin/decision_contract.py` | `polytropos.decision/1` |
 | release gate | `bin/release_gate.py` | `polytropos.release-gate/1` |
 
 | Package | Version |
