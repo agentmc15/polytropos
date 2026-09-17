@@ -204,7 +204,7 @@ PYTHONPATH=tests python3 -m unittest test_decision_policy_bundle.PolicyBundleCon
 ### D12 — Rules and replay
 - id: D12
 - title: Rules and replay
-- status: pending
+- status: done
 - model: sonnet
 - depends: D10, D11
 **Brief.** Own `bin/decision_provider.py` and `tests/test_decision_provider.py:RulesReplayProviderTests`. Implement deterministic rules/replay keyed by project/provider/task/snapshot/candidates/questions/policy/calibration; semantic uncertainty abstains.

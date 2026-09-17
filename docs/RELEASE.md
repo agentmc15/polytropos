@@ -116,6 +116,7 @@ Contract versions are read from the module that owns each one; package versions 
 | decision contract | `bin/decision_contract.py` | `polytropos.decision/1` |
 | policy bundle | `bin/decision_contract.py` | `polytropos.policy-bundle/1` |
 | candidate proposal | `bin/decision_contract.py` | `polytropos.candidate-proposal/1` |
+| decision replay record | `bin/decision_provider.py` | `polytropos.decision-replay/1` |
 | release gate | `bin/release_gate.py` | `polytropos.release-gate/1` |
 
 | Package | Version |

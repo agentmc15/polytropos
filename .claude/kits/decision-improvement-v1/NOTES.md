@@ -943,3 +943,60 @@ One limitation the verifier confirmed as correctly disclosed rather than hidden:
 parameter's VALUE may legitimately be an authority-sounding string, because the ban sweeps mapping
 keys only. Nothing downstream reads such a value as a grant; it is inert today and stated in the
 module's own header.
+
+## D12 — Rules and replay (sonnet, depends D10, D11)
+
+New `bin/decision_provider.py`: one `evaluate(request, *, mode, provider, ...)` interface over two
+private implementations, plus `record_result` and `replay_key`. New
+`tests/test_decision_provider.py:RulesReplayProviderTests`, 38 tests. Suite 4503 -> 4541. New
+`REPLAY_VERSION = "polytropos.decision-replay/1"`, registered separately; `CONTRACT_VERSION`,
+`BUNDLE_VERSION`, `CANDIDATE_VERSION` and `LEDGER_VERSION` all untouched.
+
+`replay_key` is `request.sha()` plus provider, model, bundle_sha and calibrator_ref layered on
+top — the last two being exactly what D09 noted `DecisionRequest.sha()` does NOT cover.
+Cross-project miss is structural rather than a separate check: project is already inside
+`request.sha()`, so a different project is a different key and there is no second guard that
+could drift out of agreement with the first.
+
+Three semantic claims I verified functionally myself, not from the report:
+- **Replay makes no call.** A runner that RAISES is never invoked — on replay miss, on replay hit,
+  and in rules mode. Proved the D08 way, plus an AST assertion that neither implementation's body
+  names `runner`.
+- **Unknown is None, never zero.** A replay hit forces `dispatched_provider`, `observed_provider`,
+  `dispatched_model`, `observed_model`, `duration` and `usage` all to `None`. I printed all six.
+  This is the GUARDRAILS rule "missing duration/usage/model identity is unknown, not zero" holding
+  at the one place it would be most tempting to write 0.
+- **Historical cost stays on its original record.** `record_result` is create-once, mirroring
+  `workflow_eval.write_manifest`: same identity and same content is a no-op, same identity and
+  different content is REFUSED. I confirmed the refusal by re-recording altered content under the
+  same key. It also refuses to record a result whose note already carries `REPLAY_NOTE_PREFIX`, so
+  a replay cannot be laundered into a fresh observation.
+
+33 mutations, zero survivors, and for the first time in this phase NO masked guard was found. The
+implementer attributes that to applying D10's fixture-arity lesson up front — building the two
+whole-abstain triggers (`decided_any`, `blocked`) against deliberately SEPARATE fixtures so
+neither could mask the other — rather than discovering the collision afterwards. That is the
+lesson working as prevention instead of as diagnosis.
+
+It also disclosed one branch that is deliberately NOT load-bearing: the internal
+`parse_result(payload, request)` re-validation at the end of both implementations. No test goes
+red if deleted, because every test independently re-runs the D09 validator on the returned payload
+anyway — which is the literal acceptance requirement. Naming a redundant guard beats omitting it
+from the table and letting a later audit think the report was complete.
+
+Carry-forward:
+- Zero production callers, same as D11. The chain to a coordinator is D13, then D20/D23.
+- `DEFAULT_RULES` ships EMPTY on purpose. No domain recovery heuristic is defined anywhere yet —
+  that is D14-D19's work — and inventing one here would be candidate data changing the improvement
+  procedure, which GUARDRAILS forbids. An empty table means the rules provider abstains wholesale,
+  which is exactly what acceptance asks for. Flag it if a reviewer expected a shipped heuristic.
+- `store_dir` is ALWAYS caller-supplied; the module never resolves a location, never reads an env
+  var and never imports `runtime_data`. A later task wanting a real per-user default should call
+  `runtime_data.store_path(...)` itself and pass the result in. Keeping the module ignorant of
+  where its store lives also keeps a second file from containing the reserved store-name substring
+  that the evaluation-store sweep matches.
+- The replay store does not defend against someone with the user's own privileges hand-editing a
+  record into a self-consistent forged digest — the same non-guarantee every hash in this kit
+  already carries. A digest identifies content; it does not protect against a rewrite by someone
+  who could write the file in the first place.
+outcome: D12 model=sonnet attempts=1 result=pass review=pending run=2026-09-16-aa6e
