@@ -770,3 +770,43 @@ Not attributed to the PLAN's known unreproduced scheduler race without evidence.
 capture the name.
 outcome: D09 model=opus attempts=2 result=retry-pass review=revised run=2026-09-16-aa6e
 defect: D09 kind=unspecified-path executor brief required rejecting budget.x while prescribing _alnum; the two are incompatible and the implementer flagged it
+
+## D10 — Value validation (sonnet, depends D09)
+
+Value semantics above D09's structural floor, in the same file: exact category coverage against
+the question's own `outcomes` (new reason code `category-mismatch`), a per-entry probability
+bound, a documented `DISTRIBUTION_SUM_TOLERANCE = 1e-6`, and refusal of two outcomes whose rubric
+text reduces to the same string under the `_alnum` reduction `_is_banned_key` already uses.
+Nothing renormalizes; every malformed payload is refused outright. 11 tests in a new
+`DecisionValueValidationTests`. No `CONTRACT_VERSION` bump — no key set changed shape, which is
+exactly what D09 reserved the empty numeric slots for.
+
+D09's class is untouched: AST-identical, 55 methods. I checked this by comparing the parsed class
+node, after a naive line-slice comparison reported a false difference — D09's class used to be
+last in the file, so the trailing `if __name__` block fell inside the slice and moved out when
+D10's class was appended. Measure the class, not the text between two markers.
+
+**The best thing in this task is a test D10 caught being redundant against its own product.**
+Mutation-testing the per-entry `>1` branch showed the original two cases did NOT detect its
+removal: with `minimum=0` checked separately and the sum tolerance active, any entry above 1
+necessarily breaks the sum too, so the sum check was catching both cases and the per-entry bound
+was never isolated. It added `1.0 + tolerance/2`, which is over 1 but leaves the SUM inside
+tolerance, and the mutant then fails correctly. I confirmed the arithmetic independently:
+1.0000005 sums to |s-1| = 5e-7 < 1e-6, so the sum check alone would pass it.
+
+The general lesson, which applies to every remaining task: a test can be non-vacuous, pass, and
+still prove nothing, because a DIFFERENT guard is catching its input first. Guard non-emptiness
+is necessary and not sufficient — the only way to know a branch is tested is to remove that
+branch and watch the test fail. Three guards here were audited by emptying the collection; all
+three failed as they should, and I re-derived the guard-to-loop correspondence myself.
+
+Deliberately not done, and worth a reviewer's eye: rubric ambiguity reuses `incomplete-question`
+rather than taking its own reason code, on the grounds that it is the same defect class D09 filed
+there. Defensible, and a one-line change plus two test retags if the phase review prefers a
+dedicated code for machine branching. "Do not infer independence or multiply probabilities" is
+enforced by construction rather than by a runtime check — no path in this module ever reads a
+second question's answer while validating one — so test 11 demonstrates the property instead of
+asserting a negative about code that does not exist. The tolerance is sized for IEEE-754
+summation error only, never a provider's own rounding; do not loosen it to accept a malformed
+payload.
+outcome: D10 model=sonnet attempts=1 result=pass review=clean run=2026-09-16-aa6e

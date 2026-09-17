@@ -106,6 +106,31 @@ def ordinal_question(**over):
     return payload
 
 
+CHOICE_TEXT = ("Which single category best explains why the failing attempt could not use "
+              "the contract context it was given?")
+
+
+def choice_question(**over):
+    payload = {
+        "id": "q-primary-cause",
+        "version": "v1",
+        "kind": "choice",
+        "question": CHOICE_TEXT,
+        "rubric": {
+            "context-shape": ("the supplied context did not match the interface the failure "
+                              "needed"),
+            "context-missing": "no relevant context was supplied for the failing boundary",
+            "unrelated": "the failure does not trace to the missing context at all",
+        },
+        "outcomes": ["context-shape", "context-missing", "unrelated"],
+        "abstention": "permitted",
+        "dependencies": [],
+        "sensitivity": "project-internal",
+    }
+    payload.update(over)
+    return payload
+
+
 STATE = {"head": "0123abcd", "verify_rc": 1, "worktree_dirty": False, "last_failure": "assert"}
 ALTERNATIVES = ["retry-same-model", "retry-with-contract-context", "stop"]
 
@@ -839,6 +864,236 @@ class DecisionRequestValidationTests(unittest.TestCase):
     def test_an_undeclared_reason_code_cannot_be_raised_at_all(self):
         with self.assertRaises(ValueError):
             dc.ContractError("looks-wrong", "a message")
+
+
+class DecisionValueValidationTests(unittest.TestCase):
+    """D10 -- the value semantics above `bin/decision_contract.py`'s structural floor.
+
+    D09's `_distribution` docstring named exactly what it deferred: whether a choice/ordinal/
+    boolean answer's map covers exactly its question's own categories, whether it sums to one
+    within a documented tolerance, whether a rubric actually distinguishes its levels, and
+    keeping `raw`, `calibrated` and `vendor_confidence` on separate, differently bounded rules.
+    This class is those checks, plus their boundary cases. `DecisionRequestValidationTests`
+    (D09) proves the schema is closed and identity holds; this proves a payload that IS the
+    right shape can still be numerically wrong, and is refused rather than repaired into
+    validity -- nothing here ever fills in a missing category or rescales an off-sum
+    distribution back to 1.
+
+    Uses the same module-level fixtures as D09's class (`question`, `ordinal_question`,
+    `request_payload`, `answer`, `result_payload`), plus `choice_question`, added here because
+    D10 needs a `choice`-kind question and none existed yet.
+    """
+
+    # ---- fixtures, scoped to this class -----------------------------------------------------
+
+    def request(self, **over):
+        return dc.parse_request(request_payload(**over))
+
+    def result(self, request=None, **over):
+        request = request or self.request()
+        return request, dc.parse_result(result_payload(request, **over), request)
+
+    def refusal(self, code, callable_, *args, **kwargs):
+        with self.assertRaises(dc.ContractError) as caught:
+            callable_(*args, **kwargs)
+        self.assertEqual(caught.exception.code, code, str(caught.exception))
+        return caught.exception
+
+    # ---- category coverage: a distribution covers EXACTLY its question's categories -----------
+
+    def test_a_distribution_missing_or_inventing_a_category_is_refused(self):
+        request = self.request()
+        key = request.questions[0].qualified_id
+        malformed = (
+            {"true": 1.0},                              # missing "false"
+            {"false": 0.5, "true": 0.5, "maybe": 0.0},  # invented extra category
+            {},                                          # nothing declared at all
+        )
+        self.assertTrue(malformed, "the malformed maps are what this test checks")
+        for raw in malformed:
+            with self.subTest(raw=raw):
+                self.refusal("category-mismatch", dc.parse_result,
+                             result_payload(request, answers={key: answer(raw=raw)}), request)
+        # The complete map, covering exactly the question's own categories, is accepted.
+        complete = dc.parse_result(
+            result_payload(request, answers={key: answer(raw={"false": 0.1, "true": 0.9})}),
+            request)
+        self.assertEqual(complete.answers[key]["raw"], {"false": 0.1, "true": 0.9})
+
+    def test_an_ordinal_or_choice_distribution_must_cover_every_declared_level(self):
+        ordinal = ordinal_question(dependencies=[])
+        request = self.request(questions=[ordinal],
+                               questions_sha=dc.questions_digest(_specs([ordinal])))
+        key = request.questions[0].qualified_id
+        # Two of the three ordinal levels is an incomplete map, not "the rest defaults to 0".
+        self.refusal("category-mismatch", dc.parse_result,
+                     result_payload(request, answers={
+                         key: answer(outcome="some",
+                                    calibrated={"none": 0.2, "some": 0.8})}),
+                     request)
+        parsed = dc.parse_result(
+            result_payload(request, answers={
+                key: answer(outcome="some",
+                           calibrated={"none": 0.1, "some": 0.8, "all": 0.1})}),
+            request)
+        self.assertEqual(parsed.answers[key]["calibrated"], {"none": 0.1, "some": 0.8, "all": 0.1})
+
+    # ---- probability range: an entry is in [0, 1], never a bare magnitude ----------------------
+
+    def test_a_distribution_entry_out_of_probability_range_is_refused(self):
+        request = self.request()
+        key = request.questions[0].qualified_id
+        out_of_range = (
+            {"false": -0.1, "true": 1.1},
+            {"false": 0.0, "true": 1.5},
+            # An entry over 1 by LESS than the documented sum tolerance is still refused: the
+            # per-entry [0, 1] bound is a probability range, never forgiven by the aggregate
+            # sum's floating-point allowance. Without this case the per-entry bound is provably
+            # dead code -- with every other entry non-negative, an entry over 1 by more than the
+            # tolerance already fails the sum check on its own, so only an excess SMALLER than
+            # the tolerance can show the per-entry check is doing independent work.
+            {"false": 0.0, "true": 1.0 + dc.DISTRIBUTION_SUM_TOLERANCE / 2},
+        )
+        self.assertTrue(out_of_range, "the out-of-range maps are what this test checks")
+        for raw in out_of_range:
+            with self.subTest(raw=raw):
+                self.refusal("value-invalid", dc.parse_result,
+                             result_payload(request, answers={key: answer(raw=raw)}), request)
+
+    def test_a_distribution_entry_that_is_non_finite_or_boolean_is_refused(self):
+        request = self.request()
+        key = request.questions[0].qualified_id
+        cases = {
+            "nan": ({"false": float("nan"), "true": 1.0}, "value-invalid"),
+            "inf": ({"false": float("inf"), "true": 1.0}, "value-invalid"),
+            "neg-inf": ({"false": float("-inf"), "true": 1.0}, "value-invalid"),
+            "bool": ({"false": False, "true": True}, "wrong-type"),
+        }
+        self.assertTrue(cases, "the malformed distributions are what this test checks")
+        for name, (raw, code) in cases.items():
+            with self.subTest(case=name):
+                self.refusal(code, dc.parse_result,
+                             result_payload(request, answers={key: answer(raw=raw)}), request)
+
+    # ---- the documented sum tolerance ----------------------------------------------------------
+
+    def test_a_distribution_within_the_documented_tolerance_is_accepted_outside_is_refused(self):
+        request = self.request()
+        key = request.questions[0].qualified_id
+        tol = dc.DISTRIBUTION_SUM_TOLERANCE
+        accepted = dc.parse_result(
+            result_payload(request, answers={key: answer(
+                raw={"false": 0.5, "true": 0.5 + tol / 2})}),
+            request)
+        self.assertAlmostEqual(accepted.answers[key]["raw"]["true"], 0.5 + tol / 2)
+        # Too HIGH a sum is refused, however small the excess beyond the documented band.
+        self.refusal("value-invalid", dc.parse_result,
+                     result_payload(request, answers={key: answer(
+                         raw={"false": 0.5, "true": 0.5 + tol * 5})}),
+                     request)
+        # Too LOW a sum is refused on the same terms as too high -- neither end is renormalised.
+        self.refusal("value-invalid", dc.parse_result,
+                     result_payload(request, answers={key: answer(
+                         raw={"false": 0.4, "true": 0.4})}),
+                     request)
+
+    # ---- ambiguous rubric levels -----------------------------------------------------------------
+
+    def test_two_ordinal_levels_worded_the_same_are_ambiguous_and_refused(self):
+        rubric = dict(ordinal_question()["rubric"])
+        rubric["all"] = rubric["some"]
+        self.refusal("incomplete-question", dc.parse_question, ordinal_question(rubric=rubric))
+
+        # Punctuation and case alone do not rescue it: worded the same, however differently
+        # dressed, is still indistinguishable to a grader.
+        near_duplicate = dict(ordinal_question()["rubric"])
+        near_duplicate["all"] = near_duplicate["some"].upper() + " !!"
+        self.refusal("incomplete-question", dc.parse_question,
+                     ordinal_question(rubric=near_duplicate))
+
+    def test_two_choice_categories_worded_the_same_are_ambiguous_and_refused(self):
+        rubric = dict(choice_question()["rubric"])
+        rubric["unrelated"] = rubric["context-missing"]
+        self.refusal("incomplete-question", dc.parse_question, choice_question(rubric=rubric))
+        # Three genuinely distinct rubric entries still parse.
+        parsed = dc.parse_question(choice_question())
+        self.assertEqual(len(parsed.rubric), 3)
+
+    # ---- vendor confidence stays a separate, unbounded basis -------------------------------------
+
+    def test_vendor_confidence_is_unbounded_but_a_probability_entry_is_not(self):
+        request = self.request()
+        key = request.questions[0].qualified_id
+        parsed = dc.parse_result(
+            result_payload(request, answers={key: answer(vendor_confidence=5.7)}), request)
+        self.assertEqual(parsed.answers[key]["vendor_confidence"], 5.7)
+        # The identical number, reported as a distribution entry instead of a vendor score, is
+        # refused: the two are different bases with different rules, not one field by two names.
+        self.refusal("value-invalid", dc.parse_result,
+                     result_payload(request, answers={key: answer(
+                         raw={"false": -4.7, "true": 5.7})}), request)
+
+    def test_a_heuristic_rule_may_leave_every_numeric_confidence_absent(self):
+        request = self.request()
+        key = request.questions[0].qualified_id
+        parsed = dc.parse_result(
+            result_payload(request, answers={key: answer(
+                outcome="true", raw=None, calibrated=None, vendor_confidence=None)}),
+            request)
+        answer_out = parsed.answers[key]
+        self.assertIsNone(answer_out["raw"])
+        self.assertIsNone(answer_out["calibrated"])
+        self.assertIsNone(answer_out["vendor_confidence"])
+
+    # ---- raw and calibrated are two distinct, independently validated bases ----------------------
+
+    def test_raw_and_calibrated_are_each_validated_and_never_conflated(self):
+        request = self.request()
+        key = request.questions[0].qualified_id
+        # A malformed RAW distribution is refused citing raw, even with calibrated well formed.
+        error = self.refusal("category-mismatch", dc.parse_result,
+                             result_payload(request, answers={key: answer(
+                                 raw={"true": 1.0},
+                                 calibrated={"false": 0.5, "true": 0.5})}), request)
+        self.assertIn(".raw", str(error))
+        # And the reverse: a malformed CALIBRATED distribution is refused citing calibrated,
+        # even with raw well formed.
+        error = self.refusal("category-mismatch", dc.parse_result,
+                             result_payload(request, answers={key: answer(
+                                 raw={"false": 0.5, "true": 0.5},
+                                 calibrated={"true": 1.0})}), request)
+        self.assertIn(".calibrated", str(error))
+        # Two DIFFERENT valid numbers for the same question are both accepted -- calibration is
+        # a separate basis, never a copy of the raw number checked against itself.
+        parsed = dc.parse_result(
+            result_payload(request, answers={key: answer(
+                raw={"false": 0.5, "true": 0.5},
+                calibrated={"false": 0.2, "true": 0.8})}), request)
+        self.assertEqual(parsed.answers[key]["raw"], {"false": 0.5, "true": 0.5})
+        self.assertEqual(parsed.answers[key]["calibrated"], {"false": 0.2, "true": 0.8})
+        self.assertNotEqual(parsed.answers[key]["raw"], parsed.answers[key]["calibrated"])
+
+    # ---- coexisting causes are independent booleans, never one forced distribution ---------------
+
+    def test_coexisting_boolean_causes_are_validated_independently_never_combined(self):
+        cause_a = question(id="q-cause-context", question=QUESTION_TEXT)
+        cause_b = question(id="q-cause-timeout",
+                           question=("Did the failing attempt also exceed its own wall-clock "
+                                    "budget before any retry was attempted?"))
+        both = [cause_a, cause_b]
+        request = self.request(questions=both,
+                               questions_sha=dc.questions_digest(_specs(both)))
+        key_a = request.questions[0].qualified_id
+        key_b = request.questions[1].qualified_id
+        # Both coexisting causes reported as highly likely TRUE, independently -- this module
+        # never reads one question's answer while validating another's, so neither is checked
+        # against, or discounted for, the other the way a single forced categorical would be.
+        result = dc.parse_result(result_payload(request, answers={
+            key_a: answer(outcome="true", raw={"false": 0.05, "true": 0.95}),
+            key_b: answer(outcome="true", raw={"false": 0.1, "true": 0.9}),
+        }), request)
+        self.assertEqual(result.answers[key_a]["raw"]["true"], 0.95)
+        self.assertEqual(result.answers[key_b]["raw"]["true"], 0.9)
 
 
 if __name__ == "__main__":

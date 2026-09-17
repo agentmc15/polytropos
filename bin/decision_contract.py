@@ -177,6 +177,14 @@ MAX_REASON_CODES = 16
 MAX_PROVIDERS = 16
 MAX_DISTRIBUTION_ENTRIES = MAX_OUTCOMES
 
+#: How far a choice/ordinal/boolean distribution's entries may sum from 1 and still be
+#: accepted. This covers ONLY floating-point summation error -- the gap between the
+#: mathematically exact sum and what IEEE-754 addition of the reported floats actually produces
+#: -- never a provider's own rounding of the numbers it reports. A sum outside this band is
+#: refused outright; nothing in `_distribution` renormalises it back to 1, because a provider
+#: payload this far off is malformed, not merely imprecise.
+DISTRIBUTION_SUM_TOLERANCE = 1e-6
+
 _SHA_RE = re.compile(r"\A[0-9a-f]{64}\Z")
 _ID_RE = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9._-]*\Z")
 
@@ -185,12 +193,17 @@ _ID_RE = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9._-]*\Z")
 #: Stable machine-readable reasons a payload was refused. Stable because a caller branches on
 #: them and a report counts them; a renamed code silently empties somebody's tally.
 #: `value-invalid` is the floor for a value this module can see is wrong on its face (a
-#: non-finite number, a malformed digest); D10 owns the value semantics above that floor --
-#: category coverage, distribution sums and their documented tolerance, ordinal rubric
-#: matching, and keeping raw, calibrated and vendor confidence apart.
+#: non-finite number, a malformed digest, a distribution entry outside [0, 1], or a distribution
+#: whose entries do not sum to 1 within `DISTRIBUTION_SUM_TOLERANCE`). `category-mismatch` is
+#: specifically a distribution whose keys are not EXACTLY its question's own categories -- a
+#: partial or invented category, never repaired by filling one in or dropping one. An ambiguous
+#: rubric -- two levels worded so a grader cannot tell them apart -- reuses `incomplete-question`
+#: rather than adding a fourth code for it, because it is the same defect as the cases already
+#: filed there: a question that does not yet say enough to be graded.
 REASON_CODES = (
     "authority-field",
     "bounds-exceeded",
+    "category-mismatch",
     "correlation-mismatch",
     "duplicate-entry",
     "duplicate-key",
@@ -694,6 +707,12 @@ def parse_question(value, where="question"):
                 f"differently",
             )
         rubric = {}
+        # Two levels worded the same -- however differently punctuated or cased -- are not two
+        # levels a grader can actually tell apart. `_alnum` is the same reduction
+        # `_is_banned_key` uses for the identical reason: comparing the strings AS WRITTEN would
+        # let "at least one failing assertion follows" and "AT LEAST ONE FAILING ASSERTION
+        # FOLLOWS!!" count as different wording when a grader would read them identically.
+        seen_wording = {}
         for outcome in outcomes:
             text = _text(rubric_in[outcome], f"{where}.rubric[{outcome!r}]",
                          minimum=MIN_RUBRIC_CHARS, incomplete=True)
@@ -703,6 +722,15 @@ def parse_question(value, where="question"):
                     f"{where}.rubric[{outcome!r}] just repeats the outcome name; the rubric is "
                     f"what tells a grader when that outcome applies",
                 )
+            reduced = _alnum(text)
+            if reduced in seen_wording:
+                raise ContractError(
+                    "incomplete-question",
+                    f"{where}.rubric[{outcome!r}] is worded the same as "
+                    f"{where}.rubric[{seen_wording[reduced]!r}]; two levels a grader cannot "
+                    f"tell apart are not two levels, whatever the outcome list says",
+                )
+            seen_wording[reduced] = outcome
             rubric[outcome] = text
 
     abstention = _one_of(payload["abstention"], ABSTENTION, f"{where}.abstention")
@@ -936,14 +964,48 @@ class DecisionResult:
         return _sha(_canonical(self.to_payload()))
 
 
-def _distribution(value, where):
-    """Structure only: a map of outcome -> finite non-boolean number, bounded.
+def _probability(value, where):
+    """One distribution entry: a finite, non-boolean number in the closed interval [0, 1].
 
-    Deliberately NOT validated here: whether the map covers exactly the question's categories,
-    whether it sums to one within a documented tolerance, and whether an ordinal's levels line
-    up with its rubric. Those are D10's, and pretending to check them here would leave a caller
-    believing a coverage check ran when none did. Nothing in this function normalises anything:
-    a malformed distribution is refused, never repaired into validity.
+    A distribution entry IS a probability, not an arbitrary magnitude -- unlike
+    `vendor_confidence`, which stays deliberately unbounded in `_answer` because a vendor's own
+    score is not itself a probability of task success. Keeping the two on separate rules is the
+    whole point of keeping them as separate fields; this function is what makes the
+    `raw`/`calibrated` side of that separation actually enforce its bound.
+    """
+    number = _number(value, where, minimum=0)
+    if number > 1:
+        raise ContractError(
+            "value-invalid",
+            f"{where} is {number!r}; a distribution entry is a probability and cannot exceed 1",
+        )
+    return number
+
+
+def _distribution(value, where, *, outcomes):
+    """A choice/ordinal/boolean answer's full distribution, checked against its OWN question.
+
+    D09 covered the shape: a bounded map of finite, non-boolean numbers. This is the value
+    semantics above that floor, and every one of them fails the same way -- refused, never
+    repaired into validity:
+
+      * COVERAGE. The map's keys are EXACTLY `outcomes`, the answering question's own category
+        set -- no invented category, and no omitted one. A partial map is not "the rest is
+        implied"; it is incomplete. An extra key is not "additional detail"; it is a category
+        this question never defined. Both are `category-mismatch`.
+      * RANGE. Every entry is a probability in [0, 1] via `_probability`, which also carries
+        D09's finite/non-boolean check, so a NaN, an infinity or a bare `true`/`false` is
+        refused on the same terms as an entry of 7.
+      * SUM. The total is 1 within `DISTRIBUTION_SUM_TOLERANCE` (documented above); a sum
+        outside that band is refused rather than silently renormalised back to 1.
+
+    `outcomes` is always the answering `QuestionSpec.outcomes`, so a boolean's own raw
+    distribution is held to exactly `{"false", "true"}` on the same terms as a choice or an
+    ordinal's map. That is also what keeps coexisting causes apart: they are modelled as
+    separate boolean questions precisely so each keeps its own independent distribution here,
+    and this function never reads a second question's answer -- two coexisting-cause booleans
+    can each report "true" with high probability without their numbers being combined,
+    multiplied, or checked against one another.
     """
     if value is None:
         return None
@@ -952,10 +1014,26 @@ def _distribution(value, where):
         raise ContractError("bounds-exceeded",
                             f"{where} has {len(payload)} entries; the limit is "
                             f"{MAX_DISTRIBUTION_ENTRIES}")
+    if set(payload) != set(outcomes):
+        raise ContractError(
+            "category-mismatch",
+            f"{where} covers {sorted(payload)} but the question's categories are "
+            f"{sorted(outcomes)}; a partial or invented category is refused rather than "
+            f"filled in or dropped",
+        )
     out = {}
+    total = 0.0
     for key in sorted(payload):
         _label(key, f"{where} key {key!r}")
-        out[key] = _number(payload[key], f"{where}[{key!r}]")
+        out[key] = _probability(payload[key], f"{where}[{key!r}]")
+        total += out[key]
+    if abs(total - 1.0) > DISTRIBUTION_SUM_TOLERANCE:
+        raise ContractError(
+            "value-invalid",
+            f"{where} sums to {total!r}, not 1 within the documented tolerance of "
+            f"{DISTRIBUTION_SUM_TOLERANCE}; a distribution this far off is refused, never "
+            f"renormalised back to 1",
+        )
     return out
 
 
@@ -1002,8 +1080,9 @@ def _answer(value, spec, where, *, answers_required):
         _number(confidence, f"{where}.vendor_confidence")
     return {
         "outcome": outcome, "abstained": abstained,
-        "raw": _distribution(payload["raw"], f"{where}.raw"),
-        "calibrated": _distribution(payload["calibrated"], f"{where}.calibrated"),
+        "raw": _distribution(payload["raw"], f"{where}.raw", outcomes=spec.outcomes),
+        "calibrated": _distribution(payload["calibrated"], f"{where}.calibrated",
+                                    outcomes=spec.outcomes),
         "vendor_confidence": confidence,
     }
 

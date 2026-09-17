@@ -172,7 +172,7 @@ PYTHONPATH=tests python3 -m unittest test_decision_contract.DecisionRequestValid
 ### D10 — Value validation
 - id: D10
 - title: Value validation
-- status: pending
+- status: done
 - model: sonnet
 - depends: D09
 **Brief.** Own `bin/decision_contract.py` and `DecisionValueValidationTests`. Validate category coverage/sums, ordinal rubrics, multi-label hypotheses and raw versus calibrated nullable values; never normalize malformed provider output.
