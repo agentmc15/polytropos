@@ -847,7 +847,7 @@ implementer brief rather than trusting it to be remembered.
 `PolicyBundle` and `CandidateProposal` as record types in `bin/decision_contract.py` under their
 own `BUNDLE_VERSION` and `CANDIDATE_VERSION`, registered SEPARATELY in
 `release_gate.VERSION_SOURCES` rather than overloading `CONTRACT_VERSION`, which did not move.
-New `bin/decision_policy.py` (570 lines, pure library, persists nothing) holds resolution;
+New `bin/decision_policy.py` (500 lines, pure library, persists nothing) holds resolution;
 `workflow_eval.py` was not touched and stays the persistence owner. New
 `tests/test_decision_policy_bundle.py:PolicyBundleContractTests`, 52 tests. Suite 4451 -> 4503.
 
@@ -865,7 +865,9 @@ collects ALL unmet reasons instead of short-circuiting, so one requirement's tes
 satisfied by a different check refusing the input first. And there is an explicit positive
 control, `test_a_bundle_that_meets_every_requirement_is_selected`, without which every
 "ends at legacy" assertion would pass against a resolver that always returned legacy. **I proved
-that control real: stubbing `resolve_bundle` to always return legacy fails 30 of the 52 tests.**
+that control real: stubbing `resolve_bundle` to always return legacy fails 27 of the 52 tests**
+(28 if the stub also drops the argument validation, which is a less faithful stub because those
+extra failures are callers-passed-garbage tests, not always-legacy tests).
 
 Verified myself: both new/edited `bin/` files are clean of all four repo sweeps; `CONTRACT_VERSION`
 unmoved; D09's and D10's test classes byte-untouched (`git diff --numstat` empty on that file);
@@ -898,4 +900,46 @@ Carry-forward, stated by the implementer rather than discovered later:
   and if deleted, that input terminates via content-mismatch rather than hanging.
 - `decision_policy` reaches no private name of `decision_contract` (AST-proven), so D09's
   `attempt_history._duration` private-reach smell was not extended.
-outcome: D11 model=opus attempts=1 result=pass review=pending run=2026-09-16-aa6e
+outcome: D11 model=opus attempts=1 result=pass review=clean run=2026-09-16-aa6e
+
+### D11 verification — ACCEPT, and both findings were mine
+
+The verifier ran 12 mutations rather than the 8 asked for, including all four branches the
+implementer said initially survived, and found NO branch deletable with the suite green. It could
+not force a hash collision: numeric-form ambiguity is structurally impossible because `_integer`
+refuses `float` and `bool` outright and no other numeric field exists; duplicate keys cannot
+survive `to_payload()` rebuilding a fresh dict; unicode is `ensure_ascii` escaped injectively;
+present-with-null and missing are different refusals, never silently equal. D02's goldens are
+green and untouched.
+
+Both findings were defects in MY OWN records, not the implementer's work.
+
+1. I wrote "570 lines" for `bin/decision_policy.py`. It is 500. I copied that figure from the
+   implementer's report without measuring it — a number that rots, and not even my own.
+2. I put "fails 30 of the 52 tests" in commit e2cc9d6's body for the always-legacy stub. The
+   verifier got 26/27/25 depending on the stub and flagged that it could not reproduce mine.
+   Diagnosed rather than merely corrected: my temp copy was `git archive HEAD` at 0eff7c8 —
+   BEFORE D11's own commit — with only three files overlaid, so `bin/release_gate.py` and
+   `docs/RELEASE.md` were stale and `test_both_new_versions_are_declared_on_the_release_surface`
+   failed on its own. I reproduced that: with an UNMUTATED resolver, that tree fails 2 tests. So
+   30 = 28 stub failures + 2 artifacts of my own fixture.
+
+   The faithful figure is 27: keep the `_runtime`/`_catalog` argument validation, then always
+   return legacy. 28 comes from also deleting the validation, which is the worse stub, because
+   the extra failure is a caller-passed-garbage test rather than an always-legacy test.
+
+**The lesson is the one this phase keeps re-teaching, now applied to me.** A mutation result is
+only evidence if the tree differs from the real one in exactly ONE way. Mine differed in three:
+the stub, plus two files I forgot to overlay. Build the temp tree from the commit under test, not
+from an earlier HEAD, and confirm it is green BEFORE mutating — an unmutated baseline run is the
+control that would have caught this in one command.
+
+Also carried forward from the verifier for D13, which extends this same file: D11's
+`RESOLUTION_SOURCES` and `RESOLUTION_REASONS` are closed vocabularies with their own
+mutation-proven tests. D13's `select_action` baseline/recommendation/selection reason codes are a
+DIFFERENT concern and need their own vocabulary rather than reusing or shadowing D11's names.
+
+One limitation the verifier confirmed as correctly disclosed rather than hidden: a label
+parameter's VALUE may legitimately be an authority-sounding string, because the ban sweeps mapping
+keys only. Nothing downstream reads such a value as a grant; it is inert today and stated in the
+module's own header.
