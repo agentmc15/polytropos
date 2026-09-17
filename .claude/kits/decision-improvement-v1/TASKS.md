@@ -188,7 +188,7 @@ PYTHONPATH=tests python3 -m unittest test_decision_contract.DecisionValueValidat
 ### D11 — Bundles and proposals
 - id: D11
 - title: Bundles and proposals
-- status: pending
+- status: done
 - model: opus
 - depends: D09
 **Brief.** Own record definitions in `bin/decision_contract.py`, bundle identity helpers in `bin/decision_policy.py`, and `tests/test_decision_policy_bundle.py:PolicyBundleContractTests`. Define immutable bundle/proposal hashes, parent/scope/versions/fallback/evidence and data-only diffs; reject code, shell, imports, permissions, acceptance and hidden-eval changes.

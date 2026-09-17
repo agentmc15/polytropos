@@ -841,3 +841,61 @@ upper-bound redundancy found by the implementer, D10's lower-bound gap found by 
 Standing instruction for every remaining task in this kit: after writing a guard, delete it and
 watch a test go red. A guard that survives its own deletion is decoration. Add that to the
 implementer brief rather than trusting it to be remembered.
+
+## D11 — Bundles and proposals (opus, depends D09)
+
+`PolicyBundle` and `CandidateProposal` as record types in `bin/decision_contract.py` under their
+own `BUNDLE_VERSION` and `CANDIDATE_VERSION`, registered SEPARATELY in
+`release_gate.VERSION_SOURCES` rather than overloading `CONTRACT_VERSION`, which did not move.
+New `bin/decision_policy.py` (570 lines, pure library, persists nothing) holds resolution;
+`workflow_eval.py` was not touched and stays the persistence owner. New
+`tests/test_decision_policy_bundle.py:PolicyBundleContractTests`, 52 tests. Suite 4451 -> 4503.
+
+**The standing delete-the-guard instruction was followed exhaustively and it paid: 65 branches
+deleted one at a time, and FOUR initially survived** — instances four through seven of this
+phase's masking pattern, all found by the implementer rather than by verification.
+Each was masked by a sibling guard: a hypothesis-restates-the-id case refused first by the
+32-char floor; the character floor refused first by the word floor; a catalog type guard reachable
+only by a non-iterable, since a dict or string falls through to the per-entry guard; and a source
+vocabulary check masked by the bundle/source coherence check. All four isolated, and the report
+names which test catches each of the 65 deletions.
+
+Two structural choices make masking harder here rather than relying on vigilance. `_unmet`
+collects ALL unmet reasons instead of short-circuiting, so one requirement's test cannot be
+satisfied by a different check refusing the input first. And there is an explicit positive
+control, `test_a_bundle_that_meets_every_requirement_is_selected`, without which every
+"ends at legacy" assertion would pass against a resolver that always returned legacy. **I proved
+that control real: stubbing `resolve_bundle` to always return legacy fails 30 of the 52 tests.**
+
+Verified myself: both new/edited `bin/` files are clean of all four repo sweeps; `CONTRACT_VERSION`
+unmoved; D09's and D10's test classes byte-untouched (`git diff --numstat` empty on that file);
+zero production callers of `decision_policy` — the only two matches outside its own file are
+comments in `decision_contract.py`, not imports.
+
+Note how the policy-file sweep was threaded: `LEGACY_PREFERENCE_VERSION` is
+`"polytropos.routing-policy/1"`, which names the legacy shape WITHOUT containing the
+`routing-policy.json` literal `tests/test_workflow_eval.py` forbids in any `bin/*.py` but
+`workflow_eval.py`. A test pins it equal to `workflow_eval.POLICY_VERSION` so the two cannot
+drift. `describe_legacy_preferences` LOADS the historical shape into an inert view reporting its
+keys as `unmapped`; nothing converts a legacy preference file into an active bundle.
+
+Carry-forward, stated by the implementer rather than discovered later:
+- Nothing in production calls `bin/decision_policy.py`. The chain to a runtime is D12/D13 and
+  D20/D23. A green suite says the unit works, not that anything invokes it.
+- The ban still sweeps mapping KEYS only. It is closed for the diff by construction — every
+  parameter value is a scalar, so there is no list for the sweep to miss — but `scope.task_classes`,
+  `requirements.capabilities`/`providers` and the evidence lists ARE lists, and an entry spelled
+  `approve` parses. Inert today (membership comparison only) and now written into the module's own
+  header rather than left silent.
+- `approval_ref` presence is necessary and explicitly NOT sufficient. A JSON pointer is not
+  authentication. D22 binds reviewer, scope and exact hashes.
+- Label parameter values are not checked against any vocabulary; whether a label names a workflow
+  the evaluator knows is D20's question.
+- `MAX_FALLBACK_DEPTH = 8`, `MIN_EVIDENCE_REFS = 2`, `MIN_STATEMENT_CHARS/WORDS = 32/6` and
+  `MAX_PARAMETER_VALUE = 64` are chosen bounds, not measured ones.
+- A true content-addressed fallback cycle cannot be constructed, since each link's digest depends
+  on the next. The cycle guard covers the realistic case — a tail pinning a stale ancestor digest —
+  and if deleted, that input terminates via content-mismatch rather than hanging.
+- `decision_policy` reaches no private name of `decision_contract` (AST-proven), so D09's
+  `attempt_history._duration` private-reach smell was not extended.
+outcome: D11 model=opus attempts=1 result=pass review=pending run=2026-09-16-aa6e

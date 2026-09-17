@@ -1457,3 +1457,648 @@ def decision_ref(record):
     if not isinstance(record, DecisionRecord):
         raise ContractError("wrong-type", "decision_ref takes a DecisionRecord")
     return _al().make_ref(record.decision_id, sha=record.sha(), version=CONTRACT_VERSION)
+
+
+# ==================================================================================================
+#  D11 -- POLICY BUNDLES AND CANDIDATE PROPOSALS
+# ==================================================================================================
+#
+# D09's four objects describe ONE decision. These two describe the POLICY a decision was taken
+# under, and a bounded request to change it.
+#
+#   * `PolicyBundle`      -- an immutable, content-addressed statement of which data parameters
+#                            apply, to what, under which component versions and requirements,
+#                            and what runtime falls back to when it cannot be used.
+#   * `CandidateProposal` -- a falsifiable request to change those parameters, carrying the
+#                            evidence AND the counterevidence, an evaluation it must pass, and
+#                            the target a rollback returns to.
+#
+# WHAT A BUNDLE IS NOT. It is not an approval, a permission, a budget or an activation. Nothing
+# here can be read as "and therefore this may now run": the fields that would say so are refused
+# by `BANNED_FIELDS` like everywhere else in this module, `provenance.approval_ref` is a POINTER
+# at a record some other authority owns rather than the approval itself, and selecting a bundle
+# is `bin/decision_policy.py`'s pure, side-effect-free resolution -- which writes nothing,
+# activates nothing, and falls back to the frozen legacy behaviour whenever anything is unmet.
+# Runtime activation is a separately gated transition owned by the evaluation workbench.
+#
+# WHY THE HISTORICAL PREFERENCE SHAPE IS REFUSED HERE BY NAME. The evaluation workbench has long
+# written a pull-only preference payload recording which defaults its own evidence supports. No
+# driver reads it, on purpose. That payload names no parent, no scope, no component versions, no
+# requirements and no fallback, so reading one as a bundle would silently promote a file nothing
+# consumes into the thing every run pins -- which is exactly the transition the plan reserves for
+# an explicit, approved, versioned opt-in. `parse_bundle` therefore refuses it with a message
+# that says what it is, and `is_legacy_preference_payload` is the machine-readable side of that
+# refusal so a caller can tell "this is the old shape" apart from "this is malformed".
+#
+# WHAT THE BAN STILL DOES NOT COVER HERE. `_reject_banned` sweeps MAPPING KEYS, through
+# `_object`, and list ITEMS are not swept -- which was true before these two records and is
+# still true. A parameter map cannot hide one, because every parameter value is a scalar of a
+# declared kind and a list or nested object is refused by type. But a scope's `task_classes`, a
+# requirement's `capabilities` and `providers`, and the evidence lists are lists, and an entry
+# in one of them spelled like a banned name PARSES. Those entries are compared for membership
+# and nothing more -- a cohort called `approve` selects the cohort called `approve` -- so this
+# is a naming oddity rather than an authority, and it is written down here so nobody reads the
+# ban as covering more than it does. The homoglyph non-guarantee `_is_banned_key` states
+# applies unchanged.
+#
+# TWO VERSIONS, NOT ONE, AND NEITHER IS `CONTRACT_VERSION`. A bundle and a proposal change on
+# their own schedules and neither is one of D09's four objects, so overloading
+# `polytropos.decision/1` would make a decision-shape change look like a policy-shape change and
+# vice versa. Both are registered in `release_gate.VERSION_SOURCES` in their own right.
+
+#: Ceiling on how many task classes, capabilities or providers one bundle may enumerate.
+MAX_SCOPE_ENTRIES = 32
+MAX_REQUIREMENT_ENTRIES = 16
+
+#: Ceiling on a `count` parameter's value. A data parameter is a small dial, never a budget:
+#: nothing here can raise a ceiling, so this bound exists to keep a "count" from being used as a
+#: smuggled size for something else.
+MAX_PARAMETER_VALUE = 64
+
+#: The fewest supporting references a candidate proposal may cite. One attempt is an anecdote,
+#: and the plan asks for RECURRING evidence; two is the smallest number that can recur. It is a
+#: floor on citation, never a claim that two attempts are sufficient evidence for anything.
+MIN_EVIDENCE_REFS = 2
+
+#: A hypothesis, a falsification and a tradeoff are sentences, not labels -- the same floor
+#: `MIN_QUESTION_CHARS`/`MIN_QUESTION_WORDS` put under a question's wording, for the same reason.
+MIN_STATEMENT_CHARS = 32
+MIN_STATEMENT_WORDS = 6
+
+#: The version of `PolicyBundle`, on the referenced object rather than on any envelope that
+#: carries it -- the precedent D04 set when it showed that bumping the ledger's own version
+#: silently discards every stored attempt.
+BUNDLE_VERSION = "polytropos.policy-bundle/1"
+
+#: The version of `CandidateProposal`. Separate from the bundle's because a proposal's shape can
+#: gain a field -- an evaluation input, say -- without every stored bundle becoming unreadable.
+CANDIDATE_VERSION = "polytropos.candidate-proposal/1"
+
+#: The version string the evaluation workbench's historical preference payload carries. Declared
+#: here so `parse_bundle` can refuse that shape BY NAME rather than as generic noise, and so a
+#: reader learns the two are different things. This module never reads, writes or locates that
+#: file -- the workbench owns it, `tests/test_decision_policy_bundle.py` pins this constant
+#: against the workbench's own so the two cannot drift apart, and nothing here converts one.
+LEGACY_PREFERENCE_VERSION = "polytropos.routing-policy/1"
+
+#: What a bundle falls back to. `legacy` is the frozen existing behaviour and is always
+#: reachable; `bundle` names a previously approved compatible bundle by pinned reference. There
+#: is deliberately no third kind meaning "nothing", because "no fallback" is how an unusable
+#: bundle turns into a stalled run instead of a legacy one.
+FALLBACK_KINDS = ("legacy", "bundle")
+
+#: The value kinds a data parameter may take. All three are SCALARS. A list or a nested object
+#: is refused by type -- which is also why the ban's mapping-key-only sweep is not a hole here:
+#: a diff has no list and no nested map for it to miss.
+PARAMETER_KINDS = ("boolean", "count", "label")
+
+#: The ALLOWLIST: every data parameter a bundle may carry and a proposal may change, with the
+#: kind of value it takes. This is the mechanical form of "no candidate edits arbitrary Python,
+#: shell, module paths, acceptance, permissions, pricing, the improvement procedure or hidden
+#: evaluation rules" -- not by listing those, which would be a blocklist and therefore a guess,
+#: but by enumerating the few data dials that are permitted at all. A key outside it is refused
+#: as unknown; a key inside `BANNED_FIELDS` is refused earlier still, as an authority field.
+#:
+#: One allowlist, two users. A bundle's `parameters` and a proposal's `diff` are validated by the
+#: same function against this same mapping, so the set of things a candidate may propose is
+#: exactly the set of things a bundle may carry, and neither side can grow without the other.
+#:
+#: The VALUES a label parameter may take are the owning surface's vocabulary, not this
+#: contract's: whether a workflow name is a workflow the evaluator knows is the evaluator's
+#: question, asked where that vocabulary lives.
+DIFF_PARAMETERS = {
+    "recovery.contract_context_package": "boolean",
+    "recovery.contract_context_files": "count",
+    "routing.default_workflow": "label",
+    "routing.default_policy": "label",
+}
+
+#: The partitions whose results may be cited as evidence for a change. These are the workbench's
+#: held-out partitions and nothing else: material a fit has touched is spent, so a proposal
+#: evaluated on a fitting partition is citing the fit. The workbench owns the four partitions and
+#: their roles; this names the subset a proposal may point at, and a test pins the two together.
+EVIDENCE_PARTITIONS = ("promotion", "audit")
+
+#: A contract version string is not an identifier: it carries a '/' that `_ID_RE` refuses, on
+#: purpose, because the two are different kinds of name.
+_VERSION_RE = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9._/-]*\Z")
+
+_SCOPE_KEYS = ("project", "task_classes", "intended_uses")
+COMPONENT_KEYS = ("decision_contract", "task_contract", "provider_contract")
+_REQUIREMENT_KEYS = ("capabilities", "providers", "calibration")
+_FALLBACK_KEYS = ("kind", "bundle_ref")
+_PROVENANCE_KEYS = ("approval_ref", "evaluation_ref", "rolled_back_from")
+_BUNDLE_KEYS = ("v", "id", "parent", "scope", "components", "parameters", "requirements",
+                "fallback", "provenance")
+_EVALUATION_KEYS = ("endpoint", "partition", "manifest_ref")
+_CANDIDATE_KEYS = ("v", "id", "parent", "hypothesis", "falsification", "tradeoff", "scope",
+                   "diff", "evaluation", "evidence", "counterevidence", "rollback")
+
+
+# ---- D11 primitives -------------------------------------------------------------------------
+
+def _version(value, where):
+    """A contract version string -- `name/N` -- which `_label` would refuse for its slash."""
+    if not isinstance(value, str):
+        raise ContractError("wrong-type", f"{where} must be a string, got {type(value).__name__}")
+    if not value:
+        raise ContractError("value-invalid", f"{where} is empty")
+    if len(value) > MAX_ID_CHARS:
+        raise ContractError("bounds-exceeded",
+                            f"{where} is {len(value)} chars; the limit is {MAX_ID_CHARS}")
+    if not _VERSION_RE.match(value):
+        raise ContractError(
+            "value-invalid",
+            f"{where} is {value!r}; a contract version starts alphanumeric and uses only "
+            f"letters, digits, '.', '_', '-' and '/'",
+        )
+    return value
+
+
+def _pinned_ref(value, where, *, optional=False, version=None):
+    """A reference that PINS content: id, digest and referenced version, none of them absent.
+
+    `attempt_ledger.make_ref` permits a digest-free pointer, because a caller may honestly not
+    know one -- and for an event's provenance, absent is the honest record. A bundle's lineage
+    is the opposite case: a parent, a fallback or an evidence item that does not pin the exact
+    bytes it names cannot detect that those bytes changed underneath it, and detecting exactly
+    that is what these pointers are FOR. So the same reference shape is required complete here.
+    A digest identifies content and prevents nothing; what it buys is that a rewrite is visible.
+    """
+    if value is None:
+        if optional:
+            return None
+        raise ContractError("not-a-reference", f"{where} is required and is null")
+    ref = _ref(value, where)
+    if ref["sha"] is None:
+        raise ContractError(
+            "value-invalid",
+            f"{where} names {ref['id']!r} without the digest of the bytes it names; a pointer "
+            f"that pins no content cannot notice the content changing under it",
+        )
+    if ref["v"] is None:
+        raise ContractError(
+            "value-invalid",
+            f"{where} names {ref['id']!r} without the referenced contract's version; a reader "
+            f"that fetches it would not know which field names apply to what it got",
+        )
+    if version is not None and ref["v"] != version:
+        raise ContractError(
+            "unknown-value",
+            f"{where} points at a {ref['v']!r} object; this slot points at {version!r}",
+        )
+    return ref
+
+
+def _statement(value, where):
+    """A sentence, not a label. The floor a question's wording already has, for one reason."""
+    text = _text(value, where, minimum=MIN_STATEMENT_CHARS)
+    if len(text.split()) < MIN_STATEMENT_WORDS:
+        raise ContractError(
+            "value-invalid",
+            f"{where} is {len(text.split())} words; at least {MIN_STATEMENT_WORDS} are needed "
+            f"for this to be a statement somebody could disagree with rather than a label",
+        )
+    return text
+
+
+def _parameters(value, where, *, minimum=0):
+    """The data parameters a bundle carries or a proposal changes, against ONE allowlist.
+
+    Refusals, in the order they can happen: a banned key (via `_object`, so an authority field
+    is refused before anything else is looked at), a key outside `DIFF_PARAMETERS`, and a value
+    of the wrong kind. Nothing is coerced -- a `"1"` offered for a count is refused, not read as
+    one, because a provider or proposer that sent a string did not mean an integer.
+    """
+    payload = _object(value, where)
+    if len(payload) < minimum:
+        raise ContractError(
+            "bounds-exceeded",
+            f"{where} sets {len(payload)} parameter(s); at least {minimum} are needed for this "
+            f"to be a proposal to change something",
+        )
+    if len(payload) > len(DIFF_PARAMETERS):
+        raise ContractError(
+            "bounds-exceeded",
+            f"{where} sets {len(payload)} parameter(s); the allowlist has "
+            f"{len(DIFF_PARAMETERS)}",
+        )
+    out = {}
+    for key in sorted(payload):
+        kind = DIFF_PARAMETERS.get(key)
+        if kind is None:
+            raise ContractError(
+                "unknown-field",
+                f"{where} sets {key!r}, which is not one of the data parameters policy may "
+                f"carry ({', '.join(sorted(DIFF_PARAMETERS))}). Code, a command, a module path, "
+                f"an acceptance criterion, a permission, a price and an evaluation rule are each "
+                f"owned by an authority outside this payload and none of them is settable here",
+            )
+        item = payload[key]
+        if kind == "boolean":
+            out[key] = _bool(item, f"{where}[{key!r}]")
+        elif kind == "count":
+            count = _integer(item, f"{where}[{key!r}]", minimum=0)
+            if count > MAX_PARAMETER_VALUE:
+                raise ContractError(
+                    "bounds-exceeded",
+                    f"{where}[{key!r}] is {count}; the limit is {MAX_PARAMETER_VALUE}",
+                )
+            out[key] = count
+        else:
+            out[key] = _label(item, f"{where}[{key!r}]")
+    return out
+
+
+def _scope(value, where):
+    """What this bundle or proposal applies TO. Enumerated, never wildcarded.
+
+    There is deliberately no "everything" token. A bundle that means every task class lists
+    them, which is longer and which someone has to look at -- and a wildcard is how a change
+    scoped to one cohort silently becomes a change to all of them.
+    """
+    payload = _closed(value, _SCOPE_KEYS, where)
+    project = _label(payload["project"], f"{where}.project")
+    classes = _unique_labels(payload["task_classes"], f"{where}.task_classes",
+                             maximum=MAX_SCOPE_ENTRIES, minimum=1)
+    uses = _unique_labels(payload["intended_uses"], f"{where}.intended_uses",
+                          maximum=len(INTENDED_USES), minimum=1)
+    for index, use in enumerate(uses):
+        _one_of(use, INTENDED_USES, f"{where}.intended_uses[{index}]")
+    return _frozen_map({"project": project, "task_classes": classes, "intended_uses": uses})
+
+
+def _components(value, where, *, providers):
+    """The contract versions a run must match to use this bundle.
+
+    A version pinned here is a REQUIREMENT, not a claim about the present: an old bundle pins
+    old versions, still parses, and simply stops resolving. `provider_contract` may be null,
+    which is the offline case and the V1 default -- but a bundle that REQUIRES a provider may
+    not leave it null, because requiring a provider without pinning the contract you speak to it
+    with is requiring an unknown.
+    """
+    payload = _closed(value, COMPONENT_KEYS, where)
+    out = {}
+    for key in COMPONENT_KEYS:
+        item = payload[key]
+        out[key] = None if item is None else _version(item, f"{where}[{key!r}]")
+    for key in ("decision_contract", "task_contract"):
+        if out[key] is None:
+            raise ContractError(
+                "missing-field",
+                f"{where}[{key!r}] is null; this bundle's own fields are read by that contract's "
+                f"parser, so the version it was written against is never unknown",
+            )
+    if providers and out["provider_contract"] is None:
+        raise ContractError(
+            "missing-field",
+            f"{where}['provider_contract'] is null while the bundle requires provider(s) "
+            f"{', '.join(repr(p) for p in providers)}; a required provider without the contract "
+            f"version to speak to it with is a requirement nothing can check",
+        )
+    return _frozen_map(out)
+
+
+def _requirements(value, where):
+    """What must be TRUE ELSEWHERE before this bundle may be used.
+
+    None of it is checked here, and saying so is the point. A capability is verified in the
+    registry that owns capability evidence -- where `unknown` means no -- provider eligibility
+    is the coordinator's fresh check just before acting, and a calibrator is fetched from the
+    store that holds it. This records WHICH facts a resolver must go and establish.
+    """
+    payload = _closed(value, _REQUIREMENT_KEYS, where)
+    capabilities = _unique_labels(payload["capabilities"], f"{where}.capabilities",
+                                  maximum=MAX_REQUIREMENT_ENTRIES)
+    providers = _unique_labels(payload["providers"], f"{where}.providers",
+                               maximum=MAX_PROVIDERS)
+    calibration = _pinned_ref(payload["calibration"], f"{where}.calibration", optional=True)
+    return _frozen_map({
+        "capabilities": capabilities, "providers": providers,
+        "calibration": None if calibration is None else _frozen_map(calibration),
+    })
+
+
+def _fallback(value, where):
+    """What runtime uses when this bundle cannot be used. Required, and never nothing."""
+    payload = _closed(value, _FALLBACK_KEYS, where)
+    kind = _one_of(payload["kind"], FALLBACK_KINDS, f"{where}.kind")
+    pointer = payload["bundle_ref"]
+    if kind == "legacy":
+        if pointer is not None:
+            raise ContractError(
+                "value-invalid",
+                f"{where} falls back to the frozen legacy behaviour and also names "
+                f"{pointer!r}; it is one or the other",
+            )
+        return _frozen_map({"kind": kind, "bundle_ref": None})
+    ref = _pinned_ref(pointer, f"{where}.bundle_ref", version=BUNDLE_VERSION)
+    return _frozen_map({"kind": kind, "bundle_ref": _frozen_map(ref)})
+
+
+def _provenance(value, where):
+    """Where this bundle's authority is recorded -- never the authority itself.
+
+    `approval_ref` is a pointer at a record the promotion lifecycle owns. Its PRESENCE is a
+    necessary condition and never a sufficient one: a reference is not authentication and a
+    digest is not an approval, so the exact binding of reviewer, scope and evaluation hashes
+    stays with the lifecycle that owns it. What this rules out is a bundle that points at no
+    approval at all being selected by accident.
+    """
+    payload = _closed(value, _PROVENANCE_KEYS, where)
+    approval = _pinned_ref(payload["approval_ref"], f"{where}.approval_ref", optional=True)
+    evaluation = _pinned_ref(payload["evaluation_ref"], f"{where}.evaluation_ref", optional=True)
+    rolled_back = _pinned_ref(payload["rolled_back_from"], f"{where}.rolled_back_from",
+                              optional=True, version=BUNDLE_VERSION)
+    if approval is not None and evaluation is None:
+        raise ContractError(
+            "missing-field",
+            f"{where}.approval_ref names an approval while {where}.evaluation_ref is null; what "
+            f"was approved was approved on the strength of something, and an approval with no "
+            f"evaluation behind it records a decision nobody can check",
+        )
+    return _frozen_map({
+        "approval_ref": None if approval is None else _frozen_map(approval),
+        "evaluation_ref": None if evaluation is None else _frozen_map(evaluation),
+        "rolled_back_from": None if rolled_back is None else _frozen_map(rolled_back),
+    })
+
+
+def _declared_version(value, where):
+    """The `v` a payload declares, before anything else is read from it."""
+    payload = _object(value, where)
+    if "v" not in payload:
+        raise ContractError("missing-field",
+                            f"{where} is missing 'v'; nothing can be read from a payload that "
+                            f"does not say which contract wrote it")
+    version = payload["v"]
+    if not isinstance(version, str):
+        raise ContractError("wrong-type",
+                            f"{where}.v must be a string, got {type(version).__name__}")
+    return payload, version
+
+
+def is_legacy_preference_payload(value):
+    """Is this the evaluation workbench's historical, pull-only preference payload?
+
+    The machine-readable half of `parse_bundle`'s refusal: it lets a caller tell "this is the
+    old shape, which is real and readable and simply is not a bundle" apart from "this payload
+    is malformed", without branching on a message. Nothing in this repository converts one into
+    a bundle; re-proposing the change through the workbench is how it would ever become one.
+    """
+    return isinstance(value, dict) and value.get("v") == LEGACY_PREFERENCE_VERSION
+
+
+# ---- PolicyBundle ---------------------------------------------------------------------------
+
+@dataclasses.dataclass(frozen=True)
+class PolicyBundle:
+    """An immutable, content-addressed statement of which data parameters apply, and to what.
+
+    Its identity is its content: `sha()` is taken over the canonical form of every field, so two
+    bundles agree iff they say the same thing, and a rewrite is a different bundle rather than
+    the same one changed. The digest is not a protection -- anything running with the user's
+    privileges can rewrite a payload and recompute it -- it is what makes a rewrite VISIBLE to
+    the pin that named the old bytes.
+    """
+
+    v: str
+    id: str
+    parent: object
+    scope: types.MappingProxyType
+    components: types.MappingProxyType
+    parameters: types.MappingProxyType
+    requirements: types.MappingProxyType
+    fallback: types.MappingProxyType
+    provenance: types.MappingProxyType
+
+    def to_payload(self):
+        requirements = dict(self.requirements)
+        provenance = dict(self.provenance)
+        return {
+            "v": self.v,
+            "id": self.id,
+            "parent": None if self.parent is None else dict(self.parent),
+            "scope": {"project": self.scope["project"],
+                      "task_classes": list(self.scope["task_classes"]),
+                      "intended_uses": list(self.scope["intended_uses"])},
+            "components": dict(self.components),
+            "parameters": dict(self.parameters),
+            "requirements": {
+                "capabilities": list(requirements["capabilities"]),
+                "providers": list(requirements["providers"]),
+                "calibration": (None if requirements["calibration"] is None
+                                else dict(requirements["calibration"])),
+            },
+            "fallback": {"kind": self.fallback["kind"],
+                         "bundle_ref": (None if self.fallback["bundle_ref"] is None
+                                        else dict(self.fallback["bundle_ref"]))},
+            "provenance": {key: (None if provenance[key] is None else dict(provenance[key]))
+                           for key in _PROVENANCE_KEYS},
+        }
+
+    def sha(self):
+        return _sha(_canonical(self.to_payload()))
+
+
+def parse_bundle(value, where="bundle"):
+    """A policy bundle, refused unless it is complete, self-consistent and not something else."""
+    payload, version = _declared_version(value, where)
+    if version == LEGACY_PREFERENCE_VERSION:
+        raise ContractError(
+            "unknown-value",
+            f"{where} is a {LEGACY_PREFERENCE_VERSION} preference payload, not a "
+            f"{BUNDLE_VERSION} bundle. That shape is pull-only advice about defaults: it names "
+            f"no parent, no scope, no component versions, no requirements and no fallback, and "
+            f"reading one as a bundle would promote a file nothing consumes into the thing every "
+            f"run pins. Re-propose the change through the workbench that owns it",
+        )
+    if version != BUNDLE_VERSION:
+        raise ContractError(
+            "unknown-value",
+            f"{where}.v is {version!r}; this parser reads {BUNDLE_VERSION} and refuses to guess "
+            f"at another shape's field meanings",
+        )
+    payload = _closed(payload, _BUNDLE_KEYS, where)
+    bundle_id = _label(payload["id"], f"{where}.id")
+
+    parent = _pinned_ref(payload["parent"], f"{where}.parent", optional=True,
+                         version=BUNDLE_VERSION)
+    if parent is not None and parent["id"] == bundle_id:
+        raise ContractError(
+            "value-invalid",
+            f"{where}.parent names {bundle_id!r}, the bundle itself; a lineage that contains a "
+            f"cycle has no root, and there would be nothing to compare this bundle against",
+        )
+
+    scope = _scope(payload["scope"], f"{where}.scope")
+    requirements = _requirements(payload["requirements"], f"{where}.requirements")
+    components = _components(payload["components"], f"{where}.components",
+                             providers=requirements["providers"])
+    parameters = _parameters(payload["parameters"], f"{where}.parameters")
+
+    fallback = _fallback(payload["fallback"], f"{where}.fallback")
+    if (fallback["bundle_ref"] is not None
+            and fallback["bundle_ref"]["id"] == bundle_id):
+        raise ContractError(
+            "value-invalid",
+            f"{where}.fallback falls back to {bundle_id!r}, itself; resolving it would arrive "
+            f"back where it started and the chain would never reach the legacy behaviour",
+        )
+
+    provenance = _provenance(payload["provenance"], f"{where}.provenance")
+    rolled_back = provenance["rolled_back_from"]
+    if rolled_back is not None and rolled_back["id"] == bundle_id:
+        raise ContractError(
+            "value-invalid",
+            f"{where}.provenance.rolled_back_from names {bundle_id!r}, the bundle itself; a "
+            f"rollback records which bundle was rolled back FROM, which is never this one",
+        )
+
+    return PolicyBundle(
+        v=BUNDLE_VERSION, id=bundle_id,
+        parent=None if parent is None else _frozen_map(parent),
+        scope=scope, components=components, parameters=_frozen_map(parameters),
+        requirements=requirements, fallback=fallback, provenance=provenance,
+    )
+
+
+# ---- CandidateProposal ----------------------------------------------------------------------
+
+@dataclasses.dataclass(frozen=True)
+class CandidateProposal:
+    """A falsifiable, bounded, data-only request to change a parent bundle's parameters.
+
+    It carries its own counterevidence. That is not politeness: a proposal that lists only what
+    supports it is a summary of a search for confirmation, and the attempts that contradict it
+    are the ones that decide whether the evaluation is worth running. An empty counterevidence
+    list is a claim -- "looked, found none" -- and it is recorded as one, never as an omission.
+    """
+
+    v: str
+    id: str
+    parent: types.MappingProxyType
+    hypothesis: str
+    falsification: str
+    tradeoff: str
+    scope: types.MappingProxyType
+    diff: types.MappingProxyType
+    evaluation: types.MappingProxyType
+    evidence: tuple
+    counterevidence: tuple
+    rollback: types.MappingProxyType
+
+    def to_payload(self):
+        return {
+            "v": self.v,
+            "id": self.id,
+            "parent": dict(self.parent),
+            "hypothesis": self.hypothesis,
+            "falsification": self.falsification,
+            "tradeoff": self.tradeoff,
+            "scope": {"project": self.scope["project"],
+                      "task_classes": list(self.scope["task_classes"]),
+                      "intended_uses": list(self.scope["intended_uses"])},
+            "diff": dict(self.diff),
+            "evaluation": {"endpoint": self.evaluation["endpoint"],
+                           "partition": self.evaluation["partition"],
+                           "manifest_ref": dict(self.evaluation["manifest_ref"])},
+            "evidence": [dict(ref) for ref in self.evidence],
+            "counterevidence": [dict(ref) for ref in self.counterevidence],
+            "rollback": {"kind": self.rollback["kind"],
+                         "bundle_ref": (None if self.rollback["bundle_ref"] is None
+                                        else dict(self.rollback["bundle_ref"]))},
+        }
+
+    def sha(self):
+        return _sha(_canonical(self.to_payload()))
+
+
+def _evaluation(value, where):
+    """The evaluation this candidate must pass, and the material it may be judged on."""
+    payload = _closed(value, _EVALUATION_KEYS, where)
+    endpoint = _label(payload["endpoint"], f"{where}.endpoint")
+    partition = _label(payload["partition"], f"{where}.partition")
+    _one_of(partition, EVIDENCE_PARTITIONS, f"{where}.partition")
+    manifest = _pinned_ref(payload["manifest_ref"], f"{where}.manifest_ref")
+    return _frozen_map({"endpoint": endpoint, "partition": partition,
+                        "manifest_ref": _frozen_map(manifest)})
+
+
+def _evidence(value, where, *, minimum):
+    refs = _sequence(value, where, maximum=MAX_EVIDENCE_REFS, minimum=minimum)
+    out = []
+    seen = set()
+    for index, item in enumerate(refs):
+        ref = _pinned_ref(item, f"{where}[{index}]")
+        if ref["id"] in seen:
+            raise ContractError("duplicate-entry", f"{where} repeats {ref['id']!r}")
+        seen.add(ref["id"])
+        out.append(_frozen_map(ref))
+    return tuple(out)
+
+
+def parse_proposal(value, where="proposal"):
+    """A candidate proposal, refused unless it is falsifiable, bounded and data-only."""
+    payload, version = _declared_version(value, where)
+    if version != CANDIDATE_VERSION:
+        raise ContractError(
+            "unknown-value",
+            f"{where}.v is {version!r}; this parser reads {CANDIDATE_VERSION}",
+        )
+    payload = _closed(payload, _CANDIDATE_KEYS, where)
+    proposal_id = _label(payload["id"], f"{where}.id")
+
+    # A proposal is always a change TO something, and to exactly the bytes it was written
+    # against: an unpinned parent would let the same candidate be applied to a bundle that had
+    # moved underneath it, which is the change nobody reviewed.
+    parent = _pinned_ref(payload["parent"], f"{where}.parent", version=BUNDLE_VERSION)
+
+    hypothesis = _statement(payload["hypothesis"], f"{where}.hypothesis")
+    falsification = _statement(payload["falsification"], f"{where}.falsification")
+    tradeoff = _statement(payload["tradeoff"], f"{where}.tradeoff")
+    if _alnum(hypothesis) == _alnum(proposal_id):
+        raise ContractError(
+            "value-invalid",
+            f"{where}.hypothesis restates the id {proposal_id!r}; an id is a handle and never "
+            f"the claim being made",
+        )
+    # `_alnum` is the same reduction the ban and the rubric check use, for the same reason:
+    # comparing the strings as written would let re-punctuated copies count as different text.
+    if _alnum(falsification) == _alnum(hypothesis):
+        raise ContractError(
+            "value-invalid",
+            f"{where}.falsification is worded the same as {where}.hypothesis; restating a claim "
+            f"names no observation that would refute it, and an unfalsifiable candidate cannot "
+            f"be evaluated at all",
+        )
+    if _alnum(tradeoff) in (_alnum(hypothesis), _alnum(falsification)):
+        raise ContractError(
+            "value-invalid",
+            f"{where}.tradeoff is worded the same as the hypothesis or the falsification; a "
+            f"tradeoff names what is expected to get WORSE, which a restatement does not",
+        )
+
+    scope = _scope(payload["scope"], f"{where}.scope")
+    diff = _parameters(payload["diff"], f"{where}.diff", minimum=1)
+    evaluation = _evaluation(payload["evaluation"], f"{where}.evaluation")
+
+    evidence = _evidence(payload["evidence"], f"{where}.evidence", minimum=MIN_EVIDENCE_REFS)
+    counter = _evidence(payload["counterevidence"], f"{where}.counterevidence", minimum=0)
+    both = sorted({ref["id"] for ref in evidence} & {ref["id"] for ref in counter})
+    if both:
+        raise ContractError(
+            "duplicate-entry",
+            f"{where} cites {', '.join(repr(b) for b in both)} as both evidence and "
+            f"counterevidence; one attempt is one observation, and filing it on both sides "
+            f"makes the count on each side mean nothing",
+        )
+
+    rollback = _fallback(payload["rollback"], f"{where}.rollback")
+
+    return CandidateProposal(
+        v=CANDIDATE_VERSION, id=proposal_id, parent=_frozen_map(parent), hypothesis=hypothesis,
+        falsification=falsification, tradeoff=tradeoff, scope=scope,
+        diff=_frozen_map(diff), evaluation=evaluation, evidence=evidence,
+        counterevidence=counter, rollback=rollback,
+    )

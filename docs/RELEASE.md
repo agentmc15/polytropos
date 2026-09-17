@@ -114,6 +114,8 @@ Contract versions are read from the module that owns each one; package versions 
 | lessons store | `bin/lessons_store.py` | `polytropos.lessons/2` |
 | protected profile sentinels | `bin/exec_policy.py` | `polytropos.sentinels/1` |
 | decision contract | `bin/decision_contract.py` | `polytropos.decision/1` |
+| policy bundle | `bin/decision_contract.py` | `polytropos.policy-bundle/1` |
+| candidate proposal | `bin/decision_contract.py` | `polytropos.candidate-proposal/1` |
 | release gate | `bin/release_gate.py` | `polytropos.release-gate/1` |
 
 | Package | Version |
