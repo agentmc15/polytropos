@@ -1098,3 +1098,43 @@ candidate, which is not evidence.
 (`python3 -m unittest discover -s tests > run.log 2>&1`) and grep the FILE. A summary line is
 worth nothing without the traceback above it, and the traceback is what both sightings lost.
 outcome: D13 model=opus attempts=1 result=pass review=pending run=2026-09-16-aa6e
+
+### D13 verification — ACCEPT, and it found a real defect in D11's shipped code
+
+The verifier ran its control FIRST inside the temp tree (111/111 before mutating), redirected the
+full suite to a file rather than piping it, and went well past my own confidence-vs-denial check:
+a bundle whose `parameters` name the DENIED action, both modes, all eight denial reasons, and the
+inverse trap where the baseline itself is denied and maximally-confident advice recommends exactly
+it. Nothing moved `selected` off baseline or None. A literal `force_action` bundle parameter is
+refused two layers below D13, by D09's closed parameter vocabulary.
+
+It also confirmed structurally why `ranked-lower` being soft cannot be exploited:
+`routing_policy`'s filter loop is an if/elif chain and appends `ranked-lower` ONLY to candidates
+whose reasons list is already empty, so a candidate can never carry a hard filter and a ranking at
+once. The ambiguity `state_from_routing` would have had to arbitrate cannot occur at the source.
+
+Of its 12 mutations, 10 real deletions were caught, 2 test-validity probes were caught, and one
+was the deliberate reinstatement of the removed `dict.fromkeys` de-dup: 0 failures, confirming the
+removal was correct rather than a coverage hole. The `duplicate-entry` guard it would have masked
+is exercised directly by a test that constructs `ActionSelection` and bypasses `select_action`
+entirely, so whether `select_action` de-dups internally is irrelevant to that guard's coverage.
+
+**D11's `runtime_facts` coercion defect: CONFIRMED EXPLOITABLE in shipped code, and now fixed.**
+`runtime_facts(capabilities="codex-native-dispatch")` returned twenty-one single-character
+capabilities instead of refusing. I reproduced it myself — after three failed probes of my own
+(missing required args, then an invalid `intended_use`) which is worth recording, since each near
+miss looked like the defect not existing.
+
+The gap was precise and instructive: `_runtime` ALREADY type-checks `capabilities`, `providers`
+and `components`, and a test already asserted `_runtime(capabilities="dispatch")` is refused. The
+guard was never broken. But `runtime_facts` — the caller-facing wrapper — wrote
+`list(capabilities)` and `dict(components)` BEFORE handing over, so the tested guard was
+unreachable through the public door. **A validator can be correct, and tested, and still bypassed
+by a convenience wrapper that coerces first.** Testing the validator is not testing the surface
+callers actually use.
+
+Fixed by handing the arguments over uncoerced; `_runtime` already makes its own defensive copies
+from the values it validated, so coercing first could only ever hide a caller's mistake. The fix
+is strictly a deletion. New test goes through `runtime_facts`, not `_runtime`, because that is
+where the coercion was. Mutation-proven: control green, restoring the coercion fails 3 subtests.
+Suite 4627 -> 4628.

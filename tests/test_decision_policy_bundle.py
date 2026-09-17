@@ -1045,6 +1045,27 @@ class PolicyBundleContractTests(unittest.TestCase):
         self.assertEqual(sorted(produced), sorted(dp.RESOLUTION_REASONS))
         self.assertEqual(list(dp.RESOLUTION_REASONS), sorted(set(dp.RESOLUTION_REASONS)))
 
+    def test_the_named_argument_form_refuses_what_the_dict_form_refuses(self):
+        # `_runtime` already refused `capabilities="dispatch"` (the test below asserts it), but
+        # `runtime_facts` used to write `list(capabilities)` before handing over, so the guard
+        # was unreachable through the public door: one capability id passed unwrapped became
+        # twenty-one single-character capabilities, and `dict(components)` turned a list of
+        # two-character strings into a dict of their letters. A convenience wrapper that coerces
+        # first answers the question before the validator can ask it. These cases go through
+        # `runtime_facts`, not `_runtime`, because that is where the coercion was.
+        base = {"project": PROJECT, "task_class": TASK_CLASS, "intended_use": USE,
+                "components": {}, "capabilities": (), "providers": (), "calibration": None}
+        for key in ("capabilities", "providers"):
+            with self.subTest(field=key):
+                self.refusal("wrong-type", lambda **kw: dp.runtime_facts(**kw),
+                             **dict(base, **{key: "codex-native-dispatch"}))
+        self.refusal("wrong-type", lambda **kw: dp.runtime_facts(**kw),
+                     **dict(base, components=["ab", "cd"]))
+        # The correct call is unaffected: one id in a list stays one id, not its letters.
+        self.assertEqual(
+            dp.runtime_facts(**dict(base, capabilities=["codex-native-dispatch"]))["capabilities"],
+            ("codex-native-dispatch",))
+
     def test_the_runtime_facts_are_closed_and_an_unestablished_fact_is_written_as_one(self):
         base = {"project": PROJECT, "task_class": TASK_CLASS, "intended_use": USE,
                 "components": {}, "capabilities": [], "providers": [], "calibration": None}

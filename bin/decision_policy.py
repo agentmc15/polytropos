@@ -236,11 +236,20 @@ def _runtime(value):
 
 def runtime_facts(*, project, task_class, intended_use, components, capabilities=(),
                   providers=(), calibration=None):
-    """The same object `_runtime` validates, built from named arguments instead of a dict."""
+    """The same object `_runtime` validates, built from named arguments instead of a dict.
+
+    The arguments are handed over UNCOAERCED. An earlier version wrote `dict(components)` and
+    `list(capabilities)` here, which answered the question before `_runtime` could ask it: a
+    caller passing one capability id as a bare string got `list("codex-native-dispatch")` --
+    twenty-one single-character capabilities -- instead of a refusal, and a caller passing a
+    list of two-character strings for `components` got a dict built out of their letters.
+    `_runtime` already type-checks both and already makes its own defensive copies from the
+    values it validated, so coercing first could only ever hide a caller's mistake.
+    """
     return _runtime({
         "project": project, "task_class": task_class, "intended_use": intended_use,
-        "components": dict(components), "capabilities": list(capabilities),
-        "providers": list(providers), "calibration": calibration,
+        "components": components, "capabilities": capabilities,
+        "providers": providers, "calibration": calibration,
     })
 
 
