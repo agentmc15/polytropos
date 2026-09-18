@@ -238,7 +238,7 @@ PYTHONPATH=tests python3 -m unittest test_decision_policy.LegacySelectionTests t
 ### D14 — Read-only joins
 - id: D14
 - title: Read-only joins
-- status: pending
+- status: done
 - model: opus
 - depends: D05, D06, D10
 **Brief.** Own `bin/decision_eval.py` and `tests/test_decision_eval.py:PredictionTimeJoinTests`. Join authoritative events/workflow_eval references available at prediction time; preserve target, label provenance, disagreement/censoring and decision basis.

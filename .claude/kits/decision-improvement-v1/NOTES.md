@@ -1312,3 +1312,72 @@ bumping `REPLAY_VERSION` turns an existing store into an error-throwing store ra
 cache. Honest over silent, but a coordinator expecting "a miss abstains" will not get it.
 reviewer: P3 model=opus findings=9 confirmed=9 result=accepted
 defect: D13 kind=contradictory-acceptance a refused ActionSelection has selected=None and baseline may be None, but parse_record requires both non-null, so build_record raises and a refusal cannot be recorded. Needs an architect decision before D18/D20/D23.
+
+## Phase 4 — Recovery evidence
+
+## D14 — Read-only joins (opus, depends D05, D06, D10)
+
+New `bin/decision_eval.py` (991 lines) and `tests/test_decision_eval.py:PredictionTimeJoinTests`
+(55 tests), plus a `JOIN_VERSION` row in `release_gate.VERSION_SOURCES`. Suite 4629 -> 4684.
+
+**Read-only proven BY CONSTRUCTION, which is the right shape for this acceptance term.** Not
+"does not write" but "cannot": imports are exactly `datetime, importlib, pathlib, re, types` — no
+`os`, `json`, `shutil`, `subprocess`, `tempfile` — there is no write-shaped call anywhere, and NO
+PUBLIC FUNCTION TAKES A DIR, PATH, FILE, STORE OR ROOT PARAMETER. I verified all three by AST
+myself. A mutation injecting `trial["adjudication"] = ...` — which is what `workflow_eval.build_card`
+actually does — is caught by a byte-identity check on the inputs after a join.
+
+**Future exclusion is a UTC comparison, not a lexical one, and I checked the cases that
+distinguish them.** `09:30-04:00` against `12:00Z` is 13:30 UTC and places AFTER, where a string
+compare says before; `14:30+04:00` is 10:30 UTC and places BEFORE, where a string compare says
+after. Both correct. This is the one that matters: a lexical comparison leaks a post-prediction
+fact into the feature set, which is label leakage, and every downstream metric would look better
+than reality. A zoneless stamp is `unknown-time` rather than assumed local, and with
+`prediction_at=None` NOTHING is a feature, because "before" has no meaning without an instant.
+
+**The causal fence is structural.** `RELATIONS` is `('preceded', 'co-occurred', 'followed')` —
+there is no causal member to set. Every recovery pairing carries `relation: "followed"`,
+`causal_claim: None` and `NO_CAUSAL_CLAIM`, and `assert_no_causal_claim` sweeps emitted rows using
+D09's own punctuation-reduction idiom, so `caused_by`, `c.a.u.s.e.d`, `due-to` and
+`root.cause.causedby` are all caught. I confirmed all four.
+
+50 mutations, control first, zero survivors. **Three survived the first batch and one is a variant
+not seen before in this kit: two `_copy` calls MUTUALLY MASKING each other** because a second copy
+one level out made either one individually deletable. The fix was to remove the outer copy and
+keep exactly one at the point it is observable — not to keep both. Same family as D13's "a guard
+that hides another guard is worse than no guard."
+
+**A FIFTH repo-wide sweep exists that no carry-forward had listed.**
+`tests/test_decision_policy.py:1035` asserts no `bin/*.py` except `decision_policy.py` contains
+the strings `select_action`, `state_from_routing`, `state_from_ladder` or `selection_state` —
+INCLUDING IN COMMENTS, same text-match shape as the `"evals"` trap. `decision_eval` is clean
+(verified). **D17 will turn this red deliberately when it wires a driver seam — that is the
+designed signal, not a break.**
+
+Carry-forward handled rather than ignored:
+- F3 NOT resolved, as instructed. `join_row(record=None, refusal=...)` yields an unresolved +
+  censored row with `decision.record` stays `None` and the reasons validated against
+  `decision_policy.REFUSAL_REASONS`, so no record shape is invented. The open architect decision
+  stands.
+- F6 handled: `DecisionResult.note` is deliberately NOT carried. `decision.note` is always `None`
+  and `note_withheld` states why. A test asserts the note text is absent from `json.dumps(row)`.
+- The `attempt_history._duration` private-reach smell was NOT extended; `decision_eval` reaches
+  only `RECORD_FIELDS` and `DURATION_BASES`, pinned by AST test. **The public seam it wishes
+  existed: `attempt_history.duration(basis, seconds, source)` and `cost(...)` constructors.** That
+  would remove both the contract module's smell and this module's literal fixture. Worth a task.
+- `duration_by_basis` GROUPS and never totals; nothing in the module sums anything.
+
+Limitations stated rather than found later:
+- **`prediction_at` is caller-supplied and may be None, because no `DecisionRecord` carries the
+  instant a decision was taken** — the record versions WHAT was decided, not WHEN. It refused to
+  derive it from the dispatch event's `ts`, because that instant is after the decision and would
+  silently place the decision's own consequences before it. Fixing properly means a
+  `CONTRACT_VERSION` bump to record the decision instant.
+- "The outcome" is a DEFINED choice, not a discovered fact: the last attempt fact after the
+  prediction for that run/task, described as what followed and never as what the decision produced.
+- `_history_record` proves SHAPE, not ORIGIN — a hand-built dict using only `RECORD_FIELDS` names
+  is accepted.
+- `trial_facts`' per-fact `_copy(ref)` is depth, not a proven guard; no test can distinguish its
+  deletion today because a ref is a flat dict of scalars. Reported rather than claimed as enforced.
+- Zero production callers. `release_gate` IMPORTS the module to read its version and calls nothing.
+outcome: D14 model=opus attempts=1 result=pass review=pending run=2026-09-16-aa6e

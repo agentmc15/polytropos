@@ -154,6 +154,7 @@ VERSION_SOURCES = (
     ("policy bundle", "decision_contract", "BUNDLE_VERSION"),
     ("candidate proposal", "decision_contract", "CANDIDATE_VERSION"),
     ("decision replay record", "decision_provider", "REPLAY_VERSION"),
+    ("decision prediction join", "decision_eval", "JOIN_VERSION"),
 )
 
 #: Pricing files, one per harness, never merged. Read for `cached_date` and roster size only.
