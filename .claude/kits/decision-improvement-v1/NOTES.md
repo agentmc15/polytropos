@@ -1518,3 +1518,80 @@ Limitations stated rather than found later:
   fixture has no second store directory whose fate would differ.
 - Zero production callers. D17 is what wires it.
 outcome: D16 model=opus attempts=1 result=pass review=pending run=2026-09-16-aa6e
+
+## D17 — Context-repair policy (opus, depends D07, D16)
+
+`bin/decision_policy.py` 1249 -> 1858, a third section after D13's, plus two stdlib imports.
+D11's and D13's halves byte-identical. `ContextRepairPolicyTests`, 49 tests, beside D16's class
+which is untouched. Suite 4811 -> 4860. No version constant, following D13: nothing here is
+persisted.
+
+**The fifth sweep did NOT go red, because it did not wire a driver — and it flagged the brief
+tension rather than resolving it quietly.** The brief says "extend `bin/decision_policy.py` and
+the existing driver recovery seam". It read "the driver recovery seam" as the seam representation
+D13 already built INSIDE that file — the `(baseline, ladder)` pair `state_from_ladder` wraps —
+whose ladder shape `plan_context_repair` carries. No driver was modified, and it wrote its OWN
+equivalent sweep (`test_nothing_in_this_repository_plans_a_context_repair`) carrying the same
+"when this list stops being empty, that is the signal" docstring. If the architect meant a driver
+edit, that is a scope decision and would deliberately turn the sweep red. Second time in Phase 4
+an implementer has correctly declined to widen scope on an ambiguous "own/extend the seam" phrase.
+
+**"No default" is structural in the strongest available sense: `plan_context_repair` has TEN
+required parameters and ZERO with defaults.** Nothing is permissive by omission — every fact is
+stated or the call fails — and no parameter is spelled `enable`/`allow`/`force`/`on`. I confirmed
+both by signature inspection. Only a `BundleResolution` whose parameters carry
+`recovery.contract_context_package` as LITERALLY `True` (`is True`, not truthy) puts a repair in
+force, proven against `1`, `"yes"`, `[1]`, `1.0` with a `True` control showing the fake shape is
+otherwise accepted.
+
+**Five things would have to change for a repair to actually run, and I verified the strongest one
+myself.** `kit_contract.OPERATION_CAPS["retry"]` draws down `('max-dispatches', 'max-model-calls')`,
+and **NO KIT IN THIS REPOSITORY DECLARES `max-model-calls`** — only `aesop-fold` and `docs-site`
+declare a budget line at all, and neither includes that cap; `decision-improvement-v1` declares
+none. So even with a pinned, approved bundle, EVERY kit refuses with `dispatch-cap-undeclared`.
+The other four: nothing calls `plan_context_repair`; no tracked JSON or TOML sets that parameter
+true (swept, and proven non-vacuous by planting one in the mutation tree); the bundle must survive
+D11's resolver including a verified capability; and a coordinator would have to mint a SECOND
+admission grant distinct from the failed attempt's and dispatch under it, which no path does.
+
+`REPAIR_REASONS` is a third closed vocabulary of 17 codes, verified disjoint from both
+`SELECTION_REASONS` and `RESOLUTION_REASONS`. Caps are named `dispatch-cap-*` rather than
+`budget-*`, following D13's `budget_admission` precedent, because `budget` is in `BANNED_FIELDS`.
+`_admissible(action, facts)`'s pinned parameter list is untouched — that pin is what makes
+"confidence cannot bypass a denial" structural.
+
+**D16's forward fence is now wired, with a subtlety worth keeping.** `assert_no_dependency_claim`
+is handed a PLAIN DICT, because a `MappingProxyType` is not a `dict` and a sweep given one would
+walk nothing and pass on every input. The maps are frozen only AFTER the sweep. That is the
+vacuity pattern appearing in a new disguise — not an empty collection, but a type the walker
+silently skips.
+
+59 mutations, control first, zero survivors. Both stub controls are real, which is what stops the
+refusal tests being vacuous: a planner stubbed to always REFUSE fails 16 of 49; one stubbed to
+always ADMIT fails 25 of 49. One survivor in the first batch, fixture-caused again: `_strings`'
+per-item check survived because every list passed contained well-formed strings, so a different
+guard refused first with a different code.
+
+Open questions and limitations, stated rather than left to be found:
+- **`verification` is the ONLY repairable class, which excludes ledger class `model` too.** That
+  reads the brief's "excluding ... model failures" literally and matches the shared PLAN's "do not
+  change model and context at once". **If the architect meant only UNAVAILABLE-model (ledger class
+  `config`), then `model` belongs in `REPAIRABLE_FAILURE_CLASSES`** — a one-tuple change, flagged
+  rather than assumed.
+- The duplicate guard is exactly as good as a coordinator's record-keeping: `repairs` is
+  caller-supplied and nothing in the repo records a repair id. It cannot find a repair nobody
+  recorded.
+- `_manifest` reads D16's manifest keys directly (`status`, `candidates`,
+  `freshness.revision.now`) because D16 exposes no accessor. A rename there breaks this at RUN
+  time, not import time.
+- `_failed_attempt` validates against `attempt_history.RECORD_FIELDS` — the same tuple
+  `decision_eval._history_record` uses. **One authority, two implementations, nothing pinning them
+  equivalent: the Phase 3 review's F8 shape, now at a second site.**
+- `MAX_REASON_CODES` is deliberately NOT applied to a plan's reasons, because all 16 refusals can
+  fire at once and truncating to a record's ceiling would hide one. A plan is not a
+  `DecisionRecord` — which is also why it has no version constant. If D18/D20/D23 persist a plan,
+  that question lands alongside the still-open F3.
+- `_no_dependency_claim` translates only the `authority-field` code across the loader boundary and
+  re-raises anything else untouched; both branches pinned. If D16's sweep ever raises a different
+  code, a caller catching this module's `ContractError` would miss it.
+outcome: D17 model=opus attempts=1 result=pass review=pending run=2026-09-16-aa6e

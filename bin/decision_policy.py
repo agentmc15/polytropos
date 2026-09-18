@@ -57,7 +57,9 @@ legacy, which is the conservative end of the chain rather than a chosen one.
 """
 
 import dataclasses
+import hashlib
 import importlib.util
+import json
 import types
 from pathlib import Path
 
@@ -1247,3 +1249,610 @@ def state_from_ladder(*, request, baseline, ladder, checks, admission_ref, pin=N
                       f"the baseline {baseline!r} is also a rung of the ladder above it")
     return selection_state(request=request, baseline=baseline, pin=pin, reserved=reserved,
                            denials=denials, checks=checks, admission_ref=admission_ref)
+
+
+# ==============================================================================================
+#  D17 -- WHETHER ONE BOUNDED CONTEXT REPAIR IS ADMISSIBLE, AND WHY IT IS OFF UNTIL IT IS
+# ==============================================================================================
+# The recovery experiment's arm C supplies "one bounded package of previously missing contract
+# context" before a SAME-MODEL retry, and then returns to the recovery path the driver already
+# had. `bin/decision_context.py` builds that package's manifest. This answers the question
+# before it: given a failure the ledger already classified, a manifest already built, and the
+# bundle already resolved above, is ONE such repair admissible at all -- and if not, exactly
+# which of the sixteen things that must be true is not.
+#
+# IT PLANS. IT DOES NOT REPAIR, RETRY, DISPATCH, WRITE OR ACTIVATE ANYTHING.
+# Like every other function in this file it is pure: no file, no process, no store, no clock.
+# `plan_context_repair` returns a description of an operation a coordinator MIGHT perform. It
+# performs none of it, and there is no coordinator: nothing in this repository calls it.
+#
+# ============================================================================================
+#  WHY "OFF BY DEFAULT" IS NOT A FLAG HERE
+# ============================================================================================
+# A boolean argument defaulting to False is off until somebody passes True, which is one typo,
+# one copied call site or one enthusiastic wrapper away from on. There is no such argument.
+# THE ONLY THING THAT CAN PUT A CONTEXT REPAIR IN FORCE IS A RESOLVED POLICY BUNDLE whose own
+# data parameters say so -- `REPAIR_PARAMETER`, which is one of the contract's four allowlisted
+# `DIFF_PARAMETERS` and is `boolean` there. To hold one of those a caller must have come through
+# `resolve_bundle` above with a pin naming a bundle that is in the catalog, parses, digests to
+# what the pin said, carries an approval reference, is in scope for this project/task
+# class/intended use, pins component versions the runtime actually runs, and requires no
+# capability the registry has not VERIFIED. Every one of those is a refusal in
+# `RESOLUTION_REASONS`, and every one of them ends at legacy -- and legacy, which is what a run
+# with no pin gets, sets no parameters at all and therefore can never put a repair in force.
+#
+# Two more things follow from that and are worth saying out loud. Resolving such a bundle still
+# does not ACTIVATE anything: `select_action` above continues to select the baseline in both
+# modes this module implements, and a plan produced here is an input to a coordinator's fresh
+# checks, never a substitute for one. And `plan_context_repair` has NO parameter with a default
+# value, of any kind -- a caller supplies every fact or the call does not run -- so there is no
+# argument a caller can forget in the permissive direction.
+#
+# ============================================================================================
+#  WHAT A "GENUINE IMPLEMENTATION FAILURE" IS, AND WHY IT IS READ AND NEVER GUESSED
+# ============================================================================================
+# `tasks/kits/decision-improvement/PLAN.md`: "Infrastructure/auth/permission/unavailable-model
+# failures are determined from trusted events and never trigger model escalation by a semantic
+# guess." The same rule governs a context repair, and more strictly, because supplying a package
+# of interfaces to a run that could not authenticate spends a dispatch on a diagnosis nobody
+# made.
+#
+# So the trigger is `attempt_history`'s own projected `failure_class`, written by
+# `attempt_ledger.classify_dispatch` from the process runner's observation and the dispatch's
+# own exit status, and read here from the record and from nowhere else. Exactly one class
+# qualifies -- `verification`, the deterministic check failing on work the model actually
+# produced. `auth`, `config` (which is where an unknown or unavailable model lands),
+# `permission` and `infrastructure` are facts about the host. `model` is the model's own
+# failure, whose remedy is the ladder's, and changing model and context at once is the one
+# thing the experiment's design forbids. `unknown` is a non-zero exit nobody could attribute,
+# and an unattributed failure is not a free retry.
+#
+# A second, independent fact has to agree: the record's own `verify_rc`. A record claiming a
+# verification failure whose deterministic check exited 0 contradicts itself, and a record that
+# never recorded an exit status never observed the failure at all.
+#
+# ============================================================================================
+#  THE LADDER IS CARRIED, FROZEN, AND NEVER CLIMBED
+# ============================================================================================
+# A repair is ONE retry on the SAME model, and what happens after it is whatever the driver's
+# own escalation ladder already said. This module copies that ladder onto the plan verbatim --
+# same rungs, same order, nothing added, nothing consumed -- so the thing a coordinator returns
+# to is the thing it already had. It is carried rather than merely omitted because a plan that
+# did not say where the run goes next would read as though the repair were the end of the path.
+#
+# ============================================================================================
+#  WHAT WOULD STILL HAVE TO BE TRUE BEFORE ONE COULD ACTUALLY RUN
+# ============================================================================================
+# All of this is offline. For a context repair to happen to anyone: something would have to CALL
+# this function (nothing does); an approved `PolicyBundle` carrying `REPAIR_PARAMETER` would
+# have to exist and be pinned (none does); a kit would have to declare every budget ceiling the
+# operation draws down (none in this repository declares any); a coordinator would have to mint
+# a second admission grant for the repair and then actually dispatch under it (no dispatch path
+# consumes a plan). This task builds none of those and authorises none of them.
+
+#: The bundle data parameter that puts a context repair in force, and the one that bounds how
+#: much context it may carry. Both are keys of the contract's `DIFF_PARAMETERS` allowlist --
+#: `boolean` and `count` respectively -- and a test pins them there, so this module cannot
+#: invent a dial the contract would refuse on a bundle or in a proposal's diff.
+REPAIR_PARAMETER = "recovery.contract_context_package"
+REPAIR_FILES_PARAMETER = "recovery.contract_context_files"
+
+#: The consuming operation a repair IS. Not a new word: it is a key of
+#: `kit_contract.OPERATION_CAPS`, so a repair draws down exactly the ceilings a retry has always
+#: drawn down and `max-dispatches` keeps the meaning every recorded ledger already gave it. A
+#: repair is a retry that was handed a package, not a fifth kind of operation beside them.
+REPAIR_OPERATION = "retry"
+
+#: The one failure class a context repair answers. Everything else the ledger can determine is
+#: a fact about the host, the model, or nobody's knowledge -- see the header.
+REPAIRABLE_FAILURE_CLASSES = ("verification",)
+
+#: Stable, machine-readable reasons a repair plan came out the way it did. A THIRD vocabulary,
+#: deliberately disjoint from `RESOLUTION_REASONS` (which parameters are in force) and from
+#: `SELECTION_REASONS` (which action is taken). This answers a different question again --
+#: whether one bounded extra operation is admissible -- and a code that meant two of the three
+#: would make all three reports' tallies meaningless. A test asserts the three share no member.
+REPAIR_REASONS = (
+    "acceptance-unidentified",
+    "admission-not-separate",
+    "assurance-undeclared",
+    "checkpoint-moved",
+    "checkpoint-unidentified",
+    "context-absent",
+    "context-bound-undeclared",
+    "context-over-bound",
+    "dispatch-cap-reached",
+    "dispatch-cap-undeclared",
+    "failure-class-excluded",
+    "failure-class-unestablished",
+    "failure-not-observed",
+    "model-unidentified",
+    "repair-admissible",
+    "repair-already-taken",
+    "repair-not-in-force",
+)
+_REPAIR_REASON_SET = frozenset(REPAIR_REASONS)
+
+#: The single code that is NOT a refusal. Every other member of the vocabulary above says why
+#: no repair is admissible, and a plan carries either this one alone or some of the others.
+REPAIR_ADMISSIBLE = "repair-admissible"
+
+#: One sentence per refusal, so a caller can print why without knowing this module's codes. A
+#: test pins its keys against the refusal set, for the reason D13 already found: a code with no
+#: sentence raises from inside the refusal path, which is the one place a raise helps least.
+_REPAIR_TEXT = {
+    "acceptance-unidentified": ("the failed attempt recorded no acceptance reference, and "
+                                "criteria that cannot be named cannot be preserved"),
+    "admission-not-separate": ("a repair is its own admitted operation and needs its own fresh "
+                               "grant; this one is the grant the failed attempt already spent, "
+                               "or the failed attempt recorded no grant to be separate from"),
+    "assurance-undeclared": ("the run declared no assurance for this repair to carry forward, "
+                             "and a retry that drops an independent check is a different "
+                             "operation from the one that failed"),
+    "checkpoint-moved": ("the context package was assembled over a different revision than the "
+                         "one the retry would run at; it is not this checkpoint's missing "
+                         "context"),
+    "checkpoint-unidentified": ("nobody could say which revision the retry would run at, so "
+                                "there is no failing checkpoint to restore the package against"),
+    "context-absent": ("the manifest found no applicable context, which is a legitimate "
+                       "abstention: there is no package to supply and a retry without one is "
+                       "the ladder's business"),
+    "context-bound-undeclared": ("the bundle that puts the repair in force declares no ceiling "
+                                 "on how many files the package may carry, and a bounded "
+                                 "package with no declared bound is not bounded"),
+    "context-over-bound": ("the manifest carries more candidates than the bundle in force "
+                           "permits this package to supply"),
+    "dispatch-cap-reached": ("a ceiling this operation draws down is already reached, and a "
+                             "repair spends inside the existing ceilings rather than beside "
+                             "them"),
+    "dispatch-cap-undeclared": ("the run declares no ceiling for a ceiling this operation draws "
+                                "down; an extra attempt nobody is counting is exactly the "
+                                "unbounded retry this refuses to be"),
+    "failure-class-excluded": ("the ledger classified this failure as the host's, the model's "
+                               "own, or nobody's knowledge; a package of interfaces answers "
+                               "none of those and spending a dispatch on one is a guess"),
+    "failure-class-unestablished": ("nothing classified this failure, and an unclassified "
+                                    "failure is not a classified-as-repairable one"),
+    "failure-not-observed": ("the deterministic check's own exit status does not show a "
+                             "failure, so there is nothing here to repair"),
+    "model-unidentified": ("the failed attempt recorded no dispatched model, and a repair that "
+                           "cannot preserve the model would change model and context at once"),
+    "repair-already-taken": ("a context repair was already admitted for this task; at most one "
+                             "is permitted and the rest of the recovery path is the ladder's"),
+    "repair-not-in-force": ("no resolved policy bundle puts a context repair in force. This is "
+                            "the default everywhere and the only way out of it is an approved "
+                            "bundle whose own data parameters say otherwise"),
+}
+
+
+def _kc():
+    """`bin/kit_contract.py`, loaded for the OPERATION AND BUDGET VOCABULARY it already owns.
+
+    This module defines no operation kind, no budget key and no assurance word of its own. It
+    reads the ones the task contract already declares, so a cap added there is a cap here and a
+    role whose assurance kind is new is accepted without an edit to this file.
+    """
+    return _sibling("kit_contract")
+
+
+def _ah():
+    """`bin/attempt_history.py`, loaded for the FIELD NAMES of the projection it reads."""
+    return _sibling("attempt_history")
+
+
+def _dx():
+    """`bin/decision_context.py`, the context-candidate seam D16 owns.
+
+    Read for its manifest version, its status vocabulary, its reference builder and its
+    dependency-claim sweep. This module never builds a manifest -- building one opens files, and
+    this module opens nothing.
+    """
+    return _sibling("decision_context")
+
+
+def assurance_kinds():
+    """Every assurance kind the task contract declares, derived from its own tables.
+
+    By UNION rather than by a list kept here, for the reason `denial_reasons()` is by
+    subtraction: a role added to `kit_contract.ROLE_CONTRACTS` with a new assurance kind is
+    accepted automatically, and nothing in this file has to be remembered.
+    """
+    contract = _kc()
+    kinds = set()
+    for entry in contract.WORKFLOW_ASSURANCE.values():
+        kinds.update(entry)
+    for role in contract.ROLE_CONTRACTS.values():
+        if role["assurance"]:
+            kinds.add(role["assurance"])
+    return tuple(sorted(kinds))
+
+
+def _no_dependency_claim(value, where):
+    """D16's own sweep, re-raised in THIS loader's exception class.
+
+    `bin/` is not a package, so `decision_context`'s refusal is built by ITS instance of the
+    contract, and a caller catching this module's `ContractError` would miss it entirely -- the
+    loader defect this file's header names. Both classes derive from `ValueError`, which is what
+    makes the catch work across the boundary, and the code rides on the object. Anything that is
+    not that refusal propagates untouched: relabelling an unrelated `ValueError` as an authority
+    field would be inventing a diagnosis.
+    """
+    try:
+        _dx().assert_no_dependency_claim(value, where)
+    except ValueError as error:
+        if getattr(error, "code", None) != "authority-field":
+            raise
+        raise _refuse("authority-field", str(error).split("] ", 1)[-1]) from error
+    return value
+
+
+def _failed_attempt(record):
+    """The authoritative failure event, checked against `attempt_history`'s OWN field names.
+
+    A shape assembled beside that projection is not the projection. Every fact a repair is
+    planned on -- the failure class, the deterministic check's exit status, the model that was
+    dispatched, the acceptance the attempt ran against, the grant that funded it -- is read from
+    here and from nowhere else, so nothing in this module can determine a failure by reading
+    output text and guessing.
+    """
+    if not isinstance(record, (dict, types.MappingProxyType)):
+        raise _refuse("wrong-type",
+                      f"the failed attempt must be an attempt history record, got "
+                      f"{type(record).__name__}")
+    fields = set(_ah().RECORD_FIELDS)
+    extra = sorted(set(record) - fields)
+    if extra:
+        raise _refuse("unknown-field",
+                      f"the failed attempt carries {', '.join(repr(e) for e in extra)}, which "
+                      f"bin/attempt_history.py does not project; a repair reads that projection "
+                      f"and not a shape assembled beside it")
+    for name in ("task", "failure_class", "verify_rc"):
+        if name not in record:
+            raise _refuse("missing-field",
+                          f"the failed attempt records no {name!r}; an absent field and a null "
+                          f"one are different facts and only one of them is honest here")
+    return record
+
+
+def _manifest(value):
+    """A D16 context-candidate manifest, read for its status, its bounds and its candidates."""
+    context = _dx()
+    if not isinstance(value, dict):
+        raise _refuse("wrong-type",
+                      f"the context manifest must be an object, got {type(value).__name__}")
+    if value.get("v") != context.CONTEXT_VERSION:
+        raise _refuse("unknown-value",
+                      f"the context manifest declares {value.get('v')!r}; a repair reads "
+                      f"{context.CONTEXT_VERSION} manifests and no other shape")
+    if value.get("status") not in context.MANIFEST_STATUSES:
+        raise _refuse("unknown-value",
+                      f"the context manifest's status is {value.get('status')!r}; the "
+                      f"vocabulary is {', '.join(context.MANIFEST_STATUSES)}")
+    rows = value.get("candidates")
+    if not isinstance(rows, list):
+        raise _refuse("wrong-type", "the context manifest's 'candidates' must be a list")
+    return value
+
+
+def _repair_in_force(bundle):
+    """`(in force, bundle digest, file bound)` for the resolved bundle -- the WHOLE off switch.
+
+    Legacy and no bundle at all read identically and both mean off, which is what off IS: the
+    behaviour a run has before any of this exists. A bundle in force says so through the
+    contract's own allowlisted parameter, compared with `is True` rather than for truthiness,
+    because a repair that could be switched on by any value that happens to be truthy is a
+    repair switched on by accident.
+    """
+    source, digest = _in_force(bundle)
+    if source is None:
+        return False, None, None
+    parameters = getattr(bundle, "parameters", None)
+    if not isinstance(parameters, (dict, types.MappingProxyType)):
+        raise _refuse("wrong-type",
+                      f"a {source!r} resolution carries no parameters to read a repair from")
+    if parameters.get(REPAIR_PARAMETER) is not True:
+        return False, digest, None
+    return True, digest, parameters.get(REPAIR_FILES_PARAMETER)
+
+
+def _budget(plan_budget, used):
+    """The kit's declared ceilings and what they have already spent, validated, never raised."""
+    contract = _kc()
+    out = {}
+    for name, value in (("budget", plan_budget), ("used", used)):
+        if not isinstance(value, (dict, types.MappingProxyType)):
+            raise _refuse("wrong-type",
+                          f"the declared {name} must be an object, got {type(value).__name__}")
+        unknown = sorted(set(value) - set(contract.PLAN_BUDGET_KEYS))
+        if unknown:
+            raise _refuse("unknown-field",
+                          f"the declared {name} names {', '.join(repr(u) for u in unknown)}, "
+                          f"which is not a ceiling the task contract declares")
+        cleaned = {}
+        for key, entry in value.items():
+            if isinstance(entry, bool) or not isinstance(entry, int) or entry < 0:
+                raise _refuse("value-invalid",
+                              f"the declared {name}'s {key!r} is {entry!r}; a ceiling and a "
+                              f"count are non-negative integers")
+            cleaned[key] = entry
+        out[name] = cleaned
+    return out["budget"], out["used"]
+
+
+def _strings(value, what, *, ceiling=64):
+    """A bounded tuple of non-empty strings, refused rather than coerced.
+
+    Uncoerced on purpose: `list("fake-model")` is a list of ten letters and `dict(some_list)`
+    raises a bare `ValueError`, and either would answer the question before the contract could.
+    That defect has now been found twice in this file, once in each half.
+    """
+    if isinstance(value, (str, bytes)) or not isinstance(value, (list, tuple)):
+        raise _refuse("wrong-type", f"{what} must be a list of names, got "
+                                    f"{type(value).__name__}")
+    if len(value) > ceiling:
+        raise _refuse("bounds-exceeded",
+                      f"{what} carries {len(value)} entries; the ceiling is {ceiling}")
+    for item in value:
+        if not isinstance(item, str) or not item.strip():
+            raise _refuse("value-invalid", f"{what} carries {item!r}; each entry is a name")
+    return tuple(value)
+
+
+def _prior_repairs(value):
+    """Repair identities a coordinator has already recorded for this task.
+
+    Each is one of the content digests this module mints below, so a caller cannot satisfy the
+    duplicate check with a placeholder. What this CANNOT do is find a repair nobody recorded:
+    the guard is exactly as good as the record-keeping of whoever calls it, and today nothing
+    does.
+    """
+    entries = _strings(value, "the prior repairs", ceiling=16)
+    for item in entries:
+        if len(item) != 64 or any(ch not in "0123456789abcdef" for ch in item):
+            raise _refuse("value-invalid",
+                          f"{item!r} is not a repair identity; a repair is named by the digest "
+                          f"this module mints for it")
+    return entries
+
+
+@dataclasses.dataclass(frozen=True)
+class ContextRepair:
+    """Whether one bounded context repair is admissible, and the whole reason either way.
+
+    `admissible` is the module's existing word (`ActionSelection.recommendation` already uses
+    it) and it is deliberately not `admitted`: NOTHING HERE ADMITS ANYTHING. A budget grant
+    admits an operation, a coordinator performs its fresh checks and takes it, and this object
+    reports that every precondition a pure function can check is satisfied. It is an input to
+    that decision and never a substitute for one.
+
+    `ladder` is the driver's own remaining recovery path, carried verbatim in both outcomes, so
+    the plan always says where the run goes next rather than implying the repair is the end of
+    it.
+    """
+
+    admissible: bool
+    operation: object
+    repair_id: object
+    bundle_sha: object
+    failure: object
+    context: object
+    retry: object
+    refusal: object
+    ladder: tuple
+    reasons: tuple
+
+    def __post_init__(self):
+        undeclared = sorted(set(self.reasons) - _REPAIR_REASON_SET)
+        if undeclared:
+            raise _refuse("unknown-value",
+                          f"a repair plan carries undeclared reason(s) "
+                          f"{', '.join(repr(u) for u in undeclared)}")
+        if len(set(self.reasons)) != len(self.reasons):
+            raise _refuse("duplicate-entry", "a repair plan repeats a reason code")
+        if not self.reasons:
+            raise _refuse("bounds-exceeded", "a repair plan carries no reason at all")
+        # Admissible exactly when the one non-refusal code stands alone, and every other field
+        # that only an admissible plan may carry agrees with it. Four facts, one condition: a
+        # plan cannot claim a repair while naming a refusal, and cannot refuse while handing
+        # back a retry to perform.
+        clean = tuple(self.reasons) == (REPAIR_ADMISSIBLE,)
+        if self.admissible != clean:
+            raise _refuse("value-invalid",
+                          f"a repair plan is admissible exactly when nothing refused it; this "
+                          f"one says {self.admissible} while carrying {list(self.reasons)}")
+        carried = (self.retry is not None, self.operation is not None,
+                   self.repair_id is not None, self.refusal is None)
+        if any(flag != clean for flag in carried):
+            raise _refuse("value-invalid",
+                          "a repair plan carries its retry, its operation, its identity and no "
+                          "refusal exactly when it is admissible; these disagree")
+
+    def reason(self, code):
+        return code in self.reasons
+
+
+def plan_context_repair(attempt, manifest, bundle, *, checkpoint, assurance, admission_ref,
+                        plan_budget, used, ladder, repairs):
+    """Is ONE bounded context repair admissible after this failure -> a `ContextRepair`.
+
+    PURE, and pure in the strong sense D13's `select_action` already is: it dispatches nothing,
+    opens nothing, writes nothing, starts nothing and asks nothing of a provider or a graph. It
+    reports what a coordinator could do and why, and there is no coordinator.
+
+    `attempt` is the failed attempt as `bin/attempt_history.py` projects it -- the authoritative
+    event, whose `failure_class` the ledger determined and this module only reads. `manifest` is
+    `bin/decision_context.py`'s candidate manifest. `bundle` is a `BundleResolution` from
+    `resolve_bundle` above, and it is the ONLY thing that can put a repair in force. The rest
+    are the coordinator's own facts: the revision the retry would run at, the assurance the run
+    carries, the fresh grant minted for this operation, the kit's declared ceilings and their
+    usage, the driver's remaining escalation ladder, and the repairs already recorded.
+
+    EVERY parameter is required and none has a default. A caller states every fact or the call
+    does not run, so there is no argument anyone can omit in the permissive direction.
+
+    Every unmet condition is collected rather than short-circuited, for the reason `_unmet`
+    above gives: a test asserting one specific refusal cannot be satisfied by a different check
+    refusing the same input first.
+    """
+    record = _failed_attempt(attempt)
+    rows = _manifest(manifest)
+    in_force, bundle_sha, file_bound = _repair_in_force(bundle)
+    kinds = _strings(assurance, "the assurance", ceiling=16)
+    unknown = sorted(set(kinds) - set(assurance_kinds()))
+    if unknown:
+        raise _refuse("unknown-value",
+                      f"the assurance names {', '.join(repr(u) for u in unknown)}; the task "
+                      f"contract's kinds are {', '.join(assurance_kinds())}")
+    rungs = _strings(ladder, "the remaining ladder", ceiling=32)
+    taken = _prior_repairs(repairs)
+    declared, spent = _budget(plan_budget, used)
+    grant = _al().read_ref(admission_ref)
+    if grant is None:
+        raise _refuse("not-a-reference",
+                      "a repair's 'admission_ref' is not a reference; a repair is an admitted "
+                      "operation and there is no null that means 'repairing anyway'")
+    if checkpoint is not None and (not isinstance(checkpoint, str) or not checkpoint.strip()):
+        raise _refuse("value-invalid",
+                      "the checkpoint is a revision name, or null when nobody could establish "
+                      "one")
+
+    unmet = []
+
+    # ---- the off switch, which is the resolved bundle and nothing else ----
+    if not in_force:
+        unmet.append("repair-not-in-force")
+    elif not isinstance(file_bound, int) or isinstance(file_bound, bool):
+        unmet.append("context-bound-undeclared")
+
+    # ---- the failure, read from the trusted event ----
+    failure_class = record.get("failure_class")
+    if failure_class is None:
+        unmet.append("failure-class-unestablished")
+    elif failure_class not in REPAIRABLE_FAILURE_CLASSES:
+        unmet.append("failure-class-excluded")
+    exit_status = record.get("verify_rc")
+    if isinstance(exit_status, bool) or not isinstance(exit_status, int) or exit_status == 0:
+        unmet.append("failure-not-observed")
+
+    # ---- what the retry must preserve, which it cannot preserve unnamed ----
+    model = record.get("dispatched_model")
+    if not isinstance(model, str) or not model.strip():
+        unmet.append("model-unidentified")
+    acceptance = _al().read_ref(record.get("acceptance_ref"))
+    if acceptance is None:
+        unmet.append("acceptance-unidentified")
+    if not kinds:
+        unmet.append("assurance-undeclared")
+
+    # ---- a separately identified operation, not the one already spent ----
+    spent_grant = _al().read_ref(record.get("admission_ref"))
+    if spent_grant is None or spent_grant["id"] == grant["id"]:
+        unmet.append("admission-not-separate")
+    if taken:
+        unmet.append("repair-already-taken")
+
+    # ---- inside the ceilings that already exist, never beside them ----
+    contract = _kc()
+    drawn = tuple(contract.OPERATION_CAPS.get(REPAIR_OPERATION, ()))
+    if any(key not in declared for key in drawn):
+        unmet.append("dispatch-cap-undeclared")
+    elif contract.blocking_cap(declared, spent, REPAIR_OPERATION) is not None:
+        unmet.append("dispatch-cap-reached")
+
+    # ---- the package itself, and the checkpoint it was assembled over ----
+    paths = tuple(row.get("path") for row in rows["candidates"])
+    if rows["status"] != "candidates" or not paths:
+        unmet.append("context-absent")
+    elif isinstance(file_bound, int) and not isinstance(file_bound, bool) \
+            and len(paths) > file_bound:
+        unmet.append("context-over-bound")
+    at = ((rows.get("freshness") or {}).get("revision") or {}).get("now")
+    if checkpoint is None or not isinstance(at, str) or not at.strip():
+        unmet.append("checkpoint-unidentified")
+    elif at != checkpoint:
+        unmet.append("checkpoint-moved")
+
+    # ---- the evidence, retained whatever the outcome ----
+    failure = {
+        "kit": record.get("kit"), "run": record.get("run"), "task": record.get("task"),
+        "attempt": record.get("attempt"), "source": record.get("source"),
+        "ts": record.get("ts"), "result": record.get("result"),
+        "failure_class": failure_class,
+        # The class is the ledger's determination and this module's basis for reading it is
+        # that fact alone. Spelled on the evidence so a reader of the plan never has to take
+        # this module's word for where the classification came from.
+        "failure_class_basis": "trusted-event" if failure_class else None,
+        "verify_rc": record.get("verify_rc"),
+        "verify_signature": record.get("verify_signature"),
+        "verify_failures": record.get("verify_failures"),
+        "artifact": record.get("artifact"),
+        "dispatched_model": record.get("dispatched_model"),
+        # Carried beside the dispatched model rather than folded into it: what a harness
+        # reported running is not always what was asked for, and a repair preserves what was
+        # ASKED for. Unknown stays None and is never filled in from the other one.
+        "observed_model": record.get("observed_model"),
+        "acceptance_ref": None if acceptance is None else dict(acceptance),
+        "admission_ref": None if spent_grant is None else dict(spent_grant),
+    }
+    context = {
+        "v": rows["v"], "status": rows["status"],
+        "abstention": tuple(rows.get("abstention") or ()),
+        "candidates": len(paths), "paths": paths, "bound": file_bound,
+        "ref": None, "revision": at,
+        # D16's fence, restated where a reader of the plan meets it: a candidate is a place to
+        # read. It carries `authority: None` there and gains none by being planned against.
+        "navigation": _dx().NO_DEPENDENCY_CLAIM,
+        "authority": None,
+    }
+    try:
+        context["ref"] = _dx().context_ref(rows)
+    except ValueError:
+        # A manifest with no digest is one nobody can point at later. That is a fact about the
+        # manifest, recorded as an absent reference rather than raised: the plan's refusal
+        # reasons already say whether its candidates were usable.
+        context["ref"] = None
+
+    admissible = not unmet
+    retry = None
+    identity = None
+    operation = None
+    if admissible:
+        material = json.dumps(
+            {"attempt": {k: failure[k] for k in ("kit", "run", "task", "attempt")},
+             "context": context["ref"], "bundle": bundle_sha, "grant": grant["id"],
+             "operation": REPAIR_OPERATION},
+            sort_keys=True,
+        )
+        identity = hashlib.sha256(material.encode("utf-8")).hexdigest()
+        operation = REPAIR_OPERATION
+        retry = {
+            "operation": REPAIR_OPERATION,
+            "repair_id": identity,
+            # Preserved, all three, and preserved by being COPIED rather than recomputed: there
+            # is no parameter on this function through which a different model, a weaker
+            # assurance or other criteria could arrive.
+            "model": model,
+            "assurance": tuple(kinds),
+            "acceptance_ref": dict(acceptance),
+            "admission_ref": dict(grant),
+            "checkpoint": checkpoint,
+            "context_ref": context["ref"],
+            "context_paths": paths,
+            # The evidence of what failed, carried INTO the retry rather than left behind in a
+            # report: a retry that cannot see the failure it is repairing is a fresh attempt.
+            "failed_attempt": dict(failure),
+            "ladder": rungs,
+        }
+
+    plan = {"failure": failure, "context": context, "retry": retry, "ladder": rungs}
+    _no_dependency_claim(plan, "a context repair plan")
+    if retry is not None:
+        retry["failed_attempt"] = types.MappingProxyType(retry["failed_attempt"])
+        retry = types.MappingProxyType(retry)
+    return ContextRepair(
+        admissible=admissible, operation=operation, repair_id=identity, bundle_sha=bundle_sha,
+        failure=types.MappingProxyType(failure), context=types.MappingProxyType(context),
+        retry=retry, ladder=rungs,
+        refusal=None if admissible else "; ".join(_REPAIR_TEXT[code] for code in unmet),
+        reasons=(REPAIR_ADMISSIBLE,) if admissible else tuple(unmet),
+    )

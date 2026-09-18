@@ -286,7 +286,7 @@ PYTHONPATH=tests python3 -m unittest test_decision_context_repair.ContextCandida
 ### D17 — Context-repair policy
 - id: D17
 - title: Context-repair policy
-- status: pending
+- status: done
 - model: opus
 - depends: D07, D16
 **Brief.** Own policy/context seam and `ContextRepairPolicyTests`. Add off-by-default one retry after genuine implementation failure, excluding environment/auth/permission/model failures; preserve model, assurance and acceptance then return legacy path.

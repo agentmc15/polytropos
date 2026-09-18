@@ -23,14 +23,20 @@ WHAT THE ACCEPTANCE TERMS MEAN HERE, and how each is made structural rather than
   * FALLBACK WORKS -- each of the six retrieval reasons is triggered in isolation, with the
     other five held off, because a reason that only ever fires beside another proves nothing.
 
-`ContextRepairPolicyTests` is D17's, not this task's, and is deliberately not written here.
+`ContextRepairPolicyTests` below is D17's and answers a different question against a different
+module: whether ONE bounded context repair is admissible after a failure the ledger already
+classified. It shares this file because it shares the subject, and it shares nothing else --
+`bin/decision_policy.py` is what it exercises, every fixture it uses is its own, and it does not
+touch a test, a helper or an assertion above it.
 """
 
 import ast
 import contextlib
+import dataclasses
 import datetime
 import hashlib
 import importlib.util
+import inspect
 import io
 import json
 import os
@@ -39,8 +45,10 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import types
 import unittest
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 BIN_DIR = ROOT / "bin"
@@ -975,6 +983,915 @@ print(manifest["sha256"])
 print(hashlib.sha256(repr(manifest).encode("utf-8")).hexdigest())
 '''
 
+
+# ==============================================================================================
+#  D17 -- ONE BOUNDED CONTEXT REPAIR, OFF UNTIL AN APPROVED BUNDLE SAYS OTHERWISE
+# ==============================================================================================
+# WHAT IS UNDER TEST. `bin/decision_policy.py`'s third half: `plan_context_repair`, which says
+# whether ONE extra same-model retry carrying a bounded context package is admissible after a
+# failure the attempt ledger already classified. D11 owns bundle resolution in that file and
+# D13 owns selection; neither is touched here and both their test classes are elsewhere.
+#
+# WHAT THE ACCEPTANCE TERMS MEAN HERE, and how each is made structural rather than asserted:
+#
+#   * NO DEFAULT -- there is no argument that switches a repair on. The only thing that can is
+#     a resolved `BundleResolution` carrying the contract's own allowlisted parameter as
+#     literally `True`, and every cheaper way in is tested as a refusal: no bundle, a legacy
+#     resolution, a bundle without the parameter, with it false, with it merely truthy, and a
+#     bundle that never resolved because nobody approved it. A signature test additionally pins
+#     that NO parameter of the function has a default value at all, so nothing is permissive by
+#     omission either.
+#   * NO LIVE TRIAL -- the module is pure and this class proves it the way the file's other two
+#     classes do: an AST sweep over the module's own calls, plus the fact that every fixture
+#     here is a dict built in this file. Nothing dispatches, retries, writes or activates, and
+#     a sweep asserts nothing in `bin/` calls the planner at all.
+#   * THE TRIGGER IS READ, NEVER GUESSED -- the failure class comes off the attempt projection
+#     and every one of the ledger's other classes is tested as a refusal, in a loop over the
+#     ledger's own `CLASSES` so a class added there cannot go unclassified here.
+#   * CURRENT CAP ENFORCED -- the ceilings are `kit_contract`'s, the operation kind is its
+#     `retry`, and a repair refuses both when a drawn ceiling is reached and when the run
+#     declares no such ceiling at all.
+#
+# SAFETY CONTRACT. Nothing here invokes a real `claude`/`codex`/`copilot`/`cursor`/`graphify`
+# binary, reads a real home, opens a store, starts a process or touches the network. Model ids
+# are synthetic and appear in no `data/pricing*.json`. One test builds a REAL manifest through
+# the `_Tree` fixture above, which is a temp dir with a canned git probe.
+
+dp = _load("decision_policy")
+dpc = dp._contract()          # the SAME contract instance the module under test uses
+al = dp._al()
+kc = dp._kc()
+ah = dp._ah()
+
+#: The revision the failed attempt ran at, and the one the retry would run at.
+HEAD = "aaaaaaaaaaaa1111"
+MOVED_HEAD = "bbbbbbbbbbbb2222"
+
+#: Synthetic and deliberately different from each other, so a plan that substituted the observed
+#: model for the dispatched one would be visible rather than indistinguishable.
+DISPATCHED = "fake-model-a"
+OBSERVED = "fake-model-b"
+
+PROJECT = "polytropos"
+TASK_CLASS = "recovery-cross-module"
+USE = "recovery-selection"
+MANIFEST_V = "polytropos.synthetic-manifest/1"
+APPROVAL_V = "polytropos.synthetic-approval/1"
+
+FULL_ASSURANCE = ("deterministic-check", "independent-verification", "independent-review")
+
+
+def _digest(seed):
+    return hashlib.sha256(seed.encode("utf-8")).hexdigest()
+
+
+def _ref(identity, version, sha=None):
+    return al.make_ref(identity, sha=_digest(identity) if sha is None else sha, version=version)
+
+
+def attempt_record(**over):
+    """The failed attempt as `bin/attempt_history.py` projects it.
+
+    Every field the planner reads carries a DISTINCTIVE value rather than a None, because a
+    fixture whose fields are already absent makes a guard that refuses an absent field
+    unfalsifiable -- the failure mode that left seven survivors in the task before this one.
+    """
+    record = ah.blank()
+    record.update({
+        "kit": "decision-improvement-v1", "run": "2026-09-17-d17a", "task": "D17",
+        "attempt": "att-1", "source": "ledger", "harness": "fake-harness", "op": "initial",
+        "role": "implementer", "ts": "2026-09-17T12:00:00Z", "result": "verify-failed",
+        "failure_class": "verification", "verify_rc": 1,
+        "verify_signature": "sig-abc", "verify_failures": 3, "artifact": "run.log",
+        "requested_model": DISPATCHED, "dispatched_model": DISPATCHED,
+        "observed_model": OBSERVED,
+        "acceptance_ref": _ref("acc-D17", kc.CONTRACT_VERSION),
+        "admission_ref": _ref("grant-initial-1", kc.CONTRACT_VERSION),
+    })
+    record.update(over)
+    return record
+
+
+def manifest_payload(**over):
+    """A D16 manifest, carrying exactly the fields a repair plan reads.
+
+    The digest is taken by `decision_context.canonical_bytes` -- the seam's own function -- so
+    a synthetic manifest is referenceable on the same terms a real one is. One test below runs
+    the planner against a REAL manifest built from the `_Tree` fixture, which is what keeps this
+    shortcut honest.
+    """
+    payload = {
+        "v": dc.CONTEXT_VERSION,
+        "status": "candidates",
+        "abstention": [],
+        "candidates": [{"path": "app/caller.py"}, {"path": "app/utils.py"},
+                       {"path": "spec/test_main.py"}],
+        "freshness": {"revision": {"stamped": HEAD, "now": HEAD, "moved": False}},
+    }
+    payload.update(over)
+    payload["sha256"] = hashlib.sha256(dc.canonical_bytes(payload)).hexdigest()
+    return payload
+
+
+def bundle_payload(**over):
+    """A bundle whose data parameters put a context repair in force."""
+    payload = {
+        "v": dpc.BUNDLE_VERSION,
+        "id": "bundle-context-repair-1",
+        "parent": _ref("bundle-legacy-0", dpc.BUNDLE_VERSION),
+        "scope": {"project": PROJECT, "task_classes": [TASK_CLASS], "intended_uses": [USE]},
+        "components": {"decision_contract": dpc.CONTRACT_VERSION,
+                       "task_contract": kc.CONTRACT_VERSION, "provider_contract": None},
+        "parameters": {dp.REPAIR_PARAMETER: True, dp.REPAIR_FILES_PARAMETER: 4},
+        "requirements": {"capabilities": [], "providers": [], "calibration": None},
+        "fallback": {"kind": "legacy", "bundle_ref": None},
+        "provenance": {"approval_ref": _ref("approval-1", APPROVAL_V),
+                       "evaluation_ref": _ref("manifest-1", MANIFEST_V),
+                       "rolled_back_from": None},
+    }
+    payload.update(over)
+    return payload
+
+
+class ContextRepairPolicyTests(unittest.TestCase):
+
+    # ---- fixtures ----------------------------------------------------------------------------
+
+    def setUp(self):
+        self.grant = _ref("grant-repair-1", kc.CONTRACT_VERSION)
+
+    def resolution(self, **over):
+        """A resolution with a real, fully met bundle in force."""
+        payload = bundle_payload(**over)
+        facts = dp.runtime_facts(
+            project=PROJECT, task_class=TASK_CLASS, intended_use=USE,
+            components={"decision_contract": dpc.CONTRACT_VERSION,
+                        "task_contract": kc.CONTRACT_VERSION, "provider_contract": None})
+        return dp.resolve_bundle(dp.bundle_ref(payload), [payload], facts)
+
+    def in_force(self, **over):
+        resolution = self.resolution(**over)
+        self.assertEqual(resolution.source, "pinned",
+                         "the positive fixture needs a bundle that actually resolved")
+        return resolution
+
+    def plan(self, **over):
+        kwargs = {
+            "attempt": attempt_record(), "manifest": manifest_payload(),
+            "bundle": self.in_force(), "checkpoint": HEAD, "assurance": FULL_ASSURANCE,
+            "admission_ref": self.grant,
+            "plan_budget": {"max-dispatches": 5, "max-model-calls": 9},
+            "used": {"max-dispatches": 2, "max-model-calls": 3},
+            "ladder": [OBSERVED, "fake-model-c"], "repairs": [],
+        }
+        kwargs.update(over)
+        return dp.plan_context_repair(
+            kwargs.pop("attempt"), kwargs.pop("manifest"), kwargs.pop("bundle"), **kwargs)
+
+    def refused(self, code, **over):
+        """A plan that refuses for `code`, asserted to be admissible without the change.
+
+        The control matters: without it every one of these would also pass against a planner
+        that refused everything, which is the always-legacy hole D11 had to prove its way out
+        of. `self.plan()` with no override is admissible, and every case below changes exactly
+        one thing about it.
+        """
+        plan = self.plan(**over)
+        self.assertFalse(plan.admissible, f"expected a refusal for {code}")
+        self.assertIn(code, plan.reasons, f"reasons were {list(plan.reasons)}")
+        self.assertIsNone(plan.retry)
+        self.assertIsNone(plan.repair_id)
+        self.assertIsNone(plan.operation)
+        self.assertTrue(plan.refusal)
+        return plan
+
+    def refusal(self, code, callable_, *args, **kwargs):
+        with self.assertRaises(Exception) as caught:
+            callable_(*args, **kwargs)
+        self.assertEqual(getattr(caught.exception, "code", None), code, str(caught.exception))
+        return caught.exception
+
+    # ---- A. the vocabularies, and what they may not collide with -----------------------------
+
+    def test_the_repair_vocabulary_is_a_third_one_and_collides_with_neither_other(self):
+        """Resolution answers which parameters are in force, selection answers which action is
+        taken, and this answers whether one extra bounded operation is admissible. A code
+        meaning two of the three would make all three reports' tallies meaningless."""
+        self.assertTrue(dp.REPAIR_REASONS and dp.SELECTION_REASONS and dp.RESOLUTION_REASONS)
+        self.assertEqual(sorted(set(dp.REPAIR_REASONS) & set(dp.SELECTION_REASONS)), [])
+        self.assertEqual(sorted(set(dp.REPAIR_REASONS) & set(dp.RESOLUTION_REASONS)), [])
+        self.assertEqual(list(dp.REPAIR_REASONS), sorted(set(dp.REPAIR_REASONS)))
+        self.assertIn(dp.REPAIR_ADMISSIBLE, dp.REPAIR_REASONS)
+
+    def test_every_refusal_carries_the_sentence_its_refusal_is_printed_from(self):
+        """A code with no sentence raises from inside the refusal path, which is the one place
+        a raise helps least."""
+        refusals = sorted(set(dp.REPAIR_REASONS) - {dp.REPAIR_ADMISSIBLE})
+        self.assertTrue(refusals)
+        self.assertEqual(sorted(dp._REPAIR_TEXT), refusals)
+        for text in dp._REPAIR_TEXT.values():
+            self.assertTrue(text and isinstance(text, str))
+
+    def test_no_name_this_repair_defines_is_one_the_contract_bans(self):
+        """A check OUTCOME must not be spelled like the grant either -- the rule that made D13's
+        fourth coordinator check `budget_admission` rather than `budget`."""
+        defined = set(dp.REPAIR_REASONS) | set(dp.REPAIRABLE_FAILURE_CLASSES)
+        defined |= {f.name for f in dataclasses.fields(dp.ContextRepair)}
+        defined |= set(inspect.signature(dp.plan_context_repair).parameters)
+        defined |= set(dict(self.plan().retry))
+        self.assertTrue(defined, "the name sets are what this test sweeps")
+        self.assertTrue(dpc.BANNED_FIELDS, "an empty ban has nothing for this sweep to collide")
+        self.assertEqual(sorted(name for name in defined if dpc._is_banned_key(name)), [])
+        # And the ban still matches its own plain spellings, so this is not passing because the
+        # comparison quietly stopped banning anything.
+        self.assertTrue(dpc._is_banned_key("budget"))
+        self.assertTrue(dpc._is_banned_key("approve"))
+
+    def test_the_two_dials_are_the_contracts_own_allowlisted_parameters(self):
+        """Not a dial this module invented: a parameter outside `DIFF_PARAMETERS` is refused on
+        a bundle and in a proposal's diff alike, so a repair cannot be switched on by a key the
+        contract would not have let through in the first place."""
+        self.assertEqual(dpc.DIFF_PARAMETERS.get(dp.REPAIR_PARAMETER), "boolean")
+        self.assertEqual(dpc.DIFF_PARAMETERS.get(dp.REPAIR_FILES_PARAMETER), "count")
+        self.refusal("unknown-field", dpc.parse_bundle,
+                     bundle_payload(parameters={"recovery.context_repair": True}))
+
+    def test_a_repair_is_the_task_contracts_own_retry_and_draws_the_historic_dispatch_cap(self):
+        """`max-dispatches` keeps exactly the meaning every recorded ledger already gave it: a
+        repair spends inside the existing ceilings rather than defining a fifth kind beside
+        them."""
+        self.assertIn(dp.REPAIR_OPERATION, kc.OPERATION_CAPS)
+        self.assertIn("max-dispatches", kc.OPERATION_CAPS[dp.REPAIR_OPERATION])
+        self.assertEqual(self.plan().operation, dp.REPAIR_OPERATION)
+        self.assertEqual(self.plan().retry["operation"], dp.REPAIR_OPERATION)
+
+    def test_an_assurance_kind_a_new_role_brings_is_accepted_without_editing_this_module(self):
+        """Derived by union from the task contract's own tables, like `denial_reasons()` is
+        derived by subtraction from the router's. The safe direction is the automatic one."""
+        self.assertNotIn("invented-assurance", dp.assurance_kinds())
+        extended = dict(kc.ROLE_CONTRACTS)
+        extended["invented-role"] = dict(kc.ROLE_CONTRACTS["verifier"],
+                                         assurance="invented-assurance")
+        with mock.patch.object(kc, "ROLE_CONTRACTS", extended):
+            self.assertIn("invented-assurance", dp.assurance_kinds())
+        for kind in kc.WORKFLOW_ASSURANCE["reviewed"]:
+            self.assertIn(kind, dp.assurance_kinds())
+
+    def test_every_declared_repair_reason_is_produced_and_none_is_invented(self):
+        """Both directions, as D11 and D13 already pin their own vocabularies: a code nothing
+        produces is a branch somebody removed, and a code nothing declared is one nobody can
+        count."""
+        tree = ast.parse((BIN_DIR / "decision_policy.py").read_text(encoding="utf-8"))
+        produced, constants = set(), set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Constant) and isinstance(node.value, str):
+                constants.add(node.value)
+            if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                    and node.func.attr == "append" and node.args
+                    and isinstance(node.func.value, ast.Name)
+                    and node.func.value.id == "unmet"
+                    and isinstance(node.args[0], ast.Constant)):
+                produced.add(node.args[0].value)
+        self.assertTrue(produced, "the walk found no repair reasons at all")
+        self.assertEqual(sorted(produced),
+                         sorted(set(dp.REPAIR_REASONS) - {dp.REPAIR_ADMISSIBLE}))
+        self.assertEqual(sorted(set(dp.REPAIR_REASONS) - constants), [])
+
+    # ---- B. off by default, and the only way out of it ---------------------------------------
+
+    def test_no_parameter_of_the_plan_has_a_default_so_nothing_is_permissive_by_omission(self):
+        """A flag defaulting to False is one copied call site away from on. There is no flag,
+        and there is no default of any kind: a caller states every fact or the call fails."""
+        signature = inspect.signature(dp.plan_context_repair)
+        self.assertTrue(signature.parameters, "the walk found no parameters at all")
+        for name, parameter in signature.parameters.items():
+            with self.subTest(parameter=name):
+                self.assertIs(parameter.default, inspect.Parameter.empty)
+                self.assertIsNot(parameter.default, True)
+        # And no parameter is spelled like a switch somebody could look for and flip.
+        for switch in ("enabled", "enable", "allow", "force", "repair", "active", "on"):
+            with self.subTest(switch=switch):
+                self.assertNotIn(switch, signature.parameters)
+
+    def test_with_no_bundle_there_is_no_repair_and_that_is_the_default_everywhere(self):
+        plan = self.refused("repair-not-in-force", bundle=None)
+        self.assertIsNone(plan.bundle_sha)
+        self.assertIn("no resolved policy bundle", plan.refusal)
+
+    def test_a_legacy_resolution_reads_exactly_like_no_bundle_at_all(self):
+        """Take the bundle away and the behaviour is the behaviour that was there before any of
+        this existed -- which for a repair means there is none."""
+        facts = dp.runtime_facts(
+            project=PROJECT, task_class=TASK_CLASS, intended_use=USE,
+            components={"decision_contract": dpc.CONTRACT_VERSION,
+                        "task_contract": kc.CONTRACT_VERSION, "provider_contract": None})
+        legacy = dp.resolve_bundle(None, [], facts)
+        self.assertEqual(legacy.source, "legacy")
+        plan = self.refused("repair-not-in-force", bundle=legacy)
+        self.assertIsNone(plan.bundle_sha)
+
+    def test_a_bundle_that_does_not_ask_for_a_repair_leaves_it_off(self):
+        for parameters in ({dp.REPAIR_FILES_PARAMETER: 4},
+                           {dp.REPAIR_PARAMETER: False, dp.REPAIR_FILES_PARAMETER: 4}):
+            with self.subTest(parameters=sorted(parameters)):
+                plan = self.refused("repair-not-in-force",
+                                    bundle=self.in_force(parameters=parameters))
+                # The bundle DID resolve -- its digest is on the plan -- so this is the
+                # parameter refusing and not the resolution having fallen through to legacy.
+                self.assertIsNotNone(plan.bundle_sha)
+
+    def test_only_the_literal_true_switches_a_repair_on_and_a_truthy_value_does_not(self):
+        """A repair that any truthy value could switch on is a repair switched on by accident.
+        The contract already refuses a non-boolean here, so this is proven against a resolution
+        hand-built to get past it -- the one way the value could ever arrive."""
+        self.refusal("wrong-type", dpc.parse_bundle,
+                     bundle_payload(parameters={dp.REPAIR_PARAMETER: 1,
+                                                dp.REPAIR_FILES_PARAMETER: 4}))
+        for value in (1, "yes", [1], 1.0):
+            with self.subTest(value=value):
+                faked = types.SimpleNamespace(
+                    source="pinned",
+                    bundle=types.SimpleNamespace(sha=lambda: "c" * 64),
+                    parameters={dp.REPAIR_PARAMETER: value, dp.REPAIR_FILES_PARAMETER: 4})
+                self.refused("repair-not-in-force", bundle=faked)
+        # The control: the same hand-built resolution with the literal `True` IS in force, so
+        # the loop above is the value being rejected rather than the fake being rejected.
+        faked = types.SimpleNamespace(
+            source="pinned", bundle=types.SimpleNamespace(sha=lambda: "c" * 64),
+            parameters={dp.REPAIR_PARAMETER: True, dp.REPAIR_FILES_PARAMETER: 4})
+        self.assertTrue(self.plan(bundle=faked).admissible)
+
+    def test_a_bundle_nobody_approved_never_resolves_and_so_never_puts_a_repair_in_force(self):
+        """Approval is upstream of this module and stays there: `resolve_bundle` refuses an
+        unapproved bundle to legacy, and legacy cannot put a repair in force. Nothing here
+        re-checks approval, which is what keeps the rule in one place."""
+        unapproved = bundle_payload(
+            provenance={"approval_ref": None, "evaluation_ref": _ref("manifest-1", MANIFEST_V),
+                        "rolled_back_from": None})
+        facts = dp.runtime_facts(
+            project=PROJECT, task_class=TASK_CLASS, intended_use=USE,
+            components={"decision_contract": dpc.CONTRACT_VERSION,
+                        "task_contract": kc.CONTRACT_VERSION, "provider_contract": None})
+        resolution = dp.resolve_bundle(dp.bundle_ref(unapproved), [unapproved], facts)
+        self.assertEqual(resolution.source, "legacy")
+        self.assertIn("approval-absent", resolution.reasons)
+        self.refused("repair-not-in-force", bundle=resolution)
+
+    def test_a_bundle_out_of_scope_for_this_run_cannot_put_a_repair_in_force_either(self):
+        facts = dp.runtime_facts(
+            project=PROJECT, task_class="some-other-class", intended_use=USE,
+            components={"decision_contract": dpc.CONTRACT_VERSION,
+                        "task_contract": kc.CONTRACT_VERSION, "provider_contract": None})
+        payload = bundle_payload()
+        resolution = dp.resolve_bundle(dp.bundle_ref(payload), [payload], facts)
+        self.assertEqual(resolution.source, "legacy")
+        self.assertIn("out-of-scope", resolution.reasons)
+        self.refused("repair-not-in-force", bundle=resolution)
+
+    # ---- C. the trigger, read from the trusted event and never guessed -----------------------
+
+    def test_only_a_verification_failure_triggers_a_repair_and_every_other_class_refuses(self):
+        """Looped over the LEDGER'S own class tuple, so a class added there cannot go
+        unclassified here. Infrastructure, auth, config and permission are facts about the
+        host; `model` is the model's own failure, whose remedy is the ladder's; `unknown` is a
+        non-zero exit nobody attributed, and an unattributed failure is not a free retry."""
+        self.assertTrue(al.CLASSES, "an empty class tuple would make this loop vacuous")
+        self.assertEqual(tuple(dp.REPAIRABLE_FAILURE_CLASSES), ("verification",))
+        for failure_class in al.CLASSES:
+            with self.subTest(failure_class=failure_class):
+                plan = self.plan(attempt=attempt_record(failure_class=failure_class))
+                if failure_class in dp.REPAIRABLE_FAILURE_CLASSES:
+                    self.assertTrue(plan.admissible)
+                else:
+                    self.assertFalse(plan.admissible)
+                    self.assertIn("failure-class-excluded", plan.reasons)
+        # The environment classes the plan names explicitly are the ones the shared PLAN says
+        # must never trigger an escalation from a semantic guess.
+        for deterministic in ("infrastructure", "auth", "config", "permission"):
+            with self.subTest(deterministic=deterministic):
+                self.assertIn(deterministic, al.CLASSES)
+                self.assertNotIn(deterministic, dp.REPAIRABLE_FAILURE_CLASSES)
+
+    def test_a_failure_nobody_classified_is_not_a_classified_one(self):
+        """Its own code, not folded into the excluded one: "nobody looked" and "somebody looked
+        and it was the host's" are different facts with different remedies."""
+        plan = self.refused("failure-class-unestablished",
+                            attempt=attempt_record(failure_class=None))
+        self.assertNotIn("failure-class-excluded", plan.reasons)
+        self.assertIsNone(plan.failure["failure_class_basis"])
+
+    def test_the_deterministic_checks_own_exit_status_has_to_agree_with_the_class(self):
+        """A record claiming a verification failure whose check exited 0 contradicts itself, and
+        one that recorded no exit status never observed the failure at all. A boolean is not an
+        exit status however willingly Python treats it as an integer."""
+        for verify_rc in (0, None, True, "1"):
+            with self.subTest(verify_rc=verify_rc):
+                self.refused("failure-not-observed", attempt=attempt_record(verify_rc=verify_rc))
+        self.assertTrue(self.plan(attempt=attempt_record(verify_rc=2)).admissible)
+
+    def test_nothing_here_reads_output_text_to_decide_why_something_failed(self):
+        """The class is the ledger's determination. This module never classifies, and the plan
+        says where its own basis came from rather than asking a reader to take its word.
+
+        Structural rather than textual, because the module NAMES the classifier in its own
+        header to say where the class comes from -- the same shape as the graphify fence one
+        module over, where the word appearing in prose is the fence and the word appearing in
+        an argv position would be the breach."""
+        text = (BIN_DIR / "decision_policy.py").read_text(encoding="utf-8")
+        tree = ast.parse(text)
+        calls, attributes = set(), set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call):
+                fn = node.func
+                if isinstance(fn, ast.Attribute):
+                    calls.add(fn.attr)
+                elif isinstance(fn, ast.Name):
+                    calls.add(fn.id)
+            if isinstance(node, ast.Attribute):
+                attributes.add(node.attr)
+        self.assertTrue(calls and attributes, "the walk found nothing, so the sweep is vacuous")
+        self.assertIn("read_ref", calls, "the walk reaches the ledger access that matters")
+        for classifier in ("classify_dispatch", "recovery_for", "normalize_output",
+                           "failure_count", "observation", "retry_context"):
+            with self.subTest(name=classifier):
+                self.assertNotIn(classifier, calls)
+                self.assertNotIn(classifier, attributes)
+        self.assertIn("classify_dispatch", text,
+                      "the module names where the class comes from rather than leaving it "
+                      "implied; this is the fence written down")
+        self.assertEqual(self.plan().failure["failure_class_basis"], "trusted-event")
+        self.assertEqual(self.plan().failure["failure_class"], "verification")
+
+    # ---- D. the five negative paths this task is required to hold ----------------------------
+
+    def test_a_task_that_already_had_its_repair_does_not_get_a_second_one(self):
+        """At most one approved context repair; the rest of the recovery path is the ladder's.
+        Fed its OWN emitted identity, which is the shape a coordinator that recorded the first
+        one would hand back."""
+        first = self.plan()
+        self.assertTrue(first.admissible)
+        self.refused("repair-already-taken", repairs=[first.repair_id])
+        # And a DIFFERENT repair counts too: "at most one" is about the task, not about this
+        # particular package, so a second repair under a fresh identity is still a second one.
+        self.refused("repair-already-taken", repairs=[_digest("some-other-repair")])
+        # A placeholder is not a repair identity. The duplicate check cannot be satisfied with
+        # a word, which is what stops it being satisfied by mistake.
+        self.refusal("value-invalid", self.plan, repairs=["already-did-one"])
+
+    def test_no_applicable_context_is_a_legitimate_abstention_and_not_a_repair(self):
+        """The manifest's own answer, carried onto the plan with its reasons rather than
+        flattened into "there was nothing"."""
+        abstained = manifest_payload(status="no-relevant-context", candidates=[],
+                                     abstention=["all-candidates-withheld", "no-evidence-found"])
+        plan = self.refused("context-absent", manifest=abstained)
+        self.assertEqual(plan.context["status"], "no-relevant-context")
+        self.assertEqual(plan.context["abstention"],
+                         ("all-candidates-withheld", "no-evidence-found"))
+        self.assertEqual(plan.context["candidates"], 0)
+        for reason in plan.context["abstention"]:
+            with self.subTest(reason=reason):
+                self.assertIn(reason, dc.ABSTENTION_REASONS)
+        # A manifest claiming candidates while listing none is the same abstention, reached the
+        # other way round, and is not a package either.
+        self.refused("context-absent", manifest=manifest_payload(candidates=[]))
+
+    def test_a_package_assembled_over_another_revision_is_not_this_checkpoints_context(self):
+        """"Restore equivalent failing checkpoints" -- a package read from a tree that has since
+        moved is not the context the failed attempt was missing."""
+        plan = self.refused("checkpoint-moved", checkpoint=MOVED_HEAD)
+        self.assertNotIn("checkpoint-unidentified", plan.reasons)
+        self.refused("checkpoint-moved", manifest=manifest_payload(
+            freshness={"revision": {"stamped": HEAD, "now": MOVED_HEAD, "moved": True}}))
+
+    def test_a_checkpoint_nobody_could_establish_is_not_a_matching_one(self):
+        """Its own code: git unavailable is a legitimate runtime state, and reporting it as
+        "the revision moved" would be a diagnosis nobody made."""
+        for case in ({"checkpoint": None},
+                     {"manifest": manifest_payload(
+                         freshness={"revision": {"stamped": None, "now": None,
+                                                 "moved": False}})},
+                     {"manifest": manifest_payload(freshness={})}):
+            with self.subTest(case=sorted(case)):
+                plan = self.refused("checkpoint-unidentified", **case)
+                self.assertNotIn("checkpoint-moved", plan.reasons)
+
+    def test_a_ceiling_already_reached_refuses_before_the_repair_spends(self):
+        """The ceilings are `kit_contract`'s and so is the question: `blocking_cap` for the
+        operation kind a repair IS. Each cap the operation draws down is tested on its own, so
+        one reaching cannot be masked by the other."""
+        for cap in kc.OPERATION_CAPS[dp.REPAIR_OPERATION]:
+            with self.subTest(cap=cap):
+                declared = {"max-dispatches": 5, "max-model-calls": 9}
+                spent = {"max-dispatches": 2, "max-model-calls": 3}
+                spent[cap] = declared[cap]
+                self.refused("dispatch-cap-reached", plan_budget=declared, used=spent)
+        # One below the ceiling is still inside it -- the control that keeps the check from
+        # passing because it refuses everything.
+        self.assertTrue(self.plan(plan_budget={"max-dispatches": 3, "max-model-calls": 9},
+                                  used={"max-dispatches": 2, "max-model-calls": 3}).admissible)
+
+    def test_an_extra_attempt_nobody_is_counting_is_the_unbounded_retry_this_refuses_to_be(self):
+        """A run that declares no ceiling for a ceiling the operation draws down has not bounded
+        the repair at all, and an empty budget is the most common way to have declared none."""
+        for declared in ({}, {"max-dispatches": 5}, {"max-model-calls": 9}):
+            with self.subTest(declared=sorted(declared)):
+                plan = self.refused("dispatch-cap-undeclared", plan_budget=declared)
+                # Not the reached code: a ceiling nobody declared has not been reached.
+                self.assertNotIn("dispatch-cap-reached", plan.reasons)
+
+    # ---- E. what the retry preserves ---------------------------------------------------------
+
+    def test_the_retry_preserves_the_model_the_assurance_and_the_acceptance_exactly(self):
+        """One bounded package before a SAME-MODEL retry: changing model and context at once is
+        the one thing the experiment's design forbids, and dropping an independent check would
+        make the retry a different operation from the one that failed."""
+        plan = self.plan()
+        self.assertTrue(plan.admissible)
+        self.assertEqual(plan.retry["model"], DISPATCHED)
+        self.assertEqual(plan.retry["assurance"], FULL_ASSURANCE)
+        self.assertEqual(plan.retry["acceptance_ref"], _ref("acc-D17", kc.CONTRACT_VERSION))
+        self.assertEqual(plan.retry["checkpoint"], HEAD)
+        for mandatory in ("independent-verification", "independent-review"):
+            with self.subTest(assurance=mandatory):
+                self.assertIn(mandatory, plan.retry["assurance"])
+
+    def test_the_observed_model_rides_beside_the_dispatched_one_and_never_stands_in_for_it(self):
+        """What a harness reported running is not always what was asked for, and a repair
+        preserves what was ASKED for. Unknown stays unknown rather than being filled in from
+        the other slot."""
+        plan = self.plan()
+        self.assertNotEqual(DISPATCHED, OBSERVED)
+        self.assertEqual(plan.failure["observed_model"], OBSERVED)
+        self.assertEqual(plan.retry["model"], DISPATCHED)
+        # The reverse: an attempt with only an observation recorded cannot be re-dispatched to
+        # one, and nothing substitutes it.
+        self.refused("model-unidentified", attempt=attempt_record(dispatched_model=None))
+        plan = self.plan(attempt=attempt_record(observed_model=None))
+        self.assertIsNone(plan.failure["observed_model"])
+        self.assertEqual(plan.retry["model"], DISPATCHED)
+
+    def test_what_a_repair_cannot_name_it_cannot_preserve(self):
+        for code, over in (("model-unidentified", {"dispatched_model": None}),
+                           ("model-unidentified", {"dispatched_model": "   "}),
+                           ("acceptance-unidentified", {"acceptance_ref": None}),
+                           ("acceptance-unidentified", {"acceptance_ref": "acc-D17"})):
+            with self.subTest(code=code, over=sorted(over)):
+                self.refused(code, attempt=attempt_record(**over))
+        self.refused("assurance-undeclared", assurance=[])
+
+    def test_the_original_failed_evidence_rides_in_the_retry_input(self):
+        """A retry that cannot see the failure it is repairing is a fresh attempt. Every field
+        asserted is checked against the record it came from rather than against a literal, so
+        this cannot pass on a fixture whose values were already what was expected."""
+        record = attempt_record()
+        plan = self.plan(attempt=record)
+        carried = plan.retry["failed_attempt"]
+        for field in ("kit", "run", "task", "attempt", "ts", "result", "failure_class",
+                      "verify_rc", "verify_signature", "verify_failures", "artifact",
+                      "dispatched_model", "observed_model"):
+            with self.subTest(field=field):
+                self.assertIsNotNone(record[field], "the fixture must carry it to prove it")
+                self.assertEqual(carried[field], record[field])
+        self.assertEqual(carried["acceptance_ref"], record["acceptance_ref"])
+        self.assertEqual(carried["admission_ref"], record["admission_ref"])
+        self.assertEqual(plan.retry["context_ref"], dc.context_ref(manifest_payload()))
+        self.assertEqual(plan.retry["context_paths"],
+                         ("app/caller.py", "app/utils.py", "spec/test_main.py"))
+
+    def test_the_failed_evidence_is_kept_on_a_refusing_plan_too(self):
+        """A refusal that dropped the evidence would make the most audit-relevant outcome the
+        least legible one."""
+        plan = self.refused("checkpoint-moved", checkpoint=MOVED_HEAD)
+        self.assertEqual(plan.failure["task"], "D17")
+        self.assertEqual(plan.failure["verify_signature"], "sig-abc")
+        self.assertEqual(plan.context["candidates"], 3)
+
+    def test_the_remaining_ladder_is_carried_verbatim_and_never_climbed_or_consumed(self):
+        """A repair is one retry on the same model; what happens after it is what the driver's
+        own ladder already said. Order included -- a plan that sorted it would be proposing a
+        different recovery path."""
+        rungs = ["fake-model-z", "fake-model-c", "fake-model-b"]
+        plan = self.plan(ladder=list(rungs))
+        self.assertEqual(plan.ladder, tuple(rungs))
+        self.assertEqual(plan.retry["ladder"], tuple(rungs))
+        self.assertNotEqual(tuple(rungs), tuple(sorted(rungs)),
+                            "a ladder already in sorted order could not show a sort")
+        self.assertNotIn(plan.retry["model"], plan.ladder,
+                         "the repair rung is not one the ladder was going to climb")
+        # Carried on a refusal too, so the plan always says where the run goes next.
+        self.assertEqual(self.refused("checkpoint-moved", checkpoint=MOVED_HEAD,
+                                      ladder=list(rungs)).ladder, tuple(rungs))
+        # An empty ladder is a legitimate state -- Cursor has no ladder at all -- and is not
+        # itself a refusal.
+        self.assertTrue(self.plan(ladder=[]).admissible)
+
+    # ---- F. a separately identified operation, inside the bounds ------------------------------
+
+    def test_a_repair_needs_its_own_grant_and_not_the_one_the_failed_attempt_already_spent(self):
+        """The grant that funded the attempt is spent; a repair is a second operation and needs
+        a second admission. The same refusal `select_action` makes about acting on the grant
+        that admitted asking."""
+        spent = _ref("grant-initial-1", kc.CONTRACT_VERSION)
+        self.refused("admission-not-separate", admission_ref=spent)
+        # A different digest under the same id is still the same grant: identity is the id.
+        self.refused("admission-not-separate",
+                     admission_ref=al.make_ref("grant-initial-1", sha="d" * 64,
+                                               version=kc.CONTRACT_VERSION))
+
+    def test_an_attempt_that_recorded_no_grant_cannot_show_the_repair_is_separate(self):
+        """An attempt written before provenance references existed carries none, and an
+        unestablished fact is not an established one. Conservative on purpose."""
+        for value in (None, "grant-initial-1", {"sha": "d" * 64}):
+            with self.subTest(value=value):
+                plan = self.refused("admission-not-separate",
+                                    attempt=attempt_record(admission_ref=value))
+                self.assertIsNone(plan.failure["admission_ref"])
+
+    def test_a_null_grant_is_refused_because_there_is_no_null_that_means_repairing_anyway(self):
+        for value in (None, "grant-repair-1", {"id": ""}, 7):
+            with self.subTest(value=value):
+                self.refusal("not-a-reference", self.plan, admission_ref=value)
+
+    def test_the_package_is_bounded_by_the_bundles_own_count(self):
+        """"Bounded" that the retriever decides for itself is not bounded by the approved
+        bundle. The dial is a `count` data parameter and a package larger than it refuses."""
+        self.refused("context-over-bound",
+                     bundle=self.in_force(parameters={dp.REPAIR_PARAMETER: True,
+                                                      dp.REPAIR_FILES_PARAMETER: 2}))
+        self.assertTrue(self.plan(bundle=self.in_force(
+            parameters={dp.REPAIR_PARAMETER: True, dp.REPAIR_FILES_PARAMETER: 3})).admissible)
+        self.assertEqual(self.plan().context["bound"], 4)
+
+    def test_a_bundle_that_bounds_nothing_has_not_bounded_the_package(self):
+        """On its own code rather than the over-bound one: an absent ceiling is not a ceiling
+        that was exceeded, and telling them apart is what lets an operator fix the right thing."""
+        plan = self.refused("context-bound-undeclared",
+                            bundle=self.in_force(parameters={dp.REPAIR_PARAMETER: True}))
+        self.assertNotIn("context-over-bound", plan.reasons)
+        self.assertIsNone(plan.context["bound"])
+
+    def test_the_repair_identity_is_content_addressed_and_changes_with_what_it_names(self):
+        """"Separately identified" means the identity distinguishes this repair from another
+        one. A digest identifies content; it protects against nothing, and nothing here treats
+        it as though it did."""
+        base = self.plan().repair_id
+        self.assertEqual(len(base), 64)
+        self.assertEqual(base, self.plan().repair_id, "the same repair has the same identity")
+        variants = {
+            "grant": {"admission_ref": _ref("grant-repair-2", kc.CONTRACT_VERSION)},
+            "attempt": {"attempt": attempt_record(attempt="att-2")},
+            "package": {"manifest": manifest_payload(
+                candidates=[{"path": "app/caller.py"}, {"path": "app/utils.py"}])},
+            "bundle": {"bundle": self.in_force(
+                parameters={dp.REPAIR_PARAMETER: True, dp.REPAIR_FILES_PARAMETER: 3})},
+        }
+        for name, over in variants.items():
+            with self.subTest(names=name):
+                self.assertNotEqual(self.plan(**over).repair_id, base)
+
+    # ---- G. caller defects refuse rather than degrade to a safe-looking answer ----------------
+
+    def test_a_record_that_is_not_the_projection_is_refused_rather_than_read(self):
+        """A shape assembled beside `attempt_history`'s projection is not the projection, and
+        reading one would be exactly the "determined by a semantic guess" this forbids."""
+        self.refusal("wrong-type", self.plan, attempt=["verify-failed"])
+        self.refusal("wrong-type", self.plan, attempt="verify-failed")
+        self.refusal("unknown-field", self.plan,
+                     attempt=dict(attempt_record(), why="it looked wrong"))
+        for missing in ("task", "failure_class", "verify_rc"):
+            with self.subTest(missing=missing):
+                record = attempt_record()
+                record.pop(missing)
+                self.refusal("missing-field", self.plan, attempt=record)
+        self.assertTrue(set(ah.RECORD_FIELDS) >= set(attempt_record()),
+                        "the fixture itself must be a record this projection could hold")
+
+    def test_a_manifest_of_another_shape_or_status_is_refused(self):
+        self.refusal("wrong-type", self.plan, manifest=[manifest_payload()])
+        self.refusal("unknown-value", self.plan,
+                     manifest=manifest_payload(v="polytropos.context-candidates/99"))
+        self.refusal("unknown-value", self.plan, manifest=manifest_payload(status="fine"))
+        self.refusal("wrong-type", self.plan, manifest=manifest_payload(candidates={}))
+
+    def test_a_resolution_that_is_not_one_is_refused_rather_than_read_as_off(self):
+        """Silently reading a malformed resolution as "no repair" would be the safe-looking
+        answer that hides a caller's bug, which this module refuses to give anywhere else
+        either."""
+        self.refusal("wrong-type", self.plan, bundle=bundle_payload())
+        self.refusal("wrong-type", self.plan,
+                     bundle=types.SimpleNamespace(source="active"))
+        self.refusal("wrong-type", self.plan, bundle=types.SimpleNamespace(
+            source="pinned", bundle=types.SimpleNamespace(sha=lambda: "c" * 64)))
+
+    def test_the_named_arguments_are_validated_before_they_are_copied(self):
+        """The coercion defect this file has now produced twice, once in each of its other two
+        halves: `list("fake-model-a")` is twelve letters and `dict(some_list)` raises a bare
+        `ValueError`, and either answers the question before the contract can."""
+        self.refusal("wrong-type", self.plan, assurance="deterministic-check")
+        self.refusal("wrong-type", self.plan, ladder=OBSERVED)
+        self.refusal("wrong-type", self.plan, repairs=_digest("x"))
+        self.refusal("wrong-type", self.plan, plan_budget=[("max-dispatches", 5)])
+        self.refusal("wrong-type", self.plan, used=[("max-dispatches", 2)])
+        self.refusal("unknown-value", self.plan, assurance=["thorough-vibes"])
+        # An entry that is not a name at all is refused as one, BEFORE the vocabulary check --
+        # which is what isolates it: without this the empty string reads as an unknown kind and
+        # the arrival check goes unnoticed, and a ladder rung of `None` is not checked at all.
+        self.refusal("value-invalid", self.plan, assurance=["deterministic-check", ""])
+        self.refusal("value-invalid", self.plan, assurance=[None])
+        self.refusal("value-invalid", self.plan, ladder=[OBSERVED, "   "])
+        self.refusal("value-invalid", self.plan, ladder=[None])
+        self.refusal("unknown-field", self.plan, plan_budget={"max-vibes": 5})
+        self.refusal("value-invalid", self.plan, used={"max-dispatches": -1})
+        self.refusal("value-invalid", self.plan, used={"max-dispatches": True})
+        self.refusal("value-invalid", self.plan, checkpoint="   ")
+        self.refusal("bounds-exceeded", self.plan, ladder=[f"rung-{i}" for i in range(33)])
+
+    def test_an_undeclared_reason_cannot_be_put_on_a_plan_at_all(self):
+        """Closed at construction, like every other vocabulary in this file."""
+        fields = {"admissible": False, "operation": None, "repair_id": None, "bundle_sha": None,
+                  "failure": None, "context": None, "retry": None, "refusal": "because",
+                  "ladder": ()}
+        self.refusal("unknown-value", dp.ContextRepair, reasons=("looked-wrong",), **fields)
+        self.refusal("bounds-exceeded", dp.ContextRepair, reasons=(), **fields)
+        self.refusal("duplicate-entry", dp.ContextRepair,
+                     reasons=("checkpoint-moved", "checkpoint-moved"), **fields)
+        # A plan cannot claim a repair while naming a refusal, nor refuse while handing back a
+        # retry to perform.
+        self.refusal("value-invalid", dp.ContextRepair,
+                     reasons=("checkpoint-moved",), **dict(fields, admissible=True))
+        self.refusal("value-invalid", dp.ContextRepair,
+                     reasons=(dp.REPAIR_ADMISSIBLE,), **dict(fields, admissible=True))
+
+    # ---- H. what this module does not do ------------------------------------------------------
+
+    def test_every_unmet_condition_is_collected_and_none_masks_another(self):
+        """Not short-circuited, for the reason D11 gives: a test asserting one refusal cannot be
+        satisfied by a different check refusing the same input first. Fourteen things wrong at
+        once come back as fourteen reasons."""
+        plan = self.plan(
+            attempt=attempt_record(failure_class="auth", verify_rc=0, dispatched_model=None,
+                                   acceptance_ref=None, admission_ref=None),
+            manifest=manifest_payload(status="no-relevant-context", candidates=[],
+                                      abstention=["no-evidence-found"],
+                                      freshness={"revision": {"stamped": None, "now": None,
+                                                              "moved": False}}),
+            bundle=None, checkpoint=None, assurance=[], plan_budget={}, used={},
+            repairs=[_digest("earlier-repair")])
+        for code in ("repair-not-in-force", "failure-class-excluded", "failure-not-observed",
+                     "model-unidentified", "acceptance-unidentified", "assurance-undeclared",
+                     "admission-not-separate", "repair-already-taken",
+                     "dispatch-cap-undeclared", "context-absent", "checkpoint-unidentified"):
+            with self.subTest(code=code):
+                self.assertIn(code, plan.reasons)
+        self.assertFalse(plan.admissible)
+        self.assertEqual(len(set(plan.reasons)), len(plan.reasons))
+
+    def test_the_repair_plan_is_swept_for_a_dependency_claim_by_the_seams_own_guard(self):
+        """D16 wrote that sweep saying its work was forward -- that D17 extends the seam and a
+        `depends_on` on a candidate would turn navigation evidence into an authorisation. This
+        is the wiring it was waiting for, proven by a recorder that sees the real structure and
+        by a raiser that kills the plan."""
+        seen = {}
+
+        def recorder(value, where="the candidate manifest"):
+            seen["value"] = value
+            seen["where"] = where
+            return value
+
+        with mock.patch.object(dp._dx(), "assert_no_dependency_claim", recorder):
+            plan = self.plan()
+        self.assertTrue(plan.admissible)
+        swept = seen["value"]
+        # A mapping proxy is not a `dict`, so a sweep handed one would walk nothing at all and
+        # pass on every input. What is handed over is the plain structure.
+        self.assertIsInstance(swept, dict)
+        self.assertEqual(sorted(swept), ["context", "failure", "ladder", "retry"])
+        self.assertIsInstance(swept["retry"], dict)
+        self.assertIsInstance(swept["failure"], dict)
+        self.assertIn("a context repair plan", seen["where"])
+
+        def raiser(value, where="the candidate manifest"):
+            raise dp._dx()._contract().ContractError(
+                "authority-field", "the plan carries 'depends_on'. it is navigation evidence")
+
+        with mock.patch.object(dp._dx(), "assert_no_dependency_claim", raiser):
+            error = self.refusal("authority-field", self.plan)
+        # Re-raised in THIS loader's class, so a caller catching this module's refusal sees it.
+        self.assertIsInstance(error, dpc.ContractError)
+        self.assertNotIn("] [", str(error), "the code prefix is not applied twice")
+
+        def unrelated(value, where="the candidate manifest"):
+            raise ValueError("something else entirely")
+
+        with mock.patch.object(dp._dx(), "assert_no_dependency_claim", unrelated):
+            with self.assertRaises(ValueError) as caught:
+                self.plan()
+        self.assertIsNone(getattr(caught.exception, "code", None),
+                          "an unrelated error is not relabelled as an authority field")
+
+    def test_a_candidate_is_a_place_to_read_and_the_plan_says_so_where_it_is_read(self):
+        plan = self.plan()
+        self.assertIsNone(plan.context["authority"])
+        self.assertEqual(plan.context["navigation"], dc.NO_DEPENDENCY_CLAIM)
+        self.assertIn("not a dependency", plan.context["navigation"])
+
+    def test_the_plan_is_frozen_and_its_maps_are_not_writable(self):
+        plan = self.plan()
+        with self.assertRaises(dataclasses.FrozenInstanceError):
+            plan.admissible = False
+        for name in ("failure", "context", "retry"):
+            with self.subTest(field=name):
+                self.assertIsInstance(getattr(plan, name), types.MappingProxyType)
+                with self.assertRaises(TypeError):
+                    getattr(plan, name)["task"] = "D99"
+        with self.assertRaises(TypeError):
+            plan.retry["failed_attempt"]["result"] = "pass"
+        self.assertIsInstance(plan.ladder, tuple)
+
+    def test_this_module_plans_a_repair_and_performs_none_of_it(self):
+        """The same AST sweep D11 and D13 apply to their halves, re-run over the whole file so
+        the D17 half is inside it, plus the names a repair would be performed through."""
+        text = (BIN_DIR / "decision_policy.py").read_text(encoding="utf-8")
+        tree = ast.parse(text)
+        calls = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call):
+                fn = node.func
+                if isinstance(fn, ast.Attribute):
+                    calls.add(fn.attr)
+                elif isinstance(fn, ast.Name):
+                    calls.add(fn.id)
+        self.assertTrue(calls, "the AST walk found no calls, so the sweep below is vacuous")
+        self.assertIn("plan_context_repair", {node.name for node in ast.walk(tree)
+                                              if isinstance(node, ast.FunctionDef)})
+        self.assertIn("_repair_in_force", calls, "the walk reaches the code that matters")
+        for performer in ("open", "write_text", "mkdir", "unlink", "run", "Popen", "system",
+                          "dispatch", "record_started", "record_finished", "admit", "ref_for",
+                          "context_manifest", "urlopen"):
+            with self.subTest(call=performer):
+                self.assertNotIn(performer, calls)
+        for pattern in ("subprocess", "Path.home(", "os.environ"):
+            with self.subTest(pattern=pattern):
+                self.assertNotIn(pattern, text)
+
+    def test_nothing_in_this_repository_plans_a_context_repair(self):
+        """A green suite says this function works, never that anything invokes it. A repair can
+        only happen to somebody if something calls this, and nothing does. When this list stops
+        being empty, that is the signal to check the wiring rather than a failure."""
+        callers = []
+        for path in sorted(BIN_DIR.glob("*.py")):
+            if path.name == "decision_policy.py":
+                continue
+            body = path.read_text(encoding="utf-8")
+            for name in ("plan_context_repair", "ContextRepair", "REPAIR_PARAMETER"):
+                if name in body:
+                    callers.append(f"{path.name}:{name}")
+        self.assertEqual(callers, [])
+
+    def test_no_data_file_in_this_repository_asks_for_a_context_repair(self):
+        """The dial exists in the contract's allowlist; no data file here sets it. Off is not
+        merely this function's default, it is the state of the whole repository: there is no
+        bundle to pin, so there is nothing for a caller to resolve even if one existed.
+
+        Swept over every JSON and TOML a catalog could plausibly be, skipping only the
+        generated docs tree. Python sources are excluded because naming the parameter is what
+        the contract's allowlist and this module are FOR."""
+        scanned, setters = 0, []
+        for suffix in ("*.json", "*.toml"):
+            for path in sorted(ROOT.rglob(suffix)):
+                parts = set(path.parts)
+                if ".git" in parts or "docs-site" in parts or "node_modules" in parts:
+                    continue
+                scanned += 1
+                if dp.REPAIR_PARAMETER in path.read_text(encoding="utf-8", errors="replace"):
+                    setters.append(str(path.relative_to(ROOT)))
+        self.assertTrue(scanned > 10, f"only {scanned} files were swept, so this is vacuous")
+        self.assertEqual(setters, [])
+
+    # ---- I. it composes with the real seam ----------------------------------------------------
+
+    def test_an_admissible_plan_composes_with_a_real_manifest_built_by_the_seam(self):
+        """Every other test here hands the planner a manifest built in this file. This one hands
+        it one `bin/decision_context.py` actually produced, from a temp tree with a canned git
+        probe, so the two modules are proven to compose rather than merely to agree with a
+        fixture's idea of the shape."""
+        tree = _Tree()
+        self.addCleanup(tree.cleanup)
+        real = tree.manifest()
+        self.assertEqual(real["status"], "candidates")
+        self.assertTrue(real["candidates"], "the seam's own manifest must carry candidates")
+        plan = self.plan(manifest=real, checkpoint=tree.head,
+                         bundle=self.in_force(parameters={
+                             dp.REPAIR_PARAMETER: True,
+                             dp.REPAIR_FILES_PARAMETER: dc.MAX_CANDIDATES_CEILING}))
+        self.assertTrue(plan.admissible, list(plan.reasons))
+        self.assertEqual(plan.context["ref"], dc.context_ref(real))
+        self.assertEqual(plan.context["revision"], tree.head)
+        self.assertEqual(plan.retry["context_paths"],
+                         tuple(row["path"] for row in real["candidates"]))
+        # And the same real manifest against a tree whose head has moved is refused, so the
+        # checkpoint check is reading the seam's own freshness block and not this file's.
+        self.refused("checkpoint-moved", manifest=real, checkpoint=MOVED_HEAD)
 
 if __name__ == "__main__":
     unittest.main()
