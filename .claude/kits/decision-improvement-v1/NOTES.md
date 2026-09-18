@@ -1195,3 +1195,120 @@ not a silent edit. Both docstrings in `bin/decision_provider.py` described `sha(
 omitting these four fields; that false description is corrected, and the limitation is now stated
 where a wiring task will read it.
 defect: D12 kind=unspecified-path replay_key inherits correlation_id/run/task/attempt from DecisionRequest.sha(); the shared PLAN does not list them as replay-identity components, so replay rarely hits. Conservative, not unsafe. Needs an architect decision before D20/D23 wire a coordinator.
+
+## Phase 3 review — accepted with findings; F1 and F2 closed in-phase
+
+Nine findings, none reversing a `done`. The reviewer ran its control FIRST in BOTH temp trees and
+used two of them deliberately: a `git archive` extract has no `.git`, and eight git-dependent
+tests fail there for reasons unrelated to any mutation — so it also made a `git clone` at the
+commit under test. That is the "temp tree differed in more than one way" trap I fell into on D11,
+avoided by construction. 55 single-branch deletions, subprocesses inheriting `sys.executable`
+rather than a hand-built PATH.
+
+It ran the phase end-to-end across two different module loaders and it composes: request parsed ->
+`evaluate(mode="rules")` -> `parse_result` -> `runtime_facts` + `resolve_bundle` -> `select_action`
+-> `build_record` -> `decision_ref`. Authority containment holds under COMPOSITION, not just per
+task: bundle parameters never reach selection, proposal diffs are inert, answer distributions are
+unreadable by construction, a replayed `recommended` is re-validated against the current request's
+alternatives, and reason vocabularies are closed at construction.
+
+### F1 (HIGH, closed) — and I was fooled by the same fixture the tests were
+
+Four of the six freshness nulls on a replay hit (`observed_provider`, `dispatched_model`,
+`observed_model`, `usage`) were deletable with the ENTIRE 4629-test suite green. Cause: the
+`result_for` fixture already set exactly those four to `None`, so four of the six `assertIsNone`
+lines — which read as an exhaustive proof — could not fail.
+
+**I verified this property myself earlier in this run and reported it as holding.** I printed all
+six fields coming back `None` and concluded the unknown-not-zero guardrail was satisfied. I used
+the default fixture, where four were already `None`, so my check could not have failed either. The
+reviewer's finding is as much about my verification as about the tests: **a check performed with
+the same fixture the tests use inherits the same blind spot.** When re-deriving a property, build
+the input so that every field under test carries a value the code must actively change.
+
+`usage` is the one with consequences: a replay reporting the original call's billed dollars
+double-counts real spend, against the rule that missing usage is unknown, never inherited.
+Confirmed shipped code is CORRECT — with a fully populated source record all six still come back
+`None`. The defect was purely that no test could tell.
+
+Closed with a test recording a source result carrying real values in all six, asserting in-test
+that the SOURCE carries each one before asserting the replay nulls it. Mutation-proven per field:
+all six now fail on deletion; before, four left the whole suite green.
+
+### F2 (MEDIUM, closed) — a vacuous test reintroduced, of the class D09 fixed four of
+
+`test_the_attempt_event_kinds_are_not_appended_from_this_module` had its `assertNotIn` nested
+inside four `if`s over an AST walk and executed ZERO assertions against the module. Rewritten as
+a text check like its own neighbour two lines below, which can always fail; proven non-vacuous by
+adding a kind literal as a comment and watching it go red. The product was never exposed —
+`test_decision_provenance.py` sweeps every `bin/*.py` for the same literals and is non-vacuous —
+but D09's standing instruction says a new structural check must expect auditing, and D12 added one
+that had not been.
+
+### F3 (MEDIUM, OPEN — needs an architect decision, do NOT silently edit)
+
+**A refused decision cannot be recorded.** `ActionSelection` sets `selected=None` for its six
+refusal reasons, and `baseline` may be `None`. `parse_record` requires both to be non-null labels
+drawn from `request.alternatives`, so `build_record` raises `[wrong-type] record.selected must be
+a string, got NoneType`. The outcome that matters most for audit — the coordinator refused to act,
+and here is the complete reason — has no representation in the object the shared PLAN says carries
+"reason codes, rejected alternatives". Secondary wrinkle: on a whole-selection refusal every
+alternative including the untouched baseline is listed in `rejected` with reason `not-selected`,
+which is not why it was set aside.
+
+Nothing is broken today (zero callers) but D18/D20/D23 hit it immediately. Two legitimate
+resolutions: make `selected`/`baseline` nullable, which is a `CONTRACT_VERSION` bump and exactly
+what that constant exists for; or record deliberately that a refusal produces no `DecisionRecord`
+and say where it IS recorded instead. That is a scope decision, not an implementer's call.
+
+### F4 (corrections to my own records)
+
+"Zero production callers" is true of BEHAVIOUR and false of IMPORTS. `bin/release_gate.py:153-156`
+loads and executes `bin/decision_contract.py` and `bin/decision_provider.py` at check/build time
+via `spec.loader.exec_module`. Proven by coupling, not inferred: bumping each of the four version
+constants moves `release_gate check` from exit 0 to exit 3, four times out of four. Consequence
+for Phase 4: **an import-time error in either module breaks the release gate.**
+`bin/decision_policy.py` genuinely has zero callers of any kind.
+
+Also stale: D11's note said "the only two matches outside its own file are comments in
+`decision_contract.py`". There are three now — D12 added `bin/decision_provider.py:453`. True when
+written, wrong as a present-tense claim. Carry-forward notes age; date them or phrase them as of
+a commit.
+
+### F5-F9 — carried to Phase 4/5, not fixed here
+
+F5: the rules provider sets `dispatched_provider` to the provider on the `ok` path and `None` on
+both abstain paths — same local computation, two different claims about whether anything was
+dispatched, and no test pins either. D14's coverage/abstention joins and D19's resource accounting
+both key off these slots.
+F6: `DecisionResult.note` is provider-controlled free text, bounded at 4000 chars but never passed
+through `bin/redact.py`, and it is persisted verbatim into the replay store. Harmless today (the
+only writers are this module's own constants); D20's live provider is the first real writer, and
+D14-D19 read these records.
+F7: `SENSITIVITIES` and `PRIVACY_SCOPES` are each validated as vocabularies and never compared to
+each other, so nothing prevents a `restricted` question riding inside a `vendor-eligible` request.
+F8: the stale-admission rule is spelled in both `decision_contract` and `decision_policy` with no
+test pinning them equivalent — unlike the good precedent already set for
+`LEGACY_PREFERENCE_VERSION == workflow_eval.POLICY_VERSION`.
+F9: the replay store is read with bare `json.loads`, not the contract's duplicate-key-safe
+`loads`, in a module whose sibling made duplicate keys a refusal.
+
+### Two Phase 4/5 tripwires nobody had written down
+
+**A real replay store has no home.** `replay` is not in `runtime_data.STORES` and there is no
+`/replay/` in `.gitignore`. `store_path` does not validate the name, so passing one works — but
+`runtime_data where/migrate/forget` iterate `STORES` only, so the store would be invisible to the
+user's own inspection and deletion paths, and `legacy_path` means a `replay/` directory in the
+repo root would become the store AND BE TRACKED BY GIT. That breaks the invariant that every local
+store is personal data living outside the plugin tree.
+
+**Label values are stricter in the workbench than in the bundle.** `workflow_eval.build_proposal`
+refuses a `workflow` outside `WORKFLOWS` and a `policy` outside `POLICIES`; `DIFF_PARAMETERS`'
+`routing.default_workflow`/`routing.default_policy` accept any label. Whoever bridges them must
+apply the workbench's vocabulary.
+
+Also for D20/D23: `_read_record` RAISES on a version mismatch rather than returning a miss, so
+bumping `REPLAY_VERSION` turns an existing store into an error-throwing store rather than a cold
+cache. Honest over silent, but a coordinator expecting "a miss abstains" will not get it.
+reviewer: P3 model=opus findings=9 confirmed=9 result=accepted
+defect: D13 kind=contradictory-acceptance a refused ActionSelection has selected=None and baseline may be None, but parse_record requires both non-null, so build_record raises and a refusal cannot be recorded. Needs an architect decision before D18/D20/D23.

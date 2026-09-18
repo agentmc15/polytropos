@@ -342,6 +342,42 @@ class RulesReplayProviderTests(unittest.TestCase):
         parsed = dc.parse_result(payload, req)
         self.assertEqual(parsed.correlation_id, req.correlation_id)
 
+    def test_a_replay_hit_strips_identity_and_cost_a_source_record_actually_carried(self):
+        """The hit test above asserts all six freshness fields are None, but `result_for` already
+        sets four of them to None, so four of its six assertions cannot fail. Independent review
+        confirmed it: deleting the lines that null `observed_provider`, `dispatched_model`,
+        `observed_model` or `usage` left the ENTIRE 4628-test suite green. The product was always
+        correct -- no test could tell. This records a source result carrying real values in all
+        six, so each null is something the replay had to do rather than something the fixture
+        did for it.
+
+        `usage` is the one with teeth: a replay reporting the original call's billed dollars
+        would double-count real spend against the rule that missing usage is unknown, never
+        inherited.
+        """
+        req = request()
+        result = self.result_for(
+            req,
+            observed_provider="rules", dispatched_model="m1", observed_model="m1",
+            usage={"basis": "billed", "usd": 0.42, "credits": None, "source": "rules"},
+        )
+        carried = result.to_payload()
+        for field in ("dispatched_provider", "observed_provider", "dispatched_model",
+                      "observed_model", "duration", "usage"):
+            with self.subTest(carried=field):
+                self.assertIsNotNone(carried[field],
+                                     "the SOURCE record must carry this, or nulling it proves "
+                                     "nothing about the replay")
+        with tempfile.TemporaryDirectory() as tmp:
+            dp.record_result(tmp, req, result, provider="rules")
+            payload = dp.evaluate(req, mode="replay", provider="rules", store_dir=tmp)
+        for field in ("dispatched_provider", "observed_provider", "dispatched_model",
+                      "observed_model", "duration", "usage"):
+            with self.subTest(stripped=field):
+                self.assertIsNone(payload[field])
+        self.assertEqual(payload["answers"], carried["answers"],
+                         "the answer itself is still reused verbatim")
+
     def test_a_cross_project_request_misses_even_with_every_other_field_identical(self):
         req = request()
         other = request(eligibility={"project": "some-other-project",
@@ -642,18 +678,18 @@ class RulesReplayProviderTests(unittest.TestCase):
     def test_the_attempt_event_kinds_are_not_appended_from_this_module(self):
         # This module is a library the coordinator calls; it records no attempt event itself.
         # `test_decision_provenance.py` sweeps every bin/*.py for exactly this literal set.
-        kinds = {"attempt.started", "attempt.finished", "verify.finished", "task.projected"}
-        tree = ast.parse(MODULE_PATH.read_text(encoding="utf-8"))
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.Call):
-                continue
-            fn_node = node.func
-            name = (fn_node.attr if isinstance(fn_node, ast.Attribute)
-                    else fn_node.id if isinstance(fn_node, ast.Name) else None)
-            if name in ("append", "_record") and node.args:
-                first = node.args[0]
-                if isinstance(first, ast.Constant):
-                    self.assertNotIn(first.value, kinds)
+        # This assertion used to sit inside four nested `if`s over an AST walk, so it executed
+        # ZERO times against this module -- it could not fail whatever the file contained, which
+        # is the same vacuity D09 had to fix in four of its own structural tests. The claim here
+        # is simply that no attempt-kind literal appears in this module at all, which is
+        # stronger than "is not passed to append()" and, being a text check like its neighbour
+        # below, can always fail.
+        kinds = ("attempt.started", "attempt.finished", "verify.finished", "task.projected")
+        text = MODULE_PATH.read_text(encoding="utf-8")
+        self.assertTrue(text, "the module must be readable for this to mean anything")
+        for kind in kinds:
+            with self.subTest(kind=kind):
+                self.assertNotIn(kind, text)
 
     def test_the_module_never_writes_the_evaluation_stores_own_reserved_name(self):
         # tests/test_decision_evaluation_manifest.py sweeps every bin/*.py for a quoted "evals"
