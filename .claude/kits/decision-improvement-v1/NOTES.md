@@ -1381,3 +1381,63 @@ Limitations stated rather than found later:
   deletion today because a ref is a flat dict of scalars. Reported rather than claimed as enforced.
 - Zero production callers. `release_gate` IMPORTS the module to read its version and calls nothing.
 outcome: D14 model=opus attempts=1 result=pass review=pending run=2026-09-16-aa6e
+
+## D15 — Calibration reports (sonnet, depends D14)
+
+Calibration reporting appended to `bin/decision_eval.py` (991 -> 1447) plus
+`CalibrationReportingTests` (42 tests) beside D14's class, which is AST-identical at 58 methods.
+New `CALIBRATION_VERSION` registered separately. Suite 4684 -> 4726.
+
+**"No private default fitting" is structural, and the precise claim is worth stating carefully.**
+`calibration_artifact` — the only object that could carry fitted parameters — accepts ONLY
+identity: target, provider, domain, dataset, method, fit_partition, sample_count, model,
+fitted_at, note. Every one is a label, a count or an instant, and the signature is keyword-only,
+so I confirmed that `observations`, `predictions`, `labels`, `pairs` and `samples` are all
+`TypeError`. There is no parameter a fit could be computed from.
+
+Do NOT overclaim this as "nothing sees the data": `calibration_report` necessarily receives rows
+carrying both distributions and resolved labels, because that is what computing Brier or log loss
+requires. The fence is that nothing converts them into parameters, and the artifact that would
+hold parameters cannot be built from them. What would have to be added for fitting to exist: a
+function taking (predicted, actual) batches and returning parameters. That is optional task O03
+and does not exist anywhere in the module.
+
+**The three-way metric status is the honesty rule where it matters most.**
+`METRIC_STATUSES = ('computed', 'not-applicable', 'insufficient-evidence')`, floor 20. I verified
+all three: 3 rows gives `insufficient-evidence` with `value=None` and `n=3` still visible; 40 rows
+gives `computed`; rows with no distribution in the requested field give `not-applicable` with
+`n=0`, genuinely distinct from sparse. A `0.0` Brier score reads as PERFECT CALIBRATION, which is
+the most flattering possible misreading of "we had no data" — so `None` rather than 0 is
+load-bearing here in a way it is not for most fields.
+
+Arithmetic checked independently, not taken from the report: Brier 0.08 is exactly
+(0.8-1)^2 + (0.2-0)^2, and log loss 0.22314355131420965 is -ln(0.8) to ~1e-16.
+
+**It implemented natural log FROM SCRATCH rather than importing `math`, because D14's import-pin
+test forbids new imports and it refused to modify D14's test.** That is respecting a fence at real
+cost, and a hand-rolled log is exactly the kind of thing that produces plausible wrong numbers, so
+I checked it: worst absolute error 8.9e-16 (machine epsilon) across 2013 samples from 1e-12 to
+1.0. Effectively exact in double precision.
+
+Partition leakage is refused: a calibrated report must declare its own `report_partition` and is
+refused when that equals the artifact's `fit_partition` — validating a calibrator on the material
+it was fit on is the fit read back, not held-out evidence. Same principle as D06's held-out
+manifest.
+
+23 mutations, control first, all red. Guards proven include: field-must-be-raw-or-calibrated;
+artifact-cannot-cite-raw; artifact-target-mismatch; partition-leakage; the never-fall-back-to-raw
+guard; brier not-applicable-on-empty vs sparse-insufficient as SEPARATE branches; log-loss floor
+clipping; per-threshold sparsity; and the causal-fence wiring proven by monkeypatch rather than by
+the sweep function merely being present.
+
+Limitation worth carrying: `fit_partition`/`report_partition` are caller-supplied STRINGS compared
+for inequality, NOT validated against `workflow_eval.PARTITION_ROLES`' real vocabulary
+(`development`/`calibration`/`promotion`/`audit`). That is a deliberate tradeoff — reaching that
+vocabulary would have broken D14's sibling-reach pin, which allows only `RECORD_FIELDS` and
+`DURATION_BASES`. So two misspelled-but-different labels pass the leakage check. A later task
+wiring `decision_eval` to real partitions needs either a new sibling loader or a relaxation of
+that pin, deliberately.
+
+`vendor_confidence` is read by no metric, which is correct: the decision contract already
+establishes it is not a probability of task success.
+outcome: D15 model=sonnet attempts=1 result=pass review=pending run=2026-09-16-aa6e

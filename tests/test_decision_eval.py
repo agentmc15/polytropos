@@ -42,6 +42,7 @@ import ast
 import importlib.util
 import inspect
 import json
+import math
 import unittest
 from pathlib import Path
 
@@ -780,6 +781,454 @@ class PredictionTimeJoinTests(unittest.TestCase):
 
     def test_the_join_version_is_declared_on_the_release_surface(self):
         self.assertIn(("decision prediction join", "decision_eval", "JOIN_VERSION"),
+                      rg.VERSION_SOURCES)
+
+
+# ---- D15 -- calibration reporting --------------------------------------------------------------
+#
+# `CalibrationReportingTests` covers the new section of `bin/decision_eval.py`:
+#
+#   * ARTIFACT PINS INPUTS. `calibration_artifact` records target/provider/model/domain/dataset/
+#     method/partition/sample_count and nothing else; a report that cites one refuses a mismatched
+#     target, a missing report partition, and a report partition equal to the artifact's own fit
+#     partition (the fit read back as its own validation).
+#   * RAW VS CALIBRATED NEVER BLEND. A report on `raw` cannot cite an artifact; a report on
+#     `calibrated` never falls back to `raw` when `calibrated` is absent; `calibration_report_pair`
+#     always returns the two separately, and only the calibrated side ever carries an artifact.
+#   * SPARSE SAYS INSUFFICIENT. Every rate/mean metric reports `insufficient-evidence` below
+#     `MIN_METRIC_SAMPLES` (or a caller-supplied floor), never a confident-looking number.
+#   * UNSUPPORTED METRICS ARE NOT-APPLICABLE; RULE LABELS ARE NOT PROBABILITIES. A field with zero
+#     rows carrying a distribution is `not-applicable`, distinct from a sparse field that has some;
+#     `vendor_confidence` is never read as a probability substitute.
+#   * DISPUTED/CENSORED/MISSING LABELS AND ABSTAINED ANSWERS ARE EXCLUDED FROM SCORING BUT COUNTED,
+#     never silently dropped -- the same discipline `PredictionTimeJoinTests` proves for the join
+#     itself.
+#   * INVALID METRICS REFUSE. Malformed artifacts, rows of another schema, an unknown `field`,
+#     thresholds outside [0, 1], a missing `action_outcome`, and non-positive `bins`/`min_samples`
+#     are all refused through `dc.ContractError` rather than silently coerced.
+#
+# Fixtures here are hand-built dicts shaped like `join_row`'s own `questions[]` entries, tagged
+# with `de.JOIN_VERSION` -- the "synthetic metric fixtures" the brief names -- rather than routed
+# through a full `DecisionRequest`/`DecisionResult`/`join_row` pipeline for every case: this
+# module reads exactly `row["questions"][i]["answer"]`/`["label"]`/`["outcomes"]`, and D14's own
+# tests already prove those fields come out of `join_row` in this shape.
+
+Q = Q_RECOVERS
+
+
+def question_block(question=Q, *, outcomes=("false", "true"), outcome="true", raw=None,
+                   calibrated=None, abstained=False, vendor_confidence=None,
+                   label_status="resolved", label_value="true", answer=_UNSET):
+    if answer is _UNSET:
+        answer = None if (outcome is None and not abstained) else {
+            "outcome": outcome, "abstained": abstained, "raw": raw, "calibrated": calibrated,
+            "vendor_confidence": vendor_confidence,
+        }
+    return {"question": question, "kind": "boolean", "outcomes": list(outcomes),
+            "abstention": "permitted", "target": None, "answer": answer,
+            "label": {"question": question, "status": label_status, "value": label_value,
+                     "observations": [], "disagreement": [], "reasons": [], "sources": []}}
+
+
+def calibration_row(*blocks):
+    return {"v": de.JOIN_VERSION, "questions": list(blocks)}
+
+
+def bulk_rows(n, *, p_true=0.8, actual="true", label_status="resolved", abstained=False):
+    dist = {"false": 1.0 - p_true, "true": p_true}
+    return [calibration_row(question_block(outcome=actual, raw=dict(dist),
+                                           calibrated=dict(dist), label_status=label_status,
+                                           label_value=actual, abstained=abstained))
+           for _ in range(n)]
+
+
+def artifact(**over):
+    payload = {"target": Q, "provider": "shadow-model", "domain": "decision-improvement-v1",
+              "dataset": "synthetic-fixture", "method": "isotonic",
+              "fit_partition": "calibration", "sample_count": 500, "model": "stub-model-1",
+              "fitted_at": PREDICT, "note": "synthetic fixture"}
+    payload.update(over)
+    return de.calibration_artifact(**payload)
+
+
+class CalibrationReportingTests(unittest.TestCase):
+
+    maxDiff = None
+
+    def refusal(self, code, callable_, *args, **kwargs):
+        with self.assertRaises(dc.ContractError) as caught:
+            callable_(*args, **kwargs)
+        self.assertEqual(caught.exception.code, code, str(caught.exception))
+        return caught.exception
+
+    # ---- the artifact pins inputs, never fits one -----------------------------------------------
+
+    def test_the_artifact_pins_exactly_the_declared_identity(self):
+        art = artifact()
+        self.assertEqual(art["v"], de.CALIBRATION_VERSION)
+        self.assertEqual(art["target"], Q)
+        self.assertEqual(art["fit_partition"], "calibration")
+        self.assertEqual(art["sample_count"], 500)
+        self.assertEqual(sorted(art), sorted(de.CALIBRATION_ARTIFACT_KEYS))
+
+    def test_a_blank_identity_field_is_refused(self):
+        for field in ("target", "provider", "domain", "dataset", "method", "fit_partition"):
+            with self.subTest(field=field):
+                self.refusal("wrong-type", artifact, **{field: ""})
+
+    def test_model_may_be_null_but_not_blank(self):
+        self.assertIsNone(artifact(model=None)["model"])
+        self.refusal("wrong-type", artifact, model="")
+
+    def test_sample_count_must_be_a_nonnegative_integer(self):
+        for bad in (-1, "5", 5.0, True):
+            with self.subTest(bad=bad):
+                self.refusal("wrong-type", artifact, sample_count=bad)
+        self.assertEqual(artifact(sample_count=0)["sample_count"], 0)
+
+    def test_fitted_at_must_name_an_instant_or_be_absent(self):
+        self.refusal("value-invalid", artifact, fitted_at="not a timestamp")
+        self.assertIsNone(artifact(fitted_at=None)["fitted_at"])
+
+    def test_a_raw_dict_missing_or_carrying_an_extra_artifact_field_is_refused(self):
+        rows = bulk_rows(20)
+        broken = dict(artifact())
+        del broken["sample_count"]
+        self.refusal("missing-field", de.calibration_report, rows, question=Q,
+                     field="calibrated", artifact=broken, report_partition="promotion")
+        extra = dict(artifact())
+        extra["extra_field"] = "not declared"
+        self.refusal("unknown-field", de.calibration_report, rows, question=Q,
+                     field="calibrated", artifact=extra, report_partition="promotion")
+
+    def test_an_artifact_of_a_different_calibration_version_is_refused(self):
+        stale = dict(artifact())
+        stale["v"] = "polytropos.decision-calibration/99"
+        self.refusal("unknown-value", de.calibration_report, bulk_rows(20), question=Q,
+                     field="calibrated", artifact=stale, report_partition="promotion")
+
+    # ---- raw versus calibrated interpretation, preserved -----------------------------------------
+
+    def test_a_raw_report_cannot_cite_a_calibration_artifact(self):
+        self.refusal("value-invalid", de.calibration_report, bulk_rows(20), question=Q,
+                     field="raw", artifact=artifact())
+
+    def test_a_calibrated_report_needs_the_artifacts_target_to_match_the_question(self):
+        mismatched = artifact(target="q-other@v1")
+        self.refusal("value-invalid", de.calibration_report, bulk_rows(20), question=Q,
+                     field="calibrated", artifact=mismatched, report_partition="promotion")
+
+    def test_a_calibrated_report_with_an_artifact_must_declare_its_own_partition(self):
+        self.refusal("missing-field", de.calibration_report, bulk_rows(20), question=Q,
+                     field="calibrated", artifact=artifact())
+
+    def test_a_report_cannot_validate_a_calibrator_on_the_partition_it_was_fit_on(self):
+        art = artifact(fit_partition="calibration")
+        self.refusal("value-invalid", de.calibration_report, bulk_rows(20), question=Q,
+                     field="calibrated", artifact=art, report_partition="calibration")
+        # A DIFFERENT partition is exactly the held-out evidence the plan asks for, and works.
+        report = de.calibration_report(bulk_rows(20), question=Q, field="calibrated",
+                                       artifact=art, report_partition="promotion")
+        self.assertEqual(report["classification"]["status"], "computed")
+
+    def test_the_field_argument_must_be_raw_or_calibrated(self):
+        self.refusal("unknown-value", de.calibration_report, bulk_rows(20), question=Q,
+                     field="vibes")
+
+    def test_calibrated_never_falls_back_to_raw_when_calibrated_is_absent(self):
+        rows = [calibration_row(question_block(outcome="true",
+                                               raw={"false": 0.1, "true": 0.9},
+                                               calibrated=None, label_value="true"))
+               for _ in range(5)]
+        raw_report = de.calibration_report(rows, question=Q, field="raw", min_samples=1)
+        calibrated_report = de.calibration_report(rows, question=Q, field="calibrated",
+                                                   min_samples=1)
+        self.assertEqual(raw_report["brier"]["status"], "computed")
+        self.assertEqual(calibrated_report["brier"]["status"], "not-applicable")
+        self.assertEqual(calibrated_report["coverage"]["excluded"]["no-distribution"], 5)
+
+    def test_vendor_confidence_is_never_read_as_a_probability_substitute(self):
+        rows = [calibration_row(question_block(outcome="true", raw=None, calibrated=None,
+                                               vendor_confidence=0.95, label_value="true"))
+               for _ in range(5)]
+        for field in ("raw", "calibrated"):
+            with self.subTest(field=field):
+                report = de.calibration_report(rows, question=Q, field=field, min_samples=1)
+                self.assertEqual(report["brier"]["status"], "not-applicable")
+                self.assertEqual(report["log_loss"]["status"], "not-applicable")
+                self.assertEqual(report["coverage"]["excluded"]["no-distribution"], 5)
+                # Classification still works: an outcome was named even with no distribution.
+                self.assertEqual(report["classification"]["status"], "computed")
+                self.assertEqual(report["classification"]["value"], 1.0)
+
+    def test_calibration_report_pair_never_lets_raw_cite_an_artifact(self):
+        art = artifact()
+        pair = de.calibration_report_pair(bulk_rows(20), question=Q, artifact=art,
+                                          report_partition="promotion")
+        self.assertIsNone(pair["raw"]["artifact"])
+        self.assertEqual(pair["calibrated"]["artifact"]["target"], Q)
+        self.assertEqual(pair["raw"]["field"], "raw")
+        self.assertEqual(pair["calibrated"]["field"], "calibrated")
+
+    # ---- sparse says insufficient -----------------------------------------------------------------
+
+    def test_fewer_than_the_floor_is_insufficient_evidence_not_a_number(self):
+        rows = bulk_rows(de.MIN_METRIC_SAMPLES - 1)
+        report = de.calibration_report(rows, question=Q, field="raw")
+        self.assertEqual(report["classification"]["status"], "insufficient-evidence")
+        self.assertIsNone(report["classification"]["value"])
+        self.assertEqual(report["brier"]["status"], "insufficient-evidence")
+        self.assertEqual(report["log_loss"]["status"], "insufficient-evidence")
+
+    def test_at_or_above_the_floor_computes_a_real_number(self):
+        rows = bulk_rows(de.MIN_METRIC_SAMPLES)
+        report = de.calibration_report(rows, question=Q, field="raw")
+        self.assertEqual(report["classification"]["status"], "computed")
+        self.assertEqual(report["brier"]["status"], "computed")
+        self.assertEqual(report["log_loss"]["status"], "computed")
+
+    def test_a_caller_supplied_floor_is_honoured_instead_of_the_default(self):
+        rows = bulk_rows(3)
+        report = de.calibration_report(rows, question=Q, field="raw", min_samples=3)
+        self.assertEqual(report["classification"]["status"], "computed")
+
+    def test_min_samples_must_be_a_positive_integer(self):
+        for bad in (0, -1, "3", 3.0, True):
+            with self.subTest(bad=bad):
+                self.refusal("wrong-type", de.calibration_report, bulk_rows(5), question=Q,
+                             field="raw", min_samples=bad)
+
+    # ---- unsupported metrics are not-applicable; rule labels are not probabilities ----------------
+
+    def test_a_rule_labeled_batch_is_not_applicable_not_a_fake_zero(self):
+        rows = [calibration_row(question_block(outcome="true", raw=None, calibrated=None,
+                                               label_value="true"))
+               for _ in range(25)]
+        report = de.calibration_report(rows, question=Q, field="raw")
+        self.assertEqual(report["brier"]["status"], "not-applicable")
+        self.assertEqual(report["brier"]["n"], 0)
+        self.assertEqual(report["log_loss"]["status"], "not-applicable")
+        # Classification quality does not need a distribution at all.
+        self.assertEqual(report["classification"]["status"], "computed")
+        self.assertEqual(report["classification"]["value"], 1.0)
+
+    def test_reliability_bins_are_present_but_empty_when_nothing_is_probabilistic(self):
+        rows = [calibration_row(question_block(outcome="true", raw=None, calibrated=None,
+                                               label_value="true"))
+               for _ in range(25)]
+        report = de.calibration_report(rows, question=Q, field="raw")
+        self.assertEqual(len(report["reliability_bins"]), de.DEFAULT_RELIABILITY_BINS)
+        self.assertTrue(all(b["n"] == 0 for b in report["reliability_bins"]))
+
+    # ---- disputed/censored/missing labels and abstentions: excluded but counted -------------------
+
+    def test_a_disputed_or_censored_or_missing_label_is_excluded_from_scoring_but_counted(self):
+        rows = [
+            calibration_row(question_block(outcome="true", raw={"false": 0.2, "true": 0.8},
+                                          calibrated={"false": 0.2, "true": 0.8},
+                                          label_status="resolved", label_value="true")),
+            calibration_row(question_block(outcome="true", label_status="disputed",
+                                          label_value=None)),
+            calibration_row(question_block(outcome="true", label_status="censored",
+                                          label_value=None)),
+            calibration_row(question_block(outcome="true", label_status="missing",
+                                          label_value=None)),
+        ]
+        report = de.calibration_report(rows, question=Q, field="raw", min_samples=1)
+        self.assertEqual(report["coverage"]["matched_rows"], 4)
+        self.assertEqual(report["coverage"]["resolved"], 1)
+        self.assertEqual(report["coverage"]["excluded"]["label-not-resolved"], 3)
+        self.assertEqual(report["classification"]["n"], 1)
+
+    def test_an_abstained_answer_is_excluded_from_scoring_but_counted_separately(self):
+        rows = [calibration_row(question_block(outcome="true",
+                                               raw={"false": 0.2, "true": 0.8},
+                                               calibrated={"false": 0.2, "true": 0.8},
+                                               label_value="true")),
+               calibration_row(question_block(outcome=None, abstained=True,
+                                              label_value="true"))]
+        report = de.calibration_report(rows, question=Q, field="raw", min_samples=1)
+        self.assertEqual(report["coverage"]["resolved"], 2)
+        self.assertEqual(report["coverage"]["scoreable"], 1)
+        self.assertEqual(report["coverage"]["abstained"], 1)
+
+    def test_rows_that_never_asked_this_question_are_counted_as_unmatched(self):
+        rows = [calibration_row(question_block(question="q-other@v1"))
+               for _ in range(3)]
+        report = de.calibration_report(rows, question=Q, field="raw", min_samples=1)
+        self.assertEqual(report["coverage"]["matched_rows"], 0)
+        self.assertEqual(report["coverage"]["unmatched_rows"], 3)
+        self.assertEqual(report["brier"]["status"], "not-applicable")
+
+    # ---- invalid metrics refuse ---------------------------------------------------------------------
+
+    def test_a_row_of_another_schema_is_refused(self):
+        self.refusal("wrong-type", de.calibration_report, [{"not": "a row"}], question=Q,
+                     field="raw")
+        self.refusal("wrong-type", de.calibration_report, ["not a row at all"], question=Q,
+                     field="raw")
+        self.refusal("wrong-type", de.calibration_report, "rows are a list", question=Q,
+                     field="raw")
+
+    def test_too_many_rows_is_refused(self):
+        self.refusal("bounds-exceeded", de.calibration_report,
+                     [calibration_row(question_block())] * (de.MAX_ROWS + 1), question=Q,
+                     field="raw")
+
+    def test_a_non_string_question_is_refused(self):
+        self.refusal("wrong-type", de.calibration_report, bulk_rows(5), question=123,
+                     field="raw")
+        self.refusal("wrong-type", de.calibration_report, bulk_rows(5), question="",
+                     field="raw")
+
+    def test_bins_must_be_a_positive_integer(self):
+        for bad in (0, -3, "10", 10.0, True):
+            with self.subTest(bad=bad):
+                self.refusal("wrong-type", de.calibration_report, bulk_rows(20), question=Q,
+                             field="raw", bins=bad)
+
+    def test_candidate_thresholds_need_an_explicit_action_outcome(self):
+        self.refusal("missing-field", de.calibration_report, bulk_rows(20), question=Q,
+                     field="raw", thresholds=(0.5,))
+
+    def test_a_threshold_outside_zero_to_one_is_refused(self):
+        for bad in (-0.1, 1.5, True):
+            with self.subTest(bad=bad):
+                self.refusal("value-invalid", de.calibration_report, bulk_rows(20), question=Q,
+                             field="raw", thresholds=(bad,), action_outcome="true")
+
+    def test_an_empty_thresholds_tuple_computes_no_false_action_risk_rather_than_a_default(self):
+        report = de.calibration_report(bulk_rows(20), question=Q, field="raw")
+        self.assertIsNone(report["false_action_risk"])
+
+    # ---- worked numbers: Brier, log loss, classification, reliability, false-action risk -----------
+
+    def test_brier_score_matches_a_hand_computed_value(self):
+        rows = bulk_rows(20, p_true=0.8, actual="true")
+        report = de.calibration_report(rows, question=Q, field="raw")
+        # Multi-category Brier: (0.8-1)^2 + (0.2-0)^2 = 0.04 + 0.04 = 0.08 for every row.
+        self.assertAlmostEqual(report["brier"]["value"], 0.08, places=9)
+        self.assertEqual(report["brier"]["n"], 20)
+        # Zero variance: every one of the 20 rows carries the identical distribution and label,
+        # so the standard error is exactly zero rather than undefined.
+        self.assertAlmostEqual(report["brier"]["standard_error"], 0.0, places=9)
+
+    def test_log_loss_score_matches_a_hand_computed_value(self):
+        rows = bulk_rows(20, p_true=0.8, actual="true")
+        report = de.calibration_report(rows, question=Q, field="raw")
+        self.assertAlmostEqual(report["log_loss"]["value"], -math.log(0.8), places=9)
+        self.assertEqual(report["log_loss"]["clipped"], 0)
+
+    def test_a_probability_of_exactly_zero_for_what_happened_is_clipped_and_counted(self):
+        rows = bulk_rows(20, p_true=0.0, actual="true")
+        report = de.calibration_report(rows, question=Q, field="raw")
+        self.assertEqual(report["log_loss"]["status"], "computed")
+        self.assertAlmostEqual(report["log_loss"]["value"], -math.log(de.LOG_LOSS_FLOOR),
+                               places=6)
+        self.assertEqual(report["log_loss"]["clipped"], 20)
+
+    def test_the_natural_log_helper_matches_known_values(self):
+        for value, expected in ((1, 0.0), (2, math.log(2)), (0.5, math.log(0.5)),
+                                (10, math.log(10)), (1e-9, math.log(1e-9))):
+            with self.subTest(value=value):
+                self.assertAlmostEqual(de._ln(value), expected, places=9)
+        self.refusal("value-invalid", de._ln, 0)
+        self.refusal("value-invalid", de._ln, -1.0)
+
+    def test_classification_accuracy_counts_correct_predictions(self):
+        correct = bulk_rows(15, p_true=0.8, actual="true")
+        wrong = [calibration_row(question_block(outcome="false",
+                                               raw={"false": 0.8, "true": 0.2},
+                                               calibrated={"false": 0.8, "true": 0.2},
+                                               label_value="true"))
+                for _ in range(5)]
+        report = de.calibration_report(correct + wrong, question=Q, field="raw")
+        self.assertEqual(report["classification"]["status"], "computed")
+        self.assertAlmostEqual(report["classification"]["value"], 0.75, places=9)
+        self.assertEqual(report["classification"]["n"], 20)
+        self.assertEqual(report["classification"]["successes"], 15)
+
+    def test_reliability_bin_placement_and_statistics(self):
+        rows = bulk_rows(20, p_true=0.85, actual="true")
+        report = de.calibration_report(rows, question=Q, field="raw")
+        bins = report["reliability_bins"]
+        self.assertEqual(len(bins), de.DEFAULT_RELIABILITY_BINS)
+        occupied = [b for b in bins if b["n"] > 0]
+        self.assertEqual(len(occupied), 1)
+        bucket = occupied[0]
+        self.assertEqual(bucket["n"], 20)
+        self.assertAlmostEqual(bucket["lower"], 0.8, places=9)
+        self.assertAlmostEqual(bucket["upper"], 0.9, places=9)
+        self.assertAlmostEqual(bucket["mean_confidence"], 0.85, places=9)
+        self.assertAlmostEqual(bucket["empirical_accuracy"], 1.0, places=9)
+
+    def test_false_action_risk_rate_and_per_threshold_sample_counts(self):
+        confident_right = bulk_rows(20, p_true=0.95, actual="true")
+        confident_wrong = [calibration_row(question_block(outcome="true",
+                                                          raw={"false": 0.05, "true": 0.95},
+                                                          calibrated={"false": 0.05,
+                                                                     "true": 0.95},
+                                                          label_value="false"))
+                          for _ in range(5)]
+        below_threshold = bulk_rows(20, p_true=0.6, actual="true")
+        rows = confident_right + confident_wrong + below_threshold
+        report = de.calibration_report(rows, question=Q, field="raw",
+                                       thresholds=(0.9, 0.5), action_outcome="true")
+        by_threshold = {r["threshold"]: r for r in report["false_action_risk"]}
+        high = by_threshold[0.9]
+        self.assertEqual(high["status"], "computed")
+        self.assertEqual(high["n"], 25)
+        self.assertAlmostEqual(high["false_action_rate"], 5 / 25, places=9)
+        low = by_threshold[0.5]
+        self.assertEqual(low["n"], 45)
+
+    def test_a_threshold_with_too_few_qualifying_rows_is_insufficient_evidence(self):
+        confident = bulk_rows(3, p_true=0.95, actual="true")
+        unconfident = bulk_rows(20, p_true=0.1, actual="false")
+        report = de.calibration_report(confident + unconfident, question=Q, field="raw",
+                                       thresholds=(0.9,), action_outcome="true",
+                                       min_samples=20)
+        risk = report["false_action_risk"][0]
+        self.assertEqual(risk["status"], "insufficient-evidence")
+        self.assertEqual(risk["n"], 3)
+        self.assertIsNone(risk["false_action_rate"])
+
+    # ---- audit separate: the pin and the numbers are never the same key --------------------------
+
+    def test_the_artifact_and_the_metrics_are_reported_under_separate_keys(self):
+        rows = bulk_rows(20)
+        no_artifact = de.calibration_report(rows, question=Q, field="raw")
+        self.assertIsNone(no_artifact["artifact"])
+        self.assertIn("classification", no_artifact)
+        self.assertIn("brier", no_artifact)
+        art = artifact()
+        with_artifact = de.calibration_report(rows, question=Q, field="calibrated",
+                                              artifact=art, report_partition="promotion")
+        self.assertEqual(with_artifact["artifact"]["fit_partition"], "calibration")
+        self.assertEqual(with_artifact["report_partition"], "promotion")
+        # Mutating the report's own artifact copy cannot reach the caller's artifact dict.
+        with_artifact["artifact"]["fit_partition"] = "tampered"
+        self.assertEqual(art["fit_partition"], "calibration")
+
+    # ---- the causal fence applies to this emitted surface too --------------------------------------
+
+    def test_the_report_is_actually_swept_for_a_causal_claim(self):
+        original = de.assert_no_causal_claim
+
+        def _boom(*_args, **_kwargs):
+            raise dc.ContractError("authority-field", "stubbed for this test")
+
+        de.assert_no_causal_claim = _boom
+        try:
+            with self.assertRaises(dc.ContractError):
+                de.calibration_report(bulk_rows(20), question=Q, field="raw")
+        finally:
+            de.assert_no_causal_claim = original
+
+    # ---- release surface -----------------------------------------------------------------------------
+
+    def test_the_calibration_version_is_declared_on_the_release_surface(self):
+        self.assertIn(("decision calibration report", "decision_eval", "CALIBRATION_VERSION"),
                       rg.VERSION_SOURCES)
 
 

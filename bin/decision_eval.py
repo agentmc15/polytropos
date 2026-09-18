@@ -989,3 +989,459 @@ def join(rows, notes=()):
                         INFRASTRUCTURE_FACT_NOTE, NOTE_WITHHELD],
         "notes": list(notes),
     }
+
+
+# ---- D15: calibration reporting ----------------------------------------------------------------
+#
+# WHAT WAS WRONG. A `DecisionResult` carries two numeric slots for a question -- `raw` and
+# `calibrated` -- and D14's join already carries both, alongside the label the join resolved, in
+# every question block of every row. Nothing counted how often either one agreed with what
+# happened. Without that, "the model is well-calibrated" is a claim nobody has checked, and a
+# rules provider's plain categorical choice (`raw` and `calibrated` both `None`, by
+# `bin/decision_provider.py`'s own construction) is exactly the kind of value a careless report
+# turns into a fake probability -- scored as though it had said "0% confident" rather than "no
+# confidence was ever claimed".
+#
+# WHAT THIS IS. Two things, kept apart on purpose:
+#
+#   * `calibration_artifact` records IDENTITY -- which target, provider, model, domain, dataset,
+#     method, partition and how many rows a calibrator claims to have been fit on -- and nothing
+#     else. No observation, no prediction, no label crosses this function; there is nothing here
+#     a fit could be computed FROM, because fitting one is `OPTIONAL-TASKS.md`'s O03, not
+#     started, and this module's job is to let a report cite an artifact without ever producing
+#     one.
+#   * `calibration_report` (and `calibration_report_pair`, which runs it once per field) counts,
+#     for ONE question and ONE of `raw`/`calibrated`, how the join's own `answer.outcome`,
+#     `answer.raw` and `answer.calibrated` compared against the label the join resolved:
+#     classification accuracy for every scoreable row, Brier score and log loss for the rows
+#     that actually carry a distribution in that field, a reliability diagram over the
+#     distribution's top category, and false-action risk at candidate thresholds the CALLER
+#     names -- there is no default threshold, because inventing one would be deciding what
+#     "acting" means on the caller's behalf.
+#
+# WHAT IT REFUSES. A report on `field="raw"` cannot cite a calibration artifact -- a raw score
+# was never fit on anything, and citing one beside it would dress an unfit number up as
+# validated. A report on `field="calibrated"` that DOES cite one must match the artifact's own
+# pinned question and must declare which partition its own rows come from; a report whose
+# partition equals the artifact's `fit_partition` is refused outright, because scoring a
+# calibrator on the very material it was fit on is the fit read back, not held-out evidence --
+# the same distinction `bin/workflow_eval.PARTITION_ROLES` draws between a partition that may be
+# fit on and one that is held out, expressed here as a caller-declared label this module checks
+# for equality rather than a second copy of that vocabulary (D14's own sibling-reach test pins
+# exactly four names on exactly four modules; a fifth reach here would break it). A label that is
+# `disputed`, `missing` or `censored` is EXCLUDED from every metric's numerator and denominator,
+# never guessed at, and its exclusion is counted, not silently dropped. A sample too small to
+# report with a straight face says `insufficient-evidence` rather than a number; a field with no
+# distribution at all -- a rules provider's answer, or an answer this report was not asked to
+# score -- says `not-applicable`, because "no probability was ever claimed" and "the probability
+# claimed was 0" are different facts and this module refuses to collapse them into one.
+#
+# WHAT IT NEVER DOES. Reporting on `calibrated` never reads `raw` when `calibrated` is absent,
+# and reporting on `raw` never reads `calibrated`: each call scores exactly the field it was
+# asked to score, and the two are always returned in separate keys, never combined into one
+# number. `vendor_confidence` is never read by anything in this section -- it is, by the
+# decision contract's own design, not a probability of task success, and no metric here treats
+# it as one. And nothing here fits: there is no function anywhere in this module that takes a
+# batch of predictions and labels and returns calibration PARAMETERS: this is a reader of numbers
+# some other owner already produced, exactly as the rest of this module reads projections some
+# other owner already wrote.
+
+#: This report's own schema, pinned separately from `JOIN_VERSION` for the reason `JOIN_VERSION`
+#: is pinned separately from the decision contract's: a calibration artifact and a calibration
+#: report are a THIRD and FOURTH object, neither a decision nor a join row. Registered in
+#: `release_gate.VERSION_SOURCES` in its own right.
+CALIBRATION_VERSION = "polytropos.decision-calibration/1"
+
+#: What a computed metric's own status can be. `not-applicable` is a valid question with nothing
+#: to score in this field at all (a rules provider's answer, every time, on that field);
+#: `insufficient-evidence` is a field that DOES carry probabilities, just too few of them to
+#: report as a number rather than noise.
+METRIC_STATUSES = ("computed", "not-applicable", "insufficient-evidence")
+
+#: Below this many scoreable rows a metric reports `insufficient-evidence` rather than a number.
+#: Not derived from a formula -- a documented floor beneath which a rate or a mean computed from
+#: this few observations reads as more confident than it is. A caller running a synthetic
+#: fixture may override it; production reporting should not, and nothing here has a seam to
+#: quietly change the shipped floor from outside a test.
+MIN_METRIC_SAMPLES = 20
+
+#: The reliability diagram's own bin count, absent a caller override. This is a REPORTING
+#: granularity -- how the same already-observed evidence is grouped for reading -- never a
+#: fitted parameter, so a default here carries none of the risk a default calibration METHOD
+#: would.
+DEFAULT_RELIABILITY_BINS = 10
+
+#: A floor under a probability log loss takes the logarithm of. A provider that claimed
+#: probability exactly 0 for the outcome that then happened is not rewarded with an
+#: uninformative infinity, nor is its claim quietly rounded away: the floor is applied and EVERY
+#: application of it is counted in the metric's own `clipped` field, so a reader can see how
+#: often it happened rather than trusting a finite number that hides it.
+LOG_LOSS_FLOOR = 1e-9
+
+#: A calibration artifact's exact field set. Closed, the same way `_refusal`'s field set is
+#: closed: an artifact is an audit object, and an unrecognised extra key beside its pins is a
+#: caller's mistake this module refuses rather than silently carrying forward.
+CALIBRATION_ARTIFACT_KEYS = ("v", "target", "provider", "model", "domain", "dataset", "method",
+                             "fit_partition", "sample_count", "fitted_at", "note")
+
+RULE_LABEL_NOTE = (
+    "an outcome with no raw or calibrated distribution is a rule's label, not a probability of "
+    "zero: it is excluded from every metric that scores a distribution, counted under "
+    "no-distribution, and never converted into one by assuming a value"
+)
+
+RAW_VS_CALIBRATED_NOTE = (
+    "this report scores exactly one of raw or calibrated per call and never both at once, so a "
+    "raw score and a calibrated score are never blended into one number; calibration_report_pair "
+    "returns the two separately for the same reason"
+)
+
+
+_LN2 = 0.6931471805599453
+
+
+def _ln(x):
+    """Natural log, computed without importing anything: this module's imports are pinned to
+    `datetime, importlib.util, pathlib, re, types` by its own read-only-by-construction test, so
+    log loss's `-log(p)` is built here from arithmetic alone -- range-reduce `x` to within
+    [0.75, 1.5) by repeated halving/doubling (tracked as a power of two, `_LN2` away from zero),
+    then sum the Mercator series for the reduced value. Verified in tests against known values
+    (`ln(2)`, `ln(0.5)`, `ln(10)`) rather than trusted on the strength of the derivation alone.
+    """
+    if not isinstance(x, (int, float)) or isinstance(x, bool) or x <= 0:
+        raise _refuse("value-invalid", f"ln() needs a positive number, got {x!r}")
+    value = float(x)
+    power = 0
+    while value > 1.5:
+        value /= 2.0
+        power += 1
+    while value < 0.75:
+        value *= 2.0
+        power -= 1
+    y = value - 1.0
+    total = 0.0
+    term = y
+    n = 1
+    while abs(term) > 1e-15 and n < 200:
+        total += term / n
+        term *= -y
+        n += 1
+    return total + power * _LN2
+
+
+def calibration_artifact(*, target, provider, domain, dataset, method, fit_partition,
+                         sample_count, model=None, fitted_at=None, note=""):
+    """A pin, never a fit: what a calibrator CLAIMS to be, recorded so a report can refuse to
+    trust a `calibrated` distribution whose artifact does not match the question it is asked
+    about, or was fit on the very partition it is now being validated against.
+
+    Every keyword here is IDENTITY -- a label, a count, an instant -- never a collection of
+    predictions or labels. There is no parameter this function could receive that a fit could be
+    computed from, which is the whole of why this function cannot become one.
+    """
+    for field, value in (("target", target), ("provider", provider), ("domain", domain),
+                        ("dataset", dataset), ("method", method),
+                        ("fit_partition", fit_partition)):
+        if not isinstance(value, str) or not value.strip():
+            raise _refuse(
+                "wrong-type",
+                f"a calibration artifact's {field} is non-empty text naming what was fit; this "
+                f"function records an identity, never the observations behind one")
+    if model is not None and (not isinstance(model, str) or not model.strip()):
+        raise _refuse("wrong-type", "a calibration artifact's model is non-empty text, or null")
+    if not isinstance(sample_count, int) or isinstance(sample_count, bool) or sample_count < 0:
+        raise _refuse(
+            "wrong-type",
+            "a calibration artifact's sample_count is a non-negative integer -- the count a fit "
+            "elsewhere claims to have used, never the observations themselves; nothing with "
+            "that shape is a parameter of this function")
+    if fitted_at is not None and _instant(fitted_at) is None:
+        raise _refuse("value-invalid",
+                      f"fitted_at {fitted_at!r} names no instant; pass an ISO-8601 timestamp "
+                      f"with a zone, or None for 'unknown'")
+    if not isinstance(note, str):
+        raise _refuse("wrong-type", "a calibration artifact's note is text")
+    return {"v": CALIBRATION_VERSION, "target": target, "provider": provider, "model": model,
+            "domain": domain, "dataset": dataset, "method": method,
+            "fit_partition": fit_partition, "sample_count": sample_count,
+            "fitted_at": fitted_at, "note": note}
+
+
+def _validated_artifact(value):
+    """A calibration artifact, checked against its own closed field set and version -- whether
+    it was built by `calibration_artifact` in this process or IMPORTED as a payload some other
+    owner (a future O03, or a synthetic test fixture) produced with this same shape."""
+    if not isinstance(value, (dict, types.MappingProxyType)):
+        raise _refuse("wrong-type",
+                      "a calibration artifact is the object calibration_artifact() returns")
+    extra = sorted(set(value) - set(CALIBRATION_ARTIFACT_KEYS))
+    if extra:
+        raise _refuse("unknown-field",
+                      f"a calibration artifact carries {', '.join(repr(e) for e in extra)}, "
+                      f"which is not one of its declared fields")
+    missing = sorted(set(CALIBRATION_ARTIFACT_KEYS) - set(value))
+    if missing:
+        raise _refuse("missing-field",
+                      f"a calibration artifact is missing {', '.join(repr(m) for m in missing)}")
+    if value.get("v") != CALIBRATION_VERSION:
+        raise _refuse("unknown-value",
+                      f"the artifact is stamped {value.get('v')!r}; this report reads "
+                      f"{CALIBRATION_VERSION!r}")
+    return dict(value)
+
+
+def _standard_error(rate, n):
+    """The standard error of a proportion under a normal approximation -- the one uncertainty
+    measure this module reports beside a rate. `n < 2` returns `None`: a spread computed from
+    fewer than two observations is not an uncertainty measure, it is noise dressed as one."""
+    if n < 2:
+        return None
+    return ((rate * (1.0 - rate)) / n) ** 0.5
+
+
+def _mean_and_standard_error(values):
+    """A sample mean and its standard error, or `(None, None)` for an empty sample."""
+    n = len(values)
+    if n == 0:
+        return None, None
+    mean = sum(values) / n
+    if n < 2:
+        return mean, None
+    variance = sum((v - mean) ** 2 for v in values) / (n - 1)
+    return mean, (variance / n) ** 0.5
+
+
+def _rate_metric(successes, n, min_n):
+    """A success rate, or the honest reason there is none to report yet."""
+    if n < min_n:
+        return {"status": "insufficient-evidence", "value": None, "n": n,
+                "successes": successes, "standard_error": None}
+    rate = successes / n
+    return {"status": "computed", "value": rate, "n": n, "successes": successes,
+            "standard_error": _standard_error(rate, n)}
+
+
+def _brier_metric(prob_rows, min_n):
+    """The multi-category Brier score (Brier, 1950): the mean, over scoreable rows, of the sum
+    over every one of the question's OWN outcomes of `(predicted - actual)^2`, where `actual` is
+    1 for the outcome the label resolved to and 0 for every other. This generalises across
+    boolean, choice and ordinal questions without singling out an arbitrary "positive" category."""
+    if not prob_rows:
+        return {"status": "not-applicable", "value": None, "n": 0, "standard_error": None}
+    values = [sum((dist.get(o, 0.0) - (1.0 if o == actual else 0.0)) ** 2 for o in outcomes)
+              for dist, actual, outcomes in prob_rows]
+    if len(values) < min_n:
+        return {"status": "insufficient-evidence", "value": None, "n": len(values),
+                "standard_error": None}
+    mean, se = _mean_and_standard_error(values)
+    return {"status": "computed", "value": mean, "n": len(values), "standard_error": se}
+
+
+def _log_loss_metric(prob_rows, min_n):
+    """Mean log loss: `-ln(predicted probability of the outcome that actually happened)`,
+    floored at `LOG_LOSS_FLOOR` with every floored observation counted in `clipped`."""
+    if not prob_rows:
+        return {"status": "not-applicable", "value": None, "n": 0, "standard_error": None,
+                "clipped": 0}
+    losses, clipped = [], 0
+    for dist, actual, _outcomes in prob_rows:
+        probability = dist.get(actual, 0.0)
+        if probability < LOG_LOSS_FLOOR:
+            probability = LOG_LOSS_FLOOR
+            clipped += 1
+        losses.append(-_ln(probability))
+    if len(losses) < min_n:
+        return {"status": "insufficient-evidence", "value": None, "n": len(losses),
+                "standard_error": None, "clipped": clipped}
+    mean, se = _mean_and_standard_error(losses)
+    return {"status": "computed", "value": mean, "n": len(losses), "standard_error": se,
+            "clipped": clipped}
+
+
+def _reliability_bins(prob_rows, bins):
+    """A confidence-calibration reliability diagram: each scoreable row contributes its TOP
+    predicted category and whether that category matched the label, binned by how confident the
+    prediction was. Empty bins are reported with `n: 0` rather than omitted, the same discipline
+    D14 applies to a censored row -- an empty bin is evidence about the distribution of
+    confidence, not an absence to hide."""
+    edges = [i / bins for i in range(bins + 1)]
+    grouped = [[] for _ in range(bins)]
+    for dist, actual, outcomes in prob_rows:
+        top = max(outcomes, key=lambda o: dist.get(o, 0.0))
+        confidence = dist.get(top, 0.0)
+        index = min(int(confidence * bins), bins - 1)
+        grouped[index].append((confidence, 1.0 if top == actual else 0.0))
+    out = []
+    for index in range(bins):
+        entries = grouped[index]
+        n = len(entries)
+        if n == 0:
+            out.append({"lower": edges[index], "upper": edges[index + 1], "n": 0,
+                        "mean_confidence": None, "empirical_accuracy": None,
+                        "standard_error": None})
+            continue
+        mean_confidence = sum(c for c, _ in entries) / n
+        accuracy = sum(a for _, a in entries) / n
+        out.append({"lower": edges[index], "upper": edges[index + 1], "n": n,
+                    "mean_confidence": mean_confidence, "empirical_accuracy": accuracy,
+                    "standard_error": _standard_error(accuracy, n)})
+    return out
+
+
+def _false_action_risk(prob_rows, action_outcome, thresholds, min_n):
+    """For each candidate threshold: among the rows whose predicted probability of
+    `action_outcome` is at or above it, the fraction whose label resolved to something else --
+    the risk of acting on this signal at this threshold, with its own sample count and
+    uncertainty, never a single number blended across thresholds."""
+    out = []
+    for threshold in sorted(set(thresholds)):
+        eligible = [actual for dist, actual, _outcomes in prob_rows
+                   if dist.get(action_outcome, 0.0) >= threshold]
+        n = len(eligible)
+        if n < min_n:
+            out.append({"threshold": threshold, "status": "insufficient-evidence", "n": n,
+                        "false_action_rate": None, "standard_error": None})
+            continue
+        wrong = sum(1 for actual in eligible if actual != action_outcome)
+        rate = wrong / n
+        out.append({"threshold": threshold, "status": "computed", "n": n,
+                    "false_action_rate": rate, "standard_error": _standard_error(rate, n)})
+    return out
+
+
+def calibration_report(rows, *, question, field, artifact=None, report_partition=None,
+                       thresholds=(), action_outcome=None, bins=DEFAULT_RELIABILITY_BINS,
+                       min_samples=MIN_METRIC_SAMPLES):
+    """One question, one interpretation of its numbers (`raw` or `calibrated`), and everything
+    knowable about how well those numbers matched what the join resolved.
+
+    `rows` are D14's own joined rows (or a synthetic fixture carrying the same shape, tagged with
+    `JOIN_VERSION`) -- this function reads `questions[].answer` and `questions[].label` from
+    each and computes nothing that was not already sitting in them.
+    """
+    if not isinstance(rows, (list, tuple)):
+        raise _refuse("wrong-type", "calibration_report reads a list of joined rows")
+    if len(rows) > MAX_ROWS:
+        raise _refuse("bounds-exceeded", f"{len(rows)} rows; the ceiling is {MAX_ROWS}")
+    if not isinstance(question, str) or not question.strip():
+        raise _refuse("wrong-type", "calibration_report needs the qualified question id")
+    if field not in ("raw", "calibrated"):
+        raise _refuse("unknown-value", f"field must be 'raw' or 'calibrated', not {field!r}")
+    if not isinstance(bins, int) or isinstance(bins, bool) or bins < 1:
+        raise _refuse("wrong-type", "bins is a positive integer")
+    if not isinstance(min_samples, int) or isinstance(min_samples, bool) or min_samples < 1:
+        raise _refuse("wrong-type", "min_samples is a positive integer")
+
+    pinned = None
+    if artifact is not None:
+        pinned = _validated_artifact(artifact)
+        if field != "calibrated":
+            raise _refuse(
+                "value-invalid",
+                "a calibration artifact pins what fit the CALIBRATED distribution; reporting on "
+                "'raw' needs no artifact and cites none")
+        if pinned["target"] != question:
+            raise _refuse(
+                "value-invalid",
+                f"the artifact is pinned to {pinned['target']!r}, not {question!r}; a report "
+                f"cannot cite an artifact fit for a different question")
+        if report_partition is None:
+            raise _refuse(
+                "missing-field",
+                "a report scored against a calibration artifact must declare which partition "
+                "its own rows come from, so the fit partition can never be validated against "
+                "itself by omission")
+        if report_partition == pinned["fit_partition"]:
+            raise _refuse(
+                "value-invalid",
+                f"this report's rows are declared as partition {report_partition!r}, the same "
+                f"partition the artifact says it was fit on; that is the fit read back, not "
+                f"held-out evidence")
+
+    matched, unmatched = [], 0
+    for index, row in enumerate(rows):
+        if not isinstance(row, (dict, types.MappingProxyType)) or row.get("v") != JOIN_VERSION:
+            raise _refuse(
+                "wrong-type",
+                f"row[{index}] is not a joined row this module's own join_row produced")
+        item = next((q for q in row.get("questions") or () if q.get("question") == question),
+                   None)
+        if item is None:
+            unmatched += 1
+            continue
+        matched.append(item)
+
+    resolved = [q for q in matched if (q.get("label") or {}).get("status") == "resolved"]
+    scoreable = [q for q in resolved
+                if q.get("answer") is not None and not q["answer"].get("abstained")]
+    abstained = len(resolved) - len(scoreable)
+
+    correct = sum(1 for q in scoreable if q["answer"]["outcome"] == q["label"]["value"])
+    classification = _rate_metric(correct, len(scoreable), min_samples)
+
+    prob_rows = []
+    no_distribution = 0
+    for q in scoreable:
+        dist = q["answer"].get(field)
+        if dist is None:
+            no_distribution += 1
+            continue
+        prob_rows.append((_copy(dist), q["label"]["value"], tuple(q["outcomes"])))
+
+    brier = _brier_metric(prob_rows, min_samples)
+    log_loss = _log_loss_metric(prob_rows, min_samples)
+    reliability = _reliability_bins(prob_rows, bins)
+
+    action_risk = None
+    if thresholds:
+        if action_outcome is None:
+            raise _refuse(
+                "missing-field",
+                "candidate thresholds need a declared action_outcome; this module does not "
+                "guess which outcome a threshold is measuring risk against")
+        for threshold in thresholds:
+            if (not isinstance(threshold, (int, float)) or isinstance(threshold, bool)
+                    or not (0.0 <= threshold <= 1.0)):
+                raise _refuse("value-invalid",
+                              f"a candidate threshold must be in [0, 1], got {threshold!r}")
+        action_risk = _false_action_risk(prob_rows, action_outcome, thresholds, min_samples)
+
+    report = {
+        "v": CALIBRATION_VERSION,
+        "question": question,
+        "field": field,
+        "artifact": _copy(pinned),
+        "report_partition": report_partition,
+        "coverage": {
+            "rows": len(rows), "matched_rows": len(matched), "unmatched_rows": unmatched,
+            "resolved": len(resolved), "scoreable": len(scoreable), "abstained": abstained,
+            "excluded": {"label-not-resolved": len(matched) - len(resolved),
+                        "no-distribution": no_distribution},
+        },
+        "classification": classification,
+        "brier": brier,
+        "log_loss": log_loss,
+        "reliability_bins": reliability,
+        "false_action_risk": action_risk,
+        "notes": [RULE_LABEL_NOTE, RAW_VS_CALIBRATED_NOTE],
+    }
+    return assert_no_causal_claim(report)
+
+
+def calibration_report_pair(rows, *, question, artifact=None, report_partition=None,
+                            thresholds=(), action_outcome=None, bins=DEFAULT_RELIABILITY_BINS,
+                            min_samples=MIN_METRIC_SAMPLES):
+    """`raw` and `calibrated`, reported separately and never combined into one number.
+
+    The artifact -- if there is one -- pins only the calibrated side. `raw` is always reported
+    with no artifact, regardless of what was passed here: a raw score was never fit on anything,
+    and citing an artifact beside it would misrepresent an unfit number as validated.
+    """
+    raw = calibration_report(rows, question=question, field="raw", artifact=None,
+                             thresholds=thresholds, action_outcome=action_outcome, bins=bins,
+                             min_samples=min_samples)
+    calibrated = calibration_report(rows, question=question, field="calibrated",
+                                    artifact=artifact, report_partition=report_partition,
+                                    thresholds=thresholds, action_outcome=action_outcome,
+                                    bins=bins, min_samples=min_samples)
+    return {"raw": raw, "calibrated": calibrated}

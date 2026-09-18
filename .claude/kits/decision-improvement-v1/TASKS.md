@@ -254,7 +254,7 @@ PYTHONPATH=tests python3 -m unittest test_decision_eval.PredictionTimeJoinTests
 ### D15 — Calibration reports
 - id: D15
 - title: Calibration reports
-- status: pending
+- status: done
 - model: sonnet
 - depends: D14
 **Brief.** Own calibration artifact/report in `bin/decision_eval.py` and `CalibrationReportingTests`. Report coverage/abstention/valid metrics/bins; pin fit target/version/partition and preserve raw versus calibrated interpretation.
