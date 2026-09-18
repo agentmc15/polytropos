@@ -1441,3 +1441,80 @@ that pin, deliberately.
 `vendor_confidence` is read by no metric, which is correct: the decision contract already
 establishes it is not a probability of task success.
 outcome: D15 model=sonnet attempts=1 result=pass review=pending run=2026-09-16-aa6e
+
+## D16 — Context candidates (opus, depends D13)
+
+New `bin/decision_context.py` (793 lines) and
+`tests/test_decision_context_repair.py:ContextCandidateTests` (85 tests), plus a
+`CONTEXT_VERSION` row. Suite 4726 -> 4811.
+
+**It declined to modify the seam, and it was right to — my brief overstated the requirement.**
+I briefed this as "THIS TASK MODIFIES EXISTING FILES" and pinned `bin/graph_ground.py` and
+`bin/graph_brief.py` by checksum. The brief says "Own the existing ... seam", which GRANTS the
+right to change it and does not require it. Everything D16 needs was already on the seam's public
+surface (`repo_state`, `load_graph_bytes`, `freshness` with its existing `dirty_now` /
+`uncovered_changed`, `impact` with its existing hub marking, `search`), so it built beside the seam
+and read it, the way `decision_eval` reads `attempt_history`. Putting a new privacy vocabulary
+inside `graph_ground.py` would have added a second concern to a module whose regression suite I
+had just declared immovable. Both seam files verified byte-identical to their pinned checksums;
+all three regression guards green at 134 tests, unmodified. **Bounded adaptation, flagged
+prominently rather than done quietly — and the flag is the part that made it acceptable.**
+
+**Graphify invariant holds.** `graphify` appears exactly twice, as the fence written down
+(mirroring the seam's own hygiene test), never in an argv position. No `shutil.which`, no
+`uv tool install`, no `pip install`, no `subprocess`. Every test uses a synthetic `graph.json` in
+a temp dir with a canned git. `/graphify-out/` still gitignored at line 43.
+
+**Determinism is proven the only way it can be.** Set-iteration order only shows up across
+PROCESSES, so the test spawns child interpreters under `PYTHONHASHSEED` 0/1/12345, asserts
+`returncode == 0` AND non-empty stdout BEFORE comparing — otherwise the comparison is satisfied by
+two identical empty strings. Plus byte-identity across repeated builds, across six seeded shuffles
+of node and link order, and a walk refusing any `set`/`frozenset` in the manifest. The ordering
+test additionally asserts more than one kind is present so it cannot pass vacuously.
+
+60 mutants, control first, zero survivors. **Seven survived the first batch and EVERY ROOT CAUSE
+WAS THE FIXTURE, not the code** — the clearest demonstration yet of refinement 2. The instructive
+ones:
+- The total-order tiebreaker survived because no two rows were ever TIED: every fixture node
+  differed in symbol or path, so the sort was already total. Fixed by adding two nodes sharing a
+  file, location and label but reached from different parents — the only shape where input order
+  decides the survivor.
+- The sort ITSELF survived because no test asserted an ORDER. Byte-identity is satisfied by any
+  deterministic order, so a mutant sorting by path instead of by kind was invisible. **Determinism
+  and correct ordering are different properties and need different tests.**
+- The fence's dotted-key branch survived because every key tested was already caught whole —
+  `_alnum("depends.on")` is `"dependson"`, itself a banned token — so the `.split(".")` branch
+  never ran. Fixed with `context.depends`, `graph.requires`, `edge.blocks`, whose whole spellings
+  are innocent.
+- The reference version check survived because the payload had no digest, so the sha check refused
+  first with the same code. Same masking shape as D12's anti-laundering guard.
+- One (`M27`, bare-string refusal) is GENUINELY redundant — the list/tuple check one line below
+  refuses a `str` with the same code. Kept because it exists to SAY WHY ("a bare string iterates
+  one character at a time") and the test pins that MESSAGE rather than the code. Reported as a
+  diagnostic pinned by its words, not claimed as a second refusal.
+
+The dependency fence is three-layered: no vocabulary member is dependency-spelled and every
+candidate carries `authority: None`; an extractor's own word rides under `edge_label` beside
+`edge_label_note` and a test rewrites every fixture edge's relation to literally `depends_on` and
+asserts it appears as a VALUE and never a key; and `assert_no_dependency_claim` sweeps 26 tokens
+including `safe_to_parallel` and `parallel_write`, proven WIRED by a recorder that sees a body with
+no `sha256` yet (so the digest covers a swept body) and by a raiser that kills the build.
+
+Limitations stated rather than found later:
+- **The privacy PREVENTION layer covers prefixes only, and it refused to write the sentence that
+  hides this.** A credential-shaped suffix or dotted path cannot be expressed as an exclude, so the
+  bounded scan has already READ such a file by the time its path is judged. What IS guaranteed:
+  neither the path nor any byte reaches the manifest, asserted against the whole serialised
+  manifest rather than the field meant to hold it. The module docstring says this in those words.
+- `kind-not-in-graph` will fire on most real runs, because a graph of code symbols does not index
+  configuration — so the scan usually runs. Named honestly rather than folded into "graph not
+  fresh".
+- `excluded.duplicates` counts two different collapses (a scan hit in a file the graph named, and
+  two indistinguishable graph rows); telling them apart needs two counters.
+- The dependency fence sweeps KEYS only, deliberately: a graph whose own relation vocabulary
+  contains `depends` puts that string in `edge_label` as a VALUE and is not refused, because
+  refusing it would let a third-party extractor's word break a manifest.
+- `M59` is killed structurally (AST sibling-reach pin) rather than behaviourally, because the
+  fixture has no second store directory whose fate would differ.
+- Zero production callers. D17 is what wires it.
+outcome: D16 model=opus attempts=1 result=pass review=pending run=2026-09-16-aa6e

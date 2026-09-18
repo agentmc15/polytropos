@@ -270,7 +270,7 @@ PYTHONPATH=tests python3 -m unittest test_decision_eval.CalibrationReportingTest
 ### D16 — Context candidates
 - id: D16
 - title: Context candidates
-- status: pending
+- status: done
 - model: opus
 - depends: D13
 **Brief.** Own the existing `bin/graph_ground.py`/`bin/graph_brief.py` graph/search seam and `tests/test_decision_context_repair.py:ContextCandidateTests`. Create bounded versioned manifests of interfaces/consumers/config/tests with provenance/privacy/dirty checks and graph-to-search fallback.

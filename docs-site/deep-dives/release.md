@@ -124,6 +124,7 @@ Contract versions are read from the module that owns each one; package versions 
 | decision replay record | `bin/decision_provider.py` | `polytropos.decision-replay/1` |
 | decision prediction join | `bin/decision_eval.py` | `polytropos.decision-join/1` |
 | decision calibration report | `bin/decision_eval.py` | `polytropos.decision-calibration/1` |
+| context candidate manifest | `bin/decision_context.py` | `polytropos.context-candidates/1` |
 | release gate | `bin/release_gate.py` | `polytropos.release-gate/1` |
 
 | Package | Version |
