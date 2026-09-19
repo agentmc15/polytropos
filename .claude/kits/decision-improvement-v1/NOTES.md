@@ -2048,3 +2048,60 @@ invariant guards, so no unvouched figure gets in); `calibration_report` has no a
 route today, so its label test records the call site rather than proving it end-to-end; and
 nothing calls `resource_evidence` or `recovery_report` in production, so "the relay refuses" is
 forward work, not an operational property.
+
+## D20 — Existing owner (opus) — Phase 5 task 1 of 5
+
+Extends `build_proposal`/`review_proposal`/`apply_proposal`/`rollback_policy` with a
+bundle/manifest reference block. 21 tests, 21 mutants killed, 0 survivors, 0 inert.
+
+**It improved on the pattern I briefed, and D21–D24 should copy THIS, not my version.** I asked
+for a mirror of the owner's field set pinned by exact partition. It kept **no mirror at all**:
+`fields = set(ledger.REF_FIELDS)`, read from the owner at call time, with the version read from
+each slot's owner (`decision_contract.BUNDLE_VERSION` for `bundle`, `MANIFEST_VERSION` for
+`manifest`). A partition test proves two lists agree today; reading the owner means there is only
+one list. That is the strongest available answer to this kit's recurring "one authority, two
+implementations" defect. A test patches `al.REF_FIELDS` and `dc.BUNDLE_VERSION` and asserts the
+relay follows, so the read is pinned as a read.
+
+**Closure landed right on first contact, and the contrast is the proof.** My probe:
+`read_ref` alone DROPS an unknown key; the relay REFUSES it. The owner function silently narrows,
+the relay does not — exactly the F4 distinction it took a phase review to surface. `_policy_ref`
+is the writer and refuses; `read_policy_refs` is the reader and DEGRADES (`recorded: False`,
+`unreadable: [slot]`). Two jobs, deliberately not one function.
+
+- **It declined the Shape A trap the brief warned about.** `review_proposal` records
+  `authority: "name-only"` with a label stating the reviewer is a string the command was handed
+  and that this is not authentication. It could have written a field called `approved`.
+- `POLICY_REFS_VERSION` is NEW, on the referenced object. `PROPOSAL_VERSION`, `POLICY_VERSION`,
+  `EVAL_VERSION`, `MANIFEST_VERSION` all untouched at `/1` — `read_proposal` refuses any `v` that
+  is not current, so a bump would discard stored records rather than migrate them.
+- **No `replay/` store created**, and the absence is asserted in a test rather than claimed.
+- Production path traced by reading the chain: `propose --manifest ID` → `read_manifest` →
+  `manifest_ref` → `build_proposal` exists and is driven end-to-end through `main([...])`.
+  `build_proposal(bundle_ref=...)` has NO caller — there is no bundle store in this repo, so it
+  is a library seam for D21/D22/D23.
+
+**Shape, not origin, stated plainly:** `_policy_ref` proves a reference is a complete well-formed
+pointer naming the right contract. It opens nothing, so it proves nothing about whether the target
+exists, still digests to that sha, or was approved. The `--manifest` CLI path DOES re-derive the
+digest at the moment the pointer is taken (`read_manifest` refuses a rewritten file, mutation-
+proven); nothing re-checks it later, and the library entry point cannot tell a real reference from
+a well-formed hand-typed one. **`bundle_ref` has no origin evidence at all** — D22/D23 inherit
+that, and a bundle store is an architect decision.
+
+**MY ERROR, and it is a SECOND entrance to a chain already in this ledger.** I appended the D20
+correction to `docs/DECISION-IMPROVEMENT-AUTHORITY-INVENTORY.md` — right convention, right
+content — and did not run `docs_build.py build`. Four tests went red and `docs_build check` exited
+1. The chain already recorded here fires when a `VERSION_SOURCES` row is registered; it *also*
+fires when any `docs/*.md` SOURCE is edited directly. **The same four test names
+(`test_codex_discovery_docs`, `test_docs_build_cli` x2, `test_docs_site`) had been caused three
+times by concurrent suite runs.** Nothing was racing this time. A symptom I had learned to
+attribute to one cause has two, and only checking `ps` for a competing run before diagnosing kept
+me from the wrong fix. Regenerated through the owning generator, never hand-edited.
+
+**Left for my call, flagged rather than acted on:** `tests/test_decision_policy_bundle.py`'s
+`preference_payload()` (D11's file) is now a slightly older snapshot lacking `refs` and the
+authority label. Nothing fails — `describe_legacy_preferences` ignores unknown keys and
+`parse_bundle` still refuses the shape by name — and it remains an accurate HISTORICAL file, which
+is exactly what D20's migration test uses it as. Left as is.
+outcome: D20 model=opus attempts=1 result=pass review=pending run=2026-09-16-aa6e

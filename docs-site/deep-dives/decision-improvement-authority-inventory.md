@@ -113,6 +113,16 @@ Every reference below is **to add**. None exists at this revision.
 | partition / exposure manifest refs | the evaluation envelope | `workflow_eval` | `run_id` plus the manifest's content id | `MANIFEST_VERSION` | D06 |
 | lifecycle and approval binding | the proposal and policy files | `workflow_eval` | proposal id, policy version | `PROPOSAL_VERSION`, `POLICY_VERSION` | D20, D22, D23 |
 
+**Correction, D20, 2026-09-19.** The `lifecycle and approval binding` row names `PROPOSAL_VERSION`
+and `POLICY_VERSION` only. D20 added a third, `POLICY_REFS_VERSION`, on the referenced object --
+the bundle/manifest reference block that `build_proposal` records and `apply_proposal` relays --
+and registered it in `release_gate.VERSION_SOURCES` with both doc mirrors regenerated through
+their own generators. It is a new constant rather than a bump of either stored one, for the reason
+this document's own D06 correction gives: `read_proposal` refuses any `v` that is not current, so
+bumping `PROPOSAL_VERSION` or `POLICY_VERSION` would discard stored records instead of migrating
+them. The numbered row is kept as written, because this is an inventory of a stamped revision
+(`71bb3ae`) and not a live description.
+
 Three rules govern that table.
 
 **The ledger stores a reference, never the payload.** `AttemptLedger.append` refuses any line over

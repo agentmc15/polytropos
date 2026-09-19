@@ -227,6 +227,10 @@ def _rd():
     return _sibling("redact")
 
 
+def _dc():
+    return _sibling("decision_contract")
+
+
 def _store_default(name):
     rt = _sibling("runtime_data")
     return rt.store_path(name, REPO_ROOT)
@@ -3780,6 +3784,234 @@ def adjudicate(store_dir, run_id, trial_id, by, verdict, note=""):
 
 
 # ---- policy: propose / review / apply / rollback --------------------------------------------------------------
+#
+# D20. This module is this repository's ONE owner of policy persistence: the proposal files, the
+# applied preference file, its history and its journal. What D20 adds is not a second store and
+# not a second writer -- it is two more things the records ALREADY WRITTEN HERE may say, namely
+# which policy bundle and which evaluation manifest a proposal was made against.
+#
+# WHY THAT IS A RELAY AND NOT A COMPUTATION. `bin/decision_contract.py` owns what a policy bundle
+# is; `bin/decision_policy.py` builds the reference to one; the manifest section above owns what
+# an evaluation manifest is and builds the reference to one. None of those is re-implemented
+# here. `_policy_ref` takes a reference its OWNER computed, hands it back through
+# `attempt_ledger`'s own reader and constructor, checks it names the contract this slot points
+# at, and relays exactly what came back. There is no second derivation of a digest anywhere in
+# this section, so there is nothing for a second derivation to drift away from.
+#
+# AND WHAT IT DELIBERATELY DOES NOT CLAIM. A relayed reference is a complete pointer that names
+# the right kind of object. It is NOT evidence that the bytes it names exist, that they still
+# digest to that sha, or that anybody approved them: this function never sees the content, and
+# vouching for what it did not read is the defect D19's review named. `read_manifest` is what
+# re-derives a manifest's digest, at the one place that actually opens the file, and `cmd_propose`
+# goes through it before taking a reference. Nothing equivalent exists for bundles yet -- there
+# is no bundle store in this repository -- so `build_proposal(bundle_ref=...)` records a pointer
+# whose target nothing here can open, and says so rather than implying otherwise.
+#
+# NO AUTOMATIC CONSUMPTION, AND NO VERSION BUMP. Recording these references changes what a run
+# can be ASKED about; it changes nothing about what any driver reads. The preference file stays
+# pull-only. `PROPOSAL_VERSION` and `POLICY_VERSION` are NOT bumped: `read_proposal` refuses any
+# proposal whose `v` is not the current one, so raising either would make every stored record
+# unreadable rather than migrating it. The new block carries its OWN version, on the referenced
+# object rather than on the envelope around it -- D04's precedent for the ledger, D11's for
+# `BUNDLE_VERSION`. A record written before this block existed has no `refs` key, reads as
+# unknown, and keeps working unchanged.
+
+#: The version of the referenced-object block a proposal and an applied policy carry. Registered
+#: in `release_gate.VERSION_SOURCES`.
+POLICY_REFS_VERSION = "polytropos.policy-refs/1"
+
+#: The slots that block carries. Each names a different contract, and which one is READ from its
+#: owner at call time by `_policy_ref_version` rather than copied into a literal here.
+POLICY_REF_SLOTS = ("bundle", "manifest")
+
+#: The keys the stored block itself has: its version plus one entry per slot, every entry present
+#: and explicitly null when unknown, so "nobody recorded it" can never look like "nobody wrote
+#: the key".
+POLICY_REFS_KEYS = ("v",) + POLICY_REF_SLOTS
+
+#: What a review entry's `authority` field says, and the WHOLE of what it means. `review_proposal`
+#: checks that a non-empty string was supplied and nothing else. It does not authenticate the
+#: reviewer, does not establish that the named person read the evidence, and does not bind the
+#: review to the bytes it reviewed. The field exists so a reader of a stored proposal is told
+#: that, instead of inferring an authority from the presence of a name.
+REVIEW_AUTHORITY = "name-only"
+REVIEW_AUTHORITY_LABEL = (
+    "review authority: name-only -- the reviewer is a string this command was handed, checked "
+    "for being non-empty and for nothing else. That is not authentication, not a controller "
+    "identity, and not evidence that the named person saw what they accepted; binding an "
+    "approval to the exact candidate and evaluation it approved is a later, separately gated "
+    "step and has not happened here")
+
+
+def _policy_ref_version(slot):
+    """Which contract version this slot's reference must name, read from that slot's owner.
+
+    `decision_contract` owns what a policy bundle is; this module owns what an evaluation
+    manifest is. Both are read here rather than copied, so neither can drift from a literal.
+    """
+    if slot == "bundle":
+        return _dc().BUNDLE_VERSION
+    if slot == "manifest":
+        return MANIFEST_VERSION
+    raise EvalError(f"{slot!r} is not a policy reference slot; the slots are "
+                    f"{', '.join(POLICY_REF_SLOTS)}")
+
+
+def _policy_ref(value, slot):
+    """One owner-computed reference, relayed whole -- or refused. Never trimmed, never repaired.
+
+    THE CLOSURE CHECK IS THE POINT, and it is checked in both directions. `attempt_ledger`'s
+    `read_ref` is a PROJECTION: it reads `id`, `sha` and `v` and silently ignores everything
+    else. Relaying its output without first checking that the input had no other keys would
+    write a record that claims to carry the reference it was given while having quietly dropped
+    part of it -- completeness this function did not check. So an unknown key is refused rather
+    than dropped, and a missing one is refused rather than filled in. The accepted key set is
+    `attempt_ledger.REF_FIELDS` itself, read from the owner, not a list written out here.
+
+    Whole-payload confusion falls out of that closure for free: a bundle payload, a candidate
+    payload and a preference file all carry keys a reference does not, so handing one of them to
+    a slot that wants a pointer is refused as the shape error it is.
+
+    A reference with an id but no digest or no contract version is refused too. `make_ref`
+    permits both to be absent because a caller may honestly not know them, and for an event's
+    provenance absent is the honest record. This is the opposite case: a proposal's whole reason
+    for naming a bundle or a manifest is so that a later reader can notice those bytes changing,
+    and a pointer that pins neither the bytes nor the contract cannot notice either.
+
+    WHAT SURVIVING THIS DOES NOT ESTABLISH. That the target exists, that its content still
+    digests to this sha, or that anything about it was approved. This function never opens
+    anything. It vouches for the shape of a pointer and for which contract it points at.
+    """
+    expected = _policy_ref_version(slot)
+    ledger = _al()
+    fields = set(ledger.REF_FIELDS)
+    if not isinstance(value, dict):
+        raise EvalError(f"the {slot} reference must be an object with "
+                        f"{', '.join(sorted(fields))}, not {type(value).__name__}")
+    unknown = sorted(set(value) - fields)
+    missing = sorted(fields - set(value))
+    if unknown or missing:
+        detail = "; ".join(
+            part for part in (
+                f"unknown key(s) {', '.join(repr(k) for k in unknown)}" if unknown else "",
+                f"missing {', '.join(repr(k) for k in missing)}" if missing else "")
+            if part)
+        raise EvalError(
+            f"the {slot} reference is not the shape attempt_ledger.make_ref produces "
+            f"({', '.join(sorted(fields))}): {detail}. A reference is relayed whole or not at "
+            f"all -- read_ref would drop the extra key(s) in silence and this record would then "
+            f"claim to carry what it dropped")
+    ref = ledger.read_ref(value)
+    if ref is None:
+        raise EvalError(f"the {slot} reference carries nothing attempt_ledger.read_ref accepts "
+                        f"as an id, so it points at nothing")
+    gaps = ledger.ref_gaps(ref)
+    if gaps:
+        raise EvalError(
+            f"the {slot} reference leaves {', '.join(gaps)} unknown; a pointer that pins neither "
+            f"the bytes it names nor the contract they are written under cannot notice either of "
+            f"them changing underneath it, which is the whole reason this record names it")
+    if ref["v"] != expected:
+        if slot == "bundle" and ref["v"] == _dc().LEGACY_PREFERENCE_VERSION:
+            raise EvalError(
+                f"the bundle reference points at a {ref['v']} preference payload. That file is "
+                f"pull-only advice about defaults that no driver consumes; recording it as this "
+                f"record's bundle would promote it into the thing a run pins, which is exactly "
+                f"the silent promotion the bundle contract refuses. Re-propose the change as a "
+                f"{expected} bundle")
+        raise EvalError(f"the {slot} reference points at a {ref['v']!r} object; this slot points "
+                        f"at {expected!r}")
+    try:
+        # The owner's own constructor, re-run over the owner's own reader's output: the bounds
+        # and types a reference must satisfy are checked where they are defined, not again here.
+        return ledger.make_ref(ref["id"], sha=ref["sha"], version=ref["v"])
+    except ledger.RefError as exc:
+        raise EvalError(f"the {slot} reference is not one attempt_ledger would make: {exc}") \
+            from None
+
+
+def policy_refs(*, bundle_ref=None, manifest_ref=None):
+    """The referenced-object block a proposal and an applied policy carry.
+
+    Both keyword names deliberately shadow the module-level generators that produce their
+    values (`decision_policy.bundle_ref`, and this module's own `manifest_ref`), because that is
+    how they read at a call site; nothing in this function needs either generator, and nothing
+    in it computes a reference. An omitted slot is written as an explicit null -- unknown, never
+    absent, and never back-filled from anything else on the record.
+    """
+    return {"v": POLICY_REFS_VERSION,
+            "bundle": None if bundle_ref is None else _policy_ref(bundle_ref, "bundle"),
+            "manifest": None if manifest_ref is None else _policy_ref(manifest_ref, "manifest")}
+
+
+def read_policy_refs(record):
+    """What a stored proposal or applied policy says about the bundle and manifest it cites.
+
+    A READER, so it degrades and names what it could not read instead of raising: `recorded` is
+    False for a record written before this block existed, and a slot this reader refuses is left
+    null with its name in `unreadable`. Both read as unknown, which is what they are -- and
+    nothing here tells them apart for the caller by inventing a distinction the record does not
+    make. `_relay_refs` is the write-side counterpart and REFUSES instead of degrading.
+    """
+    out = {"v": None, "bundle": None, "manifest": None, "recorded": False, "unreadable": []}
+    block = record.get("refs") if isinstance(record, dict) else None
+    if not isinstance(block, dict):
+        return out
+    out["recorded"] = True
+    version = block.get("v")
+    out["v"] = version if isinstance(version, str) and version else None
+    for slot in POLICY_REF_SLOTS:
+        value = block.get(slot)
+        if value is None:
+            continue
+        try:
+            out[slot] = _policy_ref(value, slot)
+        except EvalError:
+            out["unreadable"].append(slot)
+    return out
+
+
+def _relay_refs(record, where):
+    """Re-validate a stored record's reference block before carrying it forward. Refuses.
+
+    The write-side counterpart to `read_policy_refs`, and the reason apply is not a laundry: a
+    block that has been edited into something this module would not have written is refused
+    rather than copied into the applied policy, where a later reader would find it with the
+    applied policy's authority behind it. A record with no block at all is the pre-D20
+    generation and is not an error -- it becomes an all-unknown block, which is what it says.
+    A block whose own version is not this one is refused too: a later generation's record is
+    not silently downgraded into this one's fields.
+    """
+    if not isinstance(record, dict) or "refs" not in record:
+        return policy_refs()
+    block = record["refs"]
+    if not isinstance(block, dict):
+        raise EvalError(f"{where} carries a 'refs' that is not an object but a "
+                        f"{type(block).__name__}; nothing can be read from it")
+    unknown = sorted(set(block) - set(POLICY_REFS_KEYS))
+    missing = sorted(set(POLICY_REFS_KEYS) - set(block))
+    if unknown or missing:
+        raise EvalError(
+            f"{where} carries a 'refs' block with "
+            + "; ".join(part for part in (
+                f"unknown key(s) {', '.join(repr(k) for k in unknown)}" if unknown else "",
+                f"missing {', '.join(repr(k) for k in missing)}" if missing else "") if part)
+            + f"; the block is {', '.join(POLICY_REFS_KEYS)} and every slot is present")
+    if block["v"] != POLICY_REFS_VERSION:
+        raise EvalError(f"{where} carries a {block['v']!r} reference block; this writer reads "
+                        f"{POLICY_REFS_VERSION} and will not guess at another shape's fields")
+    try:
+        return policy_refs(bundle_ref=block["bundle"], manifest_ref=block["manifest"])
+    except EvalError as exc:
+        # Which record was refused is the part a reader needs and the slot refusal cannot know.
+        raise EvalError(f"{where} cannot be carried forward: {exc}") from None
+
+
+def _ref_ids(record):
+    """Which bundle and manifest a record names, by id alone -- the journal's share of it."""
+    read = read_policy_refs(record)
+    return {slot: (read[slot]["id"] if read[slot] else None) for slot in POLICY_REF_SLOTS}
+
 
 def _prefs_paths(prefs_dir):
     prefs_dir = Path(prefs_dir)
@@ -3810,10 +4042,21 @@ def policy_base(prefs_dir):
     return _sha(paths["policy"].read_text()) if paths["policy"].exists() else "none"
 
 
-def build_proposal(envelope, change, by, prefs_dir, task_class=None):
+def build_proposal(envelope, change, by, prefs_dir, task_class=None, bundle_ref=None,
+                   manifest_ref=None):
     """A proposal from one run's evidence -> dict, or EvalError when the evidence is not
     defensible: the named variant is absent, below the evidence floor, a single repeat, or the
-    run's tasks already backed the policy in force (evaluation tasks stay reserved)."""
+    run's tasks already backed the policy in force (evaluation tasks stay reserved).
+
+    `bundle_ref` and `manifest_ref` are optional references their own owners computed --
+    `decision_policy.bundle_ref` and this module's `manifest_ref`. They are relayed onto the
+    record, never recomputed and never dereferenced; both default to None, which is what every
+    caller written before D20 passes and what the record then says. Supplying one that is not a
+    complete pointer at the contract its slot names refuses the whole proposal, BEFORE any of
+    the evidence work below: a malformed input is answered as a malformed input rather than as
+    whatever the evidence happens to be.
+    """
+    refs = policy_refs(bundle_ref=bundle_ref, manifest_ref=manifest_ref)
     if not by:
         raise EvalError("--by is required: a proposal names who made it")
     if not change:
@@ -3857,6 +4100,7 @@ def build_proposal(envelope, change, by, prefs_dir, task_class=None):
                      "incorrect_acceptance": support["incorrect_acceptance"], "comparison": comparison,
                      "ranking": card["ranking"], "labels": card["labels"],
                      "tasks": (envelope.get("holdout") or {}).get("tasks") or []},
+        "refs": refs,
         "base": policy_base(prefs_dir), "reviews": [],
     }
 
@@ -3874,7 +4118,7 @@ def write_proposal(prefs_dir, proposal):
     path = paths["proposals"] / f"{proposal['id']}.json"
     path.write_text(json.dumps(proposal, indent=2) + "\n")
     _journal(paths, "policy.proposed", proposal=proposal["id"], run=proposal["source_run"],
-             by=proposal["proposed_by"], change=proposal["change"])
+             by=proposal["proposed_by"], change=proposal["change"], refs=_ref_ids(proposal))
     return path
 
 
@@ -3898,7 +4142,10 @@ def review_proposal(prefs_dir, proposal_id, by, decision, note=""):
     proposal = read_proposal(prefs_dir, proposal_id)
     if proposal["status"] == "applied":
         raise EvalError(f"proposal {proposal_id} was already applied; propose again to change it")
-    entry = {"by": by, "decision": decision, "note": _rd().redact(note or "")["text"], "at": _now()}
+    # `authority` says what this review IS, so a later reader is not left to infer one from the
+    # presence of a name. The check behind the field is exactly the `if not by` above.
+    entry = {"by": by, "decision": decision, "note": _rd().redact(note or "")["text"],
+             "at": _now(), "authority": REVIEW_AUTHORITY}
     proposal["reviews"].append(entry)
     proposal["status"] = "accepted" if decision == "accept" else "rejected"
     (paths["proposals"] / f"{proposal_id}.json").write_text(json.dumps(proposal, indent=2) + "\n")
@@ -3918,6 +4165,11 @@ def apply_proposal(prefs_dir, proposal_id):
     if policy_base(prefs_dir) != proposal["base"]:
         raise EvalError(f"proposal {proposal_id} was made against a different policy version than the "
                         f"one in force; re-propose from the current file")
+    # Re-validated on the way through, not copied: a proposal file edited after review is not
+    # laundered into the applied policy, where the block would carry the applied policy's
+    # authority. A pre-D20 proposal has no block and becomes an all-unknown one. Refused here,
+    # before anything is written.
+    refs = _relay_refs(proposal, f"proposal {proposal_id}")
     current = read_policy(prefs_dir)
     version = (current.get("version") or 0) + 1 if current else 1
     scope = proposal["change"]["scope"]
@@ -3928,7 +4180,8 @@ def apply_proposal(prefs_dir, proposal_id):
            "defaults": dict((current or {}).get("defaults") or {}),
            "by_task_class": dict((current or {}).get("by_task_class") or {}),
            "consumption": "pull-only: no driver reads this file until wired on purpose",
-           "labels": list(proposal["evidence"]["labels"])}
+           "refs": refs,
+           "labels": list(proposal["evidence"]["labels"]) + [REVIEW_AUTHORITY_LABEL]}
     if scope == "defaults":
         new["defaults"].update(proposal["change"]["set"])
     else:
@@ -3944,7 +4197,7 @@ def apply_proposal(prefs_dir, proposal_id):
     proposal["applied_version"] = version
     (paths["proposals"] / f"{proposal_id}.json").write_text(json.dumps(proposal, indent=2) + "\n")
     _journal(paths, "policy.applied", proposal=proposal_id, version=version,
-             previous=(current or {}).get("version"))
+             previous=(current or {}).get("version"), refs=_ref_ids(new))
     return new, current
 
 
@@ -3966,7 +4219,10 @@ def rollback_policy(prefs_dir, to_version=None):
     tmp.write_text(restored_text)
     tmp.replace(paths["policy"])
     restored = json.loads(restored_text)
-    _journal(paths, "policy.rolled-back", from_version=current.get("version"), to_version=target)
+    # Both ends' references are recorded, because which bundle and manifest a rollback moved the
+    # runtime BACK to is the part of it a later reader cannot reconstruct from the versions.
+    _journal(paths, "policy.rolled-back", from_version=current.get("version"), to_version=target,
+             from_refs=_ref_ids(current), to_refs=_ref_ids(restored))
     return restored, current
 
 
@@ -3979,12 +4235,19 @@ def policy_report(prefs_dir):
         for p in sorted(paths["proposals"].glob("*.json")):
             try:
                 d = json.loads(p.read_text())
+                reviews = [r for r in (d.get("reviews") or []) if isinstance(r, dict)]
+                # Every proposal on disk is listed whatever its status, so a REJECTED candidate
+                # stays as inspectable as an applied one, with the decisions it collected. The
+                # names behind those decisions stay in the file; this projection carries the
+                # verdicts, which is what a reader of the report is asking about.
                 proposals.append({"id": d.get("id"), "status": d.get("status"), "run": d.get("source_run"),
-                                  "change": d.get("change")})
+                                  "change": d.get("change"), "refs": read_policy_refs(d),
+                                  "decisions": [r.get("decision") for r in reviews]})
             except (OSError, ValueError):
                 proposals.append({"id": p.stem, "status": "unreadable"})
     return {"policy": current, "history_versions": versions, "proposals": proposals,
-            "path": str(paths["policy"]), "consumption": "pull-only"}
+            "path": str(paths["policy"]), "consumption": "pull-only",
+            "refs": read_policy_refs(current), "review_authority": REVIEW_AUTHORITY_LABEL}
 
 
 # ---- CLI --------------------------------------------------------------------------------------------------------
@@ -4116,10 +4379,16 @@ def cmd_propose(args):
             raise EvalError(f"--set expects key=value, got {item!r}")
         k, v = item.split("=", 1)
         change[k.strip()] = v.strip()
-    proposal = build_proposal(env, change, args.by, prefs_dir, task_class=args.task_class)
+    # `read_manifest` re-derives the manifest's digest and refuses a rewritten file, so the
+    # reference recorded below is taken from a manifest this command actually opened and
+    # checked. It is still only a pointer once it is on the record.
+    cited = manifest_ref(read_manifest(store_dir, args.manifest)) if args.manifest else None
+    proposal = build_proposal(env, change, args.by, prefs_dir, task_class=args.task_class,
+                              manifest_ref=cited)
     path = write_proposal(prefs_dir, proposal)
     print(f"proposal {proposal['id']} written to {path}")
     print(f"  change: {proposal['change']}")
+    print(f"  refs: bundle={_ref_ids(proposal)['bundle']} manifest={_ref_ids(proposal)['manifest']}")
     print(f"  evidence: {proposal['evidence']['supporting_variant']} n={proposal['evidence']['n']} "
           f"rate={proposal['evidence']['rate']} interval={proposal['evidence']['interval_95']} "
           f"stability={proposal['evidence']['stability']}")
@@ -4163,8 +4432,15 @@ def cmd_policy(args):
     pol = report["policy"]
     print(f"  in force: {'none' if not pol else 'v%s %s by_task_class=%s' % (pol.get('version'), pol.get('defaults'), pol.get('by_task_class'))}")
     print(f"  history: {', '.join('v%d' % v for v in report['history_versions']) or '(none)'}")
+    refs = report["refs"]
+    print(f"  refs: bundle={(refs['bundle'] or {}).get('id')} "
+          f"manifest={(refs['manifest'] or {}).get('id')}"
+          f"{'' if refs['recorded'] else ' (this policy predates the reference block)'}"
+          f"{' unreadable=' + ','.join(refs['unreadable']) if refs['unreadable'] else ''}")
+    print(f"  {report['review_authority']}")
     for p in report["proposals"]:
-        print(f"  proposal {p['id']}: {p['status']} run={p.get('run')} change={p.get('change')}")
+        print(f"  proposal {p['id']}: {p['status']} run={p.get('run')} change={p.get('change')}"
+              f" decisions={p.get('decisions')}")
     return 0
 
 
@@ -4352,6 +4628,9 @@ def build_parser():
     p.add_argument("--run", required=True)
     p.add_argument("--set", action="append", default=None, help="workflow=W or policy=P; repeatable")
     p.add_argument("--task-class", default=None, help="scope the change to one task class")
+    p.add_argument("--manifest", default=None,
+                   help="an evaluation manifest id in the store; records a reference to it on "
+                        "the proposal (the manifest is read and re-digested first)")
     p.add_argument("--by", required=True)
     p.add_argument("--store-dir", default=None)
     p.add_argument("--prefs-dir", default=None)

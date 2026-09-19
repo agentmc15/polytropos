@@ -336,7 +336,7 @@ PYTHONPATH=tests python3 -m unittest test_decision_trial_protocol.RecoveryReport
 ### D20 — Existing owner
 - id: D20
 - title: Existing owner
-- status: pending
+- status: done
 - model: opus
 - depends: D11, D18
 **Brief.** Own workflow_eval proposal/review/apply/rollback and `tests/test_decision_workbench.py:WorkflowEvalOwnershipTests`. Extend its records with bundle/manifest refs; do not create improvement-loop writer and retain pull-only behavior until D23.

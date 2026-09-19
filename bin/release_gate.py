@@ -148,6 +148,7 @@ VERSION_SOURCES = (
     ("evaluation manifest", "workflow_eval", "MANIFEST_VERSION"),
     ("policy proposal", "workflow_eval", "PROPOSAL_VERSION"),
     ("routing policy file", "workflow_eval", "POLICY_VERSION"),
+    ("policy reference block", "workflow_eval", "POLICY_REFS_VERSION"),
     ("three-arm trial protocol", "workflow_eval", "TRIAL_PROTOCOL_VERSION"),
     ("lessons store", "lessons_store", "SCHEMA"),
     ("protected profile sentinels", "exec_policy", "SENTINEL_VERSION"),
