@@ -352,7 +352,7 @@ PYTHONPATH=tests python3 -m unittest test_decision_workbench.WorkflowEvalOwnersh
 ### D21 — Bounded drafts
 - id: D21
 - title: Bounded drafts
-- status: pending
+- status: done
 - model: opus
 - depends: D07, D20
 **Brief.** Own workflow_eval validation and `BoundedProposalTests`. Support manual/deterministic hypothesis/counterexample/data-only/falsification/rollback drafts; optional proposer separately budgeted and audit-blind.

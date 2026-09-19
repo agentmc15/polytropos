@@ -2105,3 +2105,67 @@ authority label. Nothing fails — `describe_legacy_preferences` ignores unknown
 `parse_bundle` still refuses the shape by name — and it remains an accurate HISTORICAL file, which
 is exactly what D20's migration test uses it as. Left as is.
 outcome: D20 model=opus attempts=1 result=pass review=pending run=2026-09-16-aa6e
+
+## D21 — Bounded drafts (opus) — Phase 5 task 2 of 5
+
+`bin/improvement_loop.py`, 451 lines, a bounded orchestrator. 32 tests; 24 mutants killed,
+1 deliberately INERT (a comment-only mutation, included so the harness's own "did this change
+anything?" check is not itself vacuous), 0 survivors.
+
+**"Not a persistence owner" proven structurally, by me.** An AST sweep of the new module finds
+ZERO write primitives (`open`/`write_text`/`mkdir`/`dump`/`rename`/`unlink`/...), zero
+subprocess-shaped calls, no `Path.home`, and imports of exactly `argparse`, `importlib`, `json`,
+`pathlib`, `sys`. `workflow_eval` remains the one writer. This was the task most able to falsify
+that invariant retroactively for D08, D18 and D20, and it does not.
+
+**A NEW VARIANT OF THE MASKING PATTERN — worth adding to the catalogue.** The three draft guards
+were built as a **tuple**, so all three expressions evaluated EAGERLY and `_draft_assurance`
+raised about a value `_draft_vocabulary` had already refused. Every test still passed, because a
+refusal did occur every time — just from the wrong guard. **Masking through evaluation order
+rather than control flow.** It would have made the `assurance` refusal untestable in isolation
+while looking healthy. Caught by the positive control, fixed to lazy, and pinned by a mutant that
+reverts laziness and dies. Previous variants were all about which check runs first; this one is
+about which checks run AT ALL when you meant only one to.
+
+- **No version constant, and that is the reasoned answer rather than the rote one.** A draft is
+  not a stored record, so nothing in the section versions anything; an AST test over module-level
+  assigns inside the section bounds fails if a `*_VERSION` reappears. No `VERSION_SOURCES` row, so
+  the RELEASE/docs-site chain never fired.
+- **D20's no-mirror discipline propagated, which is what Phase 5 was supposed to do.**
+  `draft_partitions()` derives from `PARTITION_ROLES` (held-out AND not single-use →
+  `("promotion",)`), `draft_ceiling()` from `len(decision_contract.DIFF_PARAMETERS)`,
+  `baseline_workflow()` from `kit_contract.DEFAULT_WORKFLOW`, `label_vocabulary()` from this
+  module's own tuples. Each proved to follow its owner by PATCHING the owner.
+- `PROPOSER_WIRED = False`, the `CONFINED_DISPATCH_WIRED` precedent; no runner parameter anywhere.
+- `DRAFT_REFUSALS` is exactly the five acceptance terms, and
+  `test_each_of_the_five_refusals_is_reachable_with_the_other_four_satisfied` asserts the refusal
+  SET equals `[reason]` from an admissible draft with exactly one thing wrong, plus
+  `examined == len(drafts)` so an empty batch cannot stand in.
+- **No-candidate is observably distinct from all-rejected**: the CLI exits 0 for no candidate and
+  3 for all rejected.
+- Where "own workflow_eval validation" was ambiguous it resolved it from D11's own comment — the
+  VALUES a label parameter may take are the owning surface's vocabulary — and said so rather than
+  improvising.
+
+**Shape, not origin, restated:** `validate_draft` vouches for a candidate's shape and its values'
+vocabulary. It opens nothing — not the manifest a candidate cites, not the parent bundle, not the
+attempt references. Only `prepare_evaluation` opens anything, through `read_manifest` (re-derives
+the digest, refuses a rewrite) and `require_held_out`. `in_force` is the caller's statement about
+the parent bundle and nothing proves that payload is the bundle the candidate's `parent` ref pins
+— **the same no-bundle-store gap D20 recorded**, now load-bearing in a second place.
+
+**Audit-blindness is a REFUSAL, not a boundary** — enforced at `_draft_hidden` on the candidate
+and `prepare_evaluation` on the reader. Nothing here claims an OS boundary.
+
+**Judgement call flagged rather than buried:** `reviewed → kit` is refused as an assurance
+reduction, because `WORKFLOW_STAGES["kit"]` carries no `review` stage. Conservative, possibly
+stricter than intended, a one-line consequence of "never drop a stage". Strict-and-flagged beats
+permissive-and-silent, but it is the architect's call if it bites.
+
+Production path traced by reading the chain: `improvement_loop.py {evidence|draft|demo}` → `main`
+→ `run_draft` → `workflow_eval.validate_draft_batch`. **Nothing else in the repository invokes
+it** — no skill, no driver, no generated doc.
+
+Nothing in my brief was wrong this time; the agent confirmed each stated fact independently
+(including that `read_ref` does silently drop unknown keys) rather than building on it.
+outcome: D21 model=opus attempts=1 result=pass review=pending run=2026-09-16-aa6e

@@ -4250,6 +4250,406 @@ def policy_report(prefs_dir):
             "refs": read_policy_refs(current), "review_authority": REVIEW_AUTHORITY_LABEL}
 
 
+# =================================================================================================
+# BOUNDED CANDIDATE DRAFTS: WHAT THIS EVALUATOR ADMITS (decision-improvement D21)
+# =================================================================================================
+#
+# D11 owns what a candidate proposal IS -- `decision_contract.parse_proposal` refuses an
+# executable field, a key outside the data allowlist and a value of the wrong kind. It stops
+# deliberately short of one thing, and says so where the allowlist is defined: "the VALUES a
+# label parameter may take are the owning surface's vocabulary, not this contract's". This
+# section is that surface. `routing.default_workflow` names a workflow only THIS module runs,
+# and `routing.default_policy` a policy only this module routes, so whether a proposed value
+# names anything at all is a question that can only be answered here.
+#
+# FIVE REFUSALS, EACH REACHABLE ON ITS OWN. `DRAFT_REFUSALS` is the whole vocabulary, and the
+# order they are checked in is fixed so that a candidate refused for one of them has SATISFIED
+# the ones before it. A guard that can only ever fire while another is already firing has never
+# been shown to do anything, so the tests assert the refusal SET of a batch rather than that
+# some refusal happened.
+#
+# WHY THIS RETURNS VERDICTS INSTEAD OF RAISING. `_policy_ref` raises, because a malformed
+# reference on the way into a stored record is a write that must not happen. A draft batch is
+# the opposite case: refusing by exception would abandon the other candidates and, worse, throw
+# away the record of WHAT was refused and why -- and a rejected candidate staying inspectable is
+# exactly what this task's acceptance asks for. So every candidate, admitted or refused,
+# examined or never reached, comes back with its payload as it was given. The raising half of
+# the pair is still here and is deliberately separate: `draft_budget`, `label_vocabulary`,
+# `workflow_stages`, `draft_partitions` and `baseline_workflow` raise, because each of them is
+# answering a question about the CALLER's setup rather than about a candidate.
+#
+# WHAT IS NOT HERE. No writer. Nothing in this section opens, creates or appends to anything:
+# the proposal files, the preference file, its history and its journal are the D20 section's,
+# and a draft is a thing a caller looks at before it ever becomes one of those. No dispatcher
+# either -- there is no inference in a bounded draft, and `bin/improvement_loop.py`, the one
+# caller, has no runner parameter to be handed one through.
+
+#: Why a bounded draft is refused. Five codes, one concern each:
+#:
+#:   code       not a data change this surface can make -- an executable or authority field, a
+#:              key outside the allowlist, a value of the wrong kind, or a label naming
+#:              something this evaluator does not run
+#:   assurance  the change would remove a check the run currently carries. Candidate data may
+#:              not edit mandatory review; that is a person's decision, made elsewhere
+#:   hidden     the candidate reaches for evaluation material or labels a proposer must be
+#:              blind to -- the final audit partition, or an answer-key marker in its own text
+#:   duplicate  the same change to the same parent has already been drafted; wording it
+#:              differently does not make it a second proposal
+#:   budget     the batch's candidate ceiling or its effort ceiling was reached
+DRAFT_REFUSALS = ("code", "assurance", "hidden", "duplicate", "budget")
+
+#: What a batch as a whole did. `no-candidate` is a SUCCESSFUL outcome and the plan says so: "no
+#: applicable context is a legitimate abstention". It is kept distinct from `all-rejected`
+#: because "the search found nothing to propose" and "everything proposed was refused" are
+#: different facts about a run, and collapsing them would let an empty search read as a clean
+#: review -- or as a failure, which it also is not.
+DRAFT_OUTCOMES = ("candidates", "all-rejected", "no-candidate")
+
+#: What one unit of proposal effort IS. Stated because the word "effort" means a model's
+#: reasoning dial elsewhere in this repository and a price in others, and it means neither here.
+DRAFT_EFFORT_UNIT = (
+    "examined-candidate: one candidate looked at, whether it was admitted or refused. This is a "
+    "COUNT of work items and never a price, a token count, a duration or a model effort level; "
+    "nothing in this section reads a pricing file, a clock or a usage record")
+
+#: How many values the bounded search may look at per data dial before the batch stops. Three is
+#: a policy choice, not a measurement: it is enough for a boolean's flip, a count's two
+#: neighbours, or two alternative labels, and small enough that an unbounded generator is
+#: stopped rather than merely noticed.
+DRAFT_EFFORT_PER_DIAL = 3
+
+DRAFT_AUDIT_BLIND_LABEL = (
+    "a proposer is audit-blind: the single-use audit partition is the final held-out evidence "
+    "and any exposure at all spends it, so a candidate never nominates it for its own "
+    "evaluation. Which partition the final audit reads, and when, is the controller's decision "
+    "and is outside candidate authority")
+
+DRAFT_NOT_A_PROPOSAL_LABEL = (
+    "a valid draft is a candidate that this evaluator would ACCEPT FOR REVIEW; it is not an "
+    "approval, not an evaluation result, and not evidence that the change is an improvement. "
+    "Nothing here ran anything, compared anything or asked anybody")
+
+
+def draft_partitions():
+    """Which partitions a candidate may nominate for its own evaluation -- DERIVED, not listed.
+
+    Held out, so the result means something, and not single-use, so nominating it does not spend
+    the final audit. Both facts come from `PARTITION_ROLES`, this module's own table, at call
+    time: a partition that changed role would move this set with it rather than leaving a
+    literal here to go quietly stale.
+    """
+    return tuple(name for name in PARTITIONS
+                 if (PARTITION_ROLES[name].get("held_out")
+                     and not PARTITION_ROLES[name].get("single_use")))
+
+
+def label_vocabulary(parameter):
+    """The values this evaluator's surface allows for one `label` data parameter.
+
+    Read from this module's own tuples, which are the vocabularies a run is actually routed by.
+    A label dial the contract grows without a vocabulary here raises, and `validate_draft` turns
+    that into a refusal rather than a pass: a value this module cannot judge is not a value this
+    module has judged.
+
+    A workflow's vocabulary is `WORKFLOWS` INTERSECTED with the workflows there is a stage list
+    for. That is not belt-and-braces: `WORKFLOW_STAGES` is what the assurance check reads, so a
+    name this module could route by but has no stages for is a name whose assurance consequence
+    cannot be worked out, and admitting it would be admitting an unexamined one.
+    """
+    if parameter == "routing.default_workflow":
+        return tuple(name for name in WORKFLOWS if name in WORKFLOW_STAGES)
+    if parameter == "routing.default_policy":
+        return POLICIES
+    raise EvalError(
+        f"{parameter!r} is a label parameter this evaluator owns no vocabulary for; the ones it "
+        f"routes by are routing.default_workflow and routing.default_policy")
+
+
+def workflow_stages(workflow):
+    """The stages one workflow runs, from `WORKFLOW_STAGES`, or `EvalError` for a name that
+    names nothing. `check` and `project` dispatch nothing and are stages all the same: what
+    matters to the assurance question is which steps happen, not which of them cost money."""
+    stages = WORKFLOW_STAGES.get(workflow)
+    if stages is None:
+        raise EvalError(f"{workflow!r} is not a workflow this evaluator runs; they are "
+                        f"{', '.join(WORKFLOWS)}")
+    return tuple(stages)
+
+
+def baseline_workflow(in_force):
+    """Which workflow is in force now: the parent bundle's value, else the task contract's own
+    default, read from `kit_contract` at call time.
+
+    The fallback is the part that matters. Without it a bundle that simply never set the dial
+    would give the assurance check nothing to compare against, and the first candidate to set
+    it could set it to the workflow that runs no review -- a reduction that looked like an
+    addition because nobody had written the current value down. `kit_contract.DEFAULT_WORKFLOW`
+    is where that value actually lives.
+
+    RAISES when the task contract's default is not a workflow this evaluator runs. The two
+    vocabularies overlap but are not the same, and guessing a correspondence between them would
+    be inventing the very baseline this function exists to establish.
+    """
+    value = in_force.get("routing.default_workflow")
+    if value is not None:
+        workflow_stages(value)       # raises if the bundle's own value names nothing
+        return value
+    default = _kc().DEFAULT_WORKFLOW
+    if default not in WORKFLOWS:
+        raise EvalError(
+            f"the task contract's default workflow is {default!r}, which is not one this "
+            f"evaluator runs ({', '.join(WORKFLOWS)}); with no value in the bundle either there "
+            f"is no in-force workflow to compare a proposed one against, and this refuses to "
+            f"decide rather than guess which of its own workflows that name corresponds to")
+    return default
+
+
+def draft_ceiling():
+    """The most a draft batch may admit and examine, derived from the allowlist itself.
+
+    A bounded batch never admits more candidates than there are data dials to turn -- two
+    candidates changing the same dial compete, they do not accumulate -- and never examines more
+    than `DRAFT_EFFORT_PER_DIAL` values per dial. `decision_contract.DIFF_PARAMETERS` is read at
+    call time, so a dial added or removed moves both ceilings and there is no number here to
+    drift away from the allowlist it is supposed to bound.
+    """
+    dials = len(_dc().DIFF_PARAMETERS)
+    return {"candidates": dials, "effort": DRAFT_EFFORT_PER_DIAL * dials,
+            "effort_unit": DRAFT_EFFORT_UNIT}
+
+
+def draft_budget(*, max_candidates=None, max_effort=None):
+    """The bounds one batch runs under. A caller may lower them; a caller may never raise them.
+
+    RAISES on a request above the ceiling, and that direction is the whole point: a bound a
+    caller can widen on request is not a bound, and "candidate data cannot change permission or
+    budget policy" is not enforced by a ceiling that asks politely. Absent means the ceiling.
+    """
+    ceiling = draft_ceiling()
+    out = {}
+    for key, requested in (("candidates", max_candidates), ("effort", max_effort)):
+        limit = ceiling[key]
+        if requested is None:
+            out[key] = limit
+            continue
+        if isinstance(requested, bool) or not isinstance(requested, int):
+            raise EvalError(f"the {key} bound must be a whole number, not "
+                            f"{type(requested).__name__}")
+        if requested < 0:
+            raise EvalError(f"the {key} bound is {requested}; a negative bound bounds nothing")
+        if requested > limit:
+            raise EvalError(
+                f"the {key} bound was asked to be {requested}, above this evaluator's ceiling of "
+                f"{limit}; a batch may run under a smaller bound than the ceiling and never "
+                f"under a larger one")
+        out[key] = requested
+    out["ceiling"] = {"candidates": ceiling["candidates"], "effort": ceiling["effort"]}
+    out["effort_unit"] = DRAFT_EFFORT_UNIT
+    return out
+
+
+def _draft_in_force(in_force):
+    """The parameters currently in force, checked against the one allowlist. Raises: this is the
+    caller's own statement about its bundle, not a candidate's claim about anything."""
+    if not isinstance(in_force, dict):
+        raise EvalError(f"the in-force parameters must be a mapping, not "
+                        f"{type(in_force).__name__}; pass {{}} to say the parent bundle sets "
+                        f"none, which is a different statement from not knowing")
+    dials = _dc().DIFF_PARAMETERS
+    unknown = sorted(set(in_force) - set(dials))
+    if unknown:
+        raise EvalError(f"the in-force parameters name {', '.join(repr(u) for u in unknown)}, "
+                        f"which the data allowlist does not carry")
+    return dict(in_force)
+
+
+def draft_key(candidate):
+    """What makes two drafts the SAME draft: the parent they change and the change they make.
+
+    Not the id, which a generator picks, and not the digest of the whole payload, which a
+    reworded hypothesis moves. Two candidates proposing the identical change to the identical
+    parent are one proposal however differently they argue for it, and counting them twice would
+    make a batch's candidate count mean nothing.
+    """
+    return _sha(_canonical({"parent": candidate.parent["id"], "diff": dict(candidate.diff)}))
+
+
+def _draft_vocabulary(candidate):
+    """A `code`-class detail for a label value this surface does not run, else None."""
+    dials = _dc().DIFF_PARAMETERS
+    for key in sorted(candidate.diff):
+        if dials.get(key) != "label":
+            continue
+        try:
+            allowed = label_vocabulary(key)
+        except EvalError as exc:
+            return (f"{exc} -- a value this evaluator cannot judge has not been judged, so the "
+                    f"draft is refused rather than admitted on the allowlist's word alone")
+        value = candidate.diff[key]
+        if value not in allowed:
+            return (f"{key} is set to {value!r}, which names nothing this evaluator runs; its "
+                    f"values are {', '.join(allowed)}")
+    return None
+
+
+def _draft_hidden(candidate):
+    """A `hidden`-class detail, else None."""
+    allowed = draft_partitions()
+    partition = candidate.evaluation["partition"]
+    if partition not in allowed:
+        role = PARTITION_ROLES.get(partition) or {}
+        return (f"the candidate nominates the {partition!r} partition for its own evaluation "
+                f"({role.get('note', 'no role recorded')}); a candidate may nominate "
+                f"{', '.join(allowed) or 'no partition at all, as this manifest is arranged'}. "
+                f"{DRAFT_AUDIT_BLIND_LABEL}")
+    for field in ("hypothesis", "falsification", "tradeoff"):
+        text = (getattr(candidate, field) or "").upper()
+        hits = sorted(m for m in HIDDEN_LABEL_MARKERS if m in text)
+        if hits:
+            return (f"the candidate's {field} carries {len(hits)} hidden-label marker(s) of "
+                    f"kind {', '.join(repr(h) for h in hits)}; those appear beside an answer, "
+                    f"and a proposer quoting one is reading material it is blind to by design")
+    return None
+
+
+def _draft_assurance(candidate, in_force):
+    """An `assurance`-class detail, else None.
+
+    The one dial with an assurance consequence is the default workflow, because a workflow IS a
+    set of steps: `WORKFLOW_STAGES` says which ones each runs, and a proposal that drops one is
+    a proposal to stop doing it. `routing.default_policy` chooses which model a stage runs
+    under and adds or removes no step, so it is not checked here and this says so rather than
+    leaving a reader to wonder which dials were considered.
+    """
+    proposed = candidate.diff.get("routing.default_workflow")
+    if proposed is None:
+        return None
+    current = baseline_workflow(in_force)
+    if proposed == current:
+        return None
+    dropped = sorted(set(workflow_stages(current)) - set(workflow_stages(proposed)))
+    if not dropped:
+        return None
+    detail = (f"moving the default workflow from {current!r} to {proposed!r} drops the "
+              f"{', '.join(repr(d) for d in dropped)} stage(s) it currently runs")
+    if "review" in dropped:
+        detail += (f"; the review stage is the independent review the workflow in force exists "
+                   f"to run, and a mandatory review is not a dial a data candidate turns -- "
+                   f"removing a check is a person's decision, made elsewhere")
+    return (f"{detail}. A candidate may raise the assurance a run carries and may never lower "
+            f"it.")
+
+
+def _draft_verdict(payload, *, verdict, reason=None, detail="", identity=None, key=None,
+                   examined=True):
+    """One row of a batch report. The payload is carried back EXACTLY as it was handed in --
+    including a refused one, which is what keeps a rejected candidate inspectable."""
+    return {"id": identity, "key": key, "verdict": verdict, "reason": reason, "detail": detail,
+            "examined": examined, "payload": payload}
+
+
+def validate_draft(payload, *, in_force, known=()):
+    """One bounded draft -> a verdict. Never raises over the candidate; see the section note.
+
+    `in_force` is the parent bundle's own parameters, as the caller read them; `known` is the
+    draft keys already drafted, so a search run twice does not re-propose what it proposed
+    before. Budget is deliberately NOT here: a ceiling is a property of a batch, and a single
+    draft cannot know how much of one has been spent.
+    """
+    forced = _draft_in_force(in_force)
+    identity = payload.get("id") if isinstance(payload, dict) else None
+    contract = _dc()
+    try:
+        candidate = contract.parse_proposal(payload)
+    except contract.ContractError as exc:
+        return _draft_verdict(
+            payload, verdict="refused", reason="code", identity=identity,
+            detail=f"the data allowlist refused this draft: {exc}")
+    identity = candidate.id
+    key = draft_key(candidate)
+    # Checked IN ORDER and one at a time, so that a candidate refused by a later guard has
+    # satisfied every earlier one -- and so that a guard whose input the previous guard would
+    # have rejected is never run on it. Building these as a tuple would evaluate all three
+    # eagerly, and `_draft_assurance` asked about a workflow `_draft_vocabulary` has just
+    # refused would raise about a value that was never going to be admitted.
+    for reason, check in (("code", lambda: _draft_vocabulary(candidate)),
+                          ("hidden", lambda: _draft_hidden(candidate)),
+                          ("assurance", lambda: _draft_assurance(candidate, forced))):
+        detail = check()
+        if detail:
+            return _draft_verdict(payload, verdict="refused", reason=reason, detail=detail,
+                                  identity=identity, key=key)
+    if key in set(known):
+        return _draft_verdict(
+            payload, verdict="refused", reason="duplicate", identity=identity, key=key,
+            detail=f"the same change to {candidate.parent['id']!r} has already been drafted; a "
+                   f"second wording of one proposal is still one proposal")
+    return _draft_verdict(payload, verdict="valid", identity=identity, key=key,
+                          detail="accepted for review")
+
+
+def validate_draft_batch(payloads, *, in_force, budget=None, known=()):
+    """A whole batch under its bounds -> a report that keeps every candidate it was given.
+
+    The effort ceiling is applied BEFORE anything is parsed, because effort is the cost of
+    looking: a batch whose ceiling is spent stops looking, and the candidates it never reached
+    are reported as never reached rather than as refused on their merits. The candidate ceiling
+    is applied after a draft is found valid, because a refused draft was never admitted and
+    admitting nothing consumes none of it.
+    """
+    bounds = budget if budget is not None else draft_budget()
+    for field in ("candidates", "effort"):
+        if field not in bounds:
+            raise EvalError(f"the budget names no {field} bound; build one with draft_budget()")
+    forced = _draft_in_force(in_force)
+    drafts = list(payloads or ())
+    seen = list(known)
+    rows, admitted, examined = [], 0, 0
+    for index, payload in enumerate(drafts):
+        if examined >= bounds["effort"]:
+            rows.append(_draft_verdict(
+                payload, verdict="refused", reason="budget", examined=False,
+                identity=payload.get("id") if isinstance(payload, dict) else None,
+                detail=f"the batch's effort ceiling of {bounds['effort']} examined-candidate(s) "
+                       f"was reached before this one (#{index + 1}) was looked at"))
+            continue
+        examined += 1
+        row = validate_draft(payload, in_force=forced, known=seen)
+        if row["verdict"] == "valid" and admitted >= bounds["candidates"]:
+            row = _draft_verdict(
+                payload, verdict="refused", reason="budget", identity=row["id"], key=row["key"],
+                detail=f"the batch already admitted its ceiling of {bounds['candidates']} "
+                       f"candidate(s); this one is valid and is refused for the ceiling alone")
+        if row["verdict"] == "valid":
+            admitted += 1
+            seen.append(row["key"])
+        rows.append(row)
+    valid = [r for r in rows if r["verdict"] == "valid"]
+    refused = [r for r in rows if r["verdict"] == "refused"]
+    if valid:
+        outcome = "candidates"
+    elif refused:
+        outcome = "all-rejected"
+    else:
+        outcome = "no-candidate"
+    return {
+        "outcome": outcome,
+        "drafts": len(drafts), "examined": examined,
+        "admitted": valid, "refused": refused, "candidates": rows,
+        "refusals": sorted({r["reason"] for r in refused}),
+        # The bounds this batch ran under, beside the ceiling they had to fit inside. Both, so a
+        # reader of one report can see that a batch was run under a tighter bound than the
+        # module allows without having to go and look the ceiling up.
+        "budget": {"candidates": bounds["candidates"], "effort": bounds["effort"],
+                   "effort_spent": examined, "ceiling": draft_ceiling(),
+                   "effort_unit": DRAFT_EFFORT_UNIT},
+        "in_force": dict(forced),
+        "labels": [DRAFT_NOT_A_PROPOSAL_LABEL, DRAFT_AUDIT_BLIND_LABEL],
+    }
+
+# END OF THE BOUNDED CANDIDATE DRAFT SECTION (decision-improvement D21)
+
+
 # ---- CLI --------------------------------------------------------------------------------------------------------
 
 def _split(raw):

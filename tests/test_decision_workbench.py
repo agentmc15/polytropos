@@ -31,6 +31,16 @@ record as carrying what it was given. So `_policy_ref` checks closure in both di
 against `attempt_ledger.REF_FIELDS` read from its owner, and one test here proves the projection
 really does drop an extra key before proving the relay refuses it.
 
+`BoundedProposalTests` (D21) covers the section beside it: what the evaluator ADMITS as a
+bounded candidate draft, and what `bin/improvement_loop.py` is allowed to be while asking. Five
+refusals -- code, assurance, hidden, duplicate, budget -- each reached with the other four
+satisfied and asserted as a refusal SET; producing no candidate kept distinct from refusing
+every candidate; both bounds tripped at their limit and one past it; and the claim that nothing
+here infers anything proved at runtime with every dispatch and persistence seam armed to raise,
+beside a control that fires one. The loop is not a persistence owner and the proof is an
+inventory: a whole run through both its CLI paths adds no file to the temporary root or to the
+redirected data home.
+
 SAFETY CONTRACT. Nothing here invokes a real `claude`/`codex`/`copilot`/`cursor`/`graphify`
 binary, reads a real harness home, spends anything, or touches a real store. Every prefs
 directory, evals store and manifest is built in a temporary directory; `POLYTROPOS_DATA_HOME` is
@@ -70,6 +80,15 @@ rg = _load("release_gate")
 al = we._al()
 dc = we._dc()                     # the contract instance workflow_eval itself reads
 dp = _load("decision_policy")
+il = _load("improvement_loop")
+
+# ONE EVALUATOR INSTANCE, ON PURPOSE. `bin/` is not a package, so `improvement_loop`'s own
+# sibling loader would build a SECOND `workflow_eval` and a second `decision_contract` behind
+# it. Two instances would make this file's patches invisible to the module under test and,
+# worse, would let the armed dispatch seams below be armed on a module nothing actually calls.
+# Priming the cache is the whole of the accommodation; nothing else here reaches into it.
+il._MODS["workflow_eval"] = we
+il._MODS["decision_policy"] = dp
 
 #: The four functions the task names as the existing owners, plus the readers around them.
 OWNER_FUNCTIONS = ("build_proposal", "review_proposal", "apply_proposal", "rollback_policy")
@@ -77,6 +96,116 @@ OWNER_FUNCTIONS = ("build_proposal", "review_proposal", "apply_proposal", "rollb
 #: The D20 additions, as a group, for the structural sweeps.
 RELAY_FUNCTIONS = ("_policy_ref", "_policy_ref_version", "policy_refs", "read_policy_refs",
                    "_relay_refs", "_ref_ids")
+
+# ---- D21: the bounded draft section, its bounds, and the trap --------------------------------
+
+SECTION_START = "# BOUNDED CANDIDATE DRAFTS: WHAT THIS EVALUATOR ADMITS (decision-improvement D21)"
+SECTION_END = "# END OF THE BOUNDED CANDIDATE DRAFT SECTION (decision-improvement D21)"
+
+#: Every function the D21 section is allowed to define. A new one must be added here, which is
+#: how a dispatching or writing helper smuggled into the section fails this file rather than
+#: sliding past the sweeps below.
+SECTION_FUNCTIONS = {
+    "draft_partitions", "label_vocabulary", "workflow_stages", "baseline_workflow",
+    "draft_ceiling", "draft_budget", "_draft_in_force", "draft_key", "_draft_vocabulary",
+    "_draft_hidden", "_draft_assurance", "_draft_verdict", "validate_draft",
+    "validate_draft_batch",
+}
+
+#: Names that reach a model, a CLI, a grader or a sandbox. Neither the D21 section nor
+#: `improvement_loop` may call one: the whole claim of a bounded draft is that it is produced
+#: without inference.
+DISPATCHING_NAMES = {
+    "runner", "default_runner", "gate_protected_dispatch", "require_protected_trial",
+    "run_protected_dispatch", "run_confined", "wrap_argv", "dispatch_cell", "mine_tasks",
+    "mine_issue_tasks", "mine_general_tasks", "make_sandbox", "prepare_cell_sandbox",
+    "build_grade_substrate", "grade_cells", "oracle_tests", "oracle_judge", "oracle_structural",
+    "oracle_tests_full_patch", "build_plan", "Evaluation", "Popen", "check_output", "call",
+    "system", "popen", "urlopen", "request",
+}
+
+#: Filesystem and persistence verbs. `improvement_loop` is not a persistence owner and the D21
+#: section is not a writer; this is what holds both to it. `read_manifest` is deliberately
+#: absent for `improvement_loop`, which is meant to read a manifest through its owner -- and
+#: deliberately present for the section, which opens nothing at all.
+WRITER_NAMES = {
+    "open", "write_text", "write_bytes", "mkdir", "unlink", "rmtree", "replace", "touch",
+    "write_envelope", "write_manifest", "write_proposal", "build_proposal", "review_proposal",
+    "apply_proposal", "rollback_policy", "record_exposure", "record_results", "declare_cohort",
+    "select_cohort", "retire", "adjudicate", "_journal", "store_path", "confined_create_bytes",
+    "confined_append",
+}
+
+#: Every seam on the evaluator and its `repo_bench` sibling that could reach a model, a CLI, a
+#: graded sandbox -- or a stored record. Armed with a raiser for the runtime proof.
+WF_SEAMS = ("default_runner", "gate_protected_dispatch", "require_protected_trial",
+            "write_envelope", "write_manifest", "write_proposal", "build_proposal",
+            "review_proposal", "apply_proposal", "rollback_policy", "record_exposure",
+            "record_results", "declare_cohort", "select_cohort", "retire", "_journal")
+RB_SEAMS = ("mine_tasks", "make_sandbox", "prepare_cell_sandbox", "build_grade_substrate",
+            "grade_cells", "oracle_tests", "oracle_judge", "oracle_structural",
+            "oracle_tests_full_patch", "dispatch_cell")
+
+
+class _RaisingSeam:
+    """A seam that RAISES if ever invoked.
+
+    Not a mock returning a canned value: a canned return is indistinguishable from a real
+    result that happened to be ignored, and it would let a leaked dispatch or a leaked write
+    pass in silence. A control test calls one to prove the trap is armed rather than inert.
+    """
+
+    def __init__(self, name):
+        self.name = name
+        self.calls = []
+
+    def __call__(self, *args, **kwargs):
+        self.calls.append((args, kwargs))
+        raise AssertionError(f"seam {self.name!r} was reached: args={args!r} kwargs={kwargs!r}")
+
+
+class _ArmedSeams:
+    """Arms every dispatch and persistence seam for the duration of a block."""
+
+    def __init__(self, test):
+        self.test = test
+        self.saved = []
+        self.seams = []
+
+    def __enter__(self):
+        for module, names in ((we, WF_SEAMS), (we._rb(), RB_SEAMS)):
+            for name in names:
+                if not hasattr(module, name):
+                    continue
+                seam = _RaisingSeam(f"{module.__name__}.{name}")
+                self.saved.append((module, name, getattr(module, name)))
+                self.seams.append(seam)
+                setattr(module, name, seam)
+        self.test.assertTrue(self.saved, "no seam was armed; the trap is not set")
+        return self
+
+    def __exit__(self, *exc):
+        for module, name, original in self.saved:
+            setattr(module, name, original)
+        return False
+
+
+def _section_functions():
+    """Every `def` whose body lies inside the D21 section, as `{name: ast.FunctionDef}`."""
+    lines = (BIN_DIR / "workflow_eval.py").read_text(encoding="utf-8").splitlines()
+    starts = [i + 1 for i, line in enumerate(lines) if line.strip() == SECTION_START]
+    ends = [i + 1 for i, line in enumerate(lines) if line.strip() == SECTION_END]
+    if len(starts) != 1 or len(ends) != 1:
+        raise AssertionError(f"the D21 section banners are not a single pair: {starts} {ends}")
+    tree = ast.parse("\n".join(lines))
+    return {n.name: n for n in ast.walk(tree)
+            if isinstance(n, ast.FunctionDef) and starts[0] < n.lineno < ends[0]}
+
+
+def _loop_functions():
+    """Every function `bin/improvement_loop.py` defines."""
+    tree = ast.parse((BIN_DIR / "improvement_loop.py").read_text(encoding="utf-8"))
+    return {n.name: n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)}
 
 _DATA_HOME = None
 _DATA_HOME_PATCH = None
@@ -654,6 +783,698 @@ class WorkflowEvalOwnershipTests(unittest.TestCase):
                  "--by", "proposer", "--manifest", manifest["id"],
                  "--store-dir", str(self.store), "--prefs-dir", str(self.prefs)]))
         self.assertIn("rewritten", str(cm.exception))
+
+
+class BoundedProposalTests(unittest.TestCase):
+    """D21 -- what the evaluator admits as a bounded draft, and what `bin/improvement_loop.py`
+    is allowed to be while asking it.
+
+    THE FIVE REFUSALS. `code`, `assurance`, `hidden`, `duplicate` and `budget`, each reached
+    with the other four SATISFIED, and asserted as the refusal SET of a batch rather than as
+    "something was refused". Beside each one is the same payload with only the offending field
+    corrected, which is admitted: a guard that fires on everything has not been shown to fire on
+    anything in particular.
+
+    NO-CANDIDATE IS A RESULT. A search that proposes nothing is a successful outcome and is kept
+    distinct from a batch where everything was refused, so an empty run can neither read as a
+    clean review nor as a failure. Every refusal test asserts how many candidates were examined,
+    so an empty batch can never stand in for a real one.
+
+    NO INFERENCE. Every dispatch seam on the evaluator and its `repo_bench` sibling -- plus
+    every persistence seam, because this module is not a persistence owner either -- is armed
+    with a raiser for a whole drafting run, and a control test calls one to prove the trap is
+    armed rather than inert. The structural half sweeps both the D21 section and every function
+    in `improvement_loop` for dispatching and writing names, and for a parameter through which a
+    dispatcher could be handed in.
+
+    ONE OWNER. The loop writes nothing: a full run through both its CLI paths is inventoried
+    against the temporary root and the redirected data home, and neither gains a file.
+    """
+
+    # ---- fixtures, from the generator that owns each shape ------------------------------------
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory(prefix="polytropos-drafts-")
+        self.addCleanup(tmp.cleanup)
+        self.root = Path(tmp.name)
+        self.store = self.root / "evals"
+
+    def draft(self, **over):
+        """D11's own candidate fixture. Its diff is a boolean dial, its partition is promotion
+        and its statements are three different sentences, so it is admitted as it stands."""
+        return tpb.proposal_payload(**over)
+
+    def other_draft(self, **over):
+        """A second ADMISSIBLE draft, distinct from `draft()` in the dial it turns."""
+        kw = {"id": "cand-context-files-1", "diff": {"recovery.contract_context_files": 6}}
+        kw.update(over)
+        return tpb.proposal_payload(**kw)
+
+    def evaluation(self, **over):
+        payload = {"endpoint": "accepted-recovery", "partition": "promotion",
+                   "manifest_ref": tpb.ref("manifest-1", we.MANIFEST_VERSION)}
+        payload.update(over)
+        return payload
+
+    def manifest(self):
+        """A real manifest whose promotion partition is not empty, from the real builder."""
+        return we.build_manifest(tem.REPO, tem.BASE, tem.pool(12, 2), acceptance=tem.TEST_CMD)
+
+    def bundle(self, **over):
+        return tpb.bundle_payload(**over)
+
+    def batch(self, drafts, *, in_force=None, **kw):
+        return we.validate_draft_batch(drafts, in_force={} if in_force is None else in_force,
+                                       **kw)
+
+    def only(self, report):
+        """The single row of a one-draft batch, with the batch's own bookkeeping asserted so an
+        empty batch can never be mistaken for one that examined something."""
+        self.assertIn(report["outcome"], we.DRAFT_OUTCOMES)
+        self.assertEqual(report["drafts"], len(report["candidates"]))
+        self.assertEqual(len(report["candidates"]), 1)
+        return report["candidates"][0]
+
+    # ==========================================================================================
+    #  THE POSITIVE CONTROL, AND THE FIVE REFUSALS AS A SET
+    # ==========================================================================================
+
+    def test_a_well_formed_draft_is_admitted_and_comes_back_whole(self):
+        """POSITIVE CONTROL. Without it every refusal below would be satisfied by a validator
+        that refused everything, and the over-broad versions of these guards -- a hidden check
+        that rejects any partition, an assurance check that rejects any workflow change -- would
+        all still pass. D11's own generator produces the payload, so what is under test is the
+        code and not this file's guess at the shape."""
+        payload = self.draft()
+        report = self.batch([payload])
+        row = self.only(report)
+        self.assertEqual((row["verdict"], row["reason"]), ("valid", None))
+        self.assertEqual(report["outcome"], "candidates")
+        self.assertEqual(report["refusals"], [])
+        self.assertEqual((report["examined"], len(report["admitted"])), (1, 1))
+        self.assertIs(row["payload"], payload, "the draft is carried, never rebuilt")
+        self.assertEqual(row["id"], payload["id"])
+        self.assertTrue(row["key"])
+
+    def test_each_of_the_five_refusals_is_reachable_with_the_other_four_satisfied(self):
+        """THE ANTI-MASKING TEST. One batch per refusal, each built from an ADMISSIBLE draft
+        with exactly one thing wrong, so the refusal set is a single code every time -- a guard
+        that only ever fired beside another would show up here as a set of two. The union is
+        pinned against `DRAFT_REFUSALS` so a sixth code cannot appear unannounced and a fifth
+        cannot quietly become unreachable."""
+        marker = ("The ANSWER-KEY beside the held-out cohort already shows which of these "
+                  "attempts the oracle accepted before any of them ran.")
+        cases = {
+            # code: a banned executable field, with everything else admissible
+            "code": ([self.draft(diff={"command": "pytest -x"})], {}),
+            # assurance: a real dial, a real value, and it removes the review stage
+            "assurance": ([self.draft(diff={"routing.default_workflow": "direct"})],
+                          {"in_force": {"routing.default_workflow": "reviewed"}}),
+            # hidden: the single-use final audit nominated as the candidate's own evaluation
+            "hidden": ([self.draft(evaluation=self.evaluation(partition="audit"))], {}),
+            # duplicate: one change, two wordings
+            "duplicate": ([self.draft(), self.draft(id="cand-restated-1", hypothesis=marker
+                                                    .replace("ANSWER-KEY", "reference set"))],
+                          {}),
+            # budget: two admissible drafts under a ceiling of one
+            "budget": ([self.draft(), self.other_draft()],
+                       {"budget": we.draft_budget(max_candidates=1)}),
+        }
+        seen = set()
+        for reason, (drafts, kw) in cases.items():
+            with self.subTest(reason=reason):
+                report = self.batch(drafts, **kw)
+                self.assertEqual(report["refusals"], [reason],
+                                 f"{reason} did not fire alone: {report['refusals']}")
+                self.assertEqual(report["examined"], len(drafts),
+                                 "every draft in this case must actually have been looked at")
+                self.assertEqual(len(report["refused"]), 1)
+                seen.add(reason)
+        self.assertEqual(sorted(seen), sorted(we.DRAFT_REFUSALS),
+                         "every declared refusal is reachable and no other one exists")
+
+    def test_correcting_the_one_offending_field_admits_each_refused_draft(self):
+        """The other half of the anti-masking argument: each refused payload above differs from
+        an ADMITTED one in exactly the field the refusal names. Without this, an over-broad
+        guard would look identical to a correct one."""
+        pairs = (
+            (self.draft(diff={"command": "pytest -x"}),
+             self.draft(diff={"recovery.contract_context_package": True})),
+            (self.draft(diff={"routing.default_workflow": "direct"}),
+             self.draft(diff={"routing.default_workflow": "reviewed"})),
+            (self.draft(evaluation=self.evaluation(partition="audit")),
+             self.draft(evaluation=self.evaluation(partition="promotion"))),
+        )
+        for bad, good in pairs:
+            with self.subTest(diff=bad["diff"], partition=bad["evaluation"]["partition"]):
+                self.assertEqual(self.only(self.batch([bad]))["verdict"], "refused")
+                self.assertEqual(self.only(self.batch([good]))["verdict"], "valid")
+
+    # ==========================================================================================
+    #  CODE: not a data change this surface can make
+    # ==========================================================================================
+
+    def test_code_refuses_an_executable_field_a_key_off_the_allowlist_and_an_unrunnable_value(self):
+        """Three routes into one refusal, and the third is the one this module OWNS: D11's
+        allowlist checks that a label is a well-formed label and says in as many words that the
+        VALUES belong to the owning surface's vocabulary. `routing.default_workflow` names a
+        workflow only this evaluator runs, so a value naming nothing is only detectable here."""
+        for label, diff, needle in (
+                ("executable field", {"command": "pytest -x"}, "allowlist refused"),
+                ("authority field", {"skip_review": True}, "allowlist refused"),
+                ("off the allowlist", {"skills.entrypoint": "x"}, "allowlist refused"),
+                ("wrong kind", {"recovery.contract_context_files": "4"}, "allowlist refused"),
+                ("unrunnable workflow", {"routing.default_workflow": "yolo"},
+                 "names nothing this evaluator runs"),
+                ("unrunnable policy", {"routing.default_policy": "assured"},
+                 "names nothing this evaluator runs")):
+            with self.subTest(case=label):
+                row = self.only(self.batch([self.draft(diff=diff)]))
+                self.assertEqual((row["verdict"], row["reason"]), ("refused", "code"))
+                self.assertIn(needle, row["detail"])
+
+    def test_a_label_dial_with_no_vocabulary_here_is_refused_rather_than_admitted(self):
+        """UNKNOWN MEANS NO. If the contract grows a label dial this evaluator has no vocabulary
+        for, a draft setting it is refused -- not waved through on the allowlist's word. The
+        allowlist says the key may be set; only this module can say whether the VALUE names
+        anything, and a value it cannot judge has not been judged."""
+        with mock.patch.dict(dc.DIFF_PARAMETERS, {"routing.default_shape": "label"}):
+            row = self.only(self.batch([self.draft(diff={"routing.default_shape": "swarm"})]))
+            self.assertEqual((row["verdict"], row["reason"]), ("refused", "code"))
+            self.assertIn("owns no vocabulary", row["detail"])
+        with self.assertRaises(we.EvalError):
+            we.label_vocabulary("routing.default_shape")
+
+    def test_the_label_vocabularies_are_this_modules_own_tuples_and_cover_every_label_dial(self):
+        """No mirror: both vocabularies are the tuples a run is actually routed by, read at call
+        time. A list written out here could drift from them and this test would go on passing,
+        so the coverage check is an exact partition of the allowlist instead -- and the workflow
+        vocabulary is proven to follow BOTH tuples it is built from, in both directions."""
+        self.assertEqual(we.label_vocabulary("routing.default_workflow"), we.WORKFLOWS)
+        self.assertEqual(we.label_vocabulary("routing.default_policy"), we.POLICIES)
+        labels = sorted(k for k, kind in dc.DIFF_PARAMETERS.items() if kind == "label")
+        self.assertTrue(labels, "an empty label set would make this check vacuous")
+        for dial in labels:
+            with self.subTest(dial=dial):
+                self.assertTrue(we.label_vocabulary(dial))
+        swarm = self.draft(diff={"routing.default_workflow": "swarm"})
+        with mock.patch.object(we, "WORKFLOWS", tuple(we.WORKFLOWS) + ("swarm",)):
+            self.assertNotIn("swarm", we.label_vocabulary("routing.default_workflow"))
+            row = self.only(self.batch([swarm]))
+            self.assertEqual(row["reason"], "code",
+                             "routable in name only: WORKFLOW_STAGES has no entry, so the "
+                             "assurance consequence cannot be worked out and it is not admitted")
+            stages = dict(we.WORKFLOW_STAGES, swarm=("implement", "review", "check"))
+            with mock.patch.object(we, "WORKFLOW_STAGES", stages):
+                self.assertIn("swarm", we.label_vocabulary("routing.default_workflow"))
+                self.assertEqual(self.only(self.batch([swarm]))["verdict"], "valid",
+                                 "it runs every stage 'reviewed' runs, so nothing is dropped")
+        self.assertNotIn("swarm", we.label_vocabulary("routing.default_workflow"))
+
+    # ==========================================================================================
+    #  HIDDEN: what a proposer is blind to
+    # ==========================================================================================
+
+    def test_hidden_refuses_the_final_audit_and_an_answer_key_in_the_drafts_own_words(self):
+        marker = ("Every attempt whose ANSWER-KEY line already records the accepted outcome "
+                  "recovers under this setting.")
+        row = self.only(self.batch([self.draft(evaluation=self.evaluation(partition="audit"))]))
+        self.assertEqual((row["verdict"], row["reason"]), ("refused", "hidden"))
+        self.assertIn("audit-blind", row["detail"])
+        self.assertIn("single-use", row["detail"])
+        row = self.only(self.batch([self.draft(hypothesis=marker)]))
+        self.assertEqual((row["verdict"], row["reason"]), ("refused", "hidden"))
+        self.assertIn("ANSWER-KEY", row["detail"])
+        self.assertIn("hidden-label marker", row["detail"])
+
+    def test_the_nominable_partitions_are_derived_from_the_owners_own_table(self):
+        """`draft_partitions` is computed from `PARTITION_ROLES` at call time, so a partition
+        whose role changes moves with it. Both directions are checked, because a function that
+        returned a constant tuple would satisfy only one of them."""
+        self.assertEqual(we.draft_partitions(), ("promotion",))
+        roles = {name: dict(row) for name, row in we.PARTITION_ROLES.items()}
+        roles["promotion"]["single_use"] = True
+        with mock.patch.object(we, "PARTITION_ROLES", roles):
+            self.assertEqual(we.draft_partitions(), ())
+            self.assertEqual(self.only(self.batch([self.draft()]))["reason"], "hidden")
+        roles = {name: dict(row) for name, row in we.PARTITION_ROLES.items()}
+        roles["audit"]["single_use"] = False
+        with mock.patch.object(we, "PARTITION_ROLES", roles):
+            self.assertEqual(we.draft_partitions(), ("promotion", "audit"))
+            row = self.only(self.batch(
+                [self.draft(evaluation=self.evaluation(partition="audit"))]))
+            self.assertEqual(row["verdict"], "valid")
+
+    # ==========================================================================================
+    #  ASSURANCE: a candidate may raise a check and never remove one
+    # ==========================================================================================
+
+    def test_assurance_refuses_dropping_a_stage_and_admits_adding_one(self):
+        """A workflow IS a set of steps -- `WORKFLOW_STAGES` says which -- so a default that
+        drops one is a proposal to stop doing it. Adding one is admitted, which is what makes
+        this a direction check rather than a ban on touching the dial at all."""
+        cases = (("reviewed", "direct", "refused"), ("reviewed", "kit", "refused"),
+                 ("kit", "direct", "refused"), ("direct", "reviewed", "valid"),
+                 ("direct", "kit", "valid"), ("reviewed", "reviewed", "valid"))
+        for current, proposed, expected in cases:
+            with self.subTest(frm=current, to=proposed):
+                row = self.only(self.batch(
+                    [self.draft(diff={"routing.default_workflow": proposed})],
+                    in_force={"routing.default_workflow": current}))
+                self.assertEqual(row["verdict"], expected)
+                if expected == "refused":
+                    self.assertEqual(row["reason"], "assurance")
+                    dropped = sorted(set(we.workflow_stages(current))
+                                     - set(we.workflow_stages(proposed)))
+                    for stage in dropped:
+                        self.assertIn(repr(stage), row["detail"])
+
+    def test_removing_the_mandatory_review_is_named_as_what_it_is(self):
+        row = self.only(self.batch([self.draft(diff={"routing.default_workflow": "direct"})],
+                                   in_force={"routing.default_workflow": "reviewed"}))
+        self.assertIn("independent review", row["detail"])
+        self.assertIn("mandatory", row["detail"])
+        self.assertIn("'review'", row["detail"])
+
+    def test_a_bundle_that_sets_no_workflow_falls_back_to_the_task_contracts_own_default(self):
+        """The hole this closes: with no in-force value the first candidate to set the dial
+        could set it to the workflow that runs no review, and the reduction would look like an
+        addition because nobody had written the current value down. The default is READ from
+        `kit_contract`, so there is no second copy of it here to drift."""
+        kc = we._kc()
+        self.assertEqual(we.baseline_workflow({}), kc.DEFAULT_WORKFLOW)
+        row = self.only(self.batch([self.draft(diff={"routing.default_workflow": "direct"})]))
+        self.assertEqual((row["verdict"], row["reason"]), ("refused", "assurance"))
+        self.assertIn(repr(kc.DEFAULT_WORKFLOW), row["detail"])
+        with mock.patch.object(kc, "DEFAULT_WORKFLOW", "direct"):
+            self.assertEqual(we.baseline_workflow({}), "direct")
+            row = self.only(self.batch(
+                [self.draft(diff={"routing.default_workflow": "direct"})]))
+            self.assertEqual(row["verdict"], "valid", "nothing is dropped against 'direct'")
+
+    def test_a_task_contract_default_this_evaluator_does_not_run_refuses_to_decide(self):
+        """REFUSE WHAT YOU CANNOT INSPECT. The two vocabularies overlap and are not the same.
+        With no bundle value and a default this module does not run, there is no baseline, and
+        guessing a correspondence would invent the very thing the check needs."""
+        kc = we._kc()
+        with mock.patch.object(kc, "DEFAULT_WORKFLOW", "extended"):
+            with self.assertRaises(we.EvalError) as cm:
+                we.baseline_workflow({})
+            self.assertIn("refuses to decide", str(cm.exception))
+            with self.assertRaises(we.EvalError):
+                self.batch([self.draft(diff={"routing.default_workflow": "direct"})])
+        self.assertEqual(we.baseline_workflow({}), kc.DEFAULT_WORKFLOW, "nothing leaked")
+
+    def test_a_dial_with_no_assurance_consequence_is_not_refused_for_one(self):
+        """The control on the assurance check: `routing.default_policy` chooses which model a
+        stage runs under and adds or removes no stage, so changing it is not a reduction."""
+        for value in we.POLICIES:
+            with self.subTest(policy=value):
+                row = self.only(self.batch([self.draft(diff={"routing.default_policy": value})]))
+                self.assertEqual(row["verdict"], "valid")
+
+    # ==========================================================================================
+    #  DUPLICATE
+    # ==========================================================================================
+
+    def test_one_change_to_one_parent_is_one_proposal_however_it_is_worded(self):
+        """The dedupe key is the parent and the change, not the id and not the digest of the
+        whole payload -- both of which a reworded hypothesis moves."""
+        first = self.draft()
+        restated = self.draft(id="cand-restated-1",
+                              hypothesis="Handing the callee's interface to the retry recovers "
+                                         "more cross-module failures than the frozen arm does.")
+        report = self.batch([first, restated])
+        self.assertEqual(report["refusals"], ["duplicate"])
+        self.assertEqual([r["verdict"] for r in report["candidates"]], ["valid", "refused"])
+        self.assertEqual(report["candidates"][0]["key"], report["candidates"][1]["key"])
+        # And the key is available to a caller, so a later batch does not re-propose it.
+        again = self.batch([first], known=[report["candidates"][0]["key"]])
+        self.assertEqual(self.only(again)["reason"], "duplicate")
+        # A different parent is a different proposal even with an identical diff.
+        other_parent = self.draft(id="cand-elsewhere-1",
+                                  parent=tpb.ref("bundle-other-9", dc.BUNDLE_VERSION))
+        self.assertEqual(self.only(self.batch([other_parent],
+                                              known=[report["candidates"][0]["key"]]))["verdict"],
+                         "valid")
+
+    # ==========================================================================================
+    #  BUDGET: a cap that cannot be reached is not a cap
+    # ==========================================================================================
+
+    def test_both_bounds_admit_at_their_limit_and_refuse_one_past_it(self):
+        drafts = [self.draft(), self.other_draft()]
+        at_limit = self.batch(drafts, budget=we.draft_budget(max_candidates=2, max_effort=2))
+        self.assertEqual(at_limit["refusals"], [])
+        self.assertEqual((len(at_limit["admitted"]), at_limit["examined"]), (2, 2))
+
+        over_count = self.batch(drafts, budget=we.draft_budget(max_candidates=1, max_effort=2))
+        self.assertEqual(over_count["refusals"], ["budget"])
+        self.assertEqual((len(over_count["admitted"]), over_count["examined"]), (1, 2))
+        refused = over_count["refused"][0]
+        self.assertIn("ceiling of 1 candidate", refused["detail"])
+        self.assertTrue(refused["examined"], "it was looked at and found valid first")
+
+        over_effort = self.batch(drafts, budget=we.draft_budget(max_candidates=2, max_effort=1))
+        self.assertEqual(over_effort["refusals"], ["budget"])
+        self.assertEqual((len(over_effort["admitted"]), over_effort["examined"]), (1, 1))
+        refused = over_effort["refused"][0]
+        self.assertIn("effort ceiling of 1", refused["detail"])
+        self.assertFalse(refused["examined"], "the ceiling is the cost of LOOKING")
+        self.assertEqual(over_effort["budget"]["effort_spent"], 1)
+
+    def test_a_caller_may_lower_a_bound_and_may_never_raise_one(self):
+        """The direction is the point: a bound a caller widens on request is not a bound, and
+        'candidate data cannot change budget policy' is not enforced by one that asks politely.
+        """
+        ceiling = we.draft_ceiling()
+        self.assertEqual(we.draft_budget()["candidates"], ceiling["candidates"])
+        self.assertEqual(we.draft_budget(max_effort=1)["effort"], 1)
+        for kwargs in ({"max_candidates": ceiling["candidates"] + 1},
+                       {"max_effort": ceiling["effort"] + 1}):
+            with self.subTest(**kwargs):
+                with self.assertRaises(we.EvalError) as cm:
+                    we.draft_budget(**kwargs)
+                self.assertIn("ceiling", str(cm.exception))
+        for bad in ({"max_candidates": -1}, {"max_effort": True}, {"max_candidates": 1.5},
+                    {"max_effort": "2"}):
+            with self.subTest(**bad):
+                self.assertRaises(we.EvalError, we.draft_budget, **bad)
+
+    def test_the_ceiling_is_derived_from_the_allowlist_rather_than_copied_from_it(self):
+        """A number written out here could drift from the allowlist it is supposed to bound and
+        every other test in this file would go on passing."""
+        dials = len(dc.DIFF_PARAMETERS)
+        self.assertEqual(we.draft_ceiling()["candidates"], dials)
+        self.assertEqual(we.draft_ceiling()["effort"], we.DRAFT_EFFORT_PER_DIAL * dials)
+        with mock.patch.dict(dc.DIFF_PARAMETERS, {"routing.default_shape": "label"}):
+            self.assertEqual(we.draft_ceiling()["candidates"], dials + 1)
+            self.assertEqual(we.draft_budget(max_candidates=dials + 1)["candidates"], dials + 1)
+        with self.assertRaises(we.EvalError):
+            we.draft_budget(max_candidates=dials + 1)
+        self.assertIn("never a price", we.DRAFT_EFFORT_UNIT)
+        self.assertIn("effort_unit", we.draft_ceiling())
+
+    # ==========================================================================================
+    #  NO-CANDIDATE IS A RESULT, AND EVIDENCE IS RETAINED
+    # ==========================================================================================
+
+    def test_producing_no_candidate_is_a_successful_outcome_distinct_from_all_rejected(self):
+        """"No applicable change" is a legitimate abstention, not a failure -- and not the same
+        fact as "everything proposed was refused". Collapsing the two would let an empty search
+        read as a clean review."""
+        empty = self.batch([])
+        self.assertEqual(empty["outcome"], "no-candidate")
+        self.assertEqual((empty["drafts"], empty["examined"], empty["refusals"]), (0, 0, []))
+        self.assertEqual((empty["admitted"], empty["refused"]), ([], []))
+
+        rejected = self.batch([self.draft(diff={"command": "x"})])
+        self.assertEqual(rejected["outcome"], "all-rejected")
+        self.assertEqual(rejected["admitted"], [])
+        self.assertNotEqual(rejected["outcome"], empty["outcome"])
+
+        # The loop's own search reaches the same outcome by finding nothing to turn.
+        report = il.run_draft({"source": "deterministic", "bundle": self.bundle(),
+                               "evaluation": self.evaluation(),
+                               "evidence": [tpb.ref("attempt-a", dc.CONTRACT_VERSION),
+                                            tpb.ref("attempt-b", dc.CONTRACT_VERSION)],
+                               "dials": []})
+        self.assertEqual(report["outcome"], "no-candidate")
+        self.assertEqual(report["drafts"], 0)
+
+        # And the CLI agrees at the one place a caller would notice: finding nothing EXITS 0.
+        for job, expected in (({"source": "manual", "bundle": self.bundle(), "drafts": []}, 0),
+                              ({"source": "manual", "bundle": self.bundle(),
+                                "drafts": [self.draft(diff={"command": "x"})]}, 3)):
+            path = self.root / f"job-{expected}.json"
+            path.write_text(json.dumps(job), encoding="utf-8")
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(il.main(["draft", "--job", str(path)]), expected)
+
+    def test_every_refused_candidate_keeps_its_payload_and_its_reason(self):
+        """A rejection that vanishes is a rejection nobody can review. The unreadable draft and
+        the one the effort ceiling never reached are kept too, and each says which it is."""
+        good, unreadable = self.draft(), {"v": dc.CANDIDATE_VERSION}
+        unreached = self.other_draft()
+        report = self.batch([good, unreadable, unreached],
+                            budget=we.draft_budget(max_candidates=2, max_effort=2))
+        self.assertEqual([r["verdict"] for r in report["candidates"]],
+                         ["valid", "refused", "refused"])
+        self.assertEqual(sorted(report["refusals"]), ["budget", "code"])
+        for row, payload in zip(report["candidates"], [good, unreadable, unreached]):
+            with self.subTest(id=row["id"]):
+                self.assertIs(row["payload"], payload, "carried by identity, never rebuilt")
+        self.assertIsNone(report["candidates"][1]["id"], "an unreadable draft has no id to take")
+        self.assertFalse(report["candidates"][2]["examined"])
+        self.assertEqual(len(report["refused"]), 2)
+
+    def test_the_validator_returns_a_verdict_for_anything_and_raises_only_about_the_setup(self):
+        """The two jobs kept apart. A CANDIDATE is never an exception -- refusing by raising
+        would abandon the rest of the batch and lose the record of what was refused. The
+        CALLER's own setup still raises, because that is not a fact about any candidate."""
+        for payload in (None, "a draft", ["not", "a", "draft"], 7, {"v": "nope"}):
+            with self.subTest(payload=payload):
+                row = we.validate_draft(payload, in_force={})
+                self.assertEqual((row["verdict"], row["reason"]), ("refused", "code"))
+        for bad in ("not a mapping", ["x"], {"routing.unknown_dial": 1}):
+            with self.subTest(in_force=bad):
+                self.assertRaises(we.EvalError, we.validate_draft, self.draft(), in_force=bad)
+        self.assertRaises(we.EvalError, we.validate_draft_batch, [], in_force={},
+                          budget={"candidates": 1})
+
+    # ==========================================================================================
+    #  NO LIVE INFERENCE: the runtime proof, and its control
+    # ==========================================================================================
+
+    def test_the_seam_trap_is_armed_and_reachable(self):
+        """CONTROL. Without this, every "nothing was dispatched" assertion below could be
+        passing because the seams were never actually replaced."""
+        with _ArmedSeams(self) as armed:
+            with self.assertRaises(AssertionError):
+                we.default_runner("stub")
+            self.assertTrue(any(seam.calls for seam in armed.seams))
+        self.assertFalse(isinstance(we.default_runner, _RaisingSeam), "restored afterwards")
+
+    def test_a_whole_drafting_run_reaches_no_dispatching_or_storing_seam(self):
+        job = {"source": "deterministic", "bundle": self.bundle(),
+               "evaluation": self.evaluation(),
+               "evidence": [tpb.ref("attempt-a", dc.CONTRACT_VERSION),
+                            tpb.ref("attempt-b", dc.CONTRACT_VERSION)],
+               "counterevidence": [tpb.ref("attempt-c", dc.CONTRACT_VERSION)]}
+        with _ArmedSeams(self):
+            report = il.run_draft(job)
+            manual = il.run_draft({"source": "manual", "bundle": self.bundle(),
+                                   "drafts": [self.draft(), self.other_draft()]})
+            demo = il.run_draft(il.demo_job())
+            il.render_report(demo)
+        self.assertTrue(report["drafts"], "the search produced something to have dispatched for")
+        self.assertEqual(len(manual["admitted"]), 2)
+        self.assertEqual(demo["outcome"], "candidates")
+
+    def test_no_function_in_the_section_or_the_loop_calls_anything_that_dispatches(self):
+        """The structural half. `SECTION_FUNCTIONS` is exact, so a helper added to the section
+        fails here rather than sliding past the sweep."""
+        section = _section_functions()
+        self.assertEqual(set(section), SECTION_FUNCTIONS)
+        for name, node in sorted(section.items()):
+            with self.subTest(function=name):
+                called = _called_names(node)
+                self.assertEqual(called & DISPATCHING_NAMES, set())
+                self.assertEqual(called & WRITER_NAMES, set(),
+                                 "the section opens nothing and stores nothing")
+        loop = _loop_functions()
+        self.assertTrue(loop)
+        for name, node in sorted(loop.items()):
+            with self.subTest(function=f"improvement_loop.{name}"):
+                called = _called_names(node)
+                self.assertEqual(called & DISPATCHING_NAMES, set())
+                self.assertEqual(called & WRITER_NAMES, set(),
+                                 "the loop is not a persistence owner: it reads a manifest "
+                                 "through its owner and writes nothing at all")
+        source = (BIN_DIR / "improvement_loop.py").read_text(encoding="utf-8")
+        for banned in ("subprocess", "proc_runner", "copilot_execute", "claude_execute",
+                       "codex_execute", "cursor_execute", "Path.home"):
+            with self.subTest(name=banned):
+                self.assertNotIn(banned, source)
+
+    def test_the_loop_has_no_seam_through_which_a_dispatcher_could_be_passed(self):
+        """A function that cannot be handed a runner cannot use one."""
+        forbidden = {"runner", "dispatcher", "git_runner", "test_runner", "binary", "argv",
+                     "model", "prefs_dir", "proposer"}
+        checked = 0
+        for name, fn in sorted(vars(il).items()):
+            if not inspect.isfunction(fn) or fn.__module__ != il.__name__:
+                continue
+            if name == "main":
+                # `main(argv)` is the CLI's own argument vector, which is what a command line
+                # is. Every other function is swept, including the three `cmd_*` it reaches.
+                continue
+            checked += 1
+            with self.subTest(function=name):
+                offered = set(inspect.signature(fn).parameters) & forbidden
+                self.assertEqual(offered, set(), f"{name} offers {sorted(offered)}")
+        self.assertGreater(checked, 5, "nothing was swept; the filter matched no function")
+
+    def test_the_optional_proposer_is_declared_and_is_not_wired(self):
+        """Declared so a reader learns what it would have to be; not wired, so nothing here can
+        reach a model. Separately budgeted and audit-blind are stated in the label rather than
+        left to be inferred from silence."""
+        self.assertIn("proposer", il.SOURCES)
+        self.assertIs(il.PROPOSER_WIRED, False)
+        with self.assertRaises(il.LoopError) as cm:
+            il.run_draft({"source": "proposer", "bundle": self.bundle(), "drafts": []})
+        self.assertIn("not wired", str(cm.exception))
+        self.assertIn("own budget", il.PROPOSER_LABEL)
+        self.assertIn("audit-blind", il.PROPOSER_LABEL)
+        with mock.patch.object(il, "PROPOSER_WIRED", True):
+            with self.assertRaises(il.LoopError):
+                il.run_draft({"source": "manual", "bundle": self.bundle(), "drafts": []})
+
+    # ==========================================================================================
+    #  ONE OWNER: the loop stores nothing
+    # ==========================================================================================
+
+    def test_a_whole_run_through_both_cli_paths_creates_no_file_anywhere(self):
+        """One owner, checked by inventory rather than by intention: the temporary root and the
+        redirected data home are both listed before and after, and neither gains anything. The
+        job file this test writes is the only thing that appears, and it appears before the
+        run."""
+        job_path = self.root / "job.json"
+        job_path.write_text(json.dumps({
+            "source": "deterministic", "bundle": self.bundle(),
+            "evaluation": self.evaluation(),
+            "evidence": [tpb.ref("attempt-a", dc.CONTRACT_VERSION),
+                         tpb.ref("attempt-b", dc.CONTRACT_VERSION)]}), encoding="utf-8")
+        home = Path(_DATA_HOME.name)
+        before_root = sorted(p.relative_to(self.root) for p in self.root.rglob("*"))
+        before_home = sorted(p.relative_to(home) for p in home.rglob("*"))
+
+        rendered, machine = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(rendered):
+            self.assertEqual(il.main(["draft", "--job", str(job_path)]), 0)
+        with contextlib.redirect_stdout(machine):
+            self.assertEqual(il.main(["demo", "--json"]), 0)
+        self.assertIn("admitted", rendered.getvalue())
+        self.assertEqual(json.loads(machine.getvalue())["outcome"], "candidates",
+                         "the run really produced a report rather than nothing at all")
+
+        self.assertEqual(sorted(p.relative_to(self.root) for p in self.root.rglob("*")),
+                         before_root, "the drafting run wrote nothing under the root")
+        self.assertEqual(sorted(p.relative_to(home) for p in home.rglob("*")), before_home,
+                         "and nothing in the data home either")
+
+    def test_the_section_stores_nothing_and_therefore_versions_nothing(self):
+        """No new stored object means no new `*_VERSION` constant -- which matters, because one
+        would need a `release_gate.VERSION_SOURCES` row and that stales two generated documents.
+        A draft is not a record: the D20 proposal file is what a record of one looks like."""
+        lines = (BIN_DIR / "workflow_eval.py").read_text(encoding="utf-8").splitlines()
+        start = next(i + 1 for i, line in enumerate(lines) if line.strip() == SECTION_START)
+        end = next(i + 1 for i, line in enumerate(lines) if line.strip() == SECTION_END)
+        tree = ast.parse("\n".join(lines))
+        assigned = {t.id for node in tree.body if isinstance(node, ast.Assign)
+                    and start < node.lineno < end
+                    for t in node.targets if isinstance(t, ast.Name)}
+        self.assertTrue(assigned, "the section defines constants; this check is not vacuous")
+        self.assertEqual(sorted(n for n in assigned if n.endswith("_VERSION")), [])
+        self.assertNotIn("improvement_loop", [row[1] for row in rg.VERSION_SOURCES])
+        self.assertNotIn("replay", [p.name for p in self.root.rglob("*")])
+
+    def test_the_loop_reads_the_same_contract_instance_the_evaluator_judges_with(self):
+        """`bin/` is not a package, so two loaders make two `ContractError`s. The loop reaches
+        its contract THROUGH the evaluator, which is what keeps a refusal catchable."""
+        self.assertIs(il._dc(), we._dc())
+        self.assertIs(il._we(), we)
+
+    # ==========================================================================================
+    #  THE EVIDENCE SEAM: read-only, audit-blind, and it degrades
+    # ==========================================================================================
+
+    def test_the_evidence_seam_reports_what_may_be_cited_and_refuses_what_a_proposer_is_blind_to(self):
+        manifest = self.manifest()
+        we.write_manifest(self.store, manifest)
+        state = il.prepare_evaluation(self.store, manifest["id"])
+        self.assertTrue(state["ready"])
+        self.assertEqual(state["manifest_ref"], we.manifest_ref(manifest))
+        self.assertEqual(sorted(state["items"]),
+                         sorted(manifest["content"]["partitions"]["promotion"]))
+        self.assertIsNone(state["blockers"])
+        for partition in ("audit", "calibration", "development"):
+            with self.subTest(partition=partition):
+                with self.assertRaises(il.LoopError) as cm:
+                    il.prepare_evaluation(self.store, manifest["id"], partition=partition)
+                self.assertIn("proposer does not read", str(cm.exception))
+        with self.assertRaises(il.LoopError):
+            il.prepare_evaluation(self.store, manifest["id"], partition="nowhere")
+
+    def test_the_evidence_seam_degrades_with_its_blockers_and_still_refuses_a_rewrite(self):
+        """A reader names every reason the material cannot be cited instead of raising on the
+        first -- but a manifest whose bytes moved after they were written is not a fact about
+        the evidence, and `read_manifest` refuses it where that check is defined."""
+        manifest = self.manifest()
+        we.write_manifest(self.store, manifest)
+        retired = manifest["content"]["partitions"]["promotion"][0]
+        we.retire(self.store, manifest, items=[retired], reason="withdrawn", by="tester")
+        state = il.prepare_evaluation(self.store, manifest["id"])
+        self.assertFalse(state["ready"])
+        self.assertIn(retired, state["blockers"])
+        self.assertEqual(state["items"], [])
+
+        path = self.store / we.MANIFEST_DIR / f"{manifest['id']}.json"
+        tampered = json.loads(path.read_text())
+        tampered["content"]["rules"]["allocation"]["audit"] += 1
+        path.write_text(json.dumps(tampered, indent=2, sort_keys=True) + "\n")
+        with self.assertRaises(we.EvalError) as cm:
+            il.prepare_evaluation(self.store, manifest["id"])
+        self.assertIn("rewritten", str(cm.exception))
+
+    # ==========================================================================================
+    #  THE DETERMINISTIC SEARCH
+    # ==========================================================================================
+
+    def test_the_search_words_every_candidate_from_the_dial_it_turns(self):
+        """Precise and deterministic: each candidate names its dial, the value in force and the
+        value proposed, so no two are two wordings of one claim -- and running it twice produces
+        the identical payloads, which is what makes a key comparison meaningful at all."""
+        bundle = self.bundle(parameters={"routing.default_workflow": "direct",
+                                         "recovery.contract_context_files": 4})
+        kwargs = {"evaluation": self.evaluation(),
+                  "evidence": [tpb.ref("attempt-a", dc.CONTRACT_VERSION),
+                               tpb.ref("attempt-b", dc.CONTRACT_VERSION)]}
+        drafts = il.deterministic_drafts(bundle, **kwargs)
+        self.assertEqual(drafts, il.deterministic_drafts(bundle, **kwargs), "deterministic")
+        self.assertTrue(drafts)
+        for payload in drafts:
+            with self.subTest(draft=payload["id"]):
+                candidate = dc.parse_proposal(payload)       # the real parser, not a guess
+                dial, value = next(iter(candidate.diff.items()))
+                self.assertIn(dial, candidate.hypothesis)
+                self.assertIn(json.dumps(value), candidate.hypothesis)
+                self.assertIn(dial, candidate.falsification)
+        keys = [we.draft_key(dc.parse_proposal(p)) for p in drafts]
+        self.assertEqual(len(set(keys)), len(keys), "a search never emits one change twice")
+        report = we.validate_draft_batch(drafts, in_force={"routing.default_workflow": "direct",
+                                                           "recovery.contract_context_files": 4})
+        self.assertEqual(report["examined"], len(drafts))
+        self.assertTrue(report["admitted"], "the search is not a generator of refusals only")
+        with self.assertRaises(il.LoopError):
+            il.deterministic_drafts(bundle, dials=["routing.nonexistent"], **kwargs)
+
+    def test_a_job_with_a_field_nobody_reads_is_refused_rather_than_ignored(self):
+        """A field nobody reads is an instruction nobody follows, and silently dropping it is
+        how a caller comes to believe a bound was applied."""
+        base = {"source": "manual", "bundle": self.bundle(), "drafts": [self.draft()]}
+        for over, needle in ((("approve", True), "nothing here reads"),
+                             (("budget", {"max_model_calls": 4}), "the bounds are"),
+                             (("budget", "none"), "must be an object"),
+                             (("source", "oracle"), "source must be one of")):
+            with self.subTest(field=over[0]):
+                with self.assertRaises(il.LoopError) as cm:
+                    il.run_draft(dict(base, **{over[0]: over[1]}))
+                self.assertIn(needle, str(cm.exception))
+        with self.assertRaises(il.LoopError):
+            il.run_draft(dict(base, dials=["routing.default_policy"]))
+        with self.assertRaises(il.LoopError):
+            il.run_draft({"source": "manual", "drafts": []})
 
 
 if __name__ == "__main__":
