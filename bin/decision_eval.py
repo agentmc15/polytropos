@@ -28,7 +28,11 @@ WHAT THIS IS. A read-only join, one row per decision, with four rules that do th
   * AN ACTION THAT WAS NOT TAKEN HAS NO OUTCOME. The outcome slot of an alternative is filled
     only for the action actually taken; every other alternative carries `UNTRIED_ACTION_NOTE`
     and a null. An on-policy record cannot reveal what an untried action would have done, and
-    there is no field here that could hold one.
+    there is no field here that could hold one. The row's own `actions.outcome` is scoped the
+    same way: it describes what followed the action in `actions.taken`, so a decision that
+    took none -- a refusal, or a row with no record -- leaves it null and says why
+    (`NO_ACTION_OUTCOME_NOTE`). The fact that followed stays in `outcome_evidence`, where it
+    is evidence of what happened next and not of what the decision produced.
 
 WHAT IT REFUSES. It writes nothing, anywhere: it opens no file, takes no path, and is handed
 projections that their own owners read. It never totals two durations measured by different
@@ -129,6 +133,14 @@ UNTRIED_ACTION_NOTE = (
     "not taken: an on-policy record shows what happened after the action that WAS taken and "
     "reveals nothing about the outcome of one that was not. This row carries no field that "
     "could hold an untried action's outcome"
+)
+
+NO_ACTION_OUTCOME_NOTE = (
+    "no action was taken: this slot describes what followed the action named in `taken`, and a "
+    "decision that refused -- or that left no record of a selection at all -- took none, so "
+    "there is nothing here for it to describe. What happened afterwards is still in the row, "
+    "under `outcome_evidence`, as evidence of what followed rather than as this decision's "
+    "own outcome"
 )
 
 NO_CAUSAL_CLAIM = (
@@ -874,11 +886,17 @@ def join_row(request, *, prediction_at, result=None, record=None, refusal=None, 
             "note": None,
             "note_withheld": NOTE_WITHHELD,
         },
+        # `outcome` is scoped to `taken`: it reports what followed the action this decision
+        # took. With no action taken there is no such thing, and filling the slot from the
+        # attempt log anyway would read as "the decision's outcome was pass" to anyone who did
+        # not also check `taken`. The alternatives have always said so with a null and a note;
+        # this slot now says it the same way, and `outcome_evidence` still carries the fact.
         "actions": {
             "baseline": rec["baseline"] if rec else None,
             "recommended": (res or {}).get("recommended"),
             "taken": taken,
-            "outcome": _copy(outcome),
+            "outcome": None if taken is None else _copy(outcome),
+            "why": None if taken is not None else NO_ACTION_OUTCOME_NOTE,
             "alternatives": _alternatives(req["alternatives"], taken, outcome),
         },
         "questions": questions,
@@ -1034,7 +1052,13 @@ def join(rows, notes=()):
 # report with a straight face says `insufficient-evidence` rather than a number; a field with no
 # distribution at all -- a rules provider's answer, or an answer this report was not asked to
 # score -- says `not-applicable`, because "no probability was ever claimed" and "the probability
-# claimed was 0" are different facts and this module refuses to collapse them into one.
+# claimed was 0" are different facts and this module refuses to collapse them into one. That
+# floor is EVERY metric's, the reliability diagram's own bins included: each bin carries its own
+# status, and an occupied bin below the floor reports `insufficient-evidence` with its `n` and
+# its `mean_confidence` visible rather than an `empirical_accuracy` that one observation makes
+# 1.0 or 0.0. An artifact's VALUES are checked wherever one enters -- built here or imported as
+# a payload -- by the single `_assert_artifact_values`, so a garbage-provenance object with the
+# right field set and the right version stamp is refused by the report, not echoed into it.
 #
 # WHAT IT NEVER DOES. Reporting on `calibrated` never reads `raw` when `calibrated` is absent,
 # and reporting on `raw` never reads `calibrated`: each call scores exactly the field it was
@@ -1129,6 +1153,46 @@ def _ln(x):
     return total + power * _LN2
 
 
+def _assert_artifact_values(pinned):
+    """The ONE place a calibration artifact's VALUES are judged: blank identity text, a negative
+    or non-integer sample count, a `fitted_at` that names no instant, a note that is not text.
+
+    Both ways an artifact can reach a report end here -- `calibration_artifact`, which builds one
+    in this process, and `_validated_artifact`, which reads one some other owner produced. That
+    was not true before: the value checks lived in the constructor alone, so a payload carrying
+    the right FIELD SET and the right version stamp (blank provider, `sample_count` -999, a
+    `fitted_at` that is prose) was echoed into an audited report as a validated pin while the
+    constructor refused the identical values -- and the consumption path is the one every real
+    caller uses. One implementation, called twice; a second copy beside it would be the defect
+    this is the fix for, not another fix.
+    """
+    for field in ("target", "provider", "domain", "dataset", "method", "fit_partition"):
+        value = pinned.get(field)
+        if not isinstance(value, str) or not value.strip():
+            raise _refuse(
+                "wrong-type",
+                f"a calibration artifact's {field} is non-empty text naming what was fit; an "
+                f"artifact records an identity, never the observations behind one")
+    model = pinned.get("model")
+    if model is not None and (not isinstance(model, str) or not model.strip()):
+        raise _refuse("wrong-type", "a calibration artifact's model is non-empty text, or null")
+    sample_count = pinned.get("sample_count")
+    if not isinstance(sample_count, int) or isinstance(sample_count, bool) or sample_count < 0:
+        raise _refuse(
+            "wrong-type",
+            "a calibration artifact's sample_count is a non-negative integer -- the count a fit "
+            "elsewhere claims to have used, never the observations themselves; nothing with "
+            "that shape is a parameter of the constructor")
+    fitted_at = pinned.get("fitted_at")
+    if fitted_at is not None and _instant(fitted_at) is None:
+        raise _refuse("value-invalid",
+                      f"fitted_at {fitted_at!r} names no instant; pass an ISO-8601 timestamp "
+                      f"with a zone, or None for 'unknown'")
+    if not isinstance(pinned.get("note"), str):
+        raise _refuse("wrong-type", "a calibration artifact's note is text")
+    return pinned
+
+
 def calibration_artifact(*, target, provider, domain, dataset, method, fit_partition,
                          sample_count, model=None, fitted_at=None, note=""):
     """A pin, never a fit: what a calibrator CLAIMS to be, recorded so a report can refuse to
@@ -1138,39 +1202,23 @@ def calibration_artifact(*, target, provider, domain, dataset, method, fit_parti
     Every keyword here is IDENTITY -- a label, a count, an instant -- never a collection of
     predictions or labels. There is no parameter this function could receive that a fit could be
     computed from, which is the whole of why this function cannot become one.
+
+    The values themselves are judged by `_assert_artifact_values`, which `_validated_artifact`
+    calls too, so building an artifact here and importing one with the same shape cannot diverge.
     """
-    for field, value in (("target", target), ("provider", provider), ("domain", domain),
-                        ("dataset", dataset), ("method", method),
-                        ("fit_partition", fit_partition)):
-        if not isinstance(value, str) or not value.strip():
-            raise _refuse(
-                "wrong-type",
-                f"a calibration artifact's {field} is non-empty text naming what was fit; this "
-                f"function records an identity, never the observations behind one")
-    if model is not None and (not isinstance(model, str) or not model.strip()):
-        raise _refuse("wrong-type", "a calibration artifact's model is non-empty text, or null")
-    if not isinstance(sample_count, int) or isinstance(sample_count, bool) or sample_count < 0:
-        raise _refuse(
-            "wrong-type",
-            "a calibration artifact's sample_count is a non-negative integer -- the count a fit "
-            "elsewhere claims to have used, never the observations themselves; nothing with "
-            "that shape is a parameter of this function")
-    if fitted_at is not None and _instant(fitted_at) is None:
-        raise _refuse("value-invalid",
-                      f"fitted_at {fitted_at!r} names no instant; pass an ISO-8601 timestamp "
-                      f"with a zone, or None for 'unknown'")
-    if not isinstance(note, str):
-        raise _refuse("wrong-type", "a calibration artifact's note is text")
-    return {"v": CALIBRATION_VERSION, "target": target, "provider": provider, "model": model,
-            "domain": domain, "dataset": dataset, "method": method,
-            "fit_partition": fit_partition, "sample_count": sample_count,
-            "fitted_at": fitted_at, "note": note}
+    return _assert_artifact_values(
+        {"v": CALIBRATION_VERSION, "target": target, "provider": provider, "model": model,
+         "domain": domain, "dataset": dataset, "method": method,
+         "fit_partition": fit_partition, "sample_count": sample_count,
+         "fitted_at": fitted_at, "note": note})
 
 
 def _validated_artifact(value):
-    """A calibration artifact, checked against its own closed field set and version -- whether
-    it was built by `calibration_artifact` in this process or IMPORTED as a payload some other
-    owner (a future O03, or a synthetic test fixture) produced with this same shape."""
+    """A calibration artifact, checked against its own closed field set, its version AND its
+    values -- whether it was built by `calibration_artifact` in this process or IMPORTED as a
+    payload some other owner (a future O03, or a synthetic test fixture) produced with this same
+    shape. The shape checks run first and the value checks last, so a refusal names which of the
+    two actually fired rather than leaving a caller to guess."""
     if not isinstance(value, (dict, types.MappingProxyType)):
         raise _refuse("wrong-type",
                       "a calibration artifact is the object calibration_artifact() returns")
@@ -1187,7 +1235,7 @@ def _validated_artifact(value):
         raise _refuse("unknown-value",
                       f"the artifact is stamped {value.get('v')!r}; this report reads "
                       f"{CALIBRATION_VERSION!r}")
-    return dict(value)
+    return _assert_artifact_values(dict(value))
 
 
 def _standard_error(rate, n):
@@ -1258,12 +1306,32 @@ def _log_loss_metric(prob_rows, min_n):
             "clipped": clipped}
 
 
-def _reliability_bins(prob_rows, bins):
+def _reliability_bins(prob_rows, bins, min_n):
     """A confidence-calibration reliability diagram: each scoreable row contributes its TOP
     predicted category and whether that category matched the label, binned by how confident the
     prediction was. Empty bins are reported with `n: 0` rather than omitted, the same discipline
     D14 applies to a censored row -- an empty bin is evidence about the distribution of
-    confidence, not an absence to hide."""
+    confidence, not an absence to hide.
+
+    Every bin carries its own `METRIC_STATUSES` status against the SAME floor the four metrics
+    beside it already take, because a bin's `empirical_accuracy` is a rate estimated from
+    whatever landed in that bin, and a rate from one observation is 1.0 or 0.0 no matter what the
+    model believed. Without the floor this function reported that 1.0 in the same call in which
+    `classification` and `brier` were reporting `insufficient-evidence` over the very same row.
+
+    The three cases stay distinguishable rather than collapsing into each other:
+
+      * an EMPTY bin is `not-applicable` at `n: 0` -- nothing landed here to score, the same
+        reading `_brier_metric` gives a field carrying no distributions at all;
+      * an OCCUPIED bin below the floor is `insufficient-evidence` with its `n` and its
+        `mean_confidence` still visible -- the confidences are what the predictions THEMSELVES
+        said, not something estimated from outcomes -- and its `empirical_accuracy` and
+        `standard_error` null, the same shape `_rate_metric` uses when it keeps `successes` but
+        withholds `value`;
+      * at or above the floor the rate is reported.
+
+    `min_samples` stays the public, tested override it already was: a caller who knowingly passes
+    1 gets a rate from one observation, visibly, the way the other four metrics honour it."""
     edges = [i / bins for i in range(bins + 1)]
     grouped = [[] for _ in range(bins)]
     for dist, actual, outcomes in prob_rows:
@@ -1276,14 +1344,21 @@ def _reliability_bins(prob_rows, bins):
         entries = grouped[index]
         n = len(entries)
         if n == 0:
-            out.append({"lower": edges[index], "upper": edges[index + 1], "n": 0,
-                        "mean_confidence": None, "empirical_accuracy": None,
-                        "standard_error": None})
+            out.append({"lower": edges[index], "upper": edges[index + 1],
+                        "status": "not-applicable", "n": 0, "mean_confidence": None,
+                        "empirical_accuracy": None, "standard_error": None})
             continue
         mean_confidence = sum(c for c, _ in entries) / n
+        if n < min_n:
+            out.append({"lower": edges[index], "upper": edges[index + 1],
+                        "status": "insufficient-evidence", "n": n,
+                        "mean_confidence": mean_confidence, "empirical_accuracy": None,
+                        "standard_error": None})
+            continue
         accuracy = sum(a for _, a in entries) / n
-        out.append({"lower": edges[index], "upper": edges[index + 1], "n": n,
-                    "mean_confidence": mean_confidence, "empirical_accuracy": accuracy,
+        out.append({"lower": edges[index], "upper": edges[index + 1], "status": "computed",
+                    "n": n, "mean_confidence": mean_confidence,
+                    "empirical_accuracy": accuracy,
                     "standard_error": _standard_error(accuracy, n)})
     return out
 
@@ -1390,7 +1465,7 @@ def calibration_report(rows, *, question, field, artifact=None, report_partition
 
     brier = _brier_metric(prob_rows, min_samples)
     log_loss = _log_loss_metric(prob_rows, min_samples)
-    reliability = _reliability_bins(prob_rows, bins)
+    reliability = _reliability_bins(prob_rows, bins, min_samples)
 
     action_risk = None
     if thresholds:

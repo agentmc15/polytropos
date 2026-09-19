@@ -1703,3 +1703,129 @@ clean one if you only grep for FAIL lines.** A subagent's own background suite c
 mine here. Read the exit status and the `Ran`/`OK` line; the serial rule covers subagents'
 background work too.
 outcome: D19 model=sonnet attempts=2 result=pass review=revised run=2026-09-16-aa6e
+
+## Phase 4 independent verification (D14–D17, owed since they were marked done)
+
+Four verifiers ran adversarially against committed HEAD, each constrained to targeted modules.
+
+**D17 — ACCEPT.** 49 tests, all load-bearing under the verifier's own mutations: the
+`REPAIRABLE_FAILURE_CLASSES` membership check (7 failures when neutered, and `model`/
+`environment`/`permission` each produce `failure-class-excluded` ALONE, so it is not riding behind
+another guard), `_repair_in_force`'s `is True` identity check, the dispatch-cap guard, and the
+duplicate-repair guard. All ten defaultless parameters are genuinely consulted.
+
+**KIT-LEVEL FINDING, confirmed by me directly — two of the seven failure classes have no
+producer.** `attempt_ledger.CLASSES` declares `model` and `verification`, but `classify_dispatch`
+can only return `infrastructure`, `None`, `auth`, `config`, `permission`, `unknown`. It never
+returns either of the two that `RECOVERY` maps to `escalate`. The verifier reproduced the end to
+end case with a REAL ledger — a dispatch that succeeds and whose verify fails projects
+`result=verify-failed, failure_class=None` — and fed it to `plan_context_repair`, which refuses
+with `failure-class-unestablished`. **So D17 gates exclusively on a value nothing in this
+repository can currently emit.** That is a sixth and more fundamental reason "cannot run today at
+all" holds, beyond the five already recorded. Not a D17 defect: D17 correctly consumes what
+`attempt_history` projects and classifies nothing itself. **It lands on D23, D24 and the D30
+handoff — a repairable class with no producer must be stated as a live gap, not implied to work.**
+
+**Open question from D17 — CLOSED: leave `model` OUT of `REPAIRABLE_FAILURE_CLASSES`.** A context
+repair hands back interfaces/consumers/config and retries on the SAME model, which only answers a
+failure that produced a genuine checkable attempt falling short for a missing-information reason.
+A `model`-class failure is a failure to produce a valid attempt at all; handing it a context
+package changes context and spends the single permitted repair on something context cannot fix,
+foreclosing it from a later genuine verification failure on the same task. The shared PLAN's own
+rule — do not change model and context at once — points the same way. Note the distinction is not
+observable today anyway, per the finding above.
+
+**D16 — one CONFIRMED gap, being fixed.** `assert_no_dependency_claim` walks only concrete
+`dict`/`list`/`tuple`, so it silently passes on `MappingProxyType` (top level AND nested),
+namedtuple, dataclass, generator and set — each carrying a real `depends_on` key. I reproduced all
+six against the unmutated module with plain-dict controls refusing correctly. Not live-exploitable
+today because both callers hand it a fresh plain dict, and D17 deliberately sweeps BEFORE freezing
+— but the hazard is already shaping other code as a caller-side workaround, and the module
+docstring states the fence categorically. Bounded candidates, the closed `CANDIDATE_KINDS`
+vocabulary, the privacy/redaction layer and the keys-only design (a `relation` VALUE of
+`depends_on` is deliberately allowed) all verified sound.
+
+**D14 — ACCEPT with one gap queued for fix.** Future exclusion survives lexically misleading UTC
+offsets; feature-into-label leakage is genuinely blocked (`resolve_label` never reads
+`features["at_prediction"]`); the `_copy` fix for the earlier mutual-masking pair is confirmed
+load-bearing. Two findings: (a) `join_row`'s closing `assert_no_causal_claim(row)` is decorative —
+deleting it kills nothing, because nothing `join_row` builds can trigger it; disclosed in-source
+as forward insurance and the function itself is well tested, but one test pinning the return path
+converts decoration into an invariant. (b) **`actions.outcome` is populated when no action was
+taken.** I reproduced it: a refused decision gives `actions.taken=None` while `actions.outcome` is
+a full `pass` record built from what merely FOLLOWED — in the same object where every alternative
+correctly reports `outcome: None` and `recovery.intervention` is correctly `None`. That internal
+inconsistency is what makes it a defect rather than a design choice.
+
+**D15 — REVISE, two CONFIRMED findings, being fixed.** (a) `_reliability_bins` is the only metric
+helper taking no sample floor — its four neighbours all take `min_n` — so on the SAME n=1 evidence
+where `classification` and `brier` correctly say `insufficient-evidence`, a bin reports
+`empirical_accuracy: 1.0`. (b) `_validated_artifact`, the path every real caller uses, checks an
+artifact's field set and version stamp but never its VALUES: I confirmed it accepts
+`sample_count=-999`, blank provider and `fitted_at="not a timestamp at all"` verbatim, while
+`calibration_artifact` refuses exactly those. Shape enforced, content not, on the path that
+matters.
+
+**TWO SCOPING ERRORS IN MY OWN BRIEFS, both caught by verifiers who refused to scope-creep.** I
+attributed `_ln`/`METRIC_STATUSES`/`MIN_METRIC_SAMPLES` to D14 (they are D15's; the file was 991
+lines at D14 and ended at `join`) and `MAX_FALLBACK_DEPTH` to D17 (it landed in `e2cc9d6`, a task
+earlier). Cause: carrying a constants list forward in a summary and attributing entries to
+whichever task is being briefed. **Verify a constant's owning commit with `git log -S` before
+putting it in a brief.** No coverage was lost either time, but a verifier that obliged instead of
+objecting would have spent its budget on the wrong module.
+
+### Phase 4 verification fixes — all three landed, suite 4983 OK
+
+**D16 fence hardened.** The sweep now descends `Mapping`/`Sequence`/`Set`, accepts JSON scalars,
+and REFUSES what it cannot inspect rather than passing it. I re-probed all twelve behaviours: the
+six silent passes now refuse, and every deliberate allowance still accepts. Two decisions worth
+keeping:
+- A namedtuple is REFUSED rather than unpacked via `_fields`, because `json.dumps` emits it as an
+  array and drops the field names — accepting it would certify names that vanish from the
+  artifact's own bytes.
+- **The fixer found a case I had not specified: `dict.items()` is a `Set`**, so a naive
+  descend-Set rule walks a `MappingView` and reads a real `depends_on` KEY as a string in value
+  position. `{"retry": {"depends_on": "x"}.items()}` was accepted before and refuses now.
+- `{("depends_on", "x")}` is STILL accepted, correctly: a set cannot contain a mapping (nothing
+  hashable is one), so that is a value, the same allowance as `relation: "depends_on"`. Proof the
+  set is nonetheless genuinely descended: a set CONTAINING a namedtuple now refuses. "We do not
+  walk it" and "we walk it and it is legitimately fine" look identical from a green test; only the
+  second is a fence.
+- D17's sweep-before-freeze at `bin/decision_policy.py:~1848` is no longer load-bearing, since the
+  sweep handles a `MappingProxyType` directly. Harmless, left in place; its NOTES entry now
+  describes a hazard that is gone.
+
+**D15 fixed.** The floor is threaded into `_reliability_bins` the way its four neighbours take it;
+a sparse occupied bin carries an existing `METRIC_STATUSES` value with `n` and `mean_confidence`
+still visible and the outcome-estimated quantities nulled. `_assert_artifact_values` is ONE
+helper called by both the constructor and the consumption path — no second implementation, so
+nothing to drift. M6/M7 killed the asymmetry in both directions.
+- **Accepted judgement call: the bin floor is now 20 PER BIN across 10 bins**, so even 200
+  well-spread rows leave most bins `insufficient-evidence`. Strict, but the honest reading for a
+  module whose job is refusing to invent numbers, and the status is visible rather than silent. A
+  smaller bin-specific floor is a DESIGN decision for the architect, not a bug fix.
+- **Accepted: `mean_confidence` survives a sparse bin** — it re-reports what the predictions said
+  rather than estimating from outcomes, the analogue of `successes` surviving an
+  `insufficient-evidence` rate.
+
+**D14 fixed — and the "decorative guard" verdict was WRONG, which is the lesson.** When
+`actions.taken is None`, `actions.outcome` is now null with a `why` note in the alternatives' own
+idiom; `outcome_evidence` still carries the raw fact, asserted rather than assumed. But the second
+finding inverted: `assert_no_causal_claim` in `join_row` is NOT decoration. `_envelope` copies
+`holdout.manifest_ref` into the row VERBATIM with no shape validation, so a causal key reaches a
+row today by that route, and `join_row`'s call is the only thing refusing it. M1 confirms the new
+test kills that mutation and nothing else does.
+- **A guard that survives its own deletion means EITHER it is decoration OR the tests never found
+  its input route.** I collapsed those two into one conclusion and would have accepted a real
+  guard as ornamental. Look for the route before calling it decoration.
+- **`JOIN_VERSION` deliberately NOT bumped.** It appears outside `decision_eval.py` only in
+  `release_gate.py`'s registry (a string read) and in tests; nothing persists a join document and
+  nothing outside this kit reads one, so a bump would strand no reader while churning every
+  fixture pinning the stamp. The repo rule cuts the same way — bumping an envelope constant is
+  what discards data. **Honest caveat for D30: `polytropos.decision-join/1` now denotes a row
+  shape different from before (`actions.outcome` narrowed, `actions.why` added). Nothing consumed
+  the old shape, so nothing is stranded, but a release must state that `/1` covers both.**
+outcome: D14 model=opus attempts=2 result=pass review=revised run=2026-09-16-aa6e
+outcome: D15 model=sonnet attempts=2 result=pass review=revised run=2026-09-16-aa6e
+outcome: D16 model=opus attempts=2 result=pass review=revised run=2026-09-16-aa6e
+outcome: D17 model=opus attempts=1 result=pass review=clean run=2026-09-16-aa6e

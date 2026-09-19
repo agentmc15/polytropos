@@ -472,6 +472,43 @@ class PredictionTimeJoinTests(unittest.TestCase):
         self.assertEqual({a["why"] for a in row["actions"]["alternatives"]},
                          {de.UNTRIED_ACTION_NOTE})
 
+    def test_a_decision_that_took_no_action_reports_no_outcome_for_one(self):
+        """`actions.outcome` is scoped to `actions.taken`, and was not.
+
+        A refused decision took no action, yet the row filled `actions.outcome` with the last
+        attempt recorded after the prediction -- a full `pass` -- while every alternative on
+        the SAME row correctly said `None` with the untried-action note and `recovery` said
+        `None` with the no-causal-claim note. A reader of `actions.outcome` who did not also
+        check `actions.taken` read "the decision's outcome was pass" off a decision that did
+        nothing. The fact itself is not lost: it stays in `outcome_evidence`, which is the
+        field that means "what followed".
+        """
+        for label, over in (("refused", {"refusal": {"reasons": ["baseline-refused"]}}),
+                            ("no record at all", {})):
+            with self.subTest(case=label):
+                row = self.row(record=None,
+                               history=[hist(attempt=2, ts=AFTER, result="pass")], **over)
+                self.assertIsNone(row["actions"]["taken"])
+                self.assertIsNone(row["actions"]["outcome"],
+                                  "no action was taken, so nothing scoped to the action taken "
+                                  "can have an outcome")
+                self.assertEqual(row["actions"]["why"], de.NO_ACTION_OUTCOME_NOTE)
+                # Nulled, not dropped: the fact is still in the row under the name that means
+                # "observed after the decision", and still says what it was.
+                evidence = row["outcome_evidence"]
+                self.assertEqual([(f["value"], f["ref"]["attempt"]) for f in evidence],
+                                 [("pass", 2)])
+
+    def test_a_decision_that_did_take_an_action_still_reports_what_followed_it(self):
+        """The positive control for the nulling above: a row whose decision DID select an
+        action reports the outcome that followed it, with no note attached. Without this, an
+        `outcome` nulled unconditionally would pass the test above and lose the field."""
+        row = self.row(history=[hist(attempt=2, ts=AFTER, result="pass")])
+        self.assertEqual(row["actions"]["taken"], "retry-with-contract-context")
+        self.assertEqual(row["actions"]["outcome"]["result"], "pass")
+        self.assertEqual(row["actions"]["outcome"]["ref"]["attempt"], 2)
+        self.assertIsNone(row["actions"]["why"])
+
     def test_the_coverage_counts_untried_alternatives_rather_than_hiding_them(self):
         row = self.row(history=[hist(attempt=2, ts=AFTER, result="pass")])
         counts = de.join([row])["coverage"]
@@ -507,6 +544,30 @@ class PredictionTimeJoinTests(unittest.TestCase):
                              {"recovery": {key: "the context package"}})
         # And it is applied to the rows this module emits, not merely available.
         self.assertIsNotNone(de.assert_no_causal_claim(self.row()))
+
+    def test_a_causal_key_reaching_a_row_is_refused_by_the_join_and_not_merely_swept(self):
+        """The sweep at the end of `join_row` is the call site under test, not the function.
+
+        `assert_no_causal_claim` is covered directly above, but deleting the CALL changed
+        nothing observable, because no field this join builds from its own vocabulary can be
+        spelled like causation. One field is not from its own vocabulary: the evaluation
+        envelope's `manifest_ref` is copied into the row verbatim, keys and all. So a causal
+        key can reach a row today, by that route, and `join_row`'s own return is what refuses
+        it -- the refusal names the offending key and carries `NO_CAUSAL_CLAIM`.
+        """
+        env = envelope_with(trial_record())
+        env["holdout"]["manifest_ref"] = {"id": "m-1", "sha": "b" * 64, "v": we.MANIFEST_VERSION,
+                                          "caused_by": "the context package"}
+        error = self.refusal("authority-field", self.row,
+                             history=[hist(attempt=2, ts=AFTER, result="pass")],
+                             envelope=env, trial_id="t-1")
+        self.assertIn("'caused_by'", str(error))
+        self.assertIn(de.NO_CAUSAL_CLAIM, str(error))
+        # And the same envelope without that key joins, so the refusal is the key's doing and
+        # not the envelope's.
+        clean = envelope_with(trial_record())
+        self.assertEqual(self.row(history=[hist(attempt=2, ts=AFTER, result="pass")],
+                                  envelope=clean, trial_id="t-1")["trial"]["trial"], "t-1")
 
     def test_a_deterministic_infrastructure_failure_stays_a_fact_about_the_host(self):
         for cls in de.DETERMINISTIC_FAILURE_CLASSES:
@@ -791,12 +852,19 @@ class PredictionTimeJoinTests(unittest.TestCase):
 #   * ARTIFACT PINS INPUTS. `calibration_artifact` records target/provider/model/domain/dataset/
 #     method/partition/sample_count and nothing else; a report that cites one refuses a mismatched
 #     target, a missing report partition, and a report partition equal to the artifact's own fit
-#     partition (the fit read back as its own validation).
+#     partition (the fit read back as its own validation). The VALUES are checked on the path
+#     every real caller uses, not only in the constructor: a hand-built payload with the right
+#     field set and the right version stamp but a blank identity, a negative sample count or a
+#     `fitted_at` that is prose is refused by `calibration_report` itself, with the same code and
+#     the same message the constructor gives, because one function does both.
 #   * RAW VS CALIBRATED NEVER BLEND. A report on `raw` cannot cite an artifact; a report on
 #     `calibrated` never falls back to `raw` when `calibrated` is absent; `calibration_report_pair`
 #     always returns the two separately, and only the calibrated side ever carries an artifact.
 #   * SPARSE SAYS INSUFFICIENT. Every rate/mean metric reports `insufficient-evidence` below
-#     `MIN_METRIC_SAMPLES` (or a caller-supplied floor), never a confident-looking number.
+#     `MIN_METRIC_SAMPLES` (or a caller-supplied floor), never a confident-looking number -- the
+#     reliability diagram's own bins included. An occupied bin below the floor keeps its `n` and
+#     its `mean_confidence` and withholds `empirical_accuracy`; an empty bin is `not-applicable`
+#     at `n: 0`, so the two never read as the same fact.
 #   * UNSUPPORTED METRICS ARE NOT-APPLICABLE; RULE LABELS ARE NOT PROBABILITIES. A field with zero
 #     rows carrying a distribution is `not-applicable`, distinct from a sparse field that has some;
 #     `vendor_confidence` is never read as a probability substitute.
@@ -1019,6 +1087,11 @@ class CalibrationReportingTests(unittest.TestCase):
         report = de.calibration_report(rows, question=Q, field="raw")
         self.assertEqual(len(report["reliability_bins"]), de.DEFAULT_RELIABILITY_BINS)
         self.assertTrue(all(b["n"] == 0 for b in report["reliability_bins"]))
+        # Nothing landed in any bin to score, which is `not-applicable` -- the same reading the
+        # Brier metric gives a field with no distributions at all, and NOT the reading a bin
+        # that does hold rows but too few of them gets.
+        self.assertTrue(all(b["status"] == "not-applicable"
+                            for b in report["reliability_bins"]))
 
     # ---- disputed/censored/missing labels and abstentions: excluded but counted -------------------
 
@@ -1161,6 +1234,7 @@ class CalibrationReportingTests(unittest.TestCase):
         self.assertAlmostEqual(bucket["upper"], 0.9, places=9)
         self.assertAlmostEqual(bucket["mean_confidence"], 0.85, places=9)
         self.assertAlmostEqual(bucket["empirical_accuracy"], 1.0, places=9)
+        self.assertEqual(bucket["status"], "computed")
 
     def test_false_action_risk_rate_and_per_threshold_sample_counts(self):
         confident_right = bulk_rows(20, p_true=0.95, actual="true")
@@ -1224,6 +1298,147 @@ class CalibrationReportingTests(unittest.TestCase):
                 de.calibration_report(bulk_rows(20), question=Q, field="raw")
         finally:
             de.assert_no_causal_claim = original
+
+    # ---- sparse says insufficient IN THE BINS TOO ------------------------------------------------
+    #
+    # Four of the five metric helpers took a sample floor and `_reliability_bins` did not, so on
+    # the SAME n=1 evidence, in one call, `classification` and `brier` said
+    # `insufficient-evidence` while the reliability bin reported `empirical_accuracy: 1.0`. The
+    # old tests never caught it because every occupied-bin case they built was at or above the
+    # floor and every sparse case they built had no occupied bin at all.
+
+    def test_an_occupied_bin_below_the_floor_reports_no_rate_from_one_observation(self):
+        rows = bulk_rows(1, p_true=0.85, actual="true")
+        report = de.calibration_report(rows, question=Q, field="raw")
+        occupied = [b for b in report["reliability_bins"] if b["n"] > 0]
+        self.assertEqual(len(occupied), 1)
+        bucket = occupied[0]
+        self.assertEqual(bucket["status"], "insufficient-evidence")
+        self.assertIsNone(bucket["empirical_accuracy"])
+        self.assertIsNone(bucket["standard_error"])
+        # `n` stays visible, and so does what the prediction itself said -- the confidence is
+        # not estimated from an outcome, the accuracy is.
+        self.assertEqual(bucket["n"], 1)
+        self.assertAlmostEqual(bucket["mean_confidence"], 0.85, places=9)
+        # The same one row, read the same way by the metrics beside it: this is the asymmetry
+        # that made the bin's 1.0 a defect rather than a different-but-defensible choice.
+        self.assertEqual(report["classification"]["status"], "insufficient-evidence")
+        self.assertIsNone(report["classification"]["value"])
+        self.assertEqual(report["brier"]["status"], "insufficient-evidence")
+
+    def test_a_sparse_bin_is_never_the_empty_bin_branch_wearing_the_same_answer(self):
+        """A floor that made an occupied bin indistinguishable from an unoccupied one would hide
+        the evidence instead of qualifying it. Both are refusals to report a rate; they are not
+        the same fact, and the report must not let them read as one."""
+        report = de.calibration_report(bulk_rows(3, p_true=0.85, actual="true"), question=Q,
+                                       field="raw")
+        by_status = {}
+        for b in report["reliability_bins"]:
+            by_status.setdefault(b["status"], []).append(b)
+        self.assertEqual(sorted(by_status), ["insufficient-evidence", "not-applicable"])
+        self.assertTrue(set(by_status) <= set(de.METRIC_STATUSES))
+        sparse = by_status["insufficient-evidence"]
+        self.assertEqual(len(sparse), 1)
+        self.assertEqual(sparse[0]["n"], 3)
+        self.assertIsNotNone(sparse[0]["mean_confidence"])
+        empty = by_status["not-applicable"]
+        self.assertEqual(len(empty), de.DEFAULT_RELIABILITY_BINS - 1)
+        self.assertTrue(all(b["n"] == 0 and b["mean_confidence"] is None for b in empty))
+
+    def test_the_bin_floor_is_the_same_floor_its_four_neighbours_take(self):
+        at_floor = de.calibration_report(
+            bulk_rows(de.MIN_METRIC_SAMPLES, p_true=0.85, actual="true"), question=Q,
+            field="raw")
+        below = de.calibration_report(
+            bulk_rows(de.MIN_METRIC_SAMPLES - 1, p_true=0.85, actual="true"), question=Q,
+            field="raw")
+        self.assertEqual([b["status"] for b in at_floor["reliability_bins"] if b["n"] > 0],
+                         ["computed"])
+        self.assertEqual([b["status"] for b in below["reliability_bins"] if b["n"] > 0],
+                         ["insufficient-evidence"])
+
+    def test_a_caller_supplied_floor_of_one_still_reports_a_bin_rate(self):
+        """`min_samples` is a public, tested override. Passing 1 is a visible knob, not a silent
+        default, and the bins honour it exactly as the other four metrics do."""
+        report = de.calibration_report(bulk_rows(1, p_true=0.85, actual="true"), question=Q,
+                                       field="raw", min_samples=1)
+        occupied = [b for b in report["reliability_bins"] if b["n"] > 0]
+        self.assertEqual(len(occupied), 1)
+        self.assertEqual(occupied[0]["status"], "computed")
+        self.assertAlmostEqual(occupied[0]["empirical_accuracy"], 1.0, places=9)
+        self.assertEqual(report["classification"]["status"], "computed")
+
+    # ---- the artifact pins inputs ON THE PATH EVERY CALLER USES ----------------------------------
+    #
+    # `_validated_artifact` is what `calibration_report(artifact=...)` calls, and its own
+    # docstring anticipates a payload IMPORTED from another owner. It checked the field set and
+    # the version and nothing else, so the constructor refused exactly what the consumption path
+    # accepted. These tests refuse from `calibration_report` itself.
+
+    def test_a_hand_built_artifact_with_a_garbage_value_is_refused_by_the_report_itself(self):
+        rows = bulk_rows(20)
+        cases = (
+            ("target", "", "wrong-type", "target is non-empty text"),
+            ("provider", "", "wrong-type", "provider is non-empty text"),
+            ("domain", "   ", "wrong-type", "domain is non-empty text"),
+            ("dataset", 7, "wrong-type", "dataset is non-empty text"),
+            ("method", "", "wrong-type", "method is non-empty text"),
+            ("fit_partition", "", "wrong-type", "fit_partition is non-empty text"),
+            ("model", "", "wrong-type", "model is non-empty text, or null"),
+            ("sample_count", -999, "wrong-type", "non-negative integer"),
+            ("sample_count", 5.0, "wrong-type", "non-negative integer"),
+            ("fitted_at", "not a timestamp at all", "value-invalid", "names no instant"),
+            ("note", 5, "wrong-type", "note is text"),
+        )
+        for field, bad, code, fragment in cases:
+            with self.subTest(field=field, bad=bad):
+                payload = dict(artifact())
+                payload[field] = bad
+                # Nothing about this payload's SHAPE can refuse it: the full declared field set,
+                # the current version stamp, a target that matches the question, and a report
+                # partition that differs from the fit partition. Only a value check can fire,
+                # and the message below says which one did -- the type alone would not.
+                self.assertEqual(sorted(payload), sorted(de.CALIBRATION_ARTIFACT_KEYS))
+                self.assertEqual(payload["v"], de.CALIBRATION_VERSION)
+                refusal = self.refusal(code, de.calibration_report, rows, question=Q,
+                                       field="calibrated", artifact=payload,
+                                       report_partition="promotion")
+                self.assertIn(fragment, str(refusal))
+                # ... and specifically NOT the shape refusals that sit in front of it.
+                for masking in ("is the object calibration_artifact() returns",
+                                "is missing", "which is not one of its declared fields",
+                                "this report reads"):
+                    self.assertNotIn(masking, str(refusal))
+
+    def test_a_valid_hand_built_artifact_payload_still_works(self):
+        """The guard above must refuse garbage, not every imported payload: an artifact this
+        process did not build, carrying sound values, is exactly the case `_validated_artifact`
+        exists for."""
+        payload = dict(artifact())
+        report = de.calibration_report(bulk_rows(20), question=Q, field="calibrated",
+                                       artifact=payload, report_partition="promotion")
+        self.assertEqual(report["artifact"]["provider"], "shadow-model")
+        self.assertEqual(report["classification"]["status"], "computed")
+
+    def test_the_constructor_and_the_consumption_path_refuse_the_same_values_identically(self):
+        """One authority, not two implementations pinned equivalent by hope. Every value the
+        constructor refuses, the imported-payload path refuses with the same code AND the same
+        message -- which is only true while a single function does both."""
+        cases = (("target", ""), ("provider", ""), ("domain", " "), ("dataset", ""),
+                 ("method", ""), ("fit_partition", ""), ("model", ""), ("model", "  "),
+                 ("sample_count", -1), ("sample_count", 5.0), ("sample_count", True),
+                 ("sample_count", "500"), ("fitted_at", "not a timestamp"), ("note", 5),
+                 ("note", None))
+        for field, bad in cases:
+            with self.subTest(field=field, bad=bad):
+                with self.assertRaises(dc.ContractError) as built:
+                    artifact(**{field: bad})
+                payload = dict(artifact())
+                payload[field] = bad
+                with self.assertRaises(dc.ContractError) as imported:
+                    de._validated_artifact(payload)
+                self.assertEqual(built.exception.code, imported.exception.code)
+                self.assertEqual(str(built.exception), str(imported.exception))
 
     # ---- release surface -----------------------------------------------------------------------------
 
