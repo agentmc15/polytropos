@@ -2169,3 +2169,84 @@ it** — no skill, no driver, no generated doc.
 Nothing in my brief was wrong this time; the agent confirmed each stated fact independently
 (including that `read_ref` does silently drop unknown keys) rather than building on it.
 outcome: D21 model=opus attempts=1 result=pass review=pending run=2026-09-16-aa6e
+
+## D22 — Exact approval (opus) — Phase 5 task 3 of 5
+
+Six-state lifecycle, four bound hashes, 37 tests. 41 mutants killed, 0 survivors, 1 deliberately
+INERT (comment-only, so the harness's own AST-equality check is not vacuous).
+
+**"Hashes not isolation" is ENFORCED, not stated — verified structurally by me:**
+
+    "satisfied": bool(CONFINED_DISPATCH_WIRED), "evidence": None,
+    "re_derived_by": "workflow_eval.CONFINED_DISPATCH_WIRED",
+    "eligible": all(row["satisfied"] for row in rows),
+
+`eligible` is a conjunction over rows and one row reads the flag directly, so a granted,
+exactly-bound, still-holding approval with four correct hashes returns `eligible: False` BY
+CONSTRUCTION. Each row names what re-derived it (D18's precedent). A hand-written
+`{"certified": True}` report is refused because the verdict is `exec_policy.certify_profile`'s
+through D18's own `_certification_evidence`.
+
+**It did NOT undo D20's honesty.** `authority` is D20's `REVIEW_AUTHORITY` READ AT CALL TIME
+(mutation-proven: replacing it with the literal `"name-only"` kills a test that patches the
+constant). Binding is labelled integrity and explicitly not authority. The residual is
+machine-readable and UNCONDITIONAL: every record and every binding row carries `APPROVAL_UNPROVEN
+= ("actor-not-authenticated", "isolation-not-demonstrated", "origin-not-dereferenced")`, and
+nothing in the section can discharge one — so none is ever dropped because another check passed.
+Each binding row's `establishes` is the single code `content-identity`; a mutant changing it to
+`"approved-and-verified"` dies.
+
+**THREE FINDINGS ABOUT ITS OWN WORK, all caught by mutation — this is the standard to hold:**
+1. **A mutant survived because the test only ever EMPTIED a list**, so an implementation accepting
+   any INTERSECTION passed a check meant to require COVERAGE. The partial-overlap case (a
+   candidate claiming two task classes, approved for one) is the case a coverage check actually
+   gets wrong, and nothing tested it.
+2. **A test was vacuous for a subtle reason worth keeping.** `CandidateProposal.to_payload()`
+   round-trips the admitted fields and `decision_contract._canonical` / `workflow_eval._canonical`
+   serialise IDENTICALLY, so a byte-digest of the payload agrees with the contract's digest for
+   every payload the contract admits. Asserting equality proved nothing. Fixed by patching
+   `dc.CandidateProposal.sha` and watching the binding follow — the read pinned as a read.
+3. **It introduced this kit's masking pattern itself.** A create-once guard in `write_approval`
+   made a version test pass for the wrong reason: the version-mutated record had the same id, so
+   create-once raised first and the version check was never reached.
+
+**A LIMIT ON MY OWN MANDATED TECHNIQUE — record this honestly.** Its harness was comparing
+`"Ran N tests in T.Ts"` INCLUDING the elapsed time, so the collected-count check could never be
+true. I have required that check in every brief since Phase 4 without saying how to extract the
+count. **This does not invalidate any mutation kill** — those are real, a named test failed — but
+it means the specific guarantee "a mutant that broke collection was distinguishable from one that
+killed a test" cannot be assumed live in the earlier sweeps. Future briefs must say: parse the
+integer, not the line.
+
+**Judgement calls, flagged:**
+- `decide_approval` evaluates all four gates EAGERLY — deliberately the opposite of D21's lazy
+  guards — because the caller is owed the whole reason. Each gate is total over the case it is
+  handed, so D21's failure mode cannot recur; argued in the section note and a
+  `gates-short-circuit-after-the-first` mutant dies. **Laziness is not the rule; matching the
+  evaluation strategy to whether the guards are total is.**
+- `insufficient-evidence` is reserved for the refusal set being exactly `{"partial"}`; thin
+  evidence plus anything else is `rejected` with both named.
+- An illegal transition RAISES rather than producing a refused record; `reject` is reachable from
+  any non-terminal state, `accept` only from `evaluated`.
+- `write_approval` uses the plain `write_text` its neighbour `write_proposal` already uses rather
+  than `safe_paths` — I verified the precedent is real (`write_proposal` at HEAD does
+  `path.write_text`). This module already has two patterns: `safe_paths` for the evals store,
+  plain writes for the prefs store. Following the neighbour beats adding a third.
+- **The one unstated thing in my brief** was which objects `evaluation` and `source` name. It
+  resolved evaluation → the eval manifest, source → the run envelope, and wrote the mapping into
+  the section header rather than leaving it to be inferred.
+
+**Shape not origin, and a NEW gap:** the library entry point opens nothing, so
+`origin-not-dereferenced` is unconditional; the CLI path opens the manifest and envelope, but
+**the candidate payload is a document somebody handed in on BOTH paths**, so origin is never
+established for the thing being approved. The residual is deliberately not made conditional on
+the entry point, because the record cannot tell which one produced it. **Nothing pins the
+envelope before the approval does** — the candidate pins its manifest (which is what makes the
+`stale` gate possible) but pins no run, so the approval record is the FIRST thing to pin the
+envelope and the `stale` gate cannot catch an envelope swapped between the run and the approval.
+The no-bundle-store gap is now load-bearing in a THIRD place.
+
+`APPROVAL_VERSION` new; all five existing constants verified still at `/1`. No new store —
+approvals live under the prefs directory D20 already owns. `approval_holds` and
+`promotion_eligibility` have NO production caller; they are library seams for D23.
+outcome: D22 model=opus attempts=1 result=pass review=pending run=2026-09-16-aa6e

@@ -4016,7 +4016,11 @@ def _ref_ids(record):
 def _prefs_paths(prefs_dir):
     prefs_dir = Path(prefs_dir)
     return {"dir": prefs_dir, "policy": prefs_dir / POLICY_FILE, "history": prefs_dir / POLICY_HISTORY,
-            "proposals": prefs_dir / POLICY_PROPOSALS, "journal": prefs_dir / POLICY_JOURNAL}
+            "proposals": prefs_dir / POLICY_PROPOSALS, "journal": prefs_dir / POLICY_JOURNAL,
+            # D22's approval records, in the same store under the same caller-named directory.
+            # Naming a path creates nothing: a prefs directory that has never had an approval
+            # written into it still holds exactly the four files it held before.
+            "approvals": prefs_dir / POLICY_APPROVALS}
 
 
 def _journal(paths, kind, **fields):
@@ -4650,6 +4654,763 @@ def validate_draft_batch(payloads, *, in_force, budget=None, known=()):
 # END OF THE BOUNDED CANDIDATE DRAFT SECTION (decision-improvement D21)
 
 
+# =================================================================================================
+# EXACT APPROVAL: WHAT AN APPROVAL BINDS, AND WHAT BINDING IS NOT (decision-improvement D22)
+# =================================================================================================
+#
+# WHAT THIS SECTION ADDS. D20 gave a proposal a review entry whose `authority` field says
+# `name-only`, and said in `REVIEW_AUTHORITY_LABEL` exactly what that is worth: a string the
+# command was handed, checked for being non-empty. This section adds the thing that label named
+# as missing -- the binding of a decision to the EXACT bytes it was taken over -- and adds
+# nothing else. It does not add authority.
+#
+# THE DISTINCTION THE WHOLE SECTION TURNS ON, stated once here and restated in the record itself
+# so a later reader is never left to infer it:
+#
+#   BINDING GIVES INTEGRITY.   The thing that was evaluated is the thing that was approved, and
+#                              a later re-derivation notices any of it moving.
+#   BINDING IS NOT AUTHORITY.  `by` is a string. Four correct digests beside it prove that the
+#                              content did not move; they prove nothing whatever about who
+#                              typed the name, and a record saying it was approved by "alice"
+#                              with every hash matching still proves only that somebody typed
+#                              "alice".
+#   BINDING IS NOT ISOLATION.  `NOT_ENFORCEMENT_LABEL` has said since D06 that a content hash
+#                              identifies and DETECTS change and never prevents it. Adding
+#                              three more hashes does not make a confinement boundary. Whether
+#                              this host enforces one at all is `bin/exec_policy.py`'s question
+#                              (D07), and `gate_protected_dispatch` applies no confinement of
+#                              its own (D08, D18).
+#
+# Those three are not prose decoration. The residual is MACHINE-READABLE: every record carries
+# `unproven`, whose codes are `APPROVAL_UNPROVEN`, and every binding row carries `re_derived_by`
+# naming the function that actually re-derived it -- D18's precedent, for D18's reason, because
+# a row that says `satisfied` over evidence nobody consulted is a name broader than its check.
+#
+# THE FOUR BINDINGS, and which object each one digests. The plan names them
+# "candidate/evaluation/partition/source hashes"; this says which thing each of those is, so
+# nobody has to guess:
+#
+#   candidate    the candidate proposal payload, through D11's own parser and D11's own
+#                `CandidateProposal.sha()`. Not a digest of the bytes as handed in: a candidate
+#                is what the contract makes of it, so the payload is re-parsed and the owner's
+#                digest is taken over the owner's normalised form. A re-serialisation that
+#                changes nothing then invalidates nothing.
+#   evaluation   the immutable evaluation manifest -- `MANIFEST_VERSION`, the content-addressed
+#                document `build_manifest` produces, whose digest `manifest_digest` owns and
+#                whose internal consistency `verify_manifest` re-derives. This is the
+#                "immutable evaluation hash": the material, the grouping and the rules the
+#                result was read under.
+#   partition    the exact held-out item set inside that manifest that the result was read
+#                over. A manifest names four partitions; which one, and which items were in it,
+#                is a different fact from which manifest, and an approval that pinned only the
+#                manifest would not notice the cohort moving inside it.
+#   source       the source run's result envelope -- `EVAL_VERSION`, what this evaluator writes
+#                as `results.json`, and what D20's proposal record calls `source_run`. The
+#                numbers came from somewhere, and this is the somewhere.
+#
+# WHAT IS NOT HERE, deliberately. No activation: `canary`, `active`, `retired` and
+# `rolled-back` are D23's states and this vocabulary does not contain them, no runtime pointer
+# is written, `CONFINED_DISPATCH_WIRED` is untouched and still False, and `promotion_eligibility`
+# below cannot return an eligible verdict while it is. No second reviewer vocabulary either:
+# `REVIEW_AUTHORITY` is read from D20 at call time rather than copied, so there is one answer in
+# this file to "what is an authority field worth here" and not two.
+#
+# WHY THE GATES ARE EVALUATED EAGERLY, and why that is the opposite of D21's answer. D21's draft
+# guards are lazy on purpose: there, a later guard asked about a value an earlier guard had
+# already refused would raise about something that was never going to be admitted. Here the
+# caller is owed the WHOLE reason an approval did not happen -- stopping at the first refusal
+# would let a candidate be fixed one refusal at a time without ever being told it was also out
+# of scope -- and each gate is total over the case it is handed: two of them read facts the case
+# already derived, and two compare strings and sets. So all four run, every time, and the tests
+# assert the refusal SET rather than that some refusal happened.
+
+#: The version of the approval RECORD. A new stored object, so it carries its own version on
+#: itself rather than moving `PROPOSAL_VERSION` or `POLICY_VERSION` -- which would make every
+#: proposal and preference file written before today unreadable, since `read_proposal` refuses
+#: any `v` that is not current. Registered in `release_gate.VERSION_SOURCES`.
+APPROVAL_VERSION = "polytropos.policy-approval/1"
+
+#: Where approval records live under the prefs directory the caller names. Beside the proposals,
+#: in the same store, written by the same module -- not a new store, and `runtime_data.STORES`
+#: gains nothing.
+POLICY_APPROVALS = "routing-policy.approvals"
+
+#: The canonical lifecycle, exactly the six names the plan uses. `canary`, `active`, `retired`
+#: and `rolled-back` are deliberately ABSENT: runtime activation is a separately gated
+#: transition, and putting its states in this vocabulary would let something here look like a
+#: step towards running.
+APPROVAL_STATES = ("draft", "offline-valid", "evaluated", "approved", "rejected",
+                   "insufficient-evidence")
+
+#: Which state may follow which. Three of them are terminal FOR THE RECORD that reached them: a
+#: candidate whose evidence was too thin is not forbidden from ever being evaluated again, it is
+#: that THIS approval record ends there. `approved` has no successor here because its only
+#: successor is an activation this module does not perform.
+APPROVAL_TRANSITIONS = {
+    "draft": ("offline-valid", "rejected"),
+    "offline-valid": ("evaluated", "rejected"),
+    "evaluated": ("approved", "rejected", "insufficient-evidence"),
+    "approved": (),
+    "rejected": (),
+    "insufficient-evidence": (),
+}
+
+#: Why an approval asked for is not given. Four codes, one concern each, and every one of them
+#: reachable with the other three satisfied:
+#:
+#:   stale         the evidence handed in is not the evidence the candidate pins -- the manifest
+#:                 no longer hashes to the id it is filed under, its digest is not the one the
+#:                 candidate's own `evaluation.manifest_ref` names, or the partition being
+#:                 approved over is not the one the candidate nominated
+#:   partial       the evaluation did not cover the partition it claims: some member of that
+#:                 partition has no result in the run. Evidence too thin to score, which is a
+#:                 STATE (`insufficient-evidence`) and not a verdict against the candidate
+#:   self-approval the name approving is the name that proposed. A proposer does not approve
+#:                 itself -- and see `SELF_APPROVAL_NOTE` for what that check is and is not
+#:   scope         the scope the approver stated does not cover the scope the candidate claims;
+#:                 an approval for one project or task class is not an approval for another
+APPROVAL_REFUSALS = ("stale", "partial", "self-approval", "scope")
+
+#: The four bound hashes, in the order a record lists them. See the section note for which
+#: object each one digests and which function re-derives it.
+APPROVAL_BINDINGS = ("candidate", "evaluation", "partition", "source")
+
+#: What binding a hash DOES establish. One value, because there is only one: the content is the
+#: content. Written as a code rather than a sentence so a reader can machine-check that no row
+#: ever claims more than this.
+BINDING_ESTABLISHES = "content-identity"
+
+#: What no record written here establishes, whatever its state and however many of its bindings
+#: re-derive. Machine-readable, closed, and UNCONDITIONAL: nothing in this section can discharge
+#: any of them, so none is ever left off a record on the strength of some other check passing.
+APPROVAL_UNPROVEN = ("actor-not-authenticated", "isolation-not-demonstrated",
+                     "origin-not-dereferenced")
+
+APPROVAL_UNPROVEN_NOTES = {
+    "actor-not-authenticated":
+        "the approving and proposing names are strings this command was handed, checked for "
+        "being non-empty and for differing from each other. There is no controller identity, no "
+        "signature and no session behind either of them, so an approval binds WHAT was approved "
+        "exactly and WHO approved it not at all",
+    "isolation-not-demonstrated":
+        "binding four digests is integrity, never confinement. Nothing here ran under a "
+        "boundary, observed one, or asked for one; whether this host enforces one is "
+        "exec_policy's question and is answered separately",
+    "origin-not-dereferenced":
+        "the manifest, the envelope and the candidate are documents this function was handed. "
+        "It re-derives their digests, so it can say they are internally consistent and that "
+        "they have not moved since; it cannot say they came out of the store they name, because "
+        "the library entry point opens nothing",
+}
+
+BINDING_NOT_AUTHORITY_LABEL = (
+    "binding an approval to exact hashes gives INTEGRITY and not AUTHORITY: it establishes that "
+    "the candidate, manifest, partition and run bound here are the ones the decision was taken "
+    "over, and that any of them moving afterwards is detectable. It establishes nothing about "
+    "who took the decision. A JSON actor string is not authentication and a content hash is not "
+    "an identity; authority would have to be protected at the execution boundary, which this "
+    "module does not provide and does not claim")
+
+SELF_APPROVAL_NOTE = (
+    "a proposer may not approve its own candidate. What enforces that here is a comparison of "
+    "two caller-supplied names, which catches the honest case and stops nobody who types a "
+    "second name -- the proposer is not authenticated either. The structural half of the rule "
+    "is elsewhere and is real: a candidate payload cannot carry an authority field at all "
+    "(decision_contract.BANNED_FIELDS), so the name approving can never come out of the thing "
+    "being approved")
+
+APPROVAL_NOT_ACTIVATION_LABEL = (
+    "an approval is not an activation. Nothing here writes a runtime pointer, selects a bundle, "
+    "starts a run or makes anything runnable; the canary/active transition is separately gated "
+    "and is not in this lifecycle's vocabulary. An approved record is a precondition somebody "
+    "else must still check, never a permission")
+
+
+# ---- the four bindings: each digest re-derived by the owner of the thing it digests ------------
+
+def candidate_digest(payload):
+    """The exact candidate hash -> `(CandidateProposal, sha)`, through D11 and nothing else.
+
+    The digest is `CandidateProposal.sha()` over the contract's own normalised payload, NOT a
+    hash of the bytes as handed in. Two spellings of one candidate -- a reordered mapping, a
+    different indentation -- are one candidate, and an approval bound to the formatting rather
+    than to the proposal would be invalidated by a re-serialisation that changed nothing.
+
+    RAISES when the contract refuses the payload, because that is the caller's setup being wrong
+    rather than a candidate being refused: there is nothing to bind an approval to.
+    """
+    contract = _dc()
+    try:
+        parsed = contract.parse_proposal(payload)
+    except contract.ContractError as exc:
+        raise EvalError(f"the candidate is not one {contract.CANDIDATE_VERSION} describes, so "
+                        f"there is nothing to bind an approval to: {exc}") from None
+    return parsed, parsed.sha()
+
+
+def envelope_digest(envelope):
+    """The source run's hash: the digest of the whole result envelope this evaluator wrote.
+
+    Over the WHOLE envelope and not over a summary of it: the trials, the variants, the spend
+    and the labels are all part of what was evaluated, and an approval bound to a summary would
+    not notice a trial's verdict being edited underneath it.
+    """
+    if not isinstance(envelope, dict):
+        raise EvalError(f"the evaluation run must be a {EVAL_VERSION} envelope, not a "
+                        f"{type(envelope).__name__}")
+    if envelope.get("v") != EVAL_VERSION:
+        raise EvalError(f"the evaluation run is a {envelope.get('v')!r} document; an approval "
+                        f"binds a {EVAL_VERSION} result envelope")
+    return _sha(_canonical(envelope))
+
+
+def _manifest_content(manifest):
+    """One manifest document's immutable content, or `EvalError`. Never a `{}` stand-in: an
+    absent manifest digesting to the digest of nothing would give every approval taken without
+    one the same `evaluation` hash, which is a collision this module would have manufactured."""
+    if not isinstance(manifest, dict) or not isinstance(manifest.get("content"), dict):
+        raise EvalError(f"the evaluation manifest must be a {MANIFEST_VERSION} document with a "
+                        f"content block, not a {type(manifest).__name__}")
+    return manifest["content"]
+
+
+def partition_digest(manifest, partition):
+    """The hash of the exact held-out item set the result was read over.
+
+    Over the partition NAME and its members, and deliberately not over the manifest id: which
+    manifest is the `evaluation` binding's job, and keeping the two separable is what lets a
+    later check say which of the two moved. `PARTITIONS` is read from this module's own table
+    rather than listed again here.
+    """
+    if partition not in PARTITIONS:
+        raise EvalError(f"unknown partition {partition!r}; the four are {', '.join(PARTITIONS)}")
+    members = sorted(_manifest_content(manifest).get("partitions", {}).get(partition) or [])
+    return _sha(_canonical({"partition": partition, "items": members}))
+
+
+def _binding_derivations(*, candidate, manifest, partition, envelope=None):
+    """`{slot: (callable, re_derived_by, over)}` -- ONE place each binding is derived.
+
+    `approval_bindings` calls every entry and RAISES on a bad document, because a record built
+    over evidence this module could not read is a write that must not happen.
+    `approval_holds` calls the same entries one at a time and DEGRADES, because a later reader
+    asking "does this still hold" must be told which slot failed rather than losing all four to
+    the first exception. Two jobs, deliberately not one function, over one derivation.
+    """
+    return {
+        "candidate": (lambda: candidate_digest(candidate)[1],
+                      "decision_contract.parse_proposal(...).sha()",
+                      "the candidate proposal, normalised by the contract that owns its shape"),
+        "evaluation": (lambda: manifest_digest(_manifest_content(manifest)),
+                       "workflow_eval.manifest_digest",
+                       f"the immutable {MANIFEST_VERSION} manifest's content"),
+        "partition": (lambda: partition_digest(manifest, partition),
+                      "workflow_eval.partition_digest",
+                      f"the {partition!r} partition's exact membership inside that manifest"),
+        "source": (lambda: None if envelope is None else envelope_digest(envelope),
+                   "workflow_eval.envelope_digest",
+                   f"the source run's {EVAL_VERSION} result envelope"),
+    }
+
+
+def approval_bindings(*, candidate, manifest, partition, envelope=None):
+    """The four hashes an approval binds -> `{slot: row}`, every slot present.
+
+    `establishes` carries the same code on every row on purpose. A hash establishes content
+    identity and that is the whole of it; a row claiming more would be the defect this section
+    exists to avoid. `does_not_establish` carries the residual codes, so the limit travels on
+    the row rather than only in a paragraph somewhere.
+
+    An absent evaluation run leaves the `source` hash null WITH its reason -- never absent, and
+    never back-filled from one of the other three: "no result was supplied" and "a result was
+    supplied and it hashes to this" are different facts and the record keeps them different.
+    """
+    out = {}
+    for slot in APPROVAL_BINDINGS:
+        derive, re_derived_by, over = _binding_derivations(
+            candidate=candidate, manifest=manifest, partition=partition, envelope=envelope)[slot]
+        digest = derive()
+        out[slot] = {"slot": slot, "hash": digest, "re_derived_by": re_derived_by, "over": over,
+                     "establishes": None if digest is None else BINDING_ESTABLISHES,
+                     "does_not_establish": list(APPROVAL_UNPROVEN),
+                     "reason": None if digest is not None else "no evaluation run was supplied"}
+    return out
+
+
+def approval_holds(record, *, candidate, manifest, partition, envelope=None):
+    """Do the objects in hand still re-derive to what this approval bound? The central property.
+
+    Every slot is re-derived from scratch by the same function that derived it in the first
+    place and compared to the stored hash. A slot that RAISES on re-derivation -- a candidate
+    the contract now refuses, an envelope of the wrong version -- counts as moved with its
+    reason, never as unchanged: a binding that cannot be re-derived has not been shown to hold.
+    A slot that was never bound counts as moved for the same reason.
+
+    A reader, so it reports instead of raising. `holds` is False as soon as one slot moved, and
+    `moved` names which -- "the approval no longer holds" and "the manifest was rewritten" are
+    different amounts of information and a caller is owed the second.
+    """
+    stored = (record or {}).get("bindings") or {}
+    derivations = _binding_derivations(candidate=candidate, manifest=manifest,
+                                       partition=partition, envelope=envelope)
+    rows, moved = [], []
+    for slot in APPROVAL_BINDINGS:
+        bound = (stored.get(slot) or {}).get("hash")
+        derive, re_derived_by, _over = derivations[slot]
+        try:
+            fresh, reason = derive(), None
+        except (EvalError, AttributeError, TypeError, KeyError, ValueError) as exc:
+            fresh, reason = None, f"the {slot} binding could not be re-derived: {exc}"
+        if reason is None and bound is None:
+            reason = f"nothing was ever bound in the {slot} slot, so nothing about it holds"
+        matches = reason is None and fresh == bound
+        if not matches:
+            moved.append(slot)
+        rows.append({"slot": slot, "bound": bound, "re_derived": fresh, "matches": matches,
+                     "reason": reason, "re_derived_by": re_derived_by})
+    return {"holds": not moved, "moved": moved, "rows": rows,
+            "unproven": list(APPROVAL_UNPROVEN),
+            "labels": [BINDING_NOT_AUTHORITY_LABEL, NOT_ENFORCEMENT_LABEL]}
+
+
+# ---- the facts a decision is taken over --------------------------------------------------------
+
+def evidence_coverage(manifest, partition, envelope):
+    """Did the run actually evaluate the partition it claims? Derived, never asserted.
+
+    The members are the manifest's own, the task each item names is the manifest's own, and what
+    was evaluated is the set of tasks the envelope has TRIALS for -- results, not the declared
+    holdout list, because a task that was declared and never run was not evaluated. An empty
+    partition is incomplete rather than vacuously complete: nothing was covered because there
+    was nothing there, and reading that as full coverage is how an empty cohort becomes evidence.
+    """
+    content = _manifest_content(manifest)
+    if partition not in PARTITIONS:
+        raise EvalError(f"unknown partition {partition!r}; the four are {', '.join(PARTITIONS)}")
+    members = sorted(content.get("partitions", {}).get(partition) or [])
+    items = content.get("items") or {}
+    wanted = {iid: (items.get(iid) or {}).get("task_id") for iid in members}
+    evaluated = {trial.get("task_id") for trial in (envelope or {}).get("trials") or []}
+    missing = sorted(iid for iid, task in wanted.items() if task not in evaluated)
+    run = (envelope or {}).get("run_id")
+    if not members:
+        detail = f"the {partition} partition is empty, so nothing in it was covered"
+    elif missing:
+        detail = (f"{len(missing)} of {len(members)} item(s) in the {partition} partition have "
+                  f"no result in run {run!r}")
+    else:
+        detail = ""
+    return {"partition": partition, "members": len(members), "covered": len(members) - len(missing),
+            "missing": missing, "complete": bool(members) and not missing, "run": run,
+            "detail": detail}
+
+
+def _stale_findings(parsed, manifest, partition):
+    """Every way the evidence in hand is not the evidence the candidate pinned.
+
+    Three of them, each derived: the manifest document no longer hashes to the id it is filed
+    under (`verify_manifest`'s own `digest` finding, not a second implementation of it); its
+    digest is not the one the candidate's `evaluation.manifest_ref` pins; and the partition being
+    approved over is not the one the candidate nominated. All three are collected -- a candidate
+    can be stale in more than one way and a reader is told all of them.
+    """
+    out = []
+    for finding in verify_manifest(manifest):
+        if finding.get("kind") in ("digest", "version"):
+            out.append(f"the manifest is not the document it claims to be "
+                       f"({finding['kind']}: {finding['detail']})")
+    pinned = dict(parsed.evaluation["manifest_ref"])
+    actual = manifest_digest(_manifest_content(manifest))
+    if pinned.get("sha") != actual:
+        out.append(f"the candidate pins manifest {pinned.get('id')!r} at "
+                   f"{str(pinned.get('sha'))[:16]}..., and the manifest supplied digests to "
+                   f"{actual[:16]}...; the evidence moved after the candidate was written")
+    if parsed.evaluation["partition"] != partition:
+        out.append(f"the candidate nominates the {parsed.evaluation['partition']!r} partition "
+                   f"and this approval is being taken over {partition!r}")
+    return out
+
+
+def _scope_findings(approval_scope, candidate_scope):
+    """Does the stated scope COVER the candidate's? The keys come from the parsed candidate.
+
+    No list of scope field names is written here: `candidate_scope` is what
+    `decision_contract.parse_proposal` produced, so the keys compared are the contract's own and
+    there is nothing in this file to drift from them. The project must match exactly -- a project
+    is not a set -- and each collection must be a superset: approving a candidate for more task
+    classes than it claims is fine, approving it for fewer is approving something else.
+    """
+    keys = sorted(candidate_scope)
+    if not isinstance(approval_scope, dict):
+        return [f"the approval names no scope; it is an object with {', '.join(keys)}, not a "
+                f"{type(approval_scope).__name__}"]
+    unknown = sorted(set(approval_scope) - set(keys))
+    missing = sorted(set(keys) - set(approval_scope))
+    if unknown or missing:
+        return ["; ".join(part for part in (
+            f"the approval's scope carries unknown key(s) "
+            f"{', '.join(repr(k) for k in unknown)}" if unknown else "",
+            f"the approval's scope is missing {', '.join(repr(k) for k in missing)}"
+            if missing else "") if part)]
+    out = []
+    for key in keys:
+        claimed, granted = candidate_scope[key], approval_scope[key]
+        if isinstance(claimed, str):
+            if granted != claimed:
+                out.append(f"the approval is scoped to {key} {granted!r} and the candidate "
+                           f"claims {claimed!r}")
+            continue
+        covered = set(granted) if isinstance(granted, (list, tuple, set)) else set()
+        short = sorted(set(claimed) - covered)
+        if short:
+            out.append(f"the candidate claims {key} {', '.join(repr(s) for s in short)}, which "
+                       f"this approval's scope does not cover")
+    return out
+
+
+def _same_actor(left, right):
+    """Two caller-supplied names, compared the way a person reads them. `SELF_APPROVAL_NOTE`
+    is the whole of what this can and cannot establish."""
+    return str(left or "").strip().casefold() == str(right or "").strip().casefold()
+
+
+def approval_stage(*, draft_verdict, evaluated):
+    """Which pre-decision lifecycle state a candidate is in, derived from two facts.
+
+    `draft_verdict` is `validate_draft`'s own verdict -- D21's, not a second opinion about
+    offline validity -- and `None` means nobody has run it, which is what `draft` means. The
+    three decision states are not reachable from here: they are what a reviewer's decision
+    produces, and deriving one of them from content alone would be deciding without a decider.
+    """
+    if draft_verdict is None:
+        return "draft"
+    if draft_verdict.get("verdict") != "valid":
+        return "rejected"
+    return "evaluated" if evaluated else "offline-valid"
+
+
+def approval_case(*, candidate, manifest, partition, envelope=None, in_force=None,
+                  proposed_by=""):
+    """Every fact an approval decision is taken over -- and no decision, no reviewer, no write.
+
+    Deliberately split from `decide_approval`: the facts are derived from the documents by
+    functions that could not care less who is asking, and the decision is then taken over those
+    facts by somebody who is named. The split is what lets the same case be re-derived later and
+    compared, and what keeps a reviewer's name out of every function above.
+
+    `in_force` is the parent bundle's parameters as the caller read them, handed straight to
+    D21's `validate_draft`; `None` says nobody has validated this offline yet, which is the
+    `draft` state rather than a failure. The documents are kept on the case so a later
+    `approval_holds` can re-derive from the very things the bindings were derived from -- they
+    are in memory only, and `decide_approval` copies the derived facts onto its record and never
+    these.
+    """
+    parsed, _digest = candidate_digest(candidate)
+    verdict = None if in_force is None else validate_draft(candidate, in_force=in_force)
+    return {
+        "candidate": parsed.id,
+        "scope": {key: (value if isinstance(value, str) else list(value))
+                  for key, value in dict(parsed.scope).items()},
+        "proposed_by": proposed_by,
+        "state": approval_stage(draft_verdict=verdict, evaluated=envelope is not None),
+        "draft": verdict,
+        "bindings": approval_bindings(candidate=candidate, manifest=manifest,
+                                      partition=partition, envelope=envelope),
+        "coverage": (None if envelope is None
+                     else evidence_coverage(manifest, partition, envelope)),
+        "stale": _stale_findings(parsed, manifest, partition),
+        "manifest": manifest.get("id") if isinstance(manifest, dict) else None,
+        "partition": partition,
+        "run": (envelope or {}).get("run_id"),
+        "documents": {"candidate": candidate, "manifest": manifest, "partition": partition,
+                      "envelope": envelope},
+    }
+
+
+# ---- the decision ------------------------------------------------------------------------------
+
+def decide_approval(case, *, by, scope, decision, note="", now=None):
+    """One reviewer's decision over one case -> an approval record. Pure; writes nothing.
+
+    RAISES on the caller's own setup being wrong -- an unnamed reviewer, a decision outside the
+    vocabulary, or an `accept` asked for from a state the lifecycle cannot reach `approved` from.
+    That last one is the transition guard, and the asymmetry in it is deliberate: a candidate may
+    be REJECTED from any non-terminal state, because a person is always allowed to say no, and
+    may only be APPROVED from `evaluated`, because approving something that was never evaluated
+    is the defect this task exists to prevent.
+
+    The four gates then run, all of them, and the refusal SET they produce decides the state:
+    nothing refused is `approved`; `partial` alone is `insufficient-evidence`, which means the
+    evidence is too thin to score and is a different fact from a verdict against the candidate;
+    anything else is `rejected`. A refused record is kept exactly like a granted one -- see
+    `write_approval` -- because a refusal nobody can read is a refusal nobody can review.
+    """
+    if decision not in ("accept", "reject"):
+        raise EvalError("decision must be accept or reject")
+    if not by:
+        raise EvalError("--by is required: an approval names who gave it")
+    state = (case or {}).get("state")
+    if state not in APPROVAL_STATES:
+        raise EvalError(f"{state!r} is not a lifecycle state; they are "
+                        f"{', '.join(APPROVAL_STATES)}")
+    target = "approved" if decision == "accept" else "rejected"
+    reachable = APPROVAL_TRANSITIONS[state]
+    if target not in reachable:
+        onward = ", ".join(reachable) or "nothing: it is a terminal state"
+        raise EvalError(f"a candidate in the {state!r} state cannot become {target!r}; from "
+                        f"{state!r} this lifecycle reaches {onward}")
+    refusals = []
+    if decision == "accept":
+        coverage = case.get("coverage") or {}
+        # All four, every time -- see the section note on why this is the opposite of D21's
+        # lazy guards. Each gate is total over the case it is handed: two read facts the case
+        # already derived, two compare a string and a set.
+        for reason, detail in (
+                ("stale", "; ".join(case.get("stale") or ())),
+                ("partial", "" if coverage.get("complete") else
+                 (coverage.get("detail")
+                  or "no evaluation run was supplied, so nothing was covered")),
+                ("self-approval",
+                 (f"{by!r} proposed this candidate and cannot also approve it. "
+                  f"{SELF_APPROVAL_NOTE}") if _same_actor(by, case.get("proposed_by")) else ""),
+                ("scope", "; ".join(_scope_findings(scope, case.get("scope") or {})))):
+            if detail:
+                refusals.append({"reason": reason, "detail": detail})
+    codes = sorted({row["reason"] for row in refusals})
+    unknown = sorted(set(codes) - set(APPROVAL_REFUSALS))
+    if unknown:  # pragma: no cover -- a closed vocabulary that stopped being closed
+        raise EvalError(f"refusal code(s) {unknown} are outside APPROVAL_REFUSALS")
+    if decision == "reject":
+        final, granted = "rejected", False
+    elif not refusals:
+        final, granted = "approved", True
+    elif codes == ["partial"]:
+        final, granted = "insufficient-evidence", False
+    else:
+        final, granted = "rejected", False
+    bound = {slot: ((case.get("bindings") or {}).get(slot) or {}).get("hash")
+             for slot in APPROVAL_BINDINGS}
+    at = now or _now()
+    # Everything that distinguishes two decisions is in the id, the scope included: two
+    # decisions that differ only in what they were scoped to are two decisions, and an id blind
+    # to that would let the second land on the first's filename.
+    identity = _sha(_canonical({"candidate": case.get("candidate"), "by": by, "at": at,
+                                "decision": decision, "state": final, "bindings": bound,
+                                "scope": scope if isinstance(scope, dict) else None}))
+    return {
+        "v": APPROVAL_VERSION,
+        "id": f"appr-{str(at)[:10]}-{identity[:6]}",
+        "state": final,
+        "granted": granted,
+        "from_state": state,
+        "decision": decision,
+        "candidate": case.get("candidate"),
+        "manifest": case.get("manifest"),
+        "partition": case.get("partition"),
+        "run": case.get("run"),
+        "by": by,
+        "proposed_by": case.get("proposed_by"),
+        "at": at,
+        "scope": _frozen(scope) if isinstance(scope, dict) else None,
+        "candidate_scope": _frozen(case.get("scope")),
+        # Read from D20 at call time, never copied: there is one answer in this file to what an
+        # authority field is worth, and binding four hashes did not change it.
+        "authority": REVIEW_AUTHORITY,
+        # Deep copies, so a caller that goes on using the case cannot reach into a decision
+        # already taken. A record of what was decided is not a live view of the decider.
+        "bindings": _frozen(case.get("bindings")),
+        "coverage": _frozen(case.get("coverage")),
+        "refusals": refusals,
+        "unproven": list(APPROVAL_UNPROVEN),
+        "note": _rd().redact(note or "")["text"],
+        "labels": [BINDING_NOT_AUTHORITY_LABEL, APPROVAL_NOT_ACTIVATION_LABEL,
+                   REVIEW_AUTHORITY_LABEL, SELF_APPROVAL_NOTE, NOT_ENFORCEMENT_LABEL],
+    }
+
+
+def promotion_eligibility(record, *, case=None, sentinel_report=None):
+    """What an approval does and does not establish towards a PROMOTION -- rows, not a verdict
+    dressed up as one. Every row names the function that re-derived it, or `None`.
+
+    Three requirements, and the approval is only one of them. D18 established the shape and the
+    reason: a row that says `satisfied` over evidence nobody consulted is a name broader than its
+    check. So the exact-approval row is re-derived only when a `case` is supplied to re-derive it
+    FROM and says so when there is not; the profile row is `exec_policy.certify_profile`'s verdict
+    through this module's own `_certification_evidence`, never a word the caller chose; and the
+    dispatch row reads `CONFINED_DISPATCH_WIRED`, which is False.
+
+    THIS IS NOT AN ACTIVATION AND CANNOT BECOME ONE. `eligible` is the conjunction of the rows,
+    so while no dispatch path in this repository both confines and is ledgered it is False by
+    construction -- and that is the correct answer rather than a gap. Making it True would take
+    an edit to that constant, which is exactly where such an edit should have to be visible.
+    """
+    state = (record or {}).get("state")
+    granted = bool((record or {}).get("granted")) and state == "approved"
+    documents = (case or {}).get("documents") if case else None
+    holds = None if not documents else approval_holds(
+        record, candidate=documents["candidate"], manifest=documents["manifest"],
+        partition=documents["partition"], envelope=documents.get("envelope"))
+    approval_ok = granted and (holds is None or holds["holds"])
+    if not granted:
+        approval_reason = (f"the approval record is in the {state!r} state with "
+                           f"granted={bool((record or {}).get('granted'))}; only a granted record "
+                           f"in the 'approved' state establishes this")
+    elif holds is not None and not holds["holds"]:
+        approval_reason = (f"the approval was granted, and its {', '.join(holds['moved'])} "
+                           f"binding(s) no longer re-derive: what was approved is not what is "
+                           f"in hand")
+    else:
+        approval_reason = None
+    certificate, cert_reason = _certification_evidence(sentinel_report)
+    rows = [
+        {"requirement": "exact-approval",
+         "owner": "workflow_eval.decide_approval over workflow_eval.approval_case (D22)",
+         "satisfied": approval_ok, "reason": approval_reason,
+         "evidence": {slot: (((record or {}).get("bindings") or {}).get(slot) or {}).get("hash")
+                      for slot in APPROVAL_BINDINGS},
+         "blocker": None if approval_ok else "exact-approval-missing",
+         "re_derived_by": "workflow_eval.approval_holds" if holds is not None else None,
+         "note": (BINDING_NOT_AUTHORITY_LABEL if holds is not None else
+                  f"no case was supplied, so the state on the record was READ and not "
+                  f"re-derived. {BINDING_NOT_AUTHORITY_LABEL}")},
+        {"requirement": "protected-profile-certified",
+         "owner": "exec_policy.certify_profile over exec_policy.run_sentinels (D07)",
+         "satisfied": cert_reason is None, "reason": cert_reason, "evidence": certificate,
+         "blocker": None if cert_reason is None else "protected-profile-uncertified",
+         "re_derived_by": "exec_policy.certify_profile",
+         "note": "an unverified profile establishes no promotion eligibility, and an approval "
+                 "however exactly bound never stands in for one"},
+        {"requirement": "confining-and-ledgered-dispatch",
+         "owner": "whichever task wires a protected runtime transition",
+         "satisfied": bool(CONFINED_DISPATCH_WIRED), "evidence": None,
+         "blocker": None if CONFINED_DISPATCH_WIRED else "confining-dispatch-unwired",
+         "re_derived_by": "workflow_eval.CONFINED_DISPATCH_WIRED",
+         "reason": (None if CONFINED_DISPATCH_WIRED else
+                    "this repository has no dispatch path that both confines and is recorded in "
+                    "bin/attempt_ledger.py before and after the call"),
+         "note": APPROVAL_NOT_ACTIVATION_LABEL},
+    ]
+    return {
+        "eligible": all(row["satisfied"] for row in rows),
+        "requirements": rows,
+        "blockers": [row["blocker"] for row in rows if not row["satisfied"]],
+        "holds": holds,
+        "unproven": list(APPROVAL_UNPROVEN),
+        "labels": [APPROVAL_NOT_ACTIVATION_LABEL, BINDING_NOT_AUTHORITY_LABEL,
+                   NOT_ENFORCEMENT_LABEL],
+    }
+
+
+# ---- retention: the same store, the same writer, and a refusal kept like a grant ---------------
+
+def write_approval(prefs_dir, record):
+    """Persist one approval record under the prefs directory the caller named.
+
+    Every record, whatever its state. A rejected or insufficient-evidence record is written with
+    the same care as an approved one and is listed by `approval_report` beside it, because "this
+    was refused, for these reasons, by this name, over these hashes" is the part of the history
+    that gets lost first and the part a later reviewer most needs.
+
+    Writing the same record twice is a no-op; writing DIFFERENT content under an id already on
+    disk is refused loudly -- `write_manifest`'s rule, for `write_manifest`'s reason. An
+    approval is an immutable record of one decision, so a second decision is a second record and
+    never an edit of the first. This uses the same plain write the proposal writer beside it
+    uses rather than introducing a third pattern into this store.
+    """
+    if record.get("v") != APPROVAL_VERSION:
+        raise EvalError(f"not a {APPROVAL_VERSION} approval record")
+    paths = _prefs_paths(prefs_dir)
+    paths["approvals"].mkdir(parents=True, exist_ok=True)
+    path = paths["approvals"] / f"{record['id']}.json"
+    body = json.dumps(record, indent=2, sort_keys=True) + "\n"
+    if path.exists() and path.read_text() != body:
+        raise EvalError(f"approval {record['id']} already exists with DIFFERENT content; an "
+                        f"approval records one decision and is never edited into another one. "
+                        f"Nothing was overwritten.")
+    path.write_text(body)
+    _journal(paths, "policy.approval", approval=record["id"], candidate=record.get("candidate"),
+             state=record["state"], granted=record["granted"], by=record.get("by"),
+             refusals=sorted({row["reason"] for row in record.get("refusals") or ()}))
+    return path
+
+
+def read_approval(prefs_dir, approval_id):
+    paths = _prefs_paths(prefs_dir)
+    path = paths["approvals"] / f"{approval_id}.json"
+    if not path.exists():
+        raise FileNotFoundError(f"no approval {approval_id!r} under {paths['approvals']}")
+    data = json.loads(path.read_text())
+    if data.get("v") != APPROVAL_VERSION:
+        raise EvalError(f"{path} is not a {APPROVAL_VERSION} approval record")
+    return data
+
+
+def approval_report(prefs_dir):
+    """Every approval on disk, whatever its state -- a READER, so an unreadable file is named
+    rather than raised over and never quietly dropped from the list."""
+    paths = _prefs_paths(prefs_dir)
+    rows = []
+    if paths["approvals"].is_dir():
+        for path in sorted(paths["approvals"].glob("*.json")):
+            try:
+                data = json.loads(path.read_text())
+            except (OSError, ValueError):
+                rows.append({"id": path.stem, "state": "unreadable"})
+                continue
+            rows.append({
+                "id": data.get("id"), "state": data.get("state"),
+                "granted": data.get("granted"), "candidate": data.get("candidate"),
+                "by": data.get("by"), "proposed_by": data.get("proposed_by"),
+                "authority": data.get("authority"),
+                "refusals": sorted({row.get("reason") for row in data.get("refusals") or ()
+                                    if isinstance(row, dict)}),
+                "bindings": {slot: ((data.get("bindings") or {}).get(slot) or {}).get("hash")
+                             for slot in APPROVAL_BINDINGS},
+                "unproven": data.get("unproven") or []})
+    return {"approvals": rows, "path": str(paths["approvals"]),
+            "states": list(APPROVAL_STATES), "refusal_vocabulary": list(APPROVAL_REFUSALS),
+            "authority": REVIEW_AUTHORITY_LABEL,
+            "labels": [BINDING_NOT_AUTHORITY_LABEL, APPROVAL_NOT_ACTIVATION_LABEL]}
+
+
+#: The keys an approval case FILE may carry. Closed, for the reason `improvement_loop._job` is
+#: closed: a field nobody reads is an instruction nobody follows, and a document that decides an
+#: approval is the wrong place to be permissive about one.
+APPROVAL_CASE_KEYS = ("candidate", "in_force", "manifest", "run", "partition", "proposed_by")
+
+
+def load_approval_case(document, store_dir):
+    """An approval case from a case FILE, with the manifest and the run read from the store.
+
+    The one function in this section that reaches the evals store at all -- the three functions
+    below it open only the prefs directory they were handed -- and the difference is the point:
+    here the manifest goes through `read_manifest`, which re-derives its digest and refuses a
+    file rewritten since it was written, and the envelope comes out of the store under its run id.
+    The library entry point above is handed documents and can only vouch for their shape.
+    `origin-not-dereferenced` stays on the record either way, because the candidate itself is
+    still a document somebody handed in.
+    """
+    if not isinstance(document, dict):
+        raise EvalError(f"an approval case is an object with {', '.join(APPROVAL_CASE_KEYS)}; "
+                        f"this is a {type(document).__name__}")
+    unknown = sorted(set(document) - set(APPROVAL_CASE_KEYS))
+    if unknown:
+        raise EvalError(f"the approval case carries {', '.join(repr(u) for u in unknown)}, which "
+                        f"nothing here reads; the keys are {', '.join(APPROVAL_CASE_KEYS)}")
+    missing = [key for key in ("candidate", "manifest", "partition") if not document.get(key)]
+    if missing:
+        raise EvalError(f"the approval case names no {', '.join(missing)}")
+    manifest = read_manifest(store_dir, document["manifest"])
+    envelope = read_envelope(store_dir, document["run"]) if document.get("run") else None
+    return approval_case(candidate=document["candidate"], manifest=manifest,
+                         partition=document["partition"], envelope=envelope,
+                         in_force=document.get("in_force"),
+                         proposed_by=document.get("proposed_by") or "")
+
+# END OF THE EXACT APPROVAL SECTION (decision-improvement D22)
+
+
+
 # ---- CLI --------------------------------------------------------------------------------------------------------
 
 def _split(raw):
@@ -4819,6 +5580,51 @@ def cmd_rollback(args):
     restored, previous = rollback_policy(prefs_dir, to_version=args.to)
     print(f"rolled back: v{previous.get('version')} -> v{restored.get('version')} "
           f"(v{previous.get('version')} kept in history)")
+    return 0
+
+
+def cmd_approve(args):
+    """Decide one approval over a case file, and write the record whatever it decides.
+
+    The manifest and the run are read from the store HERE, so this path re-derives the
+    manifest's digest off disk before anything is bound to it. It still writes no pointer and
+    activates nothing: `write_approval` appends to the prefs store and that is the end of it.
+    """
+    store_dir = Path(args.store_dir) if args.store_dir else DEFAULT_STORE_DIR
+    prefs_dir = Path(args.prefs_dir) if args.prefs_dir else DEFAULT_PREFS_DIR
+    document = json.loads(Path(args.case).read_text(encoding="utf-8"))
+    case = load_approval_case(document, store_dir)
+    scope = json.loads(Path(args.scope).read_text(encoding="utf-8")) if args.scope else None
+    record = decide_approval(case, by=args.by, scope=scope, decision=args.decision,
+                             note=args.note or "")
+    path = write_approval(prefs_dir, record)
+    print(f"approval {record['id']}: {record['state']} (from {record['from_state']}, "
+          f"granted={record['granted']}) -> {path}")
+    for slot in APPROVAL_BINDINGS:
+        row = record["bindings"][slot]
+        print(f"  bound {slot}: {str(row['hash'])[:16] if row['hash'] else '(unbound)'} "
+              f"re-derived by {row['re_derived_by']}")
+    for row in record["refusals"]:
+        print(f"  refused {row['reason']}: {row['detail']}")
+    print(f"  authority: {record['authority']}; unproven: {', '.join(record['unproven'])}")
+    print(f"  {APPROVAL_NOT_ACTIVATION_LABEL}")
+    return 0 if record["granted"] else 3
+
+
+def cmd_approvals(args):
+    prefs_dir = Path(args.prefs_dir) if args.prefs_dir else DEFAULT_PREFS_DIR
+    report = approval_report(prefs_dir)
+    if args.json:
+        print(json.dumps(report, indent=2, sort_keys=True))
+        return 0
+    print(f"approvals: {report['path']}")
+    for row in report["approvals"]:
+        print(f"  {row['id']}: {row['state']} granted={row.get('granted')} "
+              f"candidate={row.get('candidate')} by={row.get('by')} "
+              f"refused={','.join(row.get('refusals') or ()) or '-'}")
+    print(f"  {report['authority']}")
+    for label in report["labels"]:
+        print(f"  -- {label}")
     return 0
 
 
@@ -5053,6 +5859,24 @@ def build_parser():
     p.add_argument("--to", type=int, default=None)
     p.add_argument("--prefs-dir", default=None)
     p.set_defaults(func=cmd_rollback)
+
+    p = sub.add_parser("approve", help="bind a decision to the exact candidate, manifest, "
+                                       "partition and run it was taken over")
+    p.add_argument("--case", required=True,
+                   help=f"a JSON case file; the keys are {', '.join(APPROVAL_CASE_KEYS)}")
+    p.add_argument("--by", required=True)
+    p.add_argument("--decision", required=True, choices=("accept", "reject"))
+    p.add_argument("--scope", default=None,
+                   help="a JSON file with the scope this approval covers; required to accept")
+    p.add_argument("--note", default="")
+    p.add_argument("--store-dir", default=None)
+    p.add_argument("--prefs-dir", default=None)
+    p.set_defaults(func=cmd_approve)
+
+    p = sub.add_parser("approvals", help="every approval record, granted or refused")
+    p.add_argument("--prefs-dir", default=None)
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_approvals)
 
     p = sub.add_parser("policy", help="the policy in force, its history, and proposals")
     p.add_argument("--prefs-dir", default=None)

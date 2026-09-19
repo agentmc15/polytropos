@@ -368,7 +368,7 @@ PYTHONPATH=tests python3 -m unittest test_decision_workbench.BoundedProposalTest
 ### D22 — Exact approval
 - id: D22
 - title: Exact approval
-- status: pending
+- status: done
 - model: opus
 - depends: D21
 **Brief.** Own workflow_eval lifecycle and `tests/test_decision_approval.py:ExactApprovalTests`. Bind reviewer/scope/exact candidate hash/immutable evaluation hash across draft/offline-valid/evaluated/approved/rejected/insufficient-evidence states; mutations invalidate approval.
