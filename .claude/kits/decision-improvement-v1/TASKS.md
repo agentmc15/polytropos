@@ -302,7 +302,7 @@ PYTHONPATH=tests python3 -m unittest test_decision_context_repair.ContextRepairP
 ### D18 — Three-arm protocol
 - id: D18
 - title: Three-arm protocol
-- status: pending
+- status: done
 - model: opus
 - depends: D08, D14, D17
 **Brief.** Own `bin/workflow_eval.py` seam and `tests/test_decision_trial_protocol.py:ThreeArmProtocolTests`. Represent actual baseline, same-model retry control and context repair with pinned checkpoint/acceptance/model/effort/diagnostics/ceiling and recovery/whole-task accounting.

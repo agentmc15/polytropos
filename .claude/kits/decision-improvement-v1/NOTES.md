@@ -1595,3 +1595,60 @@ Open questions and limitations, stated rather than left to be found:
   re-raises anything else untouched; both branches pinned. If D16's sweep ever raises a different
   code, a caller catching this module's `ContractError` would miss it.
 outcome: D17 model=opus attempts=1 result=pass review=pending run=2026-09-16-aa6e
+
+## D18 — Three-arm protocol (opus)
+
+Generates an experiment SPECIFICATION and runs nothing. The architect question — whether to wire
+D08's gate — was answered by NOT wiring it: `CONFINED_DISPATCH_WIRED = False` in
+`bin/workflow_eval.py`, a blocker derived from code rather than from anything a caller supplies.
+That was the right call. D08's gate applies no confinement and ledgers nothing, so wiring it
+as-is would have produced a real, unconfined, unledgered dispatch under an envelope saying the
+profile is enforced.
+
+- The flag is pinned in BOTH directions, and I killed mutants each way in my own temp tree
+  (control unmutated first): flipping the flag alone dies; making the gate genuinely call
+  `ep.wrap_argv`, `ep.ProtectedProfile` or `attempt_ledger.append` without flipping it also dies.
+  Whoever wires a live protected trial flips it in the same edit that adds both halves.
+- **`require_runnable` trusted the dict it was handed** — caught in my verification, not by the
+  suite. It read `spec["content"]["blockers"]` without re-deriving the content digest, so a
+  fabricated `{"sha": ..., "content": {"blockers": []}}` discharged every precondition, including
+  the code-derived one, without touching the flag. Fixed: `content` is re-hashed with the same
+  `_sha(_canonical(content))` `build_trial_protocol` uses, and a mismatch is refused before a
+  blocker is read. **The general lesson for D19–D34: an enforcement point must consult the thing
+  it enforces.** A guard can be genuine, derived and mutation-proven and still be discharged at
+  the door.
+- A forged spec gets NO code in `PROTOCOL_BLOCKERS`. That vocabulary is closed and means "a
+  precondition a live run must satisfy"; a fabricated input is not an unsatisfied precondition.
+- Limit, stated not glossed: content addressing detects ALTERATION, not authorship. Emptying the
+  blockers AND recomputing the sha is not caught. No test pins that weakness as expected
+  behaviour, deliberately.
+- Phase 2 F5 is CLOSED: `manifest_summary` now carries `NOT_ENFORCEMENT_LABEL`, so `results.json`
+  gets the disclaimer beside its partition counts. This changes D06's function — the one
+  non-additive line in the file.
+- Phase 2 F4 is closed at the NAMING level only: `live_requirements` lists `held-out-evidence` and
+  `protected-profile-certified` side by side with reciprocal `pairs_with`, and satisfying either
+  alone leaves the other blocking. They still never compose in a live path, because there is none.
+- D06's product finding is honoured, not assumed away: an empty held-out partition yields
+  `no-held-out-evidence`, whose detail names the no-`gh` → fix-commit-message → contagious
+  quarantine chain. The fixture builds that case through `build_manifest` itself.
+- **Zero production callers** for all 14 new public symbols; `release_gate` reads
+  `TRIAL_PROTOCOL_VERSION` and calls nothing. The suite says the unit works, not that anything
+  invokes it — D14's and D17's disclosure, again.
+- `arm_accounting` proves SHAPE, not ORIGIN: its records are caller-supplied, which is why
+  `initial_attempt_reused` is required rather than inferred.
+
+Two traps worth carrying forward, both mine:
+
+- **Prose describing a guard satisfies a text scan looking for it.** My own verification asserted
+  the deleted guard was absent by scanning the function body for `_sha(_canonical(` — and matched
+  the docstring paragraph explaining the check. D08's gate docstring likewise already contains
+  `wrap_argv`, `ProtectedProfile` and `ProtectedLayout` in its "What it does NOT do" section, so
+  any future pin on those must be AST-based or it is vacuous from birth.
+- **Inspect the mutant, never trust its exit code.** My first deletion attempt kept the guard it
+  meant to remove and "survived"; the second, verified absent, killed 11 tests + 4 errors. Fourth
+  invalidated mutation run in this kit, all from a tree or edit not being what I assumed.
+
+Process: doc-drift tests compare against the real committed tree, so a suite run concurrent with
+any other run produces phantom failures in `test_docs_build_cli` / `test_docs_site` /
+`test_codex_discovery_docs`. Seen again here. Runs stay sequential.
+outcome: D18 model=opus attempts=2 result=pass review=revised run=2026-09-16-aa6e

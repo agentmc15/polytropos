@@ -1294,9 +1294,18 @@ def manifest_ref(manifest):
 
 
 def manifest_summary(manifest):
-    """Counts only -- what the card and the envelope may repeat without copying the manifest."""
+    """Counts only -- what the card and the envelope may repeat without copying the manifest.
+
+    `enforcement` travels with the counts because this summary is what `Evaluation.run` embeds in
+    `results.json` under `holdout.manifest`, and a reader of the envelope ALONE would otherwise
+    see partition counts with nothing saying they are tamper-evident rather than enforced. The
+    disclaimer is inside the manifest file's own `content.rules`, where it is inside the digest;
+    this is the same sentence reaching the envelope, and it is a copy of a label, never a second
+    authority (Phase 2 review, F5).
+    """
     content = manifest["content"]
     return {
+        "enforcement": NOT_ENFORCEMENT_LABEL,
         "items": len(content["items"]),
         "groups": len(content["groups"]),
         "partitions": {name: len(content["partitions"].get(name) or []) for name in BUCKETS},
@@ -1967,6 +1976,976 @@ def gate_protected_dispatch(purpose, runner, argv, cwd, *, profile=None, status=
         carry_protected_evidence(envelope, evidence, purpose)
     result = runner(argv, cwd)
     return result, evidence
+
+
+# =================================================================================================
+# THREE-ARM RECOVERY TRIAL PROTOCOL (decision-improvement D18) -- A SPECIFICATION, NEVER A RUN
+#
+# WHAT THIS SECTION PRODUCES. One immutable, content-addressed EXPERIMENT SPECIFICATION for the
+# kit's first hypothesis -- that on a narrow cohort of cross-module failures, one bounded package
+# of previously missing contract context before a same-model retry improves accepted recovery or
+# total resources without weakening quality -- plus the read-only accounting a future run's
+# results would be read through. It produces no dispatch and no file.
+#
+# WHAT IT DELIBERATELY DOES NOT DO, AND HOW THAT IS MADE STRUCTURAL RATHER THAN PROMISED. No
+# function below takes a runner, a dispatcher, a store, a directory or a path; none of them calls
+# `gate_protected_dispatch`, `default_runner`, `Evaluation.run`, a `repo_bench` grader or a miner;
+# none of them opens, writes or reads a file. A generated specification is not a completed run,
+# and `require_runnable` refuses one for every precondition it cannot see satisfied -- which today
+# is always at least one, because `CONFINED_DISPATCH_WIRED` is False and this module will not
+# pretend otherwise.
+#
+# WHY D08'S GATE IS NAMED HERE AND NOT CALLED. `gate_protected_dispatch` is an AVAILABILITY gate:
+# its own docstring leads with `THIS APPLIES NO CONFINEMENT.`, it hands `argv` to the supplied
+# runner verbatim, and it records nothing in `bin/attempt_ledger.py`. Wiring it as it stands would
+# produce a real, unconfined, unledgered, money-spending dispatch under an envelope saying the
+# profile is enforced. Two obligations therefore travel together and are named together in
+# `CONFINED_DISPATCH_WIRED`: a runner that actually confines, and the ledger open/close this
+# repository requires of every dispatch. Until BOTH exist, a live trial is blocked here by
+# derivation and not by anyone remembering. This section pins D07 as a REQUIREMENT of a live run
+# rather than wiring a gate it cannot honestly complete.
+#
+# THE PAIRING NOTHING PREVIOUSLY NAMED (Phase 2 review, F4). D06's held-out controller and D08's
+# isolation gate never composed: a caller that wired only the gate would get an envelope labelled
+# "enforced" over a cohort with zero held-out evidence, and nothing said the two were both
+# required. `live_requirements` names them side by side, and `build_trial_protocol` blocks on
+# EITHER being unsatisfied -- satisfying one never discharges the other.
+#
+# THE COHORT THE DEFAULT PIPELINE CANNOT PRODUCE (D06's product finding). `repo_bench`'s issue
+# replay mining without `gh` -- which is the DEFAULT -- builds a problem statement out of the FIX
+# COMMIT MESSAGE, which D06's screen correctly flags `future-fix-message`, which quarantines the
+# whole defect group, which empties the promotion partition. So a protocol that simply assumed a
+# usable held-out cohort would be assuming something the default pipeline cannot deliver.
+# `trial_cohort` reads the actual partition out of the actual manifest, and an empty one is a
+# `no-held-out-evidence` blocker that names the cause instead of a cohort of zero items dressed
+# up as evidence.
+#
+# THE A=B COLLAPSE. Arm A is the ACTUAL frozen recovery policy, including any retry it already
+# performs -- not an idealised do-nothing arm. When that policy already IS the control (one
+# same-model extra attempt, the same diagnostics, no targeted package), A and B are the same
+# protocol, and running them as two arms is one arm counted twice: it doubles the apparent sample,
+# halves the apparent variance and compares a thing with itself. `collapse_equivalent_arms`
+# compares arm SIGNATURES -- everything that defines the protocol, never the arm's own name -- and
+# keeps one arm carrying both names in `collapsed_from`.
+#
+# WHAT "PINNED" MEANS. Six facts -- checkpoint, acceptance, model, effort, diagnostics, ceiling --
+# live in ONE hashed object that every arm cites by `inputs_sha`. An arm citing a different sha is
+# refused, so the arms cannot drift apart between construction and reading. Arm C may differ from
+# arm B in exactly one field, `context_package`; a spec that changes the model and the context at
+# once is refused by name, because it could not attribute its own result.
+#
+# WHAT THIS MODULE REFUSES TO INVENT. No sample size, no practical-gain threshold, no allowed
+# quality regression, no stopping rule. Those are operator inputs; absent, they are reported as an
+# incomplete specification and every corresponding field stays `None`. A number nobody measured
+# must never appear as though somebody had.
+# =================================================================================================
+
+TRIAL_PROTOCOL_VERSION = "polytropos.trial-protocol/1"
+
+#: The three arms of the first hypothesis, in the order the shared plan states them.
+ARMS = ("A", "B", "C")
+
+ARM_ROLES = {
+    "A": ("baseline -- the ACTUAL frozen current recovery policy, including any retry it already "
+          "performs. Never an idealised do-nothing arm: whatever the shipped policy does on this "
+          "failure class is what arm A does, and if that already is arm B then they collapse"),
+    "B": ("control -- the same permitted extra attempt, the same model, the same effort and the "
+          "same diagnostics as arm C, and NO targeted context package"),
+    "C": ("repair -- arm B plus ONE bounded package of previously missing contract context, then "
+          "the declared remaining recovery path"),
+}
+
+#: The ONE field arm C is permitted to differ from arm B in. Changing the model and the context at
+#: once makes the result unattributable, which the shared plan forbids in those words.
+REPAIR_DIMENSION = "context_package"
+
+#: Everything that defines an arm's protocol. The arm's own NAME is deliberately absent: two arms
+#: that differ only by what they are called are one arm.
+ARM_SIGNATURE_FIELDS = ("inputs_sha", "extra_attempts", "diagnostics_applied", "context_package",
+                        "remaining_recovery")
+
+#: The six facts every arm shares, hashed into one object. `pin_trial_inputs` refuses any absence.
+PINNED_INPUTS = ("checkpoint", "acceptance", "model", "effort", "diagnostics", "ceiling")
+
+#: Both scopes are reported, always. Recovery-only answers "given this failing checkpoint, did the
+#: arm recover"; whole-task answers "what did the whole task cost", and the first attempt is in it
+#: whether or not this arm re-ran it.
+ACCOUNTING_SCOPES = ("recovery-only", "whole-task")
+
+#: Everything that is a cost but not an attempt. Each row names its own scope, because the shared
+#: plan puts planning, retrieval, decision, review, judging, proposer and experiment costs "at
+#: their actual scope" rather than wherever a total happens to be convenient.
+OVERHEAD_KINDS = ("failed-attempt", "planning", "retrieval", "decision", "review", "judging",
+                  "proposer", "experiment")
+
+#: What an OPERATOR declares before a live trial. This module supplies none of them and invents no
+#: default for any of them; each missing one is a blocker naming itself.
+OPERATOR_DECLARATIONS = ("primary_endpoint", "practical_gain_threshold",
+                         "allowed_quality_regression", "sample_size", "stopping_rule",
+                         "interim_look_rule", "independent_evaluation")
+
+#: The closed vocabulary of reasons a specification is not a run. A reader never has to guess
+#: whether a new string means something new.
+PROTOCOL_BLOCKERS = (
+    "cohort-not-frozen",
+    "no-held-out-evidence",
+    "protected-profile-uncertified",
+    "confining-dispatch-unwired",
+    "full-task-study-not-run",
+    "operator-declaration-missing",
+)
+
+#: Whether this repository has a CONFINING, LEDGERED protected dispatch path. It does not, and the
+#: two halves are one fact on purpose. `gate_protected_dispatch` applies no confinement (its own
+#: docstring leads with that sentence and an AST test holds it there) and records nothing in
+#: `bin/attempt_ledger.py`, which this repository requires of every dispatch, before and after.
+#: Whoever wires a live protected trial flips this in the SAME edit that adds both -- and the D18
+#: suite fails if either half moves without the other, so the flag cannot drift away from the code
+#: it describes.
+CONFINED_DISPATCH_WIRED = False
+
+NOT_A_RUN_LABEL = (
+    "experiment SPECIFICATION only: nothing here dispatched a model, restored a checkpoint, "
+    "graded a candidate or spent anything. A generated specification is not a completed run, and "
+    "no figure below was measured"
+)
+
+ARM_COLLAPSE_NOTE = (
+    "arms with identical protocol signatures are ONE arm carrying both names, never two "
+    "independent arms: counting a baseline that already is the control twice doubles the apparent "
+    "sample and compares a thing with itself"
+)
+
+ANALYTIC_REUSE_LABEL = (
+    "initial-attempt cost is attributed to every arm that starts from this checkpoint, INCLUDING "
+    "an arm that reuses the checkpoint analytically rather than re-running the first attempt: "
+    "the first attempt was not free because a later arm declined to repeat it. An attributed "
+    "figure is not a second spend, and the reused count below says how many were attributed"
+)
+
+FAILURES_IN_TOTALS_LABEL = (
+    "cohort totals carry EVERY item's resources -- accepted, failed and censored alike -- so cost "
+    "per accepted task has the failures in its numerator, and is undefined (never 0, never "
+    "omitted) when no task was accepted"
+)
+
+NO_INVENTED_NUMBER_LABEL = (
+    "this module supplies no sample size and no success threshold: both are operator inputs, "
+    "chosen from pilot variation and a useful effect size, and their absence is reported as an "
+    "incomplete specification rather than filled in with a magic universal minimum"
+)
+
+CONDITIONAL_RECOVERY_NOTE = (
+    "conditional recovery is P(accepted | this failing checkpoint was restored). Its denominator "
+    "counts only RESOLVED outcomes; censored items are counted separately and never silently "
+    "become failures. It says nothing about whole-task completion, which is the prospective "
+    "full-task study's question"
+)
+
+FULL_TASK_STUDY_NOTE = (
+    "matched checkpoints estimate CONDITIONAL recovery only. A prospective whole-task study -- "
+    "first attempt to accepted or abandoned end, on its own predeclared inputs -- is required "
+    "before general rollout and is NOT satisfied by the checkpoint study, however it came out: "
+    "the checkpoint cohort conditions on having already failed once, which the population a "
+    "rollout would touch does not"
+)
+
+RESOURCE_ORACLE_LABEL = (
+    "resources: cost by basis and wall time, bases never summed and an unmeasured figure never "
+    "reported as zero"
+)
+
+EXTRACTION_NOTE = (
+    "checkpoints are restored by the existing extraction owner, `bin/repo_bench.py`: a "
+    "history-free tree extraction at the pinned base commit, through allowlisted git verbs "
+    "against a read-only target. This module copies nothing and extracts nothing itself"
+)
+
+OVERLAPPING_INTERVAL_NOTE = (
+    "a difference whose intervals overlap is not a result; neither is one that clears no "
+    "threshold, because no threshold exists here unless an operator declared one"
+)
+
+
+# ---- the pinned inputs -------------------------------------------------------------------------
+
+def _tp_text(value, what):
+    text = str(value or "").strip()
+    if not text:
+        raise EvalError(f"{what} must be a non-empty string")
+    return text
+
+
+def _tp_mapping(value, what):
+    if not isinstance(value, dict):
+        raise EvalError(f"{what} must be a mapping, not {type(value).__name__}")
+    return value
+
+
+def _tp_count(value, what, *, minimum=0):
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise EvalError(f"{what} must be an int, not {type(value).__name__}")
+    if value < minimum:
+        raise EvalError(f"{what} must be >= {minimum}")
+    return int(value)
+
+
+def _tp_ceiling_number(value, what):
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise EvalError(f"{what} must be a number, not {type(value).__name__}; a ceiling that is "
+                        f"absent is not a ceiling")
+    if not math.isfinite(value) or value <= 0:
+        raise EvalError(f"{what} must be a finite number greater than zero")
+    return float(value)
+
+
+def _tp_cost(value, what):
+    """One cost, validated against this module's OWN basis vocabulary. A figure without a basis
+    is not a figure: `BASES` is the same tuple `add_cost` and `priced_usd` already read."""
+    cost = _tp_mapping(value, what)
+    basis = cost.get("basis")
+    if basis not in BASES:
+        raise EvalError(f"{what}: basis {basis!r} is not one of {list(BASES)}")
+    return _frozen(cost)
+
+
+def pin_trial_inputs(*, checkpoint, acceptance, model, effort, diagnostics, ceiling):
+    """The six pinned facts every arm of one trial shares -> one hashed object.
+
+    Keyword-only, and every parameter is REQUIRED with no default: nothing here is permissive by
+    omission, and a caller that has not decided its effort or its ceiling cannot accidentally
+    inherit one. The returned `sha` is what each arm cites, so an input that moved between
+    building an arm and building the protocol is caught rather than averaged over.
+
+    `checkpoint.initial_attempt` is required even though the checkpoint will be RESTORED rather
+    than re-earned: the first attempt is what created the checkpoint, its cost is real, and an
+    accounting that drops it reports a recovery that appears to come from nowhere.
+    """
+    cp = _tp_mapping(checkpoint, "checkpoint")
+    pinned_checkpoint = {
+        "item": _tp_text(cp.get("item"), "checkpoint.item"),
+        "group": _tp_text(cp.get("group"), "checkpoint.group"),
+        "manifest": _tp_text(cp.get("manifest"), "checkpoint.manifest"),
+        "base_commit": _tp_text(cp.get("base_commit"), "checkpoint.base_commit"),
+        "failure_class": _tp_text(cp.get("failure_class"), "checkpoint.failure_class"),
+        "restored_by": _tp_text(cp.get("restored_by"), "checkpoint.restored_by"),
+        "initial_attempt": _tp_cost(cp.get("initial_attempt"), "checkpoint.initial_attempt"),
+    }
+    acc = _tp_mapping(acceptance, "acceptance")
+    pinned_acceptance = {
+        "command": _tp_text(acc.get("command"), "acceptance.command"),
+        "sha": _tp_text(acc.get("sha"), "acceptance.sha"),
+    }
+    if not isinstance(diagnostics, (list, tuple)):
+        raise EvalError("diagnostics must be a list or tuple of names -- an empty one is a "
+                        "declaration, an absent one is an omission")
+    names = [_tp_text(d, "diagnostics entry") for d in diagnostics]
+    if len(set(names)) != len(names):
+        raise EvalError("diagnostics names must be unique")
+    ceil_map = _tp_mapping(ceiling, "ceiling")
+    pinned_ceiling = {
+        "max_usd": _tp_ceiling_number(ceil_map.get("max_usd"), "ceiling.max_usd"),
+        "max_dispatches": _tp_count(ceil_map.get("max_dispatches"), "ceiling.max_dispatches",
+                                    minimum=1),
+        "max_wall_seconds": _tp_ceiling_number(ceil_map.get("max_wall_seconds"),
+                                               "ceiling.max_wall_seconds"),
+        "note": CEILING_NOTE,
+    }
+    pinned = {
+        "v": TRIAL_PROTOCOL_VERSION,
+        "checkpoint": pinned_checkpoint,
+        "acceptance": pinned_acceptance,
+        "model": _tp_text(model, "model"),
+        "effort": _tp_text(effort, "effort"),
+        "diagnostics": sorted(names),
+        "ceiling": pinned_ceiling,
+    }
+    pinned["sha"] = _sha(_canonical(pinned))
+    return pinned
+
+
+# ---- the arms ----------------------------------------------------------------------------------
+
+def _tp_package(value, what):
+    """A context package REFERENCE -- an id, a digest and a bound. Never the package itself: a
+    specification carries what identifies the intervention, not its payload.
+
+    `items` must be at least 1. A package with nothing in it is not an arm C that does nothing:
+    "no applicable context" is a legitimate ABSTENTION, and the checkpoint drops out of the
+    cohort rather than being compared against an intervention that was never applied. Counting an
+    empty package as a repair would dilute arm C with checkpoints it never touched.
+    """
+    if value is None:
+        return None
+    pkg = _tp_mapping(value, what)
+    return {
+        "id": _tp_text(pkg.get("id"), f"{what}.id"),
+        "sha": _tp_text(pkg.get("sha"), f"{what}.sha"),
+        "items": _tp_count(pkg.get("items"), f"{what}.items", minimum=1),
+        "bound": _tp_text(pkg.get("bound"), f"{what}.bound"),
+    }
+
+
+def build_arm(name, *, inputs, extra_attempts, diagnostics_applied, context_package,
+              remaining_recovery):
+    """One arm of the trial, citing the pinned inputs by sha. Keyword-only, no defaults.
+
+    Only arm C may carry a context package -- that IS the intervention, and an arm A or B that
+    carried one would not be the thing it is named after.
+    """
+    if name not in ARMS:
+        raise EvalError(f"arm {name!r} is not one of {list(ARMS)}")
+    pinned = _tp_mapping(inputs, "inputs")
+    inputs_sha = _tp_text(pinned.get("sha"), "inputs.sha")
+    if not isinstance(diagnostics_applied, (list, tuple)):
+        raise EvalError("diagnostics_applied must be a list or tuple")
+    applied = sorted({_tp_text(d, "diagnostics_applied entry") for d in diagnostics_applied})
+    unknown = [d for d in applied if d not in (pinned.get("diagnostics") or ())]
+    if unknown:
+        raise EvalError(f"arm {name}: diagnostics {unknown} are not in the pinned diagnostics "
+                        f"{list(pinned.get('diagnostics') or ())}; an arm cannot apply a "
+                        f"diagnostic the trial never pinned")
+    package = _tp_package(context_package, f"arm {name} context_package")
+    if package is not None and name != "C":
+        raise EvalError(f"arm {name} carries a context package; only arm C may, because the "
+                        f"package is the intervention under test")
+    arm = {
+        "arm": name,
+        "role": ARM_ROLES[name],
+        "inputs_sha": inputs_sha,
+        "extra_attempts": _tp_count(extra_attempts, f"arm {name} extra_attempts"),
+        "diagnostics_applied": applied,
+        "context_package": package,
+        "remaining_recovery": _tp_text(remaining_recovery, f"arm {name} remaining_recovery"),
+    }
+    arm["signature"] = _sha(_canonical({f: arm[f] for f in ARM_SIGNATURE_FIELDS}))
+    return arm
+
+
+def arm_delta(left, right):
+    """Every signature field two arms differ in. The comparison is over the canonical form, so
+    `None` and a missing key read alike and key order never matters."""
+    return sorted(f for f in ARM_SIGNATURE_FIELDS
+                  if _canonical(left.get(f)) != _canonical(right.get(f)))
+
+
+def collapse_equivalent_arms(arms):
+    """`(kept, equivalences)` -- arms with identical signatures collapsed into one.
+
+    A=B is the case the shared plan names: when the frozen current policy already performs the
+    same same-model extra attempt with the same diagnostics and no package, arm A IS arm B and
+    "record equivalence and collapse the duplicate" is the instruction. The kept arm keeps the
+    FIRST name in `ARMS` order and carries every collapsed name in `collapsed_from`, so nothing
+    is lost -- the two arms become one arm with two roles, never one arm with one role.
+    """
+    kept, by_signature = [], {}
+    for arm in arms:
+        signature = _tp_text(arm.get("signature"), "arm signature")
+        first = by_signature.get(signature)
+        if first is None:
+            copy = _frozen(arm)
+            copy["collapsed_from"] = [arm["arm"]]
+            copy["collapse_reason"] = None
+            by_signature[signature] = copy
+            kept.append(copy)
+            continue
+        first["collapsed_from"].append(arm["arm"])
+    equivalences = []
+    for arm in kept:
+        if len(arm["collapsed_from"]) > 1:
+            arm["collapse_reason"] = "arms-equivalent"
+            arm["role"] = " || ".join(ARM_ROLES[n] for n in arm["collapsed_from"])
+            equivalences.append({
+                "arms": list(arm["collapsed_from"]),
+                "reason": "arms-equivalent",
+                "signature": arm["signature"],
+                "note": ARM_COLLAPSE_NOTE,
+            })
+    return kept, equivalences
+
+
+# ---- the frozen grouped cohort -------------------------------------------------------------------
+
+def trial_cohort(manifest, partition, *, cohort):
+    """The frozen, grouped checkpoint cohort this trial compares over -- counts and ids only.
+
+    Read straight out of D06's immutable manifest content: this function selects nothing, writes
+    nothing and opens nothing, so it cannot be the thing that spends single-use material. A live
+    run still passes `require_held_out` / `select_cohort` against the STORE, which is where
+    exposure, retirement and staleness actually live; the counts here are what a specification may
+    state in advance.
+    """
+    if partition not in PARTITIONS:
+        raise EvalError(f"partition {partition!r} is not one of {list(PARTITIONS)}")
+    role = PARTITION_ROLES[partition]
+    base = {
+        "partition": partition,
+        "held_out": role["held_out"],
+        "role_note": role["note"],
+        "cohort": cohort,
+        "manifest_ref": None,
+        "items": [],
+        "item_count": 0,
+        "groups": [],
+        "group_count": 0,
+        "quarantined": None,
+        "frozen": False,
+        "grouping": GROUPING_RULE,
+        "assignment": ASSIGNMENT_RULE,
+        "enforcement": NOT_ENFORCEMENT_LABEL,
+    }
+    if manifest is None:
+        return base
+    content = _tp_mapping(_tp_mapping(manifest, "manifest").get("content"), "manifest.content")
+    members = list((content.get("partitions") or {}).get(partition) or ())
+    if cohort is not None:
+        name = _tp_text(cohort, "cohort")
+        declared = [c for c in (content.get("cohorts") or ())
+                    if c.get("cohort") == name and c.get("partition") == partition]
+        if not declared:
+            raise EvalError(f"cohort {name!r} is not declared on the {partition} partition of "
+                            f"manifest {manifest.get('id')!r}; a cohort chosen after the fact is "
+                            f"not a cohort")
+        members = [i for i in declared[0].get("items") or () if i in members]
+    items = sorted(set(members))
+    by_item = content.get("items") or {}
+    groups = sorted({(by_item.get(i) or {}).get("group") for i in items} - {None})
+    summary = manifest_summary(manifest)
+    base.update(
+        manifest_ref=manifest_ref(manifest),
+        items=items,
+        item_count=len(items),
+        groups=groups,
+        group_count=len(groups),
+        quarantined=summary["quarantined"],
+        frozen=True,
+    )
+    return base
+
+
+# ---- the graders, which are repo_bench's own -----------------------------------------------------
+
+def trial_oracles():
+    """The four gradings this protocol reads, each naming its existing owner and its own honesty
+    label. No new oracle is defined here, and no two classes are blended: `solved` is the tests
+    oracle alone, and a judge opinion is never ground truth."""
+    rb = _rb()
+    return [
+        {"oracle": "tests", "owner": "repo_bench.oracle_tests", "objective": True,
+         "label": SOLVED_LABEL},
+        {"oracle": "structural", "owner": "repo_bench.oracle_structural", "objective": False,
+         "label": getattr(rb, "STRUCTURAL_LABEL", None)},
+        {"oracle": "judge", "owner": "repo_bench.oracle_judge", "objective": False,
+         "label": getattr(rb, "JUDGE_LABEL", None)},
+        {"oracle": "resources", "owner": "workflow_eval cost and wall accounting",
+         "objective": True, "label": RESOURCE_ORACLE_LABEL},
+    ]
+
+
+def trial_extraction():
+    """Where a restored checkpoint comes from: the existing extraction owner, named, not copied."""
+    return {
+        "owner": "repo_bench",
+        "snapshot": "repo_bench.make_sandbox / repo_bench.prepare_cell_sandbox",
+        "substrate": "repo_bench.build_grade_substrate",
+        "envelope_writer": "workflow_eval",
+        "note": EXTRACTION_NOTE,
+    }
+
+
+# ---- what a live run of this specification would require -----------------------------------------
+
+def _certification_evidence(certification):
+    """`(reference, reason_or_None)` for a certification claim.
+
+    Validated against the SHAPE `exec_policy.certify_profile` actually returns, not against the
+    word `certified`: a hand-written `{"certified": True}` satisfies nothing, an empty sentinel
+    plan (`required == 0`) certifies nothing, and a report with anything in `blocking` certifies
+    nothing. This module does not re-derive the certification -- D07 owns that, over a real
+    sentinel report -- it refuses to accept a claim that does not carry D07's own arithmetic.
+    """
+    if certification is None:
+        return None, "no certification evidence was supplied"
+    cert = _tp_mapping(certification, "certification")
+    missing = [k for k in ("profile", "backend", "certified", "required", "satisfied", "blocking")
+               if k not in cert]
+    if missing:
+        return None, (f"certification is missing {missing}; the evidence must be what "
+                      f"exec_policy.certify_profile returns, not a claim shaped like it")
+    if cert["certified"] is not True:
+        return None, f"exec_policy.certify_profile returned certified={cert['certified']!r}"
+    required = cert.get("required")
+    satisfied = cert.get("satisfied")
+    if not isinstance(required, int) or isinstance(required, bool) or required < 1:
+        return None, "the certification names no sentinel plan, so it certifies nothing"
+    if satisfied != required:
+        return None, (f"{satisfied} of {required} sentinels satisfied; a partially satisfied plan "
+                      f"certifies nothing")
+    if list(cert.get("blocking") or ()):
+        return None, f"{len(cert['blocking'])} blocking sentinel finding(s) remain"
+    return {
+        "profile": cert.get("profile"),
+        "backend": cert.get("backend"),
+        "required": required,
+        "satisfied": satisfied,
+        "not_proven": list(cert.get("not_proven") or ()),
+        "label": cert.get("label"),
+    }, None
+
+
+def _study_run_reference(full_task_study_run):
+    """`(reference, reason_or_None)` for a prospective full-task study that claims to have run."""
+    if full_task_study_run is None:
+        return None, ("no whole-task study has run; a checkpoint study conditions on having "
+                      "already failed once and cannot answer the rollout population's question")
+    run = _tp_mapping(full_task_study_run, "full_task_study_run")
+    return {"run_id": _tp_text(run.get("run_id"), "full_task_study_run.run_id"),
+            "results_ref": _tp_text(run.get("results_ref"),
+                                    "full_task_study_run.results_ref")}, None
+
+
+def live_requirements(*, cohort, certification, full_task_study_run, declarations):
+    """Every precondition a LIVE run of this specification would have to satisfy, each with the
+    owner that can satisfy it and whether the evidence in hand does.
+
+    The first two are Phase 2's F4 finding made explicit: D06's held-out controller and D07/D08's
+    isolation question are BOTH required, side by side. Satisfying one has never discharged the
+    other, and until this list existed nothing said so.
+    """
+    certificate, cert_reason = _certification_evidence(certification)
+    study, study_reason = _study_run_reference(full_task_study_run)
+    missing_declarations = [name for name in OPERATOR_DECLARATIONS
+                            if declarations.get(name) in (None, "", [], {})]
+    held_out_reason = held_out_blocker = None
+    if not cohort["frozen"]:
+        held_out_blocker = "cohort-not-frozen"
+        held_out_reason = "no immutable manifest was supplied, so the cohort is not frozen"
+    elif not cohort["held_out"]:
+        held_out_blocker = "no-held-out-evidence"
+        held_out_reason = (f"the {cohort['partition']} partition is fitting material and is never "
+                           f"citable as held-out evidence")
+    elif not cohort["item_count"]:
+        held_out_blocker = "no-held-out-evidence"
+        held_out_reason = (
+            f"the {cohort['partition']} partition is EMPTY. The usual cause is the default mining "
+            f"path: without `gh`, repo_bench builds a problem statement out of the fix commit "
+            f"message, the leak screen flags it `future-fix-message`, and quarantine is contagious "
+            f"within a defect group, so every group ends in quarantine and no partition fills")
+    return [
+        {"requirement": "held-out-evidence", "owner": "workflow_eval.require_held_out (D06)",
+         "satisfied": held_out_reason is None, "reason": held_out_reason,
+         "evidence": cohort["manifest_ref"], "blocker": held_out_blocker,
+         "pairs_with": "protected-profile-certified"},
+        {"requirement": "protected-profile-certified",
+         "owner": "exec_policy.certify_profile over exec_policy.run_sentinels (D07)",
+         "satisfied": cert_reason is None, "reason": cert_reason, "evidence": certificate,
+         "blocker": None if cert_reason is None else "protected-profile-uncertified",
+         "pairs_with": "held-out-evidence",
+         "note": ("workflow_eval.gate_protected_dispatch is an AVAILABILITY gate and applies no "
+                  "confinement of its own; passing it is not this requirement")},
+        {"requirement": "confining-and-ledgered-dispatch",
+         "owner": "whichever task wires a live protected trial",
+         "satisfied": bool(CONFINED_DISPATCH_WIRED), "evidence": None,
+         "blocker": None if CONFINED_DISPATCH_WIRED else "confining-dispatch-unwired",
+         "reason": (None if CONFINED_DISPATCH_WIRED else
+                    "this repository has no dispatch path that both confines and is recorded in "
+                    "bin/attempt_ledger.py before and after the call; the availability gate does "
+                    "neither"),
+         "pairs_with": "protected-profile-certified"},
+        {"requirement": "whole-task-study", "owner": "a prospective study, separately run",
+         "satisfied": study_reason is None, "reason": study_reason, "evidence": study,
+         "blocker": None if study_reason is None else "full-task-study-not-run",
+         "note": FULL_TASK_STUDY_NOTE},
+        {"requirement": "operator-declarations", "owner": "the operator, never this module",
+         "satisfied": not missing_declarations, "evidence": None,
+         "blocker": None if not missing_declarations else "operator-declaration-missing",
+         "reason": (None if not missing_declarations else
+                    f"undeclared: {', '.join(missing_declarations)}"),
+         "note": NO_INVENTED_NUMBER_LABEL},
+    ]
+
+
+def _blockers_from(requirements, declarations):
+    """The closed-vocabulary blockers behind the unsatisfied requirements. Each row carries its
+    own code, so nothing here sniffs a sentence for a word."""
+    blockers = []
+    for row in requirements:
+        if row["satisfied"] or row["blocker"] is None:
+            continue
+        if row["blocker"] == "operator-declaration-missing":
+            for name in OPERATOR_DECLARATIONS:
+                if declarations.get(name) in (None, "", [], {}):
+                    blockers.append({"blocker": row["blocker"], "detail": name})
+            continue
+        blockers.append({"blocker": row["blocker"], "detail": row["reason"]})
+    unknown = sorted({b["blocker"] for b in blockers} - set(PROTOCOL_BLOCKERS))
+    if unknown:  # pragma: no cover -- a closed vocabulary that stopped being closed
+        raise EvalError(f"blocker code(s) {unknown} are outside PROTOCOL_BLOCKERS")
+    return blockers
+
+
+# ---- the specification ---------------------------------------------------------------------------
+
+def build_trial_protocol(*, inputs, arms, manifest, partition, cohort, certification,
+                         full_task_study_run, operator_declarations, created_by, created_at):
+    """The three-arm recovery trial SPECIFICATION: immutable, content-addressed, and not a run.
+
+    Keyword-only with no defaults, for the same reason `pin_trial_inputs` is: a specification
+    assembled out of whatever the caller happened to omit is not a specification. `created_at` and
+    `created_by` are provenance and stay OUTSIDE the digest, so the same specification written
+    twice by two people is the same specification -- D06's rule, for D06's reason.
+
+    Nothing here dispatches, grades, mines, selects from a store, or writes. The one thing it
+    produces is a document that says, in a closed vocabulary, exactly what would have to be true
+    before this experiment could run.
+    """
+    pinned = _tp_mapping(inputs, "inputs")
+    inputs_sha = _tp_text(pinned.get("sha"), "inputs.sha")
+    arm_list = list(arms or ())
+    if not arm_list:
+        raise EvalError("a trial protocol needs at least one arm")
+    names = [a.get("arm") for a in arm_list]
+    if len(set(names)) != len(names):
+        raise EvalError(f"duplicate arm name(s) in {names}")
+    for arm in arm_list:
+        if arm.get("inputs_sha") != inputs_sha:
+            raise EvalError(f"arm {arm.get('arm')!r} cites inputs {arm.get('inputs_sha')!r} but "
+                            f"the trial pins {inputs_sha!r}; the arms are not comparing the same "
+                            f"checkpoint, acceptance, model, effort, diagnostics and ceiling")
+    by_name = {a["arm"]: a for a in arm_list}
+    if "B" in by_name and "C" in by_name:
+        delta = arm_delta(by_name["B"], by_name["C"])
+        illegal = [f for f in delta if f != REPAIR_DIMENSION]
+        if illegal:
+            raise EvalError(
+                f"arm C differs from arm B in {illegal} as well as {REPAIR_DIMENSION!r}; a trial "
+                f"that changes the model, the effort, the diagnostics or the permitted attempts "
+                f"at the same time as the context cannot attribute its own result")
+        if REPAIR_DIMENSION not in delta:
+            raise EvalError(
+                f"arm C does not differ from arm B in {REPAIR_DIMENSION!r}, so there is no "
+                f"intervention under test; arm C is the bounded context package")
+    kept, equivalences = collapse_equivalent_arms([by_name[n] for n in ARMS if n in by_name])
+    declarations = {name: _tp_mapping(operator_declarations, "operator_declarations").get(name)
+                    for name in OPERATOR_DECLARATIONS}
+    selected = trial_cohort(manifest, partition, cohort=cohort)
+    requirements = live_requirements(cohort=selected, certification=certification,
+                                     full_task_study_run=full_task_study_run,
+                                     declarations=declarations)
+    blockers = _blockers_from(requirements, declarations)
+    study, _study_reason = _study_run_reference(full_task_study_run)
+    content = {
+        "v": TRIAL_PROTOCOL_VERSION,
+        "hypothesis": (
+            "on a narrow cohort of cross-module failures, one bounded package of previously "
+            "missing contract context before a same-model retry improves accepted recovery or "
+            "total resources without weakening quality"),
+        "inputs": _frozen(pinned),
+        "pinned_inputs": list(PINNED_INPUTS),
+        "arms": kept,
+        "nominal_arms": names,
+        "equivalences": equivalences,
+        "repair_dimension": REPAIR_DIMENSION,
+        "cohort": selected,
+        "oracles": trial_oracles(),
+        "extraction": trial_extraction(),
+        "accounting": {
+            "scopes": list(ACCOUNTING_SCOPES),
+            "overhead_kinds": list(OVERHEAD_KINDS),
+            "initial_attempt": ANALYTIC_REUSE_LABEL,
+            "failures": FAILURES_IN_TOTALS_LABEL,
+            "conditional_recovery": CONDITIONAL_RECOVERY_NOTE,
+            "bases": list(BASES),
+            "reader": "workflow_eval.arm_accounting",
+        },
+        "full_task_study": {
+            "status": "prospective" if study is None else "run",
+            "run": study,
+            "unit": "one whole task, from its first attempt to the accepted or abandoned end",
+            "satisfied_by_checkpoint_study": False,
+            "required_before": "general rollout",
+            "note": FULL_TASK_STUDY_NOTE,
+        },
+        "declarations": declarations,
+        "live_requirements": requirements,
+        "blockers": blockers,
+        "runnable": False,
+        "labels": [NOT_A_RUN_LABEL, NO_INVENTED_NUMBER_LABEL, FAILURES_IN_TOTALS_LABEL,
+                   ANALYTIC_REUSE_LABEL, NOT_ENFORCEMENT_LABEL],
+        "notes": [ARM_COLLAPSE_NOTE, OVERLAPPING_INTERVAL_NOTE, EXTRACTION_NOTE],
+    }
+    sha = _sha(_canonical(content))
+    return {
+        "v": TRIAL_PROTOCOL_VERSION,
+        "id": sha[:16],
+        "sha": sha,
+        "digest": {
+            "algorithm": "sha256",
+            "canonical": "json.dumps(sort_keys=True, separators=(',',':'), ensure_ascii=True)",
+            "over": "content",
+            "excludes": ["created_at", "created_by", "id", "sha", "digest"],
+            "note": NOT_ENFORCEMENT_LABEL,
+        },
+        "created_at": created_at or _now(),
+        "created_by": created_by or "",
+        "content": content,
+    }
+
+
+def protocol_ref(spec):
+    """What an envelope quotes: id, digest, contract version. Never the specification itself."""
+    if not spec:
+        return None
+    return {"id": spec["id"], "sha": spec["sha"], "v": spec["v"]}
+
+
+def require_runnable(spec):
+    """Refuse to treat a specification as a run. Two refusals, kept textually distinguishable
+    because they mean different things.
+
+    FIRST, the document is checked against ITS OWN digest: `content` is re-hashed here exactly the
+    way `build_trial_protocol` hashed it, `_sha(_canonical(content))`, and any mismatch -- or a
+    `content`/`sha` that is missing or of the wrong type -- is refused as a malformed or TAMPERED
+    specification before a single blocker is read. Skipping that check is how this function used
+    to be defeated: it trusted the dict it was handed, so a caller who passed
+    `{"sha": ..., "content": {"blockers": []}}` discharged every precondition -- including the
+    `confining-dispatch-unwired` one derived from code -- without touching the flag. The
+    enforcement point has to consult the thing being enforced. A forged specification gets NO code
+    in `PROTOCOL_BLOCKERS`: that vocabulary is closed and means "a precondition a live run must
+    satisfy", and a fabricated input is not an unsatisfied precondition.
+
+    SECOND, an honest specification is refused for every unsatisfied precondition it carries,
+    naming each in that closed vocabulary. For every specification `build_trial_protocol` actually
+    produces this is the path taken, and it always raises, because `confining-dispatch-unwired` is
+    derived from `CONFINED_DISPATCH_WIRED` and no evidence a caller can hand in changes it. That
+    is the exact and narrowed claim, and its limit is stated rather than glossed: content
+    addressing detects ALTERATION, it does not authenticate an author, so a caller who empties the
+    blockers AND recomputes `sha` over the emptied content is not caught here. What IS guaranteed
+    is that no document can claim a digest it does not have, and that every specification this
+    module builds is refused.
+
+    Returning is not a dispatch and grants nothing: there is no function in this section that
+    dispatches, and this one is a precondition check a future caller must pass, not a way in.
+    """
+    mapping = _tp_mapping(spec, "the specification handed to require_runnable")
+    content = mapping.get("content")
+    if not isinstance(content, dict):
+        raise EvalError(f"malformed specification: `content` must be a mapping, not "
+                        f"{type(content).__name__}, so it cannot be checked against its own "
+                        f"digest; refusing rather than reading preconditions out of it")
+    claimed = mapping.get("sha")
+    if not isinstance(claimed, str) or not claimed.strip():
+        raise EvalError(f"malformed specification: `sha` must be a non-empty string, not "
+                        f"{type(claimed).__name__}, so there is nothing to check `content` "
+                        f"against; refusing rather than reading preconditions out of it")
+    try:
+        derived = _sha(_canonical(content))
+    except (TypeError, ValueError) as exc:
+        raise EvalError(f"malformed specification: `content` does not canonicalise ({exc}), so no "
+                        f"digest can be derived from it; refusing rather than reading "
+                        f"preconditions out of it") from None
+    if derived != claimed:
+        raise EvalError(f"TAMPERED specification: `content` hashes to {derived} but the document "
+                        f"carries sha {claimed}. Its blockers were NOT read -- a caller that can "
+                        f"rewrite the preconditions can discharge every one of them, so a "
+                        f"specification that does not match its own digest is refused outright")
+    blockers = list(content.get("blockers") or ())
+    if blockers:
+        detail = "; ".join(f"{b['blocker']}: {b['detail']}" for b in blockers)
+        raise EvalError(f"this is an experiment specification, not a run -- {len(blockers)} "
+                        f"unsatisfied precondition(s): {detail}")
+    return spec
+
+
+def carry_trial_protocol(envelope, spec):
+    """Append the specification's reference and its caveats into the SAME `labels`/`notes` an
+    envelope already carries every run-level caveat in.
+
+    `bin/workflow_eval.py` stays the only envelope writer and this adds no top-level key, no
+    second store and no second file -- D08's `carry_protected_evidence` precedent, for D08's
+    reason. `NOT_ENFORCEMENT_LABEL` travels with it because a reader of `results.json` alone
+    otherwise sees partition counts with nothing saying they are tamper-evident rather than
+    enforced (Phase 2 review, F5).
+    """
+    ref = protocol_ref(spec)
+    content = spec["content"]
+    cohort = content["cohort"]
+    envelope.setdefault("labels", []).append(
+        f"three-arm recovery trial protocol {ref['id']} ({ref['v']}): {NOT_A_RUN_LABEL}")
+    envelope.setdefault("notes", []).append(
+        f"protocol {ref['id']}: arms {[a['arm'] for a in content['arms']]} from nominal "
+        f"{content['nominal_arms']}; {len(content['equivalences'])} equivalence(s); cohort "
+        f"{cohort['item_count']} item(s) in {cohort['group_count']} group(s) of the "
+        f"{cohort['partition']} partition (held_out={cohort['held_out']}); "
+        f"{len(content['blockers'])} blocker(s): "
+        f"{sorted({b['blocker'] for b in content['blockers']})}")
+    envelope.setdefault("notes", []).append(f"protocol {ref['id']}: {NOT_ENFORCEMENT_LABEL}")
+    return envelope
+
+
+# ---- reading a future run's results ---------------------------------------------------------------
+
+_TP_ABSENT = object()
+
+
+def _tp_outcome(record):
+    value = record.get("accepted", _TP_ABSENT)
+    if value is _TP_ABSENT:
+        raise EvalError("every record needs an explicit `accepted`: True, False, or None for a "
+                        "censored outcome. An absent key is not a failure")
+    if value not in (True, False, None):
+        raise EvalError(f"accepted must be True, False or None, not {value!r}")
+    return value
+
+
+def arm_accounting(arm, records):
+    """One arm's cohort accounting over EVERY record -- accepted, failed and censored alike.
+
+    Two things this refuses to do, both of which would flatter the arm:
+
+      * drop the initial attempt for a checkpoint that was reused ANALYTICALLY. The whole-task
+        scope carries it either way; `analytically_reused` says how many were attributed rather
+        than re-spent, which is a different fact from a second spend and is labelled as one.
+      * drop failures out of the cohort totals. Cost per accepted task divides the WHOLE cohort's
+        resources by the accepted count, and is `None` with a stated reason when that count is
+        zero -- never `0.0`, which would read as free.
+
+    Bases are never summed: `empty_totals`/`add_cost` keep model-reported, estimated, proxy,
+    credits and unpriced apart, exactly as every other total in this module does.
+    """
+    scopes = {name: {"totals": empty_totals(), "priced_usd": 0.0} for name in ACCOUNTING_SCOPES}
+    accepted = failed = censored = 0
+    reused = 0
+    initial_priced = 0.0
+    rows = list(records or ())
+    for index, raw in enumerate(rows):
+        record = _tp_mapping(raw, f"record {index}")
+        _tp_text(record.get("item"), f"record {index}.item")
+        outcome = _tp_outcome(record)
+        if outcome is True:
+            accepted += 1
+        elif outcome is False:
+            failed += 1
+        else:
+            censored += 1
+        initial = _tp_cost(record.get("initial_attempt"), f"record {index}.initial_attempt")
+        flag = record.get("initial_attempt_reused")
+        if not isinstance(flag, bool):
+            raise EvalError(f"record {index}.initial_attempt_reused must be True or False: "
+                            f"whether the first attempt was re-run or attributed is a fact the "
+                            f"accounting states, never one it guesses")
+        if flag:
+            reused += 1
+        add_cost(scopes["whole-task"]["totals"], initial)
+        scopes["whole-task"]["priced_usd"] += priced_usd(initial)
+        initial_priced += priced_usd(initial)
+        for n, cost in enumerate(record.get("recovery_costs") or ()):
+            attempt = _tp_cost(cost, f"record {index}.recovery_costs[{n}]")
+            for name in ACCOUNTING_SCOPES:
+                add_cost(scopes[name]["totals"], attempt)
+                scopes[name]["priced_usd"] += priced_usd(attempt)
+        for n, entry in enumerate(record.get("overhead") or ()):
+            row = _tp_mapping(entry, f"record {index}.overhead[{n}]")
+            kind = row.get("kind")
+            if kind not in OVERHEAD_KINDS:
+                raise EvalError(f"record {index}.overhead[{n}]: kind {kind!r} is not one of "
+                                f"{list(OVERHEAD_KINDS)}")
+            scope = row.get("scope")
+            if scope not in ACCOUNTING_SCOPES:
+                raise EvalError(f"record {index}.overhead[{n}]: scope {scope!r} is not one of "
+                                f"{list(ACCOUNTING_SCOPES)}; every cost belongs at its actual "
+                                f"scope, and an unattributed one belongs nowhere")
+            cost = _tp_cost(row.get("cost"), f"record {index}.overhead[{n}].cost")
+            targets = (ACCOUNTING_SCOPES if scope == "recovery-only" else ("whole-task",))
+            for name in targets:
+                add_cost(scopes[name]["totals"], cost)
+                scopes[name]["priced_usd"] += priced_usd(cost)
+    resolved = accepted + failed
+    for name in ACCOUNTING_SCOPES:
+        block = scopes[name]
+        block["priced_usd"] = round(block["priced_usd"], 6)
+        block["scope"] = name
+        block["items"] = len(rows)
+        if accepted:
+            block["cost_per_accepted_usd"] = round(block["priced_usd"] / accepted, 6)
+            block["undefined_reason"] = None
+        else:
+            block["cost_per_accepted_usd"] = None
+            block["undefined_reason"] = ("no task was accepted, so cost per accepted task is "
+                                         "undefined; it is not zero and the cohort's resources "
+                                         "were still spent")
+        block["label"] = FAILURES_IN_TOTALS_LABEL
+    return {
+        "arm": arm["arm"],
+        "collapsed_from": list(arm.get("collapsed_from") or [arm["arm"]]),
+        "items": len(rows),
+        "accepted": accepted,
+        "failed": failed,
+        "censored": censored,
+        "conditional_recovery": {
+            "k": accepted, "n": resolved,
+            "rate": round(accepted / resolved, 6) if resolved else None,
+            "ci95": wilson(accepted, resolved),
+            "censored": censored,
+            "undefined_reason": None if resolved else "no outcome was resolved",
+            "note": CONDITIONAL_RECOVERY_NOTE,
+        },
+        "initial_attempt": {
+            "items": len(rows), "analytically_reused": reused,
+            "priced_usd": round(initial_priced, 6), "label": ANALYTIC_REUSE_LABEL,
+        },
+        "scopes": scopes,
+        "labels": [FAILURES_IN_TOTALS_LABEL, ANALYTIC_REUSE_LABEL],
+    }
+
+
+def compare_conditional_recovery(accountings, *, baseline_arm, threshold):
+    """Differences in conditional recovery against one baseline arm -- numbers, never a verdict
+    this module invented.
+
+    `threshold` is the OPERATOR's declared practical gain, or `None` when none was declared. With
+    `None` every verdict is `None` and says why: there is no universal success threshold here, and
+    a difference that clears nothing is not a result. Overlapping intervals get their own note,
+    because a positive point estimate inside a wide interval is the shape that most often gets
+    read as a win.
+    """
+    rows = {a["arm"]: a for a in accountings}
+    if baseline_arm not in rows:
+        raise EvalError(f"baseline arm {baseline_arm!r} is not among {sorted(rows)}")
+    base = rows[baseline_arm]["conditional_recovery"]
+    out = []
+    for name in sorted(rows):
+        if name == baseline_arm:
+            continue
+        other = rows[name]["conditional_recovery"]
+        delta = (None if base["rate"] is None or other["rate"] is None
+                 else round(other["rate"] - base["rate"], 6))
+        if delta is None:
+            verdict, why = None, "at least one arm resolved no outcome"
+        elif threshold is None:
+            verdict, why = None, ("no operator-declared practical gain threshold; this module "
+                                  "supplies none")
+        else:
+            verdict = "meets-declared-threshold" if delta >= threshold \
+                else "below-declared-threshold"
+            why = f"against the operator's declared threshold {threshold!r}"
+        overlap = None
+        if base["ci95"] and other["ci95"]:
+            overlap = not (other["ci95"][0] > base["ci95"][1]
+                           or base["ci95"][0] > other["ci95"][1])
+        out.append({
+            "arm": name, "baseline": baseline_arm,
+            "collapsed_from": list(rows[name].get("collapsed_from") or [name]),
+            "rate": other["rate"], "baseline_rate": base["rate"], "delta": delta,
+            "ci95": other["ci95"], "baseline_ci95": base["ci95"],
+            "intervals_overlap": overlap,
+            "censored": {"arm": other["censored"], "baseline": base["censored"]},
+            "verdict": verdict, "verdict_reason": why,
+            "note": OVERLAPPING_INTERVAL_NOTE,
+        })
+    return out
+
+# END OF THE THREE-ARM RECOVERY TRIAL PROTOCOL (decision-improvement D18)
 
 
 class Evaluation:
