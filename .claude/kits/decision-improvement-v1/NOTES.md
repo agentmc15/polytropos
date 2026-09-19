@@ -1652,3 +1652,54 @@ Process: doc-drift tests compare against the real committed tree, so a suite run
 any other run produces phantom failures in `test_docs_build_cli` / `test_docs_site` /
 `test_codex_discovery_docs`. Seen again here. Runs stay sequential.
 outcome: D18 model=opus attempts=2 result=pass review=revised run=2026-09-16-aa6e
+
+## D19 — Outcomes and stopping (sonnet)
+
+`recovery_report` in `bin/decision_eval.py`, with `RecoveryReportTests` in D18's test file.
+Five acceptance terms, each mutation-proven by deleting the guard and watching exactly the
+matching test go red.
+
+- **F8 was answered better than the two options I offered, and this is the pattern to reuse.**
+  D18's `arm_accounting` already enforced "zero ratio undefined" and "bases separate". Rather
+  than calling it across the module boundary (which `decision_eval` never does for any sibling)
+  or writing a second implementation pinned equivalent, `resource_evidence` takes an
+  `arm_accounting` result as an ARGUMENT, relays every field verbatim, and REFUSES to relay
+  evidence violating either invariant. There is no second computation, so there is nothing to
+  diverge — verified: the only `cost_per_accepted_usd` mentions in the module are a key name and
+  the refusal, with no arithmetic. **Relay-and-refuse beats both reuse and equivalence-pinning
+  where a module must not reach for a sibling.**
+- The guards have only ever fired against hand-forged dicts, because the real `arm_accounting`
+  never produces a violation. That is a defensive relay guard, not a masked one; the forged
+  tests prove reachability and deleting the call turns them red.
+- **`operator_plan` claimed more than its scope, and I sent it back.** With its six declarations
+  supplied it reported `plan-complete` / `blocks_promotion: False` while `primary_endpoint`,
+  `sample_size` and `independent_evaluation` were undeclared and unmentioned. Now it carries
+  `not_covered` naming those three with owner `workflow_eval.live_requirements`, a `scope_note`
+  present unconditionally, and the two fields renamed to `own-declarations-complete` /
+  `blocks_promotion_on_these_fields`. The old key is gone, not shadowed.
+- The drift pin is the part that mattered: `shared | uncovered == set(OPERATOR_DECLARATIONS)`
+  and `shared & uncovered == set()`. **My fix brief named only two uncovered fields; the exact
+  partition found the third.** A test written to my list would have been complete by
+  construction and wrong.
+- `RECOVERY_REPORT_VERSION` is a NEW constant with its own `VERSION_SOURCES` row;
+  `JOIN_VERSION` and `CALIBRATION_VERSION` untouched at `/1`. No envelope was bumped.
+- Adding the `VERSION_SOURCES` row staled `docs/RELEASE.md`, and regenerating that staled
+  `docs-site/deep-dives/release.md`. Both fixed by their OWN generators, never by hand. That
+  two-step chain will fire for every future task that registers a version.
+
+**This is the THIRD instance of the Phase 2 F4 shape** — held-out vs isolation, then D18's
+`live_requirements`, now `operator_plan`. Each half is individually rigorous; the composition is
+what keeps going missing, and the tell is always a verdict field whose NAME is broader than the
+check behind it. Carry that to Phase 4 review as one pattern, not three findings.
+
+Left open, volunteered rather than found: no production path calls any of D19's functions;
+"caps" (resource ceilings) is not surfaced in the report though the brief's first sentence names
+it; `quality_regression` is untested for both-sides-insufficient-evidence; `candidate_tally` and
+`slice_coverage` accept caller-assembled data with no manifest-backed origin, so they prove
+counting logic, not that the counted data came from anywhere real.
+
+Process: **concurrent full-suite runs get one KILLED for memory, and a killed run looks like a
+clean one if you only grep for FAIL lines.** A subagent's own background suite collided with
+mine here. Read the exit status and the `Ran`/`OK` line; the serial rule covers subagents'
+background work too.
+outcome: D19 model=sonnet attempts=2 result=pass review=revised run=2026-09-16-aa6e

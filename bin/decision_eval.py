@@ -1445,3 +1445,479 @@ def calibration_report_pair(rows, *, question, artifact=None, report_partition=N
                                     thresholds=thresholds, action_outcome=action_outcome,
                                     bins=bins, min_samples=min_samples)
     return {"raw": raw, "calibrated": calibrated}
+
+
+# ---- D19: outcomes and stopping ------------------------------------------------------------------
+#
+# WHAT WAS WRONG. D18 built the EXPERIMENT SPECIFICATION -- three arms, a frozen held-out cohort,
+# and the accounting a future run's results would be read through (`workflow_eval.arm_accounting`,
+# `workflow_eval.compare_conditional_recovery`) -- and D15 built one question's calibration
+# report. Nothing above this line assembled the two into the single document an operator would
+# actually read before deciding whether to promote a candidate: quality beside regression,
+# resources beside time, coverage beside censoring, a slice broken out from the whole, and --
+# before any of the rest is read as more than a rehearsal -- whether the operator has PINNED every
+# stop field this decision needs. A report that showed recovery numbers without that gate would
+# let a complete-looking document stand in for a complete plan.
+#
+# WHAT THIS IS. `operator_plan` is the gate: six fields -- an independent label source, an
+# observation window, a practical gain, a tolerated regression, an interim-look policy and a
+# stopping rule -- predeclared before any live evaluation, with no default for any of them.
+# `recovery_report` is the document: it reads a D14 join's own `coverage()` for row, label and
+# censoring counts, an optional D15 `calibration_report_pair` for quality, an optional
+# `quality_regression` for the paired change against the operator's own cap, `resource_evidence`
+# over one or more `workflow_eval.arm_accounting` results for cost by scope, `time_by_basis` over
+# the same join's rows for wall/latency by clock, `slice_coverage` for a caller-declared subgroup
+# breakdown, `candidate_tally` for every candidate this evaluation tried or rejected and its
+# exposure, and an optional `full_task_study` block and `comparisons` list carried straight
+# through from D18's own protocol and accounting -- never recomputed here. Every report is
+# labelled `synthetic` when the data behind it is, because nothing above this line has ever run a
+# live evaluation.
+#
+# WHAT IT REFUSES. A missing operator field is `own-declarations-incomplete` and
+# `blocks_promotion_on_these_fields` -- never a default this module invents, and never
+# `insufficient-evidence`, which is a DATA problem `METRIC_STATUSES` already names and which an
+# unset threshold is not. `resource_evidence` refuses a cost-per-accepted figure that is not
+# `None` when nothing was accepted, and refuses a totals block that lost a basis or smuggled a
+# priced `usd` figure under `proxy` or `unpriced` -- not a second computation of
+# `workflow_eval.arm_accounting`'s own ratio, a refusal to relay evidence that no longer agrees
+# with it. `quality_regression` reports no verdict without an operator-declared
+# `allowed_quality_regression`, and invents no universal cap. Four of
+# `RECOVERY_REPORT_DECLARATIONS`'s six names are spelled identically to four of
+# `bin/workflow_eval.OPERATOR_DECLARATIONS`'s seven on purpose -- the same practical gain, the
+# same tolerated regression, the same interim-look and stopping rules, declared at two different
+# scopes -- and `tests/test_decision_trial_protocol.py` pins the two spellings equal rather than
+# this module reaching across the module boundary for a second function call. `operator_plan`
+# ALSO refuses to let that six-field completeness read as the whole of a live-run precondition
+# set: `RECOVERY_PLAN_UNCOVERED_DECLARATIONS` names the three `workflow_eval.OPERATOR_DECLARATIONS`
+# fields it does not cover, `not_covered` carries them with `workflow_eval.live_requirements`
+# named as their owner, and `scope_note` travels into every `recovery_report`'s own `labels` --
+# not only when this plan is incomplete -- so `own-declarations-complete` is never read alone as
+# "nothing blocks promotion" (Phase 2 F4, its third appearance in this kit).
+#
+# WHAT IT NEVER DOES. `recovery_report` computes no cost, no duration, no calibration metric and
+# no conditional-recovery rate itself: every number it carries was computed by an existing owner
+# -- `workflow_eval.arm_accounting`, `workflow_eval.compare_conditional_recovery`, this module's
+# own `coverage`, `duration_by_basis` and `calibration_report_pair` -- and this section only
+# assembles, validates and labels what those owners already produced.
+
+RECOVERY_REPORT_VERSION = "polytropos.decision-recovery-report/1"
+
+#: This report's own predeclared operator inputs. `practical_gain_threshold`,
+#: `allowed_quality_regression`, `interim_look_rule` and `stopping_rule` are spelled identically
+#: to four of `bin/workflow_eval.OPERATOR_DECLARATIONS`'s seven names ON PURPOSE -- the pairing is
+#: pinned by name in `tests/test_decision_trial_protocol.py`, not by this module reaching into
+#: workflow_eval for a function call: decision_eval.py reads a sibling for VOCABULARY only (see
+#: `_we`'s own docstring), and workflow_eval's OPERATOR_DECLARATIONS is D18's per-ARM
+#: predeclaration, not this report's per-EVALUATION one -- two independent things kept spelled
+#: alike rather than one reaching into the other. `independent_label_source` and
+#: `observation_window` belong to the join layer alone and have no counterpart there.
+RECOVERY_REPORT_DECLARATIONS = ("independent_label_source", "observation_window",
+                                "practical_gain_threshold", "allowed_quality_regression",
+                                "interim_look_rule", "stopping_rule")
+
+#: The five cost bases `workflow_eval.add_cost`/`priced_usd` keep separate, mirrored here the same
+#: way `RECOVERED_RESULTS`/`FAILED_RESULTS` above mirror a subset of another owner's vocabulary: a
+#: literal this module reads FROM evidence, never a name it reaches across the module boundary to
+#: fetch.
+RESOURCE_BASES = ("model-reported", "estimated", "proxy", "credits", "unpriced")
+
+#: The exact field set `resource_evidence` requires on every `workflow_eval.arm_accounting`
+#: result before it will relay it. A result missing one of these is refused rather than padded.
+ACCOUNTING_EVIDENCE_KEYS = ("arm", "collapsed_from", "items", "accepted", "failed", "censored",
+                            "conditional_recovery", "initial_attempt", "scopes", "labels")
+
+#: The exact field set inside each of an accounting's own `scopes[...]` blocks.
+ACCOUNTING_SCOPE_KEYS = ("totals", "priced_usd", "scope", "items", "cost_per_accepted_usd",
+                         "undefined_reason", "label")
+
+#: What data a recovery report was built over. `synthetic` carries `SYNTHETIC_LABEL`; there is no
+#: third value, because a report is either evidence from a real evaluation or it is not.
+DATA_PROVENANCES = ("synthetic", "live")
+
+#: The only two states `quality_regression` may return alongside a verdict. Never invented for
+#: any other purpose.
+REGRESSION_STATUSES = ("within-allowed-regression", "regression-exceeds-allowance")
+
+#: Every outcome a candidate this evaluation considered can carry. A candidate that was tried and
+#: then rejected stays counted -- it is not the same fact as one never tried.
+CANDIDATE_STATUSES = ("tried", "accepted", "rejected")
+
+#: The `workflow_eval.OPERATOR_DECLARATIONS` names this report's own plan does NOT cover.
+#: `RECOVERY_REPORT_DECLARATIONS` shares four of D18's seven names by design (see its own
+#: docstring); these are the other three -- `primary_endpoint` and `sample_size`, both required
+#: by `workflow_eval.live_requirements` before a live trial, plus `independent_evaluation` -- and
+#: `operator_plan` neither declares nor checks them. Phase 2's F4 shape (two halves each
+#: enforcing part of a precondition, nothing composing them, each phrased as though it were the
+#: whole) has appeared three times in this kit; this is the naming-level fix D18 used for the
+#: first two, applied here: a hardcoded literal, never a reach into workflow_eval for a computed
+#: difference (decision_eval.py calls no sibling function), pinned in BOTH directions by
+#: `tests/test_decision_trial_protocol.py` against workflow_eval.OPERATOR_DECLARATIONS's whole
+#: seven -- the four shared and these three uncovered must always partition it exactly.
+RECOVERY_PLAN_UNCOVERED_DECLARATIONS = ("primary_endpoint", "sample_size",
+                                       "independent_evaluation")
+
+SCOPE_NOTE = (
+    "this plan covers exactly RECOVERY_REPORT_DECLARATIONS's six fields and NO other stop "
+    "field: workflow_eval.OPERATOR_DECLARATIONS's own primary_endpoint, sample_size and "
+    "independent_evaluation (see RECOVERY_PLAN_UNCOVERED_DECLARATIONS) are "
+    "workflow_eval.live_requirements's responsibility, not this module's, and are neither "
+    "declared nor checked here. own_declarations_complete and "
+    "blocks_promotion_on_these_fields describe ONLY this plan's own six fields -- reading "
+    "either as a claim that nothing else blocks a live evaluation is exactly the misreading "
+    "this note exists to rule out"
+)
+
+SYNTHETIC_LABEL = (
+    "every figure in this report was computed over SYNTHETIC fixture data: no attempt behind it "
+    "was dispatched, no checkpoint was restored and no acceptance check ran for real. A report "
+    "built from a fixture carries this label so it is never read as evidence of a live outcome"
+)
+
+PLAN_INCOMPLETE_NOTE = (
+    "a missing operator declaration means this plan is INCOMPLETE, not a value this module "
+    "supplies by default: promotion is blocked until the operator pins every stop field. A thin "
+    "plan is a different fact from a metric with insufficient evidence, and this module never "
+    "reports one as the other"
+)
+
+NO_REGRESSION_CAP_NOTE = (
+    "no operator-declared allowed_quality_regression was supplied; this module invents no "
+    "universal cap and reports no verdict without one"
+)
+
+RESOURCE_EVIDENCE_NOTE = (
+    "every figure here was computed by workflow_eval.arm_accounting and is relayed field for "
+    "field; this module computes no cost of its own and refuses evidence that no longer agrees "
+    "with that function's own zero-accepted and separate-bases invariants"
+)
+
+
+def _rr_mapping(value, where):
+    if not isinstance(value, (dict, types.MappingProxyType)):
+        raise _refuse("wrong-type", f"{where} must be a mapping")
+    return value
+
+
+# ---- the operator's plan, gating everything below it --------------------------------------------
+
+def operator_plan(declarations):
+    """The six stop fields an operator must pin before any live evaluation -> which are present,
+    which are missing, and whether THIS PLAN's own six are complete.
+
+    Absence is `own-declarations-incomplete`, never a default this module fills in and never
+    `insufficient-evidence` -- that status describes evidence too thin to score, and an operator
+    who has not yet chosen a stopping rule is a planning gap, not a data problem.
+
+    THE SCOPE THIS RETURN VALUE DOES NOT CLAIM. `RECOVERY_REPORT_DECLARATIONS` is six fields, not
+    the whole of what a live evaluation needs pinned: `workflow_eval.OPERATOR_DECLARATIONS` names
+    seven, and `RECOVERY_PLAN_UNCOVERED_DECLARATIONS` -- `primary_endpoint`, `sample_size` and
+    `independent_evaluation` -- are neither declared nor checked here. `own_declarations_complete`
+    reporting True and `blocks_promotion_on_these_fields` reporting False describe ONLY this
+    plan's own six fields; both are misread as "nothing blocks promotion" if the `not_covered`
+    block and `scope_note` below are dropped when this payload is read on its own, which is
+    exactly the reading this function's return shape exists to rule out.
+    """
+    decl = _rr_mapping(declarations, "operator_declarations")
+    declared, missing = {}, []
+    for name in RECOVERY_REPORT_DECLARATIONS:
+        value = decl.get(name)
+        declared[name] = _copy(value)
+        if value in (None, "", [], {}):
+            missing.append(name)
+    source = declared.get("independent_label_source")
+    if source not in (None, "") and source not in LABEL_SOURCES:
+        raise _refuse("unknown-value",
+                      f"independent_label_source must be one of {LABEL_SOURCES}, not {source!r}")
+    window = declared.get("observation_window")
+    if window not in (None, "") and _instant(window) is None:
+        raise _refuse("value-invalid", f"observation_window {window!r} names no instant")
+    complete = not missing
+    return {
+        "v": RECOVERY_REPORT_VERSION,
+        "fields": list(RECOVERY_REPORT_DECLARATIONS),
+        "declared": declared,
+        "missing": missing,
+        "complete": complete,
+        "status": "own-declarations-complete" if complete else "own-declarations-incomplete",
+        "blocks_promotion_on_these_fields": not complete,
+        "not_covered": {
+            "fields": list(RECOVERY_PLAN_UNCOVERED_DECLARATIONS),
+            "owner": "workflow_eval.live_requirements",
+            "pairs_with": "decision_eval.operator_plan",
+            "note": SCOPE_NOTE,
+        },
+        "scope_note": SCOPE_NOTE,
+        "note": None if complete else PLAN_INCOMPLETE_NOTE,
+    }
+
+
+# ---- resources, relayed and checked against the invariants they must still hold -----------------
+
+def _assert_zero_ratio_undefined(accounting, where):
+    """Refuse evidence that violates the invariant this report exists to surface: with nothing
+    accepted, cost per accepted task is UNDEFINED, never a synthesized zero. This is not a second
+    computation of the ratio -- `workflow_eval.arm_accounting` owns that -- it is a refusal to
+    relay evidence that no longer agrees with it."""
+    accepted = accounting.get("accepted")
+    for name, block in (accounting.get("scopes") or {}).items():
+        if accepted == 0 and block.get("cost_per_accepted_usd") is not None:
+            raise _refuse(
+                "value-invalid",
+                f"{where}.scopes[{name!r}] reports cost_per_accepted_usd="
+                f"{block['cost_per_accepted_usd']!r} with zero accepted; this report refuses to "
+                f"relay a ratio that must be undefined")
+
+
+def _assert_bases_kept_apart(block, where):
+    """Refuse a scope block whose totals lost the five-basis structure `workflow_eval` keeps, or
+    that smuggled a priced `usd` figure under `proxy` or `unpriced`."""
+    totals = block.get("totals") or {}
+    missing = sorted(set(RESOURCE_BASES) - set(totals))
+    if missing:
+        raise _refuse("missing-field",
+                      f"{where}.totals is missing basis(es) {missing}; a total that dropped a "
+                      f"basis cannot prove the bases stayed separate")
+    for basis in ("proxy", "unpriced"):
+        if "usd" in (totals.get(basis) or {}):
+            raise _refuse(
+                "value-invalid",
+                f"{where}.totals[{basis!r}] carries a priced 'usd' figure; a subscription-plan "
+                f"estimate or an unpriced figure must never be relayed as though it had a price")
+
+
+def resource_evidence(accountings):
+    """Every arm's cohort accounting, exactly as `workflow_eval.arm_accounting` computed it --
+    read and copied field for field, never recomputed. See `RESOURCE_EVIDENCE_NOTE`."""
+    if not isinstance(accountings, (list, tuple)):
+        raise _refuse("wrong-type", "resource_evidence reads a list of arm_accounting() results")
+    out = []
+    for index, accounting in enumerate(accountings):
+        where = f"accountings[{index}]"
+        acc = _rr_mapping(accounting, where)
+        missing = sorted(set(ACCOUNTING_EVIDENCE_KEYS) - set(acc))
+        if missing:
+            raise _refuse("missing-field",
+                          f"{where} is missing {missing}; this module reads "
+                          f"workflow_eval.arm_accounting's own output and fills in none of it")
+        _assert_zero_ratio_undefined(acc, where)
+        scopes = {}
+        for name, raw_block in (acc.get("scopes") or {}).items():
+            block = _rr_mapping(raw_block, f"{where}.scopes[{name!r}]")
+            block_missing = sorted(set(ACCOUNTING_SCOPE_KEYS) - set(block))
+            if block_missing:
+                raise _refuse("missing-field",
+                              f"{where}.scopes[{name!r}] is missing {block_missing}")
+            _assert_bases_kept_apart(block, f"{where}.scopes[{name!r}]")
+            scopes[name] = {key: _copy(block[key]) for key in ACCOUNTING_SCOPE_KEYS}
+        out.append({
+            "arm": acc["arm"], "collapsed_from": list(acc.get("collapsed_from") or []),
+            "items": acc["items"], "accepted": acc["accepted"], "failed": acc["failed"],
+            "censored": acc["censored"],
+            "conditional_recovery": _copy(acc["conditional_recovery"]),
+            "initial_attempt": _copy(acc["initial_attempt"]),
+            "scopes": scopes, "labels": list(acc.get("labels") or ()),
+        })
+    return out
+
+
+# ---- time, by the clock that measured it ---------------------------------------------------------
+
+def time_by_basis(rows):
+    """Every duration across many joined rows, grouped by basis and never summed --
+    `duration_by_basis` run once per row and merged, so many decisions report the same
+    separation this module already guarantees for one."""
+    if not isinstance(rows, (list, tuple)):
+        raise _refuse("wrong-type", "time_by_basis reads a list of joined rows")
+    merged = {basis: [] for basis in _ah().DURATION_BASES}
+    for index, row in enumerate(rows):
+        if not isinstance(row, (dict, types.MappingProxyType)) or row.get("v") != JOIN_VERSION:
+            raise _refuse("wrong-type", f"row[{index}] is not a joined row")
+        per_row = duration_by_basis(row)
+        for basis, entries in per_row["by_basis"].items():
+            merged.setdefault(basis, []).extend(entries)
+    return {"by_basis": merged, "note": DURATIONS_SEPARATE}
+
+
+# ---- subgroup and transfer slices, each just another coverage() call ----------------------------
+
+def slice_coverage(rows, assignments, *, dimension):
+    """`coverage()` broken out per named slice of a caller-declared dimension -- one call to this
+    module's own `coverage()` per slice, never a second counting pass. A row with no assignment
+    is `unassigned`, never dropped."""
+    if not isinstance(rows, (list, tuple)):
+        raise _refuse("wrong-type", "slice_coverage reads a list of joined rows")
+    if not isinstance(assignments, (dict, types.MappingProxyType)):
+        raise _refuse("wrong-type",
+                      "assignments must map a row's correlation_id to its slice name")
+    if not isinstance(dimension, str) or not dimension.strip():
+        raise _refuse("wrong-type", "dimension names what the slices split on")
+    buckets = {}
+    for row in rows:
+        name = assignments.get(row.get("correlation_id"), "unassigned")
+        buckets.setdefault(name, []).append(row)
+    return {
+        "dimension": dimension,
+        "slices": {name: coverage(members) for name, members in sorted(buckets.items())},
+        "note": "a row with no declared assignment is 'unassigned', never dropped",
+    }
+
+
+# ---- every candidate this evaluation tried or rejected, and its exposure ------------------------
+
+def candidate_tally(candidates):
+    """Every candidate this evaluation considered, counted by outcome and exposure. A candidate
+    that was tried and then rejected stays in the tally -- it is not the same fact as one never
+    tried, and its id may not repeat."""
+    if not isinstance(candidates, (list, tuple)):
+        raise _refuse("wrong-type", "candidate_tally reads a list of candidate records")
+    counts = {status: 0 for status in CANDIDATE_STATUSES}
+    exposure_total = 0
+    exposure_known = 0
+    ids = []
+    for index, raw in enumerate(candidates):
+        record = _rr_mapping(raw, f"candidates[{index}]")
+        cid = record.get("id")
+        if not isinstance(cid, str) or not cid.strip():
+            raise _refuse("wrong-type", f"candidates[{index}].id must be a non-empty string")
+        status = record.get("status")
+        if status not in CANDIDATE_STATUSES:
+            raise _refuse("unknown-value",
+                          f"candidates[{index}].status must be one of {CANDIDATE_STATUSES}, not "
+                          f"{status!r}")
+        counts[status] += 1
+        ids.append(cid)
+        exposure = record.get("exposure")
+        if exposure is not None:
+            if not isinstance(exposure, int) or isinstance(exposure, bool) or exposure < 0:
+                raise _refuse("wrong-type",
+                              f"candidates[{index}].exposure must be a non-negative int or None")
+            exposure_total += exposure
+            exposure_known += 1
+    if len(set(ids)) != len(ids):
+        raise _refuse("duplicate-entry", "candidate_tally was handed the same candidate id twice")
+    return {
+        "counts": counts, "total": len(candidates),
+        "exposure_total": exposure_total, "exposure_known": exposure_known,
+        "exposure_unknown": len(candidates) - exposure_known,
+    }
+
+
+# ---- quality regression, judged only against the operator's own cap -----------------------------
+
+def quality_regression(baseline, candidate, *, allowed_regression):
+    """The paired change in classification quality between two `calibration_report` results,
+    judged only against the operator's own declared `allowed_quality_regression` -- never a value
+    this module supplies."""
+    for report, where in ((baseline, "baseline"), (candidate, "candidate")):
+        block = _rr_mapping(report, where)
+        if block.get("v") != CALIBRATION_VERSION:
+            raise _refuse("wrong-type", f"{where} must be a calibration_report() result")
+    b, c = baseline["classification"], candidate["classification"]
+    if b["status"] != "computed" or c["status"] != "computed":
+        return {
+            "v": RECOVERY_REPORT_VERSION, "delta": None, "standard_error": None,
+            "baseline": _copy(b), "candidate": _copy(c),
+            "allowed_regression": allowed_regression, "verdict": None,
+            "verdict_reason": "at least one side has no computed classification metric",
+        }
+    delta = round(c["value"] - b["value"], 6)
+    se = None
+    if b.get("standard_error") is not None and c.get("standard_error") is not None:
+        se = (b["standard_error"] ** 2 + c["standard_error"] ** 2) ** 0.5
+    if allowed_regression is None:
+        verdict, reason = None, NO_REGRESSION_CAP_NOTE
+    else:
+        verdict = (REGRESSION_STATUSES[0] if delta >= -abs(allowed_regression)
+                  else REGRESSION_STATUSES[1])
+        reason = (f"against the operator's declared allowed_quality_regression "
+                 f"{allowed_regression!r}")
+    return {
+        "v": RECOVERY_REPORT_VERSION, "delta": delta, "standard_error": se,
+        "baseline": _copy(b), "candidate": _copy(c), "allowed_regression": allowed_regression,
+        "verdict": verdict, "verdict_reason": reason,
+    }
+
+
+# ---- the document -----------------------------------------------------------------------------
+
+def recovery_report(*, provenance, join_document, operator_declarations, calibration=None,
+                    regression=None, accountings=(), comparisons=None, slices=None,
+                    full_task_study=None, candidates=None, notes=()):
+    """One document an operator reads before deciding whether to promote a candidate: quality,
+    regression, resources, time, the operator's own plan, coverage, slices and censoring,
+    assembled from what existing owners already computed and never recomputed here."""
+    if provenance not in DATA_PROVENANCES:
+        raise _refuse("unknown-value",
+                      f"provenance must be one of {DATA_PROVENANCES}, not {provenance!r}")
+    doc = _rr_mapping(join_document, "join_document")
+    if doc.get("v") != JOIN_VERSION:
+        raise _refuse("wrong-type", "join_document must be the object join() returns")
+    plan = operator_plan(operator_declarations)
+
+    quality = None
+    if calibration is not None:
+        cal = _rr_mapping(calibration, "calibration")
+        for field in ("raw", "calibrated"):
+            block = cal.get(field)
+            if (not isinstance(block, (dict, types.MappingProxyType))
+                    or block.get("v") != CALIBRATION_VERSION):
+                raise _refuse("wrong-type",
+                              f"calibration[{field!r}] must be a calibration_report() result")
+        quality = {"raw": _copy(cal["raw"]), "calibrated": _copy(cal["calibrated"])}
+
+    regression_block = None
+    if regression is not None:
+        reg = _rr_mapping(regression, "regression")
+        if reg.get("v") != RECOVERY_REPORT_VERSION:
+            raise _refuse("wrong-type",
+                          "regression must be the object quality_regression() returns")
+        regression_block = _copy(reg)
+
+    comparisons_block = None
+    if comparisons is not None:
+        if not isinstance(comparisons, (list, tuple)):
+            raise _refuse("wrong-type",
+                          "comparisons must be the list compare_conditional_recovery() returns")
+        comparisons_block = [_copy(_rr_mapping(c, "a comparison row")) for c in comparisons]
+
+    study_block = None
+    if full_task_study is not None:
+        study = _rr_mapping(full_task_study, "full_task_study")
+        if study.get("status") not in ("prospective", "run"):
+            raise _refuse("unknown-value",
+                          f"full_task_study.status must be 'prospective' or 'run', not "
+                          f"{study.get('status')!r}")
+        study_block = _copy(study)
+
+    candidates_block = candidate_tally(candidates) if candidates is not None else None
+    resources = resource_evidence(accountings)
+    coverage_block = _copy(doc.get("coverage")) or {}
+
+    labels = list(notes)
+    labels.append(plan["scope_note"])
+    if plan["note"]:
+        labels.append(plan["note"])
+    if provenance == "synthetic":
+        labels.append(SYNTHETIC_LABEL)
+
+    report = {
+        "v": RECOVERY_REPORT_VERSION,
+        "provenance": provenance,
+        "operator": plan,
+        "quality": quality,
+        "regression": regression_block,
+        "resources": resources,
+        "resources_note": RESOURCE_EVIDENCE_NOTE,
+        "comparisons": comparisons_block,
+        "time": time_by_basis(list(doc.get("rows") or ())),
+        "coverage": coverage_block,
+        "censoring": dict(coverage_block.get("censoring") or {}),
+        "slices": _copy(slices) if slices is not None else None,
+        "candidates": candidates_block,
+        "full_task_study": study_block,
+        "blocks_promotion_on_these_fields": plan["blocks_promotion_on_these_fields"],
+        "labels": labels,
+    }
+    return assert_no_causal_claim(report)
+
+# END OF D19: OUTCOMES AND STOPPING

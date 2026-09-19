@@ -318,7 +318,7 @@ PYTHONPATH=tests python3 -m unittest test_decision_trial_protocol.ThreeArmProtoc
 ### D19 — Outcomes and stopping
 - id: D19
 - title: Outcomes and stopping
-- status: pending
+- status: done
 - model: sonnet
 - depends: D15, D18
 **Brief.** Own `bin/decision_eval.py` report and `RecoveryReportTests`. Report quality/regression/resources/time/operator/coverage/slices/censoring with complete predeclared endpoint/margins/caps/stops, never universal thresholds.

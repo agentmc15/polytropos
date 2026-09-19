@@ -157,6 +157,7 @@ VERSION_SOURCES = (
     ("decision replay record", "decision_provider", "REPLAY_VERSION"),
     ("decision prediction join", "decision_eval", "JOIN_VERSION"),
     ("decision calibration report", "decision_eval", "CALIBRATION_VERSION"),
+    ("decision recovery report", "decision_eval", "RECOVERY_REPORT_VERSION"),
     ("context candidate manifest", "decision_context", "CONTEXT_VERSION"),
 )
 

@@ -53,6 +53,15 @@ WF_SPEC = importlib.util.spec_from_file_location("workflow_eval_trial_protocol",
 wf = importlib.util.module_from_spec(WF_SPEC)
 WF_SPEC.loader.exec_module(wf)
 
+#: decision-improvement D19 (`RecoveryReportTests`, below) reads `bin/decision_eval.py`'s own
+#: loader for the same reason `tests/test_decision_eval.py` does: `bin/` is not a package, so a
+#: second `import` of it would produce a second, unrelated set of classes.
+DE_PATH = ROOT / "bin" / "decision_eval.py"
+DE_SPEC = importlib.util.spec_from_file_location("decision_eval_recovery_report", DE_PATH)
+de = importlib.util.module_from_spec(DE_SPEC)
+DE_SPEC.loader.exec_module(de)
+dc = de._contract()
+
 #: The exact banner lines that bound the D18 section. Asserted found before anything is walked:
 #: a section slice that silently came back empty would make every structural test below vacuous.
 SECTION_START = ("# THREE-ARM RECOVERY TRIAL PROTOCOL (decision-improvement D18) "
@@ -1141,6 +1150,375 @@ class ThreeArmProtocolTests(unittest.TestCase):
         self.assertEqual(spec["v"], wf.TRIAL_PROTOCOL_VERSION)
         self.assertNotEqual(wf.TRIAL_PROTOCOL_VERSION, wf.EVAL_VERSION)
         self.assertNotEqual(wf.TRIAL_PROTOCOL_VERSION, wf.MANIFEST_VERSION)
+
+
+def _rr_row(**over):
+    """A minimal fixture SHAPED like one row of `decision_eval.join()`'s own output -- not built
+    through `join_row` (that is D14's own, exhaustively tested machinery in
+    `tests/test_decision_eval.py`), but carrying exactly the keys `decision_eval.coverage`,
+    `decision_eval.duration_by_basis` and `decision_eval.time_by_basis` read. Every field is
+    optional in the real join's own reader (`.get(...) or default`), so a synthetic row that
+    supplies only what one test needs is still a faithful fixture, not a shortcut past it.
+    """
+    base = {
+        "v": de.JOIN_VERSION,
+        "correlation_id": "corr-1",
+        "prediction_at": "2026-01-01T00:00:00+00:00",
+        "censoring": [],
+        "unresolved": [],
+        "features": {"at_prediction": [], "excluded_as_future": [], "unknown_time": []},
+        "questions": [],
+        "actions": {"alternatives": []},
+        "decision": {"record": None},
+    }
+    base.update(over)
+    return base
+
+
+def _rr_cal_row(outcome, label_value, *, question="q-1@v1", raw=None, calibrated=None,
+               abstained=False):
+    """A minimal fixture shaped like one row's `questions[]` entry, enough for
+    `decision_eval.calibration_report` to score -- not a full D15 fixture, which is
+    `tests/test_decision_eval.py`'s own scope."""
+    return {
+        "v": de.JOIN_VERSION,
+        "questions": [{
+            "question": question, "outcomes": ["false", "true"],
+            "answer": {"outcome": outcome, "abstained": abstained, "raw": raw,
+                      "calibrated": calibrated},
+            "label": {"status": "resolved", "value": label_value},
+        }],
+    }
+
+
+def _rr_declarations(**over):
+    decl = {name: f"operator-declared {name}" for name in de.RECOVERY_REPORT_DECLARATIONS}
+    decl["independent_label_source"] = "human-adjudication"
+    decl["observation_window"] = "2026-02-01T00:00:00+00:00"
+    decl.update(over)
+    return decl
+
+
+def _rr_zero_accepted_accounting():
+    arm = _spec()["content"]["arms"][0]
+    return wf.arm_accounting(arm, [_record("i0", False, recovery=(2.0,))])
+
+
+def _rr_mixed_basis_accounting():
+    arm = _spec()["content"]["arms"][0]
+    record = _record("i0", True, initial=0.0)
+    record["recovery_costs"] = [{"basis": "proxy", "api_equivalent_usd": 9.0},
+                                {"basis": "unpriced"}, {"basis": "estimated", "usd": 0.25}]
+    return wf.arm_accounting(arm, [record])
+
+
+class RecoveryReportTests(unittest.TestCase):
+    """decision-improvement D19. `bin/decision_eval.py`'s recovery report: the operator's
+    predeclared stop fields, and one document assembled from what D14/D15/D18 already computed
+    without recomputing any of it. Every fixture below is synthetic."""
+
+    maxDiff = None
+
+    # -- do not become the second implementation ------------------------------------------------
+
+    def test_stop_field_names_agree_with_workflow_evals_operator_declarations(self):
+        """Four of this report's own six stop fields are the SAME concept as four of D18's seven
+        `OPERATOR_DECLARATIONS`, deliberately spelled alike rather than reached across the module
+        boundary for a function call. If either module renames one without the other, this is
+        the test that catches it."""
+        shared = set(wf.OPERATOR_DECLARATIONS) & set(de.RECOVERY_REPORT_DECLARATIONS)
+        self.assertEqual(shared, {"practical_gain_threshold", "allowed_quality_regression",
+                                  "interim_look_rule", "stopping_rule"})
+        # And the two that belong to the join layer alone have no counterpart in D18's list.
+        self.assertEqual(set(de.RECOVERY_REPORT_DECLARATIONS) - set(wf.OPERATOR_DECLARATIONS),
+                         {"independent_label_source", "observation_window"})
+
+    def test_the_shared_and_uncovered_names_exactly_partition_workflow_evals_seven(self):
+        """THE F4 FIX. `operator_plan` covers only four of D18's seven `OPERATOR_DECLARATIONS`;
+        the other three (`RECOVERY_PLAN_UNCOVERED_DECLARATIONS`) are workflow_eval's own. This
+        pins the partition in the direction the shared-names test above does not: the two sets
+        together must equal the whole seven, with no name double-counted and none left out. If a
+        name is ever added to `workflow_eval.OPERATOR_DECLARATIONS` without a matching update
+        here, or moved between "shared" and "uncovered" in only one file, this test catches it.
+        """
+        shared = set(wf.OPERATOR_DECLARATIONS) & set(de.RECOVERY_REPORT_DECLARATIONS)
+        uncovered = set(de.RECOVERY_PLAN_UNCOVERED_DECLARATIONS)
+        self.assertEqual(shared & uncovered, set(),
+                         "a name is claimed both shared and uncovered")
+        self.assertEqual(shared | uncovered, set(wf.OPERATOR_DECLARATIONS),
+                         "the shared and uncovered sets no longer partition D18's own seven")
+        self.assertEqual(uncovered, {"primary_endpoint", "sample_size", "independent_evaluation"})
+
+    # -- stop fields required --------------------------------------------------------------------
+
+    def test_a_complete_operator_plan_has_no_missing_fields_and_does_not_block(self):
+        plan = de.operator_plan(_rr_declarations())
+        self.assertEqual(plan["missing"], [])
+        self.assertTrue(plan["complete"])
+        self.assertEqual(plan["status"], "own-declarations-complete")
+        self.assertFalse(plan["blocks_promotion_on_these_fields"])
+        self.assertIsNone(plan["note"])
+
+    def test_every_one_of_the_six_stop_fields_is_required_in_isolation(self):
+        """Each absence on its own: a field that only ever fails beside another proves nothing
+        about itself."""
+        for name in de.RECOVERY_REPORT_DECLARATIONS:
+            with self.subTest(missing=name):
+                declarations = _rr_declarations()
+                declarations[name] = None
+                plan = de.operator_plan(declarations)
+                self.assertEqual(plan["missing"], [name])
+                self.assertFalse(plan["complete"])
+                self.assertEqual(plan["status"], "own-declarations-incomplete")
+                self.assertTrue(plan["blocks_promotion_on_these_fields"])
+                self.assertIn("INCOMPLETE", plan["note"])
+
+    def test_a_recovery_report_with_an_incomplete_plan_blocks_promotion(self):
+        document = de.join([_rr_row()])
+        declarations = _rr_declarations(stopping_rule=None)
+        report = de.recovery_report(provenance="synthetic", join_document=document,
+                                    operator_declarations=declarations)
+        self.assertTrue(report["blocks_promotion_on_these_fields"])
+        self.assertEqual(report["operator"]["status"], "own-declarations-incomplete")
+        self.assertIn(de.PLAN_INCOMPLETE_NOTE, report["labels"])
+
+    # -- the completeness claim cannot be read as covering the whole live-run precondition set ---
+
+    def test_a_complete_plan_still_names_the_fields_it_does_not_cover(self):
+        """THE DEFECT THIS FIXES. A plan reporting `own-declarations-complete` and
+        `blocks_promotion_on_these_fields=False` over its own six fields must never be read, on
+        its own, as "nothing blocks promotion": `workflow_eval.OPERATOR_DECLARATIONS`'s
+        `primary_endpoint` and `sample_size` are required by `workflow_eval.live_requirements`
+        and are untouched by this plan entirely."""
+        plan = de.operator_plan(_rr_declarations())
+        self.assertTrue(plan["complete"])
+        self.assertEqual(sorted(plan["not_covered"]["fields"]),
+                         sorted(de.RECOVERY_PLAN_UNCOVERED_DECLARATIONS))
+        self.assertIn("primary_endpoint", plan["not_covered"]["fields"])
+        self.assertIn("sample_size", plan["not_covered"]["fields"])
+        self.assertEqual(plan["not_covered"]["owner"], "workflow_eval.live_requirements")
+        self.assertEqual(plan["not_covered"]["pairs_with"], "decision_eval.operator_plan")
+
+    def test_the_scope_note_is_always_present_even_on_a_complete_plan(self):
+        """The note that rules out "own_declarations_complete means nothing blocks promotion"
+        must not be conditioned on `missing` being non-empty -- a caller reading only a
+        complete, non-blocking plan needs it exactly as much as one reading an incomplete one."""
+        complete_plan = de.operator_plan(_rr_declarations())
+        self.assertEqual(complete_plan["scope_note"], de.SCOPE_NOTE)
+        incomplete_plan = de.operator_plan(_rr_declarations(stopping_rule=None))
+        self.assertEqual(incomplete_plan["scope_note"], de.SCOPE_NOTE)
+
+    def test_the_scope_note_reaches_the_reports_own_labels_regardless_of_completeness(self):
+        document = de.join([_rr_row()])
+        report = de.recovery_report(provenance="synthetic", join_document=document,
+                                    operator_declarations=_rr_declarations())
+        self.assertTrue(report["operator"]["complete"])
+        self.assertIn(de.SCOPE_NOTE, report["labels"],
+                     "a complete plan's report dropped the scope caveat from its own labels")
+
+    def test_independent_label_source_must_be_one_of_the_labels_own_vocabulary(self):
+        with self.assertRaises(dc.ContractError):
+            de.operator_plan(_rr_declarations(independent_label_source="a-model-graded-itself"))
+
+    def test_observation_window_must_name_an_instant(self):
+        with self.assertRaises(dc.ContractError):
+            de.operator_plan(_rr_declarations(observation_window="not-a-timestamp"))
+
+    # -- zero ratio undefined ---------------------------------------------------------------------
+
+    def test_cost_per_accepted_is_relayed_as_undefined_never_a_synthesized_zero(self):
+        accounting = _rr_zero_accepted_accounting()
+        relayed = de.resource_evidence([accounting])
+        for scope in wf.ACCOUNTING_SCOPES:
+            block = relayed[0]["scopes"][scope]
+            self.assertIsNone(block["cost_per_accepted_usd"])
+            self.assertIn("undefined", block["undefined_reason"])
+            self.assertGreater(block["priced_usd"], 0.0)
+
+    def test_a_forged_zero_accepted_ratio_is_refused_rather_than_relayed(self):
+        """THE MUTATION THIS PROVES. Deleting `_assert_zero_ratio_undefined`'s call inside
+        `resource_evidence` turns this from a refusal into a silent pass-through of a ratio that
+        should never exist -- a forged accounting `workflow_eval.arm_accounting` itself would
+        never produce, which is exactly why this module checks rather than trusts it."""
+        accounting = _rr_zero_accepted_accounting()
+        accounting["scopes"]["recovery-only"]["cost_per_accepted_usd"] = 0.0
+        with self.assertRaises(dc.ContractError) as caught:
+            de.resource_evidence([accounting])
+        self.assertIn("must be undefined", str(caught.exception))
+
+    # -- bases separate ----------------------------------------------------------------------------
+
+    def test_bases_stay_separate_through_the_report(self):
+        accounting = _rr_mixed_basis_accounting()
+        relayed = de.resource_evidence([accounting])
+        block = relayed[0]["scopes"]["recovery-only"]
+        self.assertAlmostEqual(block["priced_usd"], 0.25)
+        self.assertEqual(block["totals"]["proxy"]["n"], 1)
+        self.assertEqual(block["totals"]["unpriced"]["n"], 1)
+        self.assertAlmostEqual(block["totals"]["proxy"]["api_equivalent_usd"], 9.0)
+
+    def test_a_forged_priced_proxy_basis_is_refused_rather_than_relayed(self):
+        """A subscription-plan proxy dollar smuggled a 'usd' key -- something
+        `workflow_eval.add_cost` never produces -- must never be relayed as though it were a
+        priced figure."""
+        accounting = _rr_mixed_basis_accounting()
+        accounting["scopes"]["recovery-only"]["totals"]["proxy"]["usd"] = 9.0
+        with self.assertRaises(dc.ContractError) as caught:
+            de.resource_evidence([accounting])
+        self.assertIn("proxy", str(caught.exception))
+
+    def test_a_forged_missing_basis_is_refused(self):
+        accounting = _rr_mixed_basis_accounting()
+        del accounting["scopes"]["recovery-only"]["totals"]["unpriced"]
+        with self.assertRaises(dc.ContractError) as caught:
+            de.resource_evidence([accounting])
+        self.assertIn("missing basis", str(caught.exception))
+
+    def test_resource_evidence_refuses_an_accounting_missing_a_required_field(self):
+        accounting = _rr_zero_accepted_accounting()
+        del accounting["conditional_recovery"]
+        with self.assertRaises(dc.ContractError):
+            de.resource_evidence([accounting])
+
+    # -- synthetic labeled --------------------------------------------------------------------------
+
+    def test_a_recovery_report_over_synthetic_data_carries_the_synthetic_label(self):
+        document = de.join([_rr_row()])
+        report = de.recovery_report(provenance="synthetic", join_document=document,
+                                    operator_declarations=_rr_declarations())
+        self.assertIn(de.SYNTHETIC_LABEL, report["labels"])
+        self.assertEqual(report["provenance"], "synthetic")
+
+    def test_a_recovery_report_over_live_data_carries_no_synthetic_label(self):
+        document = de.join([_rr_row()])
+        report = de.recovery_report(provenance="live", join_document=document,
+                                    operator_declarations=_rr_declarations())
+        self.assertNotIn(de.SYNTHETIC_LABEL, report["labels"])
+
+    def test_provenance_outside_the_closed_vocabulary_is_refused(self):
+        document = de.join([_rr_row()])
+        with self.assertRaises(dc.ContractError):
+            de.recovery_report(provenance="mostly-real", join_document=document,
+                               operator_declarations=_rr_declarations())
+
+    # -- censoring visible --------------------------------------------------------------------------
+
+    def test_censoring_is_visible_in_the_recovery_report(self):
+        rows = [_rr_row(censoring=["attempt-open"]), _rr_row(correlation_id="corr-2",
+                                                              censoring=["trial-skipped"]),
+                _rr_row(correlation_id="corr-3")]
+        document = de.join(rows)
+        report = de.recovery_report(provenance="synthetic", join_document=document,
+                                    operator_declarations=_rr_declarations())
+        self.assertEqual(report["censoring"]["attempt-open"], 1)
+        self.assertEqual(report["censoring"]["trial-skipped"], 1)
+        self.assertEqual(report["censoring"], document["coverage"]["censoring"])
+
+    def test_recovery_report_refuses_a_join_document_from_a_different_version(self):
+        forged = {"v": "not-the-join-version", "rows": [], "coverage": {}}
+        with self.assertRaises(dc.ContractError):
+            de.recovery_report(provenance="synthetic", join_document=forged,
+                               operator_declarations=_rr_declarations())
+
+    # -- time, by the clock that measured it -----------------------------------------------------
+
+    def test_time_by_basis_merges_many_rows_without_summing_across_bases(self):
+        rows = [
+            _rr_row(decision={"record": {"duration": {"basis": "decision-latency",
+                                                       "seconds": 0.5, "source": "t"}}}),
+            _rr_row(correlation_id="corr-2",
+                   features={"at_prediction": [{"duration": {"basis": "process-wall",
+                                                             "seconds": 12.0, "source": "t"}}],
+                            "excluded_as_future": [], "unknown_time": []}),
+        ]
+        merged = de.time_by_basis(rows)
+        self.assertEqual(len(merged["by_basis"]["decision-latency"]), 1)
+        self.assertEqual(len(merged["by_basis"]["process-wall"]), 1)
+        self.assertEqual(merged["by_basis"]["decision-latency"][0]["seconds"], 0.5)
+        self.assertEqual(merged["note"], de.DURATIONS_SEPARATE)
+
+    # -- subgroup slices ----------------------------------------------------------------------------
+
+    def test_slice_coverage_buckets_by_the_declared_dimension_and_keeps_unassigned(self):
+        rows = [_rr_row(correlation_id="corr-1"), _rr_row(correlation_id="corr-2"),
+               _rr_row(correlation_id="corr-3")]
+        result = de.slice_coverage(
+            rows, {"corr-1": "cross-module", "corr-2": "cross-module"}, dimension="failure_class")
+        self.assertEqual(sorted(result["slices"]), ["cross-module", "unassigned"])
+        self.assertEqual(result["slices"]["cross-module"]["rows"], 2)
+        self.assertEqual(result["slices"]["unassigned"]["rows"], 1)
+
+    # -- every candidate tried or rejected, and its exposure -----------------------------------------
+
+    def test_candidate_tally_counts_tried_accepted_rejected_and_exposure(self):
+        tally = de.candidate_tally([
+            {"id": "c1", "status": "tried", "exposure": 3},
+            {"id": "c2", "status": "accepted", "exposure": 1},
+            {"id": "c3", "status": "rejected", "exposure": 2},
+            {"id": "c4", "status": "rejected", "exposure": None},
+        ])
+        self.assertEqual(tally["counts"], {"tried": 1, "accepted": 1, "rejected": 2})
+        self.assertEqual(tally["total"], 4)
+        self.assertEqual(tally["exposure_total"], 6)
+        self.assertEqual(tally["exposure_known"], 3)
+        self.assertEqual(tally["exposure_unknown"], 1)
+
+    def test_candidate_tally_refuses_a_repeated_candidate_id(self):
+        with self.assertRaises(dc.ContractError):
+            de.candidate_tally([{"id": "c1", "status": "tried", "exposure": None},
+                                {"id": "c1", "status": "rejected", "exposure": None}])
+
+    # -- paired quality regression, judged only against an operator-declared cap --------------------
+
+    def test_quality_regression_reports_no_verdict_without_an_operator_declared_cap(self):
+        baseline = de.calibration_report(
+            [_rr_cal_row("true", "true"), _rr_cal_row("true", "true")],
+            question="q-1@v1", field="raw", min_samples=1)
+        candidate = de.calibration_report(
+            [_rr_cal_row("true", "true"), _rr_cal_row("true", "false")],
+            question="q-1@v1", field="raw", min_samples=1)
+        comparison = de.quality_regression(baseline, candidate, allowed_regression=None)
+        self.assertIsNone(comparison["verdict"])
+        self.assertIn("no operator-declared allowed_quality_regression",
+                      comparison["verdict_reason"])
+        self.assertAlmostEqual(comparison["delta"], -0.5)
+
+    def test_quality_regression_reports_a_verdict_against_the_declared_cap(self):
+        baseline = de.calibration_report(
+            [_rr_cal_row("true", "true"), _rr_cal_row("true", "true")],
+            question="q-1@v1", field="raw", min_samples=1)
+        candidate = de.calibration_report(
+            [_rr_cal_row("true", "true"), _rr_cal_row("true", "false")],
+            question="q-1@v1", field="raw", min_samples=1)
+        within = de.quality_regression(baseline, candidate, allowed_regression=0.6)
+        self.assertEqual(within["verdict"], "within-allowed-regression")
+        exceeds = de.quality_regression(baseline, candidate, allowed_regression=0.1)
+        self.assertEqual(exceeds["verdict"], "regression-exceeds-allowance")
+
+    # -- prospective versus checkpoint claims, and paired arm effects, carried as references ---------
+
+    def test_recovery_report_carries_comparisons_and_full_task_study_as_references(self):
+        spec = _spec()
+        accepted = [_record(f"i{i}", True, recovery=(0.2,)) for i in range(2)]
+        base = wf.arm_accounting(spec["content"]["arms"][0], accepted)
+        repair = wf.arm_accounting(spec["content"]["arms"][1], accepted)
+        comparisons = wf.compare_conditional_recovery([base, repair], baseline_arm="A",
+                                                       threshold=None)
+        study = spec["content"]["full_task_study"]
+        document = de.join([_rr_row()])
+        report = de.recovery_report(provenance="synthetic", join_document=document,
+                                    operator_declarations=_rr_declarations(),
+                                    comparisons=comparisons, full_task_study=study)
+        self.assertEqual(report["comparisons"], comparisons)
+        self.assertEqual(report["full_task_study"]["status"], "prospective")
+        self.assertIs(report["full_task_study"]["satisfied_by_checkpoint_study"], False)
+
+    def test_recovery_report_refuses_a_full_task_study_with_an_unknown_status(self):
+        document = de.join([_rr_row()])
+        with self.assertRaises(dc.ContractError):
+            de.recovery_report(provenance="synthetic", join_document=document,
+                               operator_declarations=_rr_declarations(),
+                               full_task_study={"status": "definitely-happened"})
 
 
 if __name__ == "__main__":  # pragma: no cover
