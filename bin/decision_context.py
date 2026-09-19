@@ -38,7 +38,10 @@ This is a fence, not a sentence, and it is built three ways.
   * A DEPENDENCY-SPELLED KEY IS REFUSED. `assert_no_dependency_claim` sweeps every manifest
     before it is returned, using the punctuation-reducing key match D09 established and D14
     used for causation. Its work is forward: D17 extends this seam, and a `depends_on` or a
-    `safe_to_parallel` added to a candidate would turn navigation into an authorisation.
+    `safe_to_parallel` added to a candidate would turn navigation into an authorisation. The
+    sweep REFUSES WHAT IT CANNOT WALK rather than passing over it -- `UNSWEEPABLE_NOTE` says
+    which shapes those are and why -- because a walker handed a container it does not descend
+    into inspects nothing and certifies everything.
 
 Absence of an edge establishes no safe parallelism, and sequential execution stays the default
 (`tasks/kits/decision-improvement/PLAN.md`). The execution DAG lives in `bin/kit_contract.py`
@@ -97,6 +100,7 @@ import hashlib
 import importlib.util
 import json
 import re
+from collections.abc import Mapping, MappingView, Sequence, Set
 from pathlib import Path, PurePosixPath
 
 #: This manifest's own schema, registered in `release_gate.VERSION_SOURCES`. Not the grounding
@@ -196,6 +200,22 @@ NO_DEPENDENCY_CLAIM = (
     "imports -- and the execution DAG is bin/kit_contract.py's, not this graph's"
 )
 
+#: Why a shape the sweep does not descend is refused instead of skipped. A manifest is
+#: JSON-shaped by construction -- `canonical_bytes` is what makes it an artifact -- so mappings,
+#: sequences, sets and the JSON scalars are the whole of what a caller may hand this fence.
+UNSWEEPABLE_NOTE = (
+    "a value this sweep cannot walk cannot be certified free of a dependency claim, so it is "
+    "refused rather than passed over: a walker handed a container it does not descend into "
+    "inspects nothing and accepts everything. A manifest is JSON-shaped by construction, so "
+    "the sweep descends mappings, sequences and sets and accepts the JSON scalars. A namedtuple "
+    "and a dataclass are refused rather than unpacked, because their field names are exactly "
+    "where a claim would live and a sequence walk never sees them -- and the serialiser drops "
+    "those names too, so no manifest can legitimately carry one. A mapping's own view is refused "
+    "for that same reason: an items view is a set of pairs, and a pair walked as a sequence puts "
+    "a key where this sweep reads values. A generator is refused because walking one consumes "
+    "the caller's own object and cannot be repeated"
+)
+
 EDGE_LABEL_NOTE = ("the extractor's own word for this edge, copied verbatim, bounded, and not "
                    "interpreted here")
 
@@ -271,6 +291,14 @@ def _is_dependency_key(key):
     return any(_alnum(part) in _DEPENDENCY_ALNUM for part in key.split("."))
 
 
+def _is_namedtuple(item):
+    """A namedtuple IS a tuple, so a sequence walk descends it and sees only its values -- never
+    the field name, which is the one place a claim could be spelled. Detected by the generated
+    `_fields` on the TYPE, so an instance attribute cannot make an ordinary object look like
+    one."""
+    return isinstance(item, tuple) and hasattr(type(item), "_fields")
+
+
 def assert_no_dependency_claim(value, where="the candidate manifest"):
     """Refuse a structure carrying a key spelled like "A depends on B" or "this is safe to
     write in parallel".
@@ -279,22 +307,44 @@ def assert_no_dependency_claim(value, where="the candidate manifest"):
     D17 extends this seam, and a `depends_on` on a candidate would silently promote navigation
     evidence into a dependency claim -- and a `safe_to_parallel` would promote it into a
     write authorisation, which is the more dangerous of the two.
+
+    The sweep is CLOSED over what it accepts, not over what it recognises. It descends any
+    `Mapping` (a `MappingProxyType` is one, and D17 freezes its plan into exactly that), any
+    `Sequence` or `Set` that is not text or bytes, and accepts the JSON scalars. EVERYTHING ELSE
+    IS REFUSED, `UNSWEEPABLE_NOTE` saying why: the guarantee this function is asked for is
+    categorical, and a walker that silently skips the shape it was not taught certifies every
+    input it cannot read. What it does NOT do is judge values -- a `relation` of `"depends_on"`
+    is the extractor's word, quoted under `EDGE_LABEL_NOTE`, and refusing it would let a
+    third-party extractor's vocabulary break a manifest.
+
+    Both lists are collected and raised once, rather than raised where they are found, so the
+    refusal does not depend on the order a set or a dict happened to be walked in.
     """
     hits = []
+    unsweepable = []
     stack = [value]
     while stack:
         item = stack.pop()
-        if isinstance(item, dict):
+        if isinstance(item, Mapping):
             for key, sub in item.items():
                 if _is_dependency_key(key):
                     hits.append(key)
                 stack.append(sub)
-        elif isinstance(item, (list, tuple)):
+        elif isinstance(item, (str, int, float, type(None))):
+            continue  # the JSON scalars; `bool` is an `int` and arrives here too
+        elif (isinstance(item, (bytes, bytearray, MappingView)) or _is_namedtuple(item)
+                or not isinstance(item, (Sequence, Set))):
+            unsweepable.append(type(item).__name__)
+        else:
             stack.extend(item)
     if hits:
         raise _refuse("authority-field",
                       f"{where} carries {', '.join(repr(h) for h in sorted(set(hits)))}. "
                       f"{NO_DEPENDENCY_CLAIM}")
+    if unsweepable:
+        raise _refuse("authority-field",
+                      f"{where} carries a value this sweep cannot inspect: "
+                      f"{', '.join(sorted(set(unsweepable)))}. {UNSWEEPABLE_NOTE}")
     return value
 
 

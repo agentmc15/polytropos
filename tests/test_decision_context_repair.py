@@ -31,6 +31,7 @@ touch a test, a helper or an assertion above it.
 """
 
 import ast
+import collections
 import contextlib
 import dataclasses
 import datetime
@@ -663,6 +664,91 @@ class ContextCandidateTests(_Case):
         self.refusal("authority-field", dc.assert_no_dependency_claim,
                      {"a": [{"b": {"c": [{"depends_on": 1}]}}]})
         dc.assert_no_dependency_claim({"a": [{"b": {"c": [{"path": "app/x.py"}]}}]})
+
+    def test_a_frozen_mapping_is_swept_rather_than_walked_past(self):
+        """A walker that tests for the concrete `dict` sees nothing in a `MappingProxyType` and
+        therefore certifies it. That is not hypothetical here: D17 freezes its repair plan into
+        exactly that type, and sweeps BEFORE freezing only because this used to be the only
+        order that worked."""
+        frozen = types.MappingProxyType({"depends_on": "app/utils.py"})
+        self.refusal("authority-field", dc.assert_no_dependency_claim, frozen)
+        self.refusal("authority-field", dc.assert_no_dependency_claim, {"retry": frozen})
+        self.refusal("authority-field", dc.assert_no_dependency_claim,
+                     {"a": [{"retry": types.MappingProxyType({"safe_to_parallel": True})}]})
+        # ... and a frozen mapping with nothing to hide still passes, so the refusals above are
+        # about the KEY and not about the type.
+        dc.assert_no_dependency_claim(types.MappingProxyType({"path": "app/utils.py"}))
+
+    def test_a_shape_the_sweep_cannot_walk_is_refused_instead_of_certified(self):
+        """The general form of the defect above: any container the walk does not descend into
+        is a container it inspects nothing inside of. A namedtuple is the sharp case -- it IS a
+        tuple, so descending it as a sequence walks its VALUES and never the field name where
+        the claim lives -- so it is refused rather than unpacked."""
+        pair = collections.namedtuple("_Claiming", ["depends_on"])("app/utils.py")
+        instance = dataclasses.make_dataclass("_Claim", [("depends_on", str)])("app/utils.py")
+        cases = {
+            "namedtuple": pair,
+            "namedtuple nested": {"retry": pair},
+            "dataclass": instance,
+            "dataclass nested": [instance],
+            "items view": {"retry": {"depends_on": "app/utils.py"}.items()},
+            "bytes": {"retry": b"{}"},
+            "arbitrary object": {"retry": Path("/nowhere")},
+        }
+        for label, value in cases.items():
+            with self.subTest(case=label):
+                error = self.refusal("authority-field", dc.assert_no_dependency_claim, value)
+                self.assertIn("cannot inspect", str(error))
+                self.assertIn("cannot be certified free of a dependency claim", str(error))
+
+    def test_a_generator_is_refused_without_being_consumed(self):
+        """Descending one would be worse than passing it: it would empty the caller's own
+        object and could not be repeated. So the refusal has to leave it untouched, which is
+        what the second half of this test checks."""
+        rows = [{"depends_on": "app/utils.py"}]
+        stream = (row for row in rows)
+        error = self.refusal("authority-field", dc.assert_no_dependency_claim,
+                             {"candidates": stream})
+        self.assertIn("cannot inspect", str(error))
+        self.assertEqual(list(stream), rows, "the sweep consumed the caller's generator")
+
+    def test_a_set_is_actually_descended_and_not_accepted_on_sight(self):
+        """A set is walked rather than refused, because it CAN be walked exhaustively -- and
+        this is the control proving that, since an un-sweepable member inside one is still
+        caught. Nothing about the hardening is "refuse the unfamiliar"."""
+        pair = collections.namedtuple("_Claiming", ["depends_on"])("app/utils.py")
+        self.refusal("authority-field", dc.assert_no_dependency_claim, {pair})
+        self.refusal("authority-field", dc.assert_no_dependency_claim,
+                     {"seen": frozenset({pair})})
+
+    def test_a_dependency_word_in_a_value_position_is_still_allowed_after_hardening(self):
+        """The deliberate allowance, re-pinned because a fix aimed at "refuse more" is exactly
+        what would quietly take it away: the fence sweeps KEYS. `relation` carries the
+        extractor's own word, quoted under `EDGE_LABEL_NOTE` and never adopted, and refusing a
+        VALUE would let a third-party extractor's vocabulary break a manifest.
+
+        A set of pairs is the same allowance seen from the other side and is listed here rather
+        than among the refusals above on purpose: a set cannot contain a mapping (no mapping is
+        hashable), so `depends_on` inside one is a string VALUE and never a key."""
+        dc.assert_no_dependency_claim({"relation": "depends_on", "edge_label": "depends_on"})
+        dc.assert_no_dependency_claim({"evidence": [{"edge_label": "safe_to_parallel"}]})
+        dc.assert_no_dependency_claim({("depends_on", "app/utils.py")})
+
+    def test_the_hardened_sweep_still_accepts_everything_a_manifest_is_made_of(self):
+        """The anti-vacuity control for the whole group: a refusal broad enough to pass those
+        tests and fail every real caller would be no fix at all. The second shape is D17's plan
+        as `bin/decision_policy.py` builds it -- frozen mappings, tuples and scalars."""
+        dc.assert_no_dependency_claim({"v": dc.CONTEXT_VERSION, "candidates": [],
+                                       "limits": list(dc.LIMITS), "authority": None,
+                                       "withheld_total": 0, "bounds": {"depth": 1},
+                                       "over_budget": False, "score": 0.5})
+        dc.assert_no_dependency_claim({
+            "failure": {"verify_rc": 1, "artifact": None},
+            "retry": types.MappingProxyType({"model": "a-model", "assurance": ("reviewed",),
+                                             "context_paths": ("app/utils.py",),
+                                             "failed_attempt": types.MappingProxyType({})}),
+            "ladder": ("a", "b"),
+        }, "a context repair plan")
 
     def test_an_ordinary_manifest_key_is_not_mistaken_for_a_claim(self):
         manifest = self.tree.manifest()
