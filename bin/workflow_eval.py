@@ -2011,6 +2011,23 @@ def gate_protected_dispatch(purpose, runner, argv, cwd, *, profile=None, status=
 # required. `live_requirements` names them side by side, and `build_trial_protocol` blocks on
 # EITHER being unsatisfied -- satisfying one never discharges the other.
 #
+# EVERY ENFORCEMENT POINT CONSULTS THE THING IT ENFORCES -- INCLUDING ONE LEVEL DOWN (Phase 4
+# review). `require_runnable` re-hashes the document it is handed, which stops a caller emptying
+# `blockers`. That fixed the document and left the EVIDENCE the document is built from unchecked:
+# four of the five rows `live_requirements` produces were discharged by a caller dict nobody
+# consulted. A fabricated manifest (`sha` of the caller's choosing, invented partitions and
+# items) reported `frozen: True` -- because a `manifest` argument was passed, not because
+# anything was frozen -- and a hand-written `{"certified": True, "required": 7, "satisfied": 7,
+# "blocking": []}` discharged D07 while `exec_policy` was never called at all. Content addressing
+# was never the weak link: `build_trial_protocol` computed a perfectly CORRECT digest over forged
+# inputs, so the forgery was INSIDE the digest. So `trial_cohort` now runs `verify_manifest` over
+# the manifest and reads nothing out of one that fails, and `_certification_evidence` now takes
+# the sentinel REPORT and asks `exec_policy.certify_profile` for the verdict instead of accepting
+# one. What is left unauthenticated is named rather than glossed: a report that lies about what
+# the OS did still certifies (running the sentinels spawns processes, which this section does
+# not do), and the `whole-task-study` row is still a caller's claim that a run happened. Both say
+# so in `re_derived_by`, which is None exactly where nothing re-derived the row.
+#
 # THE COHORT THE DEFAULT PIPELINE CANNOT PRODUCE (D06's product finding). `repo_bench`'s issue
 # replay mining without `gh` -- which is the DEFAULT -- builds a problem statement out of the FIX
 # COMMIT MESSAGE, which D06's screen correctly flags `future-fix-message`, which quarantines the
@@ -2086,8 +2103,15 @@ OPERATOR_DECLARATIONS = ("primary_endpoint", "practical_gain_threshold",
 
 #: The closed vocabulary of reasons a specification is not a run. A reader never has to guess
 #: whether a new string means something new.
+#:
+#: `manifest-unverified` and `no-held-out-evidence` are deliberately TWO codes and never one. A
+#: manifest that does not match its own digest is a forgery finding and nothing may be read out of
+#: it; a manifest that verifies and whose partition is simply empty is an honest document with
+#: nothing in it, and the cause worth printing is D06's mining finding. A reader who could not
+#: tell those apart would read a fabricated cohort as a thin one.
 PROTOCOL_BLOCKERS = (
     "cohort-not-frozen",
+    "manifest-unverified",
     "no-held-out-evidence",
     "protected-profile-uncertified",
     "confining-dispatch-unwired",
@@ -2164,6 +2188,20 @@ EXTRACTION_NOTE = (
 OVERLAPPING_INTERVAL_NOTE = (
     "a difference whose intervals overlap is not a result; neither is one that clears no "
     "threshold, because no threshold exists here unless an operator declared one"
+)
+
+MANIFEST_VERIFICATION_NOTE = (
+    "the manifest is re-checked here by workflow_eval.verify_manifest before ANY count is read "
+    "out of it, so a document whose content no longer hashes to the sha it is filed under yields "
+    "no cohort at all. What that check cannot see is the STORE -- exposure, retirement, "
+    "single-use and calibration fits live there, and workflow_eval.require_held_out is what reads "
+    "them at run time. Verifying a manifest is not the same as a partition still being unspent"
+)
+
+UNDERIVED_EVIDENCE_NOTE = (
+    "re_derived_by is None on this row: its verdict is read off what the CALLER handed in, and "
+    "nothing in this module re-derives it. Satisfied here means `the caller asserted it`, which "
+    "is weaker than every row that names a function, and a live run must treat it that way"
 )
 
 
@@ -2374,6 +2412,16 @@ def trial_cohort(manifest, partition, *, cohort):
     run still passes `require_held_out` / `select_cohort` against the STORE, which is where
     exposure, retirement and staleness actually live; the counts here are what a specification may
     state in advance.
+
+    THE MANIFEST IS RE-CHECKED, NEVER TAKEN ON THE CALLER'S WORD. `verify_manifest` -- D06's own
+    checker, store-free and defined in this same file -- runs over it FIRST, and its digest test
+    is exactly what catches a document whose `content` no longer hashes to the `sha` it is filed
+    under. A manifest with ANY finding comes back `verified: False`, `frozen: False`, and with
+    `items`, `groups` and `quarantined` left empty: nothing is read out of a document that failed
+    its own check, for the reason `require_runnable` does not read the blockers of a tampered
+    specification. `frozen` therefore means "an immutable manifest was supplied AND it verifies",
+    which is the only reading under which the word is true; it used to mean "a `manifest`
+    argument was passed", which is not the same claim and was the defect.
     """
     if partition not in PARTITIONS:
         raise EvalError(f"partition {partition!r} is not one of {list(PARTITIONS)}")
@@ -2390,6 +2438,10 @@ def trial_cohort(manifest, partition, *, cohort):
         "group_count": 0,
         "quarantined": None,
         "frozen": False,
+        "verified": None,
+        "verification": None,
+        "verified_by": "workflow_eval.verify_manifest",
+        "verification_note": MANIFEST_VERIFICATION_NOTE,
         "grouping": GROUPING_RULE,
         "assignment": ASSIGNMENT_RULE,
         "enforcement": NOT_ENFORCEMENT_LABEL,
@@ -2397,6 +2449,19 @@ def trial_cohort(manifest, partition, *, cohort):
     if manifest is None:
         return base
     content = _tp_mapping(_tp_mapping(manifest, "manifest").get("content"), "manifest.content")
+    try:
+        findings = verify_manifest(manifest)
+    except EvalError:
+        raise
+    except (AttributeError, TypeError, KeyError, ValueError) as exc:
+        raise EvalError(f"manifest {manifest.get('id')!r} is too malformed for "
+                        f"verify_manifest to read ({exc!r}); refusing rather than reading a "
+                        f"cohort out of it") from None
+    base.update(verification=_frozen(findings), verified=not findings)
+    if all(key in manifest for key in ("id", "sha", "v")):
+        base.update(manifest_ref=manifest_ref(manifest))
+    if findings:
+        return base
     members = list((content.get("partitions") or {}).get(partition) or ())
     if cohort is not None:
         name = _tp_text(cohort, "cohort")
@@ -2412,7 +2477,6 @@ def trial_cohort(manifest, partition, *, cohort):
     groups = sorted({(by_item.get(i) or {}).get("group") for i in items} - {None})
     summary = manifest_summary(manifest)
     base.update(
-        manifest_ref=manifest_ref(manifest),
         items=items,
         item_count=len(items),
         groups=groups,
@@ -2455,34 +2519,55 @@ def trial_extraction():
 
 # ---- what a live run of this specification would require -----------------------------------------
 
-def _certification_evidence(certification):
-    """`(reference, reason_or_None)` for a certification claim.
+def _certification_evidence(sentinel_report):
+    """`(reference, reason_or_None)` for a protected-profile claim, DERIVED here rather than read.
 
-    Validated against the SHAPE `exec_policy.certify_profile` actually returns, not against the
-    word `certified`: a hand-written `{"certified": True}` satisfies nothing, an empty sentinel
-    plan (`required == 0`) certifies nothing, and a report with anything in `blocking` certifies
-    nothing. This module does not re-derive the certification -- D07 owns that, over a real
-    sentinel report -- it refuses to accept a claim that does not carry D07's own arithmetic.
+    WHAT CHANGED AND WHY (Phase 4 review). This used to take D07's RESULT and check that its
+    arithmetic looked right. That left the verdict as something the caller asserted about itself:
+    `{"profile": "made-up", "backend": "none", "certified": True, "required": 7, "satisfied": 7,
+    "blocking": []}` discharged the requirement, and no function in this section ever called
+    `exec_policy`. It now takes the sentinel REPORT -- what `exec_policy.run_sentinels` produces
+    -- and asks `exec_policy.certify_profile` for the verdict. That function is pure over a
+    report: it re-derives the sentinel plan for the report's OWN backend, requires every sentinel
+    in that plan to be present and to match its expectation, requires each protected leg to name
+    that backend as its confinement (so a `trusted-host` leg can never count as enforcement),
+    requires an attributing control leg that SUCCEEDED and an OS permission signal behind every
+    denial, requires the controller-owned trees to be byte-identical afterwards, and requires
+    every acceptance question to be covered. A forger now has to fabricate all of that
+    consistently instead of one boolean, and the same report fed in above is refused.
+
+    WHAT THIS STILL DOES NOT DO, said plainly rather than glossed. It cannot RUN the sentinels:
+    that is `exec_policy.run_sentinels`, which spawns processes into a temporary tree, and no
+    function in this section spawns anything. So a report that LIES about what the OS did is
+    still a report this module will certify, and a certification is still only ever about the one
+    host the report was produced on. What is gone is the shortcut: the verdict is now D07's own
+    arithmetic over the evidence, not a word the caller chose.
     """
-    if certification is None:
-        return None, "no certification evidence was supplied"
-    cert = _tp_mapping(certification, "certification")
-    missing = [k for k in ("profile", "backend", "certified", "required", "satisfied", "blocking")
-               if k not in cert]
-    if missing:
-        return None, (f"certification is missing {missing}; the evidence must be what "
-                      f"exec_policy.certify_profile returns, not a claim shaped like it")
-    if cert["certified"] is not True:
-        return None, f"exec_policy.certify_profile returned certified={cert['certified']!r}"
+    if sentinel_report is None:
+        return None, ("no sentinel report was supplied; the evidence must be what "
+                      "exec_policy.run_sentinels produces, which this module then puts through "
+                      "exec_policy.certify_profile")
+    report = _tp_mapping(sentinel_report, "sentinel_report")
+    try:
+        cert = _ep().certify_profile(report)
+    except (AttributeError, TypeError, KeyError, ValueError, IndexError) as exc:
+        return None, (f"exec_policy.certify_profile could not read this report ({exc!r}); the "
+                      f"evidence must be what exec_policy.run_sentinels produces, not a document "
+                      f"shaped like it")
     required = cert.get("required")
     satisfied = cert.get("satisfied")
     if not isinstance(required, int) or isinstance(required, bool) or required < 1:
-        return None, "the certification names no sentinel plan, so it certifies nothing"
+        return None, (f"exec_policy.certify_profile found no sentinel plan for backend "
+                      f"{cert.get('backend')!r}, so this report certifies nothing")
+    if cert.get("certified") is not True:
+        blocking = [b for b in (cert.get("blocking") or ()) if isinstance(b, dict)]
+        named = sorted({str(b.get("id")) for b in blocking})
+        return None, (f"exec_policy.certify_profile refused this report: "
+                      f"{len(cert.get('blocking') or ())} blocking finding(s) over "
+                      f"{named[:6]}{' and more' if len(named) > 6 else ''}")
     if satisfied != required:
         return None, (f"{satisfied} of {required} sentinels satisfied; a partially satisfied plan "
                       f"certifies nothing")
-    if list(cert.get("blocking") or ()):
-        return None, f"{len(cert['blocking'])} blocking sentinel finding(s) remain"
     return {
         "profile": cert.get("profile"),
         "backend": cert.get("backend"),
@@ -2504,20 +2589,37 @@ def _study_run_reference(full_task_study_run):
                                     "full_task_study_run.results_ref")}, None
 
 
-def live_requirements(*, cohort, certification, full_task_study_run, declarations):
+def live_requirements(*, cohort, sentinel_report, full_task_study_run, declarations):
     """Every precondition a LIVE run of this specification would have to satisfy, each with the
-    owner that can satisfy it and whether the evidence in hand does.
+    owner that can satisfy it, whether the evidence in hand does, and -- in `re_derived_by` --
+    which function actually re-derived that verdict, or `None` when nothing did.
 
     The first two are Phase 2's F4 finding made explicit: D06's held-out controller and D07/D08's
     isolation question are BOTH required, side by side. Satisfying one has never discharged the
     other, and until this list existed nothing said so.
+
+    `re_derived_by` exists because of Phase 4's finding: a row that says `satisfied` over
+    evidence nobody consulted is a name broader than its check. Three rows now name the function
+    behind them -- `verify_manifest`, `exec_policy.certify_profile`, and this module's own
+    `CONFINED_DISPATCH_WIRED` -- and the two that cannot be re-derived offline say so instead of
+    reading like the other three.
     """
-    certificate, cert_reason = _certification_evidence(certification)
+    certificate, cert_reason = _certification_evidence(sentinel_report)
     study, study_reason = _study_run_reference(full_task_study_run)
     missing_declarations = [name for name in OPERATOR_DECLARATIONS
                             if declarations.get(name) in (None, "", [], {})]
     held_out_reason = held_out_blocker = None
-    if not cohort["frozen"]:
+    findings = list(cohort.get("verification") or ())
+    if findings:
+        kinds = ", ".join(sorted({str(f.get("kind")) for f in findings}))
+        held_out_blocker = "manifest-unverified"
+        held_out_reason = (
+            f"workflow_eval.verify_manifest returned {len(findings)} finding(s) over this "
+            f"manifest ({kinds}), so NOTHING was read out of it as a cohort. A `digest` finding "
+            f"means the content does not hash to the sha the document is filed under -- a forged "
+            f"or altered manifest, which is a different fact from an honest manifest with an "
+            f"empty partition and is never reported as one")
+    elif not cohort["frozen"]:
         held_out_blocker = "cohort-not-frozen"
         held_out_reason = "no immutable manifest was supplied, so the cohort is not frozen"
     elif not cohort["held_out"]:
@@ -2532,21 +2634,29 @@ def live_requirements(*, cohort, certification, full_task_study_run, declaration
             f"message, the leak screen flags it `future-fix-message`, and quarantine is contagious "
             f"within a defect group, so every group ends in quarantine and no partition fills")
     return [
-        {"requirement": "held-out-evidence", "owner": "workflow_eval.require_held_out (D06)",
+        {"requirement": "held-out-evidence",
+         "owner": ("workflow_eval.verify_manifest here; workflow_eval.require_held_out against "
+                   "the store at run time (D06)"),
          "satisfied": held_out_reason is None, "reason": held_out_reason,
          "evidence": cohort["manifest_ref"], "blocker": held_out_blocker,
-         "pairs_with": "protected-profile-certified"},
+         "re_derived_by": "workflow_eval.verify_manifest",
+         "pairs_with": "protected-profile-certified",
+         "note": MANIFEST_VERIFICATION_NOTE},
         {"requirement": "protected-profile-certified",
          "owner": "exec_policy.certify_profile over exec_policy.run_sentinels (D07)",
          "satisfied": cert_reason is None, "reason": cert_reason, "evidence": certificate,
          "blocker": None if cert_reason is None else "protected-profile-uncertified",
+         "re_derived_by": "exec_policy.certify_profile",
          "pairs_with": "held-out-evidence",
          "note": ("workflow_eval.gate_protected_dispatch is an AVAILABILITY gate and applies no "
-                  "confinement of its own; passing it is not this requirement")},
+                  "confinement of its own; passing it is not this requirement. The verdict here "
+                  "is certify_profile's over the supplied report; this module cannot RUN the "
+                  "sentinels, so a report that lies about what the OS did still certifies")},
         {"requirement": "confining-and-ledgered-dispatch",
          "owner": "whichever task wires a live protected trial",
          "satisfied": bool(CONFINED_DISPATCH_WIRED), "evidence": None,
          "blocker": None if CONFINED_DISPATCH_WIRED else "confining-dispatch-unwired",
+         "re_derived_by": "workflow_eval.CONFINED_DISPATCH_WIRED",
          "reason": (None if CONFINED_DISPATCH_WIRED else
                     "this repository has no dispatch path that both confines and is recorded in "
                     "bin/attempt_ledger.py before and after the call; the availability gate does "
@@ -2555,13 +2665,15 @@ def live_requirements(*, cohort, certification, full_task_study_run, declaration
         {"requirement": "whole-task-study", "owner": "a prospective study, separately run",
          "satisfied": study_reason is None, "reason": study_reason, "evidence": study,
          "blocker": None if study_reason is None else "full-task-study-not-run",
-         "note": FULL_TASK_STUDY_NOTE},
+         "re_derived_by": None,
+         "note": f"{FULL_TASK_STUDY_NOTE}. {UNDERIVED_EVIDENCE_NOTE}"},
         {"requirement": "operator-declarations", "owner": "the operator, never this module",
          "satisfied": not missing_declarations, "evidence": None,
          "blocker": None if not missing_declarations else "operator-declaration-missing",
+         "re_derived_by": None,
          "reason": (None if not missing_declarations else
                     f"undeclared: {', '.join(missing_declarations)}"),
-         "note": NO_INVENTED_NUMBER_LABEL},
+         "note": f"{NO_INVENTED_NUMBER_LABEL}. {UNDERIVED_EVIDENCE_NOTE}"},
     ]
 
 
@@ -2586,7 +2698,7 @@ def _blockers_from(requirements, declarations):
 
 # ---- the specification ---------------------------------------------------------------------------
 
-def build_trial_protocol(*, inputs, arms, manifest, partition, cohort, certification,
+def build_trial_protocol(*, inputs, arms, manifest, partition, cohort, sentinel_report,
                          full_task_study_run, operator_declarations, created_by, created_at):
     """The three-arm recovery trial SPECIFICATION: immutable, content-addressed, and not a run.
 
@@ -2598,6 +2710,13 @@ def build_trial_protocol(*, inputs, arms, manifest, partition, cohort, certifica
     Nothing here dispatches, grades, mines, selects from a store, or writes. The one thing it
     produces is a document that says, in a closed vocabulary, exactly what would have to be true
     before this experiment could run.
+
+    The two pieces of EVIDENCE are re-derived rather than believed. `manifest` goes through
+    `verify_manifest` in `trial_cohort` before a single count is read out of it, and
+    `sentinel_report` is the raw report `exec_policy.run_sentinels` produces -- never a
+    certification -- so the verdict on it is `exec_policy.certify_profile`'s and not the caller's.
+    The digest this function then takes is correct either way; that was always the point, and it
+    is why an unchecked input inside the digest was the exposure rather than the digest itself.
     """
     pinned = _tp_mapping(inputs, "inputs")
     inputs_sha = _tp_text(pinned.get("sha"), "inputs.sha")
@@ -2629,7 +2748,7 @@ def build_trial_protocol(*, inputs, arms, manifest, partition, cohort, certifica
     declarations = {name: _tp_mapping(operator_declarations, "operator_declarations").get(name)
                     for name in OPERATOR_DECLARATIONS}
     selected = trial_cohort(manifest, partition, cohort=cohort)
-    requirements = live_requirements(cohort=selected, certification=certification,
+    requirements = live_requirements(cohort=selected, sentinel_report=sentinel_report,
                                      full_task_study_run=full_task_study_run,
                                      declarations=declarations)
     blockers = _blockers_from(requirements, declarations)
@@ -2723,6 +2842,14 @@ def require_runnable(spec):
     blockers AND recomputes `sha` over the emptied content is not caught here. What IS guaranteed
     is that no document can claim a digest it does not have, and that every specification this
     module builds is refused.
+
+    THAT LIMIT USED TO BE STATED IN A WAY THAT MISFRAMED THE EXPOSURE, and Phase 4 corrected it.
+    The weak link was never the digest: `build_trial_protocol` computes a perfectly CORRECT
+    digest over forged inputs, so the unauthenticated evidence sat INSIDE the hash and no check
+    here could ever have seen it. The fix belongs one level down, where the document is built --
+    `trial_cohort` now puts the manifest through `verify_manifest`, and `_certification_evidence`
+    now puts the sentinel report through `exec_policy.certify_profile` -- and this function is
+    deliberately unchanged, because it was already doing its own job correctly.
 
     Returning is not a dispatch and grants nothing: there is no function in this section that
     dispatches, and this one is a precondition check a future caller must pass, not a way in.

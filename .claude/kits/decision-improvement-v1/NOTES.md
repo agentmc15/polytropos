@@ -1380,7 +1380,6 @@ Limitations stated rather than found later:
 - `trial_facts`' per-fact `_copy(ref)` is depth, not a proven guard; no test can distinguish its
   deletion today because a ref is a flat dict of scalars. Reported rather than claimed as enforced.
 - Zero production callers. `release_gate` IMPORTS the module to read its version and calls nothing.
-outcome: D14 model=opus attempts=1 result=pass review=pending run=2026-09-16-aa6e
 
 ## D15 — Calibration reports (sonnet, depends D14)
 
@@ -1440,7 +1439,6 @@ that pin, deliberately.
 
 `vendor_confidence` is read by no metric, which is correct: the decision contract already
 establishes it is not a probability of task success.
-outcome: D15 model=sonnet attempts=1 result=pass review=pending run=2026-09-16-aa6e
 
 ## D16 — Context candidates (opus, depends D13)
 
@@ -1517,7 +1515,6 @@ Limitations stated rather than found later:
 - `M59` is killed structurally (AST sibling-reach pin) rather than behaviourally, because the
   fixture has no second store directory whose fate would differ.
 - Zero production callers. D17 is what wires it.
-outcome: D16 model=opus attempts=1 result=pass review=pending run=2026-09-16-aa6e
 
 ## D17 — Context-repair policy (opus, depends D07, D16)
 
@@ -1594,7 +1591,6 @@ Open questions and limitations, stated rather than left to be found:
 - `_no_dependency_claim` translates only the `authority-field` code across the loader boundary and
   re-raises anything else untouched; both branches pinned. If D16's sweep ever raises a different
   code, a caller catching this module's `ContractError` would miss it.
-outcome: D17 model=opus attempts=1 result=pass review=pending run=2026-09-16-aa6e
 
 ## D18 — Three-arm protocol (opus)
 
@@ -1829,3 +1825,226 @@ outcome: D14 model=opus attempts=2 result=pass review=revised run=2026-09-16-aa6
 outcome: D15 model=sonnet attempts=2 result=pass review=revised run=2026-09-16-aa6e
 outcome: D16 model=opus attempts=2 result=pass review=revised run=2026-09-16-aa6e
 outcome: D17 model=opus attempts=1 result=pass review=clean run=2026-09-16-aa6e
+
+## Phase 5 red preconditions — captured at 559a51b, before any Phase 5 task started
+
+Evidence that cannot be obtained once the work exists, so it is taken up front (as it was for
+Phases 3 and 4). Every Phase 5 verify command exits 1 at this commit, and all three test files it
+names are absent from the tree:
+
+    D20  test_decision_workbench.WorkflowEvalOwnershipTests    exit=1
+    D21  test_decision_workbench.BoundedProposalTests          exit=1
+    D22  test_decision_approval.ExactApprovalTests             exit=1
+    D23  test_decision_activation.ProtectedActivationGateTests exit=1
+    D24  test_decision_activation.PolicyEvidenceReportTests    exit=1
+
+    tests/test_decision_workbench.py   No such file
+    tests/test_decision_approval.py    No such file
+    tests/test_decision_activation.py  No such file
+
+Pins at the phase boundary: `bin/workflow_eval.py` 4275 lines
+`3653a08bb4a9ed9a1784336173d4bc42`, `bin/decision_policy.py`
+`5768addb61293c3670adb0e229e2384f`, `bin/kit_contract.py`
+`8644823d02e36f973ac3522ff51a3149`.
+
+**PLAN.md's fence for this phase, re-read from disk at the boundary: "Shared-module changes run
+sequentially; phase review precedes the next phase."** All five of D20–D24 extend
+`bin/workflow_eval.py`, so none of them may be dispatched in parallel with another — this is the
+one phase where the kit explicitly forbids the fan-out the loop otherwise allows.
+
+Carry into Phase 5, from D19's answer to the F8 shape: when a task must honour an invariant that
+another owner already computes, prefer **relay-and-refuse** — take the other owner's result as an
+argument, relay it verbatim, and refuse to relay what violates the invariant — over either
+reaching across for a function call or writing a second implementation pinned equivalent. It
+leaves nothing to drift. D20–D24 will face this question repeatedly against `workflow_eval`.
+
+## Phase 4 review — adjudicated
+
+**The "one pattern, three instances" reading I carried was WRONG, and the correction is
+load-bearing because the two shapes need opposite fixes.**
+
+- **Shape A — the name is broader than the check.** Tell: a field, docstring or vocabulary
+  promises categorically what the code inspects partially. Fix: scope the name, pin the scope with
+  an exact-partition test. D19's `operator_plan` is this and was fixed correctly.
+- **Shape B — the enforcement point is not on the path, and the evidence it consults is
+  unauthenticated.** Tell: "zero production callers" plus a sibling entry point that bypasses.
+  **Fix: a call site and a re-derivation, never a name.** Phase 2's F4 is this. D18's
+  `live_requirements` is this.
+
+Merging them is what made a Shape B defect look like it was closed by renaming. F4 was never
+"closed at the naming level"; it was RELOCATED to a checkpoint that is off the path and thin.
+
+**F1 HIGH — CONFIRMED by me, fixing now.** Four of five live-run preconditions are discharged by
+unauthenticated caller dicts. My AST check: `trial_cohort`, `_certification_evidence`,
+`live_requirements`, `build_trial_protocol` and `require_runnable` call NONE of
+`verify_manifest` / `require_held_out` / `manifest_digest` — all three of which are defined **in
+that same module**. The `held-out-evidence` row names `workflow_eval.require_held_out (D06)` as
+its owner, reports `satisfied: True`, and never calls it. `trial_cohort` sets `frozen: True`
+because a `manifest` argument was PASSED, not because anything is frozen. A forged manifest with
+`sha = "0"*64` is accepted and its declared sha is never compared to its derived one.
+**This corrects my own sign-off.** I accepted D18's "emptying blockers AND recomputing sha is not
+caught" as a properly disclosed limit. True but misframed: content addressing is not the weak
+link, because `build_trial_protocol` computes a CORRECT digest over forged inputs. The
+unauthenticated evidence sits inside the digest. Keep the digest check; add the consultation.
+
+**F2 HIGH — CONFIRMED by me, queued behind F1 (same test file).** Two halves. (a) D19's
+`recovery_report` closing `assert_no_causal_claim` is unpinned: replacing it with `return report`
+leaves 804 tests green, yet it IS load-bearing — `full_task_study`, `comparisons` and `slices`
+are copied verbatim from caller arguments and this call is the only refusal. Same inversion the
+D14 verifier hit. (b) **`CAUSAL_TOKENS` misses the ordinary spellings.** My probe: REFUSED
+`caused_by`, `because`, `due-to`, `explains`, `therefore`; **ACCEPTED `cause`, `root_cause`,
+`rootcause`, `led_to`, `resulted_in`, `triggered_by`, `effect_of`, `attributable_to`**. The list
+has `caused`/`causedby`/`causes`/`causal` but not the base `cause`. D14's four demonstration
+spellings each happened to contain a listed token, which is exactly why the hole stayed invisible.
+Compare D16's `DEPENDENCY_TOKENS`, which does carry base forms.
+
+**F4 MEDIUM — AMENDS the Phase 5 carry-forward I wrote above. Relay-and-refuse is still the right
+precedent, but ONLY with two conditions it currently lacks:**
+1. **an exact-partition or equality test against the owner's own constant** — D19 already proved
+   this works, and that exact test is what found the third uncovered field my fix brief had
+   missed. D19 simply did not apply its own template to `RESOURCE_BASES`,
+   `ACCOUNTING_EVIDENCE_KEYS` and `ACCOUNTING_SCOPE_KEYS`, which are hand-copied and pinned to
+   nothing;
+2. **closure — an undeclared key or basis must be REFUSED, not silently dropped.** The relay is a
+   whitelist projection, so unknown fields vanish and the drift direction is silent
+   UNDER-REPORTING of resources. An undeclared sixth basis carrying `usd` relays without refusal,
+   straight through the guard that exists to stop exactly that.
+Without both, D20–D23 reproduce this five more times against `workflow_eval`.
+The review also qualified my question 4a correctly: `resource_evidence`'s relay guards are
+legitimately defensive rather than masked (the condition is unreachable from real output BY
+CONSTRUCTION, which is what makes it a defensive invariant assertion), but the honest label is
+**"checks presence, not closure"** — not "proven".
+
+**F6 MEDIUM — MY ERROR, fixed.** I appended new `outcome:` lines for D14–D17 instead of updating
+them in place, which is what Phases 1–3 did. Verdicts read correctly (last-wins) but
+`count_plan_budget_usage` sums every line: **31 dispatches reported against 27 real**. Four
+phantom dispatches. `kit_contract`'s own docstring states the invariant, citing Phase 1's F2:
+*nothing may write a line the reader has to ignore.* Nothing refuses today only because this kit
+declares no budget — and D17's finding is that no kit in this repo declares `max-model-calls`.
+Collapsed to one line per task; now 27, no duplicates, every verdict preserved.
+
+### Adjudications, recorded rather than deferred again
+
+**F3 (a refused decision cannot be recorded) — RESOLVED: record the decision, do NOT bump
+`CONTRACT_VERSION`.** Every Phase 4 consumer already handles `record=None` correctly —
+`join_row` emits `refusal-has-no-record` into both `censoring` and `unresolved`, and `_refusal`
+validates reasons and refuses an empty list. Making `selected` nullable turns that tested path
+into dead code. **There is no persisted `DecisionRecord` store anywhere**, so the honest answer
+to "where IS a refusal recorded" is: in the attempt ledger's event, in the unresolved+censored
+join row, and nowhere durable yet — and that sentence is the artifact the plan needed, not a
+nullable field. If D20 or D23 genuinely needs to persist a refusal, bump IN THAT TASK with both
+doc mirrors in the same commit (Phase 3's F4 proved that coupling four times out of four).
+
+**D17's `model` class — moot as posed; the real finding is worse.** `classify_dispatch` has
+exactly six returns: `auth`, `config`, `infrastructure`, `permission`, `unknown`, `None`. Never
+`verification`, never `model`. So the tuple change is unobservable. But `failure_class ==
+"verification"` reaches a record by exactly ONE route: `attempt_history.py:296`,
+`failure_class or pairs.get("failure")`, where `pairs["failure"]` is the driver's **NOTES prose
+outcome-line string** written from `rc != 0`. **So the only records that can ever trigger a repair
+come from the NOTES projection (`source="notes"`), not from a trusted ledger event** — and D17's
+header sentence claiming the trigger is written by `classify_dispatch` is false for the only class
+it accepts. Leave the tuple; correct the sentence; and adjudicate whether a NOTES-derived class
+satisfies the shared PLAN's "determined from trusted events and never by a semantic guess",
+because today it is the only thing that can satisfy the trigger at all.
+
+**The replay store still has no home — now a NAMED PHASE 5 PRECONDITION, not a carry-forward.**
+`runtime_data.STORES` has no `replay`, and `.gitignore` carries no `/replay/`. A `replay/`
+directory created in the repo root would become the store AND be tracked by git, against the
+invariant that every local store is personal data living outside the plugin tree. D20 is the
+first plausible writer.
+
+**F8 — yes, the uncalled modules are a phase finding, and here is the measurement.** Five modules,
+**69 public symbols, 7382 lines**, referenced in `bin/` only by each other and by `release_gate`
+(which reads version strings and calls nothing). None has a `__main__`, so none has `--help` or
+`--demo`. 11 of 66 `bin/` modules lack `__main__`, so being a library is not unprecedented — but
+every other one has a production consumer that invokes it (`safe_paths` <- 16 modules,
+`codex_policy` <- 7, `journal_sources` <- 5). These five have **zero in-edges from the running
+system**. Phase 5 adds to the island and D28–D30 are release checks over a feature set nothing
+exercises. **Phase 5 gate: one task produces a traced production path, or at minimum a `--demo`
+for `decision_eval`/`decision_context`; failing that, the plan records that V1 ships these as an
+offline library and names what D28–D30 exercise instead.**
+
+**F9 — `JOIN_VERSION` non-bump RATIFIED**, with the release note already written into `559a51b`'s
+body: `/1` now denotes two row shapes inside one kit run and a release must say so.
+**F10 — `caps` is a brief/acceptance mismatch, not an acceptance failure.** One relayed field
+beside `resources`; housekeeping.
+
+**Standing rule, new: a shared scratchpad is not safe while agents run in parallel.** A parallel
+agent overwrote a generic `scratchpad/mutate.py` and deleted `scratchpad/mut/` mid-run, which
+invalidated one of the reviewer's sweeps. Every agent gets a UNIQUELY NAMED scratchpad
+subdirectory from now on.
+
+**Housekeeping deferred to the next green boundary:** F3's untested closed-vocabulary refusals
+(11 survivors in D18's section, 16 in D19's, 0 in D17's — D17's `review=clean` is earned), F5's
+bare `complete` key, F10's cap field.
+reviewer: P4 model=opus findings=10 confirmed=8 result=accepted
+
+### Phase 4 review findings — closed before Phase 5, suite 5009 OK
+
+**F1 closed.** `trial_cohort` now calls `verify_manifest`; `_certification_evidence` now calls
+`exec_policy.certify_profile` over a sentinel REPORT (the seam renamed `certification=` →
+`sentinel_report=`). My check: a manifest with only its declared sha tampered now yields
+`verified: False, frozen: False, item_count: 0` with a `digest` finding, while the honest one
+still gives `frozen: True` and 6 items — refused without being over-broad. `frozen` now means "an
+immutable manifest was supplied AND it verifies"; it used to mean "a `manifest` argument was
+passed". New closed code `manifest-unverified`, deliberately distinct from `no-held-out-evidence`.
+`CONFINED_DISPATCH_WIRED` still `False`.
+**Honest residual, made machine-checkable rather than prose:** every requirement row now carries
+`re_derived_by`, naming the function that re-derived it or `None`. `whole-task-study` and
+`operator-declarations` are `None` — they remain caller assertions, and nothing offline can
+re-derive that a run happened. The sentinel report itself is still unauthenticated; a fabricated
+report consistent across backends, denial signals and control legs still certifies.
+
+**F2 closed, and BOTH halves were needed.** All three caller-supplied routes into
+`recovery_report` are pinned. Seven tokens added — `cause`, `rootcause`, `ledto`, `resultedin`,
+`triggeredby`, `effectof`, `attributableto`. **The claim was narrowed in three places**, because
+widening a list under a categorical claim just moves the line. `causation`, `causality`,
+`proximate_cause` and `why_it_passed` are still uncaught and are now DISCLOSED and demonstrated
+by a test rather than promised away — the redaction idiom: shape-matching cannot prove absence.
+Causal words in VALUES still pass, as designed.
+
+**F4 closed — and my description of it was wrong in a way worth keeping.** I said the drift was
+silent UNDER-reporting. That holds for the projected fields, but `totals` is `_copy`'d WHOLESALE,
+so an undeclared sixth basis carrying `usd: 12.5` came through INTACT, past the priced-usd sweep,
+into the report. **Two opposite drift directions in one function.** So the Phase 5 rule is not
+"projections under-report" — it is **any relay that does not check closure is asserting
+completeness it did not check**, and which way it lies depends on whether the field was projected
+or copied. Closure now refuses unknown keys and unknown bases (`unknown-field`); the three
+mirrored vocabularies are pinned against the owner — `RESOURCE_BASES == wf.BASES`, and the two
+field sets against `arm_accounting`'s real output, which is stronger than a constant because a
+constant can drift from the literal it describes.
+
+**F5 closed:** `complete` → `own_declarations_complete`, gone rather than shadowed. There were
+FOUR assertion sites, not the three I named.
+
+**THE PHASE 5 TEMPLATE IS THREE PARTS, NOT ONE.** `empty_totals()` carries a sixth key `note`
+that is not a basis, so a naive `set(totals) - set(RESOURCE_BASES)` closure check would have
+refused every well-formed accounting. **Only the positive control catches an over-broad guard.**
+So D20–D24 inherit: (1) relay-and-refuse, (2) pinned to the owner by exact partition, (3) with a
+positive control that provably bites. Here the positive control is killed by 7 of 12 mutants.
+
+**My briefs were corrected SIX times across these fixes**, every time because the brief said
+verify rather than assume:
+1. I claimed adding `cause` would catch `root_cause` "via the existing normalisation". FALSE —
+   `_is_causal_key` matches a WHOLE reduced key or dotted segment, never a substring, so
+   `rootcause` needed its own token. The most likely real-world spelling would still be accepted.
+2. I relayed the review's claim that `slices` was a second, separate hole. It is ONE vocabulary
+   hole reachable by three routes; the review had probed `slices` with a base form and the others
+   with `caused_by`.
+3. Three assertion sites for the rename; there were four.
+4. The drift direction was both ways, not one (above).
+5. `workflow_eval` declares no constant for two of the three field sets.
+6. `empty_totals()`'s non-basis `note` key (above).
+
+**And my own probes were shallow FIVE times in one sitting** — passing a `where=` argument
+`resource_evidence` does not take, hand-rolling an accounting missing required fields, a string
+where an arm dict belongs, `_record()` without its two positional arguments. Every failure was a
+real guard refusing my guess. **Build the input with the real generator; a hand-rolled input
+tests your guess about the shape, a generated one tests the code.**
+
+**Still open, carried to Phase 5:** scope NAMES in the relay are not closed (an invented scope
+label relays, though every block under it still passes all three closure checks and both
+invariant guards, so no unvouched figure gets in); `calibration_report` has no adversarial input
+route today, so its label test records the call site rather than proving it end-to-end; and
+nothing calls `resource_evidence` or `recovery_report` in production, so "the relay refuses" is
+forward work, not an operational property.

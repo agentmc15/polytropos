@@ -31,11 +31,21 @@ HOW EACH ACCEPTANCE TERM IS MADE STRUCTURAL RATHER THAN ASSERTED:
     writer. `write_envelope` stays the one envelope writer.
 
   * D07 REQUIRED LIVE -- a live run's requirements name D07's certification and D06's held-out
-    controller SIDE BY SIDE, and satisfying one never discharges the other (Phase 2 F4). The
-    certification must be what `exec_policy.certify_profile` actually returns; a hand-written
-    `{"certified": True}` satisfies nothing. Nothing is wired: `gate_protected_dispatch` applies
-    no confinement and ledgers nothing, so `CONFINED_DISPATCH_WIRED` is False and the flag is
-    pinned to the code it describes in both directions.
+    controller SIDE BY SIDE, and satisfying one never discharges the other (Phase 2 F4). Nothing
+    is wired: `gate_protected_dispatch` applies no confinement and ledgers nothing, so
+    `CONFINED_DISPATCH_WIRED` is False and the flag is pinned to the code it describes in both
+    directions.
+
+  * THE EVIDENCE IS RE-DERIVED, NOT BELIEVED (Phase 4). `require_runnable` re-hashes the
+    DOCUMENT; that left the evidence the document is built from unchecked, and four of the five
+    requirement rows were dischargeable by a caller dict nobody consulted. So a manifest whose
+    declared and derived digests disagree now yields NO cohort and its own blocker -- asserted
+    here as a blocker SET beside an otherwise-satisfiable control, because a new blocker that
+    only ever appears beside `confining-dispatch-unwired` proves nothing about itself -- and the
+    protected-profile row is `exec_policy.certify_profile`'s verdict over a sentinel REPORT, so
+    the reviewer's hand-written `{"certified": True, "required": 7, "satisfied": 7,
+    "blocking": []}` satisfies nothing. What is still only a caller's word says so in
+    `re_derived_by`, and a test holds every row to declaring which side it is on.
 
 Synthetic throughout: every fixture is built in this file, no temp home or store is created, no
 file outside the repository is read, and nothing is installed.
@@ -44,6 +54,7 @@ file outside the repository is read, and nothing is installed.
 import ast
 import importlib.util
 import inspect
+import json
 import unittest
 from pathlib import Path
 
@@ -52,6 +63,12 @@ WF_PATH = ROOT / "bin" / "workflow_eval.py"
 WF_SPEC = importlib.util.spec_from_file_location("workflow_eval_trial_protocol", WF_PATH)
 wf = importlib.util.module_from_spec(WF_SPEC)
 WF_SPEC.loader.exec_module(wf)
+
+#: D07's module, reached through `wf._ep()` on purpose: that is the SAME module object the D18
+#: section consults, so a fixture built from `ep.SENTINELS` here is built from the very plan
+#: `exec_policy.certify_profile` will check the report against. Loading `bin/exec_policy.py` a
+#: second time would give a different module object and a fixture that only looked equivalent.
+ep = wf._ep()
 
 #: decision-improvement D19 (`RecoveryReportTests`, below) reads `bin/decision_eval.py`'s own
 #: loader for the same reason `tests/test_decision_eval.py` does: `bin/` is not a package, so a
@@ -266,14 +283,60 @@ def _manifest(*, leak=False, partition_items=2):
                              acceptance="fixture-check", created_by="test")
 
 
-def _certification(**over):
-    """The shape `exec_policy.certify_profile` actually returns, for a fully satisfied plan."""
-    cert = {"profile": "fixture-profile", "backend": "fixture-backend", "certified": True,
-            "required": 21, "satisfied": 21, "blocking": [],
-            "not_proven": ["general filesystem confidentiality is not proven"],
-            "label": "a hash is not enforcement"}
-    cert.update(over)
-    return cert
+def _sentinel_report(*, backend="fixture-backend", rows=None, **over):
+    """A synthetic sentinel REPORT that `exec_policy.certify_profile` certifies.
+
+    Built from `ep.sentinels_for(backend)` rather than hand-listed, so the plan this fixture
+    answers is the plan D07 will ask for. `backend` is a fictional name on purpose: a report that
+    named a real backend would look like a claim about this host, and nothing here ran on any
+    host. `sentinels_for` selects on the backend string alone, so a fictional one yields every
+    backend-agnostic sentinel and the fixture stays identical on every platform.
+
+    Nothing in this file runs a sentinel. `exec_policy.run_sentinels` spawns processes into a
+    temporary tree; `exec_policy.certify_profile` is pure over a report dict, and it is the only
+    part of D07 anything here touches.
+    """
+    plan = ep.sentinels_for(backend)
+    if rows is None:
+        rows = []
+        for sentinel in plan:
+            denies = sentinel.expect == "deny"
+            rows.append({
+                "id": sentinel.id, "role": sentinel.role, "expect": sentinel.expect,
+                "outcome": "denied" if denies else "allowed", "why": sentinel.why,
+                "detail": None, "confinement": backend,
+                "control": "succeeded" if denies else "not-run",
+                "errno": "EPERM" if denies else None,
+                "denial_signal": "EPERM" if denies else None,
+                "effect_observed": False,
+            })
+    report = {
+        "version": ep.SENTINEL_VERSION, "profile": "fixture-profile",
+        "status": ep.PROFILE_ENFORCED, "mode": "enforced", "backend": backend,
+        "platform": "fixture-platform", "reason": None, "missing": [],
+        "enforcement_label": ep.NOT_ISOLATION_LABEL,
+        "not_proven": list(ep.SENTINEL_NOT_PROVEN),
+        "controlled_tree_intact": True, "sentinels": rows,
+    }
+    report.update(over)
+    return report
+
+
+def _forged_manifest(*, honest=None, resha=False, **content_over):
+    """An honest manifest with its content rewritten and its `sha` left as it was.
+
+    This is the reviewer's forgery reduced to its mechanism: the declared digest and the derived
+    digest no longer agree, and before this task nothing compared them. `resha=True` recomputes
+    the digest over the rewritten content, which is the DIFFERENT attack -- a consistent rewrite,
+    which `verify_manifest`'s own docstring says it cannot catch and which this file never claims
+    it does.
+    """
+    forged = json.loads(json.dumps(honest if honest is not None else _manifest()))
+    forged["content"].update(content_over)
+    if resha:
+        forged["sha"] = wf.manifest_digest(forged["content"])
+        forged["id"] = forged["sha"][:16]
+    return forged
 
 
 def _declarations(**over):
@@ -286,7 +349,7 @@ def _spec(**over):
     inputs = over.pop("inputs", None) or _inputs()
     kwargs = {
         "inputs": inputs, "arms": over.pop("arms", None) or _arms(inputs),
-        "manifest": None, "partition": "promotion", "cohort": None, "certification": None,
+        "manifest": None, "partition": "promotion", "cohort": None, "sentinel_report": None,
         "full_task_study_run": None, "operator_declarations": {}, "created_by": "test",
         "created_at": "2026-01-01T00:00:00+00:00",
     }
@@ -331,7 +394,7 @@ class ThreeArmProtocolTests(unittest.TestCase):
             manifest = _manifest()
             spec = wf.build_trial_protocol(
                 inputs=inputs, arms=arms, manifest=manifest, partition="promotion", cohort=None,
-                certification=_certification(), full_task_study_run=None,
+                sentinel_report=_sentinel_report(), full_task_study_run=None,
                 operator_declarations=_declarations(), created_by="test",
                 created_at="2026-01-01T00:00:00+00:00")
             wf.protocol_ref(spec)
@@ -597,6 +660,9 @@ class ThreeArmProtocolTests(unittest.TestCase):
         self.assertFalse(cohort["frozen"])
         self.assertEqual(cohort["item_count"], 0)
         self.assertIsNone(cohort["manifest_ref"])
+        self.assertIsNone(cohort["verified"], "nothing was supplied, so nothing verified or "
+                                              "failed to verify; False would say it failed")
+        self.assertIsNone(cohort["verification"])
         blockers = {b["blocker"] for b in _spec(manifest=None)["content"]["blockers"]}
         self.assertIn("cohort-not-frozen", blockers)
 
@@ -645,6 +711,108 @@ class ThreeArmProtocolTests(unittest.TestCase):
         self.assertEqual(cohort["items"], sorted(chosen))
         self.assertEqual(cohort["item_count"], 2)
 
+    # -- the manifest is re-verified, not taken on the caller's word (Phase 4) --------------------
+
+    def test_a_manifest_that_does_not_match_its_own_digest_yields_no_cohort(self):
+        """THE PHASE 4 DEFECT, IN ONE ASSERTION. `trial_cohort` used to report `frozen: True`
+        because a `manifest` argument was passed. It now reports what `verify_manifest` found.
+
+        The forgery is the reviewer's, reduced to its mechanism: the content is rewritten and the
+        declared `sha` is left where it was, so the declared and derived digests disagree. Before
+        this task nothing compared them, and two invented item ids were counted as held-out
+        evidence.
+        """
+        forged = _forged_manifest(partitions={"promotion": ["invented-a", "invented-b"]})
+        self.assertNotEqual(forged["sha"], wf.manifest_digest(forged["content"]),
+                            "the fixture is not forged, so this test proves nothing")
+        cohort = wf.trial_cohort(forged, "promotion", cohort=None)
+        self.assertIs(cohort["frozen"], False)
+        self.assertIs(cohort["verified"], False)
+        self.assertEqual([f["kind"] for f in cohort["verification"]][:1], ["digest"])
+        self.assertEqual(cohort["items"], [])
+        self.assertEqual(cohort["item_count"], 0)
+        self.assertEqual(cohort["groups"], [])
+        self.assertEqual(cohort["group_count"], 0)
+        self.assertIsNone(cohort["quarantined"])
+        self.assertEqual(cohort["verified_by"], "workflow_eval.verify_manifest")
+
+    def test_an_honest_manifest_is_verified_rather_than_merely_present(self):
+        """The control on the check above: it is not something that refuses every manifest."""
+        cohort = wf.trial_cohort(_manifest(partition_items=3), "promotion", cohort=None)
+        self.assertIs(cohort["verified"], True)
+        self.assertEqual(cohort["verification"], [])
+        self.assertIs(cohort["frozen"], True)
+        self.assertEqual(cohort["item_count"], 3)
+
+    def test_the_forged_manifest_blocker_is_reachable_on_its_own(self):
+        """ANTI-MASKING. A blocker that only ever appears beside `confining-dispatch-unwired`
+        proves nothing about itself, so this asserts the blocker SET over a specification whose
+        every other satisfiable precondition IS satisfied. The control beside it is the same
+        specification with the honest manifest: exactly one blocker, and it is the one no caller
+        can discharge.
+        """
+        satisfiable = {"sentinel_report": _sentinel_report(),
+                       "full_task_study_run": {"run_id": "r1", "results_ref": "sha1"},
+                       "operator_declarations": _declarations()}
+        honest = _spec(manifest=_manifest(), **satisfiable)
+        self.assertEqual({b["blocker"] for b in honest["content"]["blockers"]},
+                         {"confining-dispatch-unwired"},
+                         "the control is already blocked by something else, so the case below "
+                         "could not tell a new blocker from a masked one")
+        forged = _spec(manifest=_forged_manifest(
+            partitions={"promotion": ["invented-a", "invented-b"]}), **satisfiable)
+        self.assertEqual({b["blocker"] for b in forged["content"]["blockers"]},
+                         {"manifest-unverified", "confining-dispatch-unwired"})
+
+    def test_a_forged_manifest_is_never_reported_as_an_empty_partition(self):
+        """The two facts a reader must be able to tell apart: a manifest that fails its own digest
+        and an honest manifest whose partition is empty. One code for both would read a fabricated
+        cohort as a thin one."""
+        forged = _spec(manifest=_forged_manifest(
+            partitions={"promotion": ["invented-a"]}), sentinel_report=_sentinel_report())
+        codes = {b["blocker"] for b in forged["content"]["blockers"]}
+        self.assertIn("manifest-unverified", codes)
+        self.assertNotIn("no-held-out-evidence", codes)
+        self.assertNotIn("cohort-not-frozen", codes)
+        detail = next(b["detail"] for b in forged["content"]["blockers"]
+                      if b["blocker"] == "manifest-unverified")
+        self.assertIn("digest", detail)
+        self.assertIn("verify_manifest", detail)
+
+        empty = _spec(manifest=_manifest(leak=True), sentinel_report=_sentinel_report())
+        empty_codes = {b["blocker"] for b in empty["content"]["blockers"]}
+        self.assertIn("no-held-out-evidence", empty_codes)
+        self.assertNotIn("manifest-unverified", empty_codes)
+
+    def test_every_finding_verify_manifest_can_return_blocks_not_only_the_digest_one(self):
+        """`verify_manifest` returns several kinds. The blocker is `any finding`, not `a digest
+        finding`, so a consistently re-hashed manifest whose partitions disagree with its items is
+        caught too -- which is the forgery that survives a recomputed digest."""
+        resha = _forged_manifest(resha=True,
+                                 partitions={"promotion": ["invented-a", "invented-b"]})
+        self.assertEqual(resha["sha"], wf.manifest_digest(resha["content"]),
+                         "this case is about a CONSISTENT rewrite; a stale sha would be the "
+                         "other test")
+        kinds = {f["kind"] for f in wf.verify_manifest(resha)}
+        self.assertNotIn("digest", kinds)
+        self.assertTrue(kinds, "the rewrite left nothing for verify_manifest to find")
+        spec = _spec(manifest=resha, sentinel_report=_sentinel_report())
+        self.assertIn("manifest-unverified",
+                      {b["blocker"] for b in spec["content"]["blockers"]})
+
+    def test_a_manifest_too_malformed_to_verify_is_refused_rather_than_crashing(self):
+        """A caller dict that `verify_manifest` cannot even walk gets this module's own refusal.
+        `assertIs(type(...))` rules out the `AttributeError` the unguarded call would raise."""
+        for why, bad in {"items is a list": {"v": wf.MANIFEST_VERSION, "id": "x", "sha": "y",
+                                             "content": {"items": ["not-a-mapping"]}},
+                         "content is a list": {"v": wf.MANIFEST_VERSION, "id": "x", "sha": "y",
+                                               "content": []},
+                         "manifest is a string": "manifest-0001"}.items():
+            with self.subTest(why=why):
+                with self.assertRaises(wf.EvalError) as caught:
+                    wf.trial_cohort(bad, "promotion", cohort=None)
+                self.assertIs(type(caught.exception), wf.EvalError)
+
     # -- D07 required live, paired with D06 (Phase 2 F4) ----------------------------------------
 
     def test_a_live_run_requires_the_protected_profile_and_the_held_out_cohort_together(self):
@@ -655,45 +823,142 @@ class ThreeArmProtocolTests(unittest.TestCase):
         self.assertEqual(rows["held-out-evidence"]["pairs_with"], "protected-profile-certified")
         self.assertIn("certify_profile", rows["protected-profile-certified"]["owner"])
         self.assertIn("require_held_out", rows["held-out-evidence"]["owner"])
+        self.assertIn("verify_manifest", rows["held-out-evidence"]["owner"])
+
+    def test_every_requirement_row_says_which_function_re_derived_its_verdict(self):
+        """Phase 4's rule, made readable rather than asserted in prose: a row that says
+        `satisfied` over evidence nothing consulted is a name broader than its check.
+
+        The three rows that ARE re-derived name the function that did it, and the function is
+        checked to exist rather than merely to be spelled. The two that cannot be re-derived
+        offline carry `None` and say what that means, instead of reading like the other three.
+        """
+        rows = {r["requirement"]: r for r in _spec()["content"]["live_requirements"]}
+        self.assertEqual(len(rows), 5)
+        derived = {
+            "held-out-evidence": ("workflow_eval", "verify_manifest"),
+            "protected-profile-certified": ("exec_policy", "certify_profile"),
+            "confining-and-ledgered-dispatch": ("workflow_eval", "CONFINED_DISPATCH_WIRED"),
+        }
+        for name, (module, attr) in derived.items():
+            with self.subTest(requirement=name):
+                self.assertEqual(rows[name]["re_derived_by"], f"{module}.{attr}")
+                self.assertTrue(hasattr(wf if module == "workflow_eval" else ep, attr),
+                                f"{module}.{attr} does not exist, so the row names nothing")
+        for name in ("whole-task-study", "operator-declarations"):
+            with self.subTest(requirement=name):
+                self.assertIsNone(rows[name]["re_derived_by"])
+                self.assertIn(wf.UNDERIVED_EVIDENCE_NOTE, rows[name]["note"])
+        self.assertEqual(sorted(rows), sorted(set(derived) | {"whole-task-study",
+                                                              "operator-declarations"}),
+                         "a requirement row was added or renamed without saying whether anything "
+                         "re-derives it")
 
     def test_satisfying_the_profile_alone_never_discharges_the_held_out_requirement(self):
-        spec = _spec(manifest=None, certification=_certification())
+        spec = _spec(manifest=None, sentinel_report=_sentinel_report())
         rows = {r["requirement"]: r for r in spec["content"]["live_requirements"]}
         self.assertTrue(rows["protected-profile-certified"]["satisfied"])
         self.assertFalse(rows["held-out-evidence"]["satisfied"])
         self.assertIn("cohort-not-frozen", {b["blocker"] for b in spec["content"]["blockers"]})
 
     def test_satisfying_the_cohort_alone_never_discharges_the_profile_requirement(self):
-        spec = _spec(manifest=_manifest(), certification=None)
+        spec = _spec(manifest=_manifest(), sentinel_report=None)
         rows = {r["requirement"]: r for r in spec["content"]["live_requirements"]}
         self.assertTrue(rows["held-out-evidence"]["satisfied"])
         self.assertFalse(rows["protected-profile-certified"]["satisfied"])
         self.assertIn("protected-profile-uncertified",
                       {b["blocker"] for b in spec["content"]["blockers"]})
 
-    def test_a_certification_claim_that_is_not_d07s_arithmetic_satisfies_nothing(self):
-        """The third case is the one a coarser fixture misses. `{"certified": True}` alone is
-        caught twice over -- by the missing-keys check AND, downstream, by the absent sentinel
-        plan -- so it proves nothing about the first. A claim whose ARITHMETIC is all present and
-        which merely never names a profile or a backend reaches the first check alone."""
-        nameless = {"certified": True, "required": 21, "satisfied": 21, "blocking": []}
-        for bad, why in (({"certified": True}, "missing everything"),
-                         (nameless, "names no profile and no backend"),
-                         (_certification(certified="yes"), "not literally True"),
-                         (_certification(required=0, satisfied=0), "no sentinel plan"),
-                         (_certification(satisfied=20), "partially satisfied"),
-                         (_certification(blocking=[{"id": "x", "why": "y"}]), "blocking finding")):
-            with self.subTest(why=why):
-                spec = _spec(manifest=_manifest(), certification=bad)
-                self.assertIn("protected-profile-uncertified",
-                              {b["blocker"] for b in spec["content"]["blockers"]})
-        row = next(r for r in _spec(manifest=_manifest(), certification=nameless)
-                   ["content"]["live_requirements"]
+    def test_a_hand_written_certification_result_certifies_nothing(self):
+        """THE PHASE 4 DEFECT, VERBATIM. This dict is the certification the reviewer handed
+        `build_trial_protocol`, and under the old code it discharged D07 outright: the row's
+        arithmetic was internally consistent, so the shape check passed, and `exec_policy` was
+        never called. It is now fed in where the SENTINEL REPORT goes, and
+        `exec_policy.certify_profile` reads it as what it is -- a report with no sentinels in it
+        -- and refuses. The boolean the forger wrote is not consulted at any point.
+        """
+        forged = {"profile": "made-up", "backend": "none", "certified": True, "required": 7,
+                  "satisfied": 7, "blocking": []}
+        spec = _spec(manifest=_manifest(), sentinel_report=forged,
+                     full_task_study_run={"run_id": "r1", "results_ref": "sha1"},
+                     operator_declarations=_declarations())
+        row = next(r for r in spec["content"]["live_requirements"]
                    if r["requirement"] == "protected-profile-certified")
-        self.assertIn("missing ['profile', 'backend']", row["reason"])
+        self.assertFalse(row["satisfied"])
+        self.assertIsNone(row["evidence"])
+        self.assertIn("certify_profile refused", row["reason"])
+        self.assertEqual({b["blocker"] for b in spec["content"]["blockers"]},
+                         {"protected-profile-uncertified", "confining-dispatch-unwired"})
+
+    def test_the_certification_verdict_is_exec_policys_over_the_report_not_the_callers(self):
+        """Each case breaks ONE thing D07 checks and nothing else, so each proves that
+        `certify_profile` -- not a shape check in this module -- is what looked.
+
+        A `certified: True` planted ON the report is the sharpest of them: the old code read that
+        key, this code reads the sentinels underneath it, and the two disagree on purpose.
+        """
+        backend = "fixture-backend"
+        good = _sentinel_report()
+
+        def broken(mutate, **over):
+            rows = json.loads(json.dumps(good["sentinels"]))
+            mutate(rows)
+            return _sentinel_report(rows=rows, **over)
+
+        def _first_denial(rows):
+            return next(r for r in rows if r["expect"] == "deny")
+
+        cases = {
+            "not enforced": _sentinel_report(status="unavailable", reason="no backend"),
+            "controller tree not intact": _sentinel_report(controlled_tree_intact=False),
+            "a sentinel missing from the plan": broken(lambda rows: rows.pop(0)),
+            "a denial that did not happen": broken(
+                lambda rows: _first_denial(rows).update(outcome="allowed")),
+            "confined by something else": broken(
+                lambda rows: _first_denial(rows).update(confinement="trusted-host")),
+            "no control leg to attribute it": broken(
+                lambda rows: _first_denial(rows).update(control="not-run")),
+            "a non-zero exit read as a denial": broken(
+                lambda rows: _first_denial(rows).update(denial_signal="ENOENT")),
+            "no sentinels at all": _sentinel_report(rows=[]),
+            "no plan for this backend": _sentinel_report(backend=None, rows=[]),
+            "certified planted on the report": broken(
+                lambda rows: _first_denial(rows).update(outcome="leaked"), certified=True),
+        }
+        for why, report in cases.items():
+            with self.subTest(why=why):
+                self.assertFalse(ep.certify_profile(report)["certified"],
+                                 "the fixture is not actually broken, so this case proves "
+                                 "nothing about what refused it")
+                spec = _spec(manifest=_manifest(), sentinel_report=report)
+                row = next(r for r in spec["content"]["live_requirements"]
+                           if r["requirement"] == "protected-profile-certified")
+                self.assertFalse(row["satisfied"])
+                self.assertIsNone(row["evidence"])
+        control = _spec(manifest=_manifest(), sentinel_report=_sentinel_report(backend=backend))
+        row = next(r for r in control["content"]["live_requirements"]
+                   if r["requirement"] == "protected-profile-certified")
+        self.assertTrue(row["satisfied"],
+                        "the unbroken fixture must certify, or every case above passes because "
+                        "nothing could ever satisfy this requirement")
+
+    def test_a_report_this_module_cannot_read_is_refused_rather_than_crashing(self):
+        """Rubbish shaped vaguely like a report gets this module's own refusal. `certify_profile`
+        indexes `row["id"]`, so a sentinel list of strings raises inside D07; the caller still
+        sees an `EvalError`-free requirement row with a reason, never a stack trace."""
+        for why, report in {"sentinels are strings": _sentinel_report(rows=["not-a-row"]),
+                            "sentinels is not a list": _sentinel_report(rows=None,
+                                                                       sentinels=7),
+                            "empty dict": {}}.items():
+            with self.subTest(why=why):
+                row = next(r for r in _spec(manifest=_manifest(), sentinel_report=report)
+                           ["content"]["live_requirements"]
+                           if r["requirement"] == "protected-profile-certified")
+                self.assertFalse(row["satisfied"])
+                self.assertIsInstance(row["reason"], str)
 
     def test_a_complete_certification_is_carried_as_a_reference_not_a_report(self):
-        spec = _spec(manifest=_manifest(), certification=_certification())
+        spec = _spec(manifest=_manifest(), sentinel_report=_sentinel_report())
         row = next(r for r in spec["content"]["live_requirements"]
                    if r["requirement"] == "protected-profile-certified")
         self.assertTrue(row["satisfied"])
@@ -720,7 +985,7 @@ class ThreeArmProtocolTests(unittest.TestCase):
                          "the same edit, together with a confining runner")
 
     def test_a_specification_always_refuses_to_be_treated_as_a_run(self):
-        spec = _spec(manifest=_manifest(), certification=_certification(),
+        spec = _spec(manifest=_manifest(), sentinel_report=_sentinel_report(),
                      full_task_study_run={"run_id": "r1", "results_ref": "sha1"},
                      operator_declarations=_declarations())
         blockers = {b["blocker"] for b in spec["content"]["blockers"]}
@@ -744,7 +1009,7 @@ class ThreeArmProtocolTests(unittest.TestCase):
         The specification is content-addressed, so this is detectable and the check is the whole
         fix: re-hash `content` the way `build_trial_protocol` hashed it and refuse a mismatch.
         """
-        spec = _spec(manifest=_manifest(), certification=_certification(),
+        spec = _spec(manifest=_manifest(), sentinel_report=_sentinel_report(),
                      full_task_study_run={"run_id": "r1", "results_ref": "sha1"},
                      operator_declarations=_declarations())
         honest_sha = spec["sha"]
@@ -779,11 +1044,11 @@ class ThreeArmProtocolTests(unittest.TestCase):
         shapes = {
             "nothing supplied": {},
             "everything satisfiable satisfied": {
-                "manifest": _manifest(), "certification": _certification(),
+                "manifest": _manifest(), "sentinel_report": _sentinel_report(),
                 "full_task_study_run": {"run_id": "r1", "results_ref": "sha1"},
                 "operator_declarations": _declarations()},
             "leaking manifest quarantined": {
-                "manifest": _manifest(leak=True), "certification": _certification()},
+                "manifest": _manifest(leak=True), "sentinel_report": _sentinel_report()},
         }
         for label, over in shapes.items():
             with self.subTest(spec=label):
@@ -807,7 +1072,7 @@ class ThreeArmProtocolTests(unittest.TestCase):
         than of the digest. `cohort.held_out` is the nastiest field to flip -- it is what turns a
         fitting partition into a claim of held-out evidence -- and it is nowhere near `blockers`.
         """
-        spec = _spec(manifest=_manifest(), certification=_certification(),
+        spec = _spec(manifest=_manifest(), sentinel_report=_sentinel_report(),
                      full_task_study_run={"run_id": "r1", "results_ref": "sha1"},
                      operator_declarations=_declarations())
         honest_sha = spec["sha"]
@@ -845,6 +1110,49 @@ class ThreeArmProtocolTests(unittest.TestCase):
                     wf.require_runnable(case)
                 self.assertIs(type(caught.exception), wf.EvalError)
 
+    def test_a_content_that_is_not_a_mapping_is_refused_before_it_is_hashed(self):
+        """The test above does NOT pin this refusal, which is why it is here. With the
+        `content`-is-a-mapping check deleted, `{"content": [], "sha": "0"*64}` still raises
+        `EvalError` -- `_canonical([])` serialises fine, the digest simply mismatches, and the
+        TAMPERED path catches it for the wrong reason.
+
+        So this pins the refusal two ways. By MESSAGE: a document with no `content` mapping is
+        malformed, not forged, and calling it TAMPERED accuses a caller of something it did not
+        do. And by the case the digest check cannot reach: a list whose sha is CORRECT walks
+        straight past the mismatch and into `content.get("blockers")`, where an unguarded
+        `require_runnable` raises `AttributeError` -- not an `EvalError` -- at the caller.
+        """
+        with self.assertRaises(wf.EvalError) as caught:
+            wf.require_runnable({"content": [], "sha": "0" * 64})
+        message = str(caught.exception)
+        self.assertIn("`content` must be a mapping", message)
+        self.assertNotIn("TAMPERED", message)
+
+        honest_digest = wf._sha(wf._canonical([{"blocker": "x"}]))
+        with self.assertRaises(wf.EvalError) as caught:
+            wf.require_runnable({"content": [{"blocker": "x"}], "sha": honest_digest})
+        self.assertIs(type(caught.exception), wf.EvalError)
+        self.assertIn("`content` must be a mapping", str(caught.exception))
+        self.assertNotIn("TAMPERED", str(caught.exception),
+                         "a non-mapping content with a matching digest reached the blocker read")
+
+    def test_an_absent_or_blank_sha_is_malformed_and_never_reported_as_tampering(self):
+        """The same omission on the other guard. Deleting the `sha`-is-a-non-empty-string check
+        leaves `derived != claimed` true for every non-string, so `EvalError` is still raised --
+        and the document is reported as TAMPERED, which says a caller rewrote a specification
+        when what it actually did was hand in one with no digest at all. The distinction is the
+        whole reason the two refusals are written separately, so it is asserted by message."""
+        for why, case in {"absent": {"content": {"blockers": []}},
+                          "None": {"content": {}, "sha": None},
+                          "blank": {"content": {}, "sha": "   "},
+                          "an int": {"content": {}, "sha": 7}}.items():
+            with self.subTest(sha=why):
+                with self.assertRaises(wf.EvalError) as caught:
+                    wf.require_runnable(case)
+                message = str(caught.exception)
+                self.assertIn("`sha` must be a non-empty string", message)
+                self.assertNotIn("TAMPERED", message)
+
     def test_every_blocker_code_is_in_the_closed_vocabulary(self):
         spec = _spec()
         codes = {b["blocker"] for b in spec["content"]["blockers"]}
@@ -853,16 +1161,23 @@ class ThreeArmProtocolTests(unittest.TestCase):
 
     def test_each_blocker_can_be_produced_in_isolation(self):
         """A reason that only ever fires beside another proves nothing about itself."""
-        full = {"manifest": _manifest(), "certification": _certification(),
+        full = {"manifest": _manifest(), "sentinel_report": _sentinel_report(),
                 "full_task_study_run": {"run_id": "r1", "results_ref": "sha1"},
                 "operator_declarations": _declarations()}
         cases = {
             "cohort-not-frozen": {"manifest": None},
-            "protected-profile-uncertified": {"certification": None},
+            "manifest-unverified": {"manifest": _forged_manifest(
+                partitions={"promotion": ["invented-a"]})},
+            "no-held-out-evidence": {"manifest": _manifest(leak=True)},
+            "protected-profile-uncertified": {"sentinel_report": None},
             "full-task-study-not-run": {"full_task_study_run": None},
             "operator-declaration-missing": {"operator_declarations": _declarations(
                 sample_size=None)},
         }
+        self.assertEqual(sorted(set(cases) | {"confining-dispatch-unwired"}),
+                         sorted(wf.PROTOCOL_BLOCKERS),
+                         "a blocker code exists that no case here produces in isolation, so the "
+                         "closed vocabulary is wider than what this test exercises")
         for code, override in cases.items():
             with self.subTest(blocker=code):
                 spec = _spec(**{**full, **override})
@@ -1060,7 +1375,7 @@ class ThreeArmProtocolTests(unittest.TestCase):
     # -- the prospective whole-task study --------------------------------------------------------
 
     def test_the_whole_task_study_is_prospective_and_the_checkpoint_study_never_satisfies_it(self):
-        study = _spec(manifest=_manifest(), certification=_certification(),
+        study = _spec(manifest=_manifest(), sentinel_report=_sentinel_report(),
                       operator_declarations=_declarations())["content"]["full_task_study"]
         self.assertEqual(study["status"], "prospective")
         self.assertIsNone(study["run"])
@@ -1199,6 +1514,16 @@ def _rr_declarations(**over):
     return decl
 
 
+def _rr_simple_accounting():
+    """A WELL-FORMED `wf.arm_accounting` result, built by that function itself over one accepted
+    record. Two jobs: it is what the vocabulary pins below read their field names off (an actual
+    output, not a second hand-written copy of one), and it is the POSITIVE CONTROL every closure
+    refusal below is measured against -- a guard that refused this too would be over-broad and
+    would have broken the relay rather than tightened it."""
+    arm = _spec()["content"]["arms"][0]
+    return wf.arm_accounting(arm, [_record("i0", True, recovery=(0.10,))])
+
+
 def _rr_zero_accepted_accounting():
     arm = _spec()["content"]["arms"][0]
     return wf.arm_accounting(arm, [_record("i0", False, recovery=(2.0,))])
@@ -1249,12 +1574,71 @@ class RecoveryReportTests(unittest.TestCase):
                          "the shared and uncovered sets no longer partition D18's own seven")
         self.assertEqual(uncovered, {"primary_endpoint", "sample_size", "independent_evaluation"})
 
+    # -- and neither do the three accounting vocabularies ----------------------------------------
+    #
+    # THE SAME DEFECT ONE LAYER DOWN. `RESOURCE_BASES`, `ACCOUNTING_EVIDENCE_KEYS` and
+    # `ACCOUNTING_SCOPE_KEYS` are hand-written tuples in `bin/decision_eval.py` that must agree
+    # with `bin/workflow_eval.py`'s own constants and with `arm_accounting`'s actual output. They
+    # agreed by coincidence: nothing anywhere pinned them, so a basis or a field added, removed or
+    # renamed on the owner's side would have gone on relaying -- silently dropping the new name,
+    # in the direction that UNDER-reports resources. These four tests are the template the two
+    # tests above already proved out, applied to those three vocabularies: an exact partition or
+    # an exact equality against the owner's OWN constant or its OWN output, never a second copy
+    # of the names asserted against the first copy of the names.
+
+    def test_the_relayed_cost_bases_are_workflow_evals_own_five_exactly(self):
+        """`de.RESOURCE_BASES` mirrors `wf.BASES` on purpose (decision_eval reaches no sibling
+        function; see its `_we` docstring). Mirroring is only safe while something holds the two
+        equal, and until now nothing did."""
+        self.assertEqual(de.RESOURCE_BASES, wf.BASES)
+        self.assertEqual(len(set(de.RESOURCE_BASES)), len(de.RESOURCE_BASES),
+                         "a basis is listed twice")
+
+    def test_the_bases_and_the_declared_non_bases_exactly_partition_a_real_totals_block(self):
+        """The closure guard's own premise. `_assert_bases_kept_apart` now refuses any totals key
+        that is neither one of the five bases nor a declared non-basis, which is only correct if
+        those two sets together are exactly what `wf.empty_totals()` actually produces -- today
+        the five bases plus its own `note`. Asserted against a real block from the owner, in both
+        directions, so a sixth basis added there fails HERE rather than at a caller's relay."""
+        totals = wf.empty_totals()
+        bases, non_bases = set(de.RESOURCE_BASES), set(de.TOTALS_NON_BASIS_KEYS)
+        self.assertEqual(non_bases, {"note"})
+        self.assertEqual(bases & non_bases, set(), "a name is claimed both basis and non-basis")
+        self.assertEqual(bases | non_bases, set(totals),
+                         "RESOURCE_BASES + TOTALS_NON_BASIS_KEYS no longer covers a real "
+                         "workflow_eval totals block exactly")
+
+    def test_the_accounting_evidence_keys_are_exactly_arm_accountings_own_output_keys(self):
+        """Read off the owner's ACTUAL output rather than a constant, because workflow_eval
+        declares no constant for this: `arm_accounting`'s return literal IS the authority. Three
+        differently-shaped accountings are checked, so the equality is a property of the function
+        rather than of one fixture's inputs."""
+        for label, accounting in (("accepted", _rr_simple_accounting()),
+                                  ("zero-accepted", _rr_zero_accepted_accounting()),
+                                  ("mixed-basis", _rr_mixed_basis_accounting())):
+            with self.subTest(accounting=label):
+                self.assertEqual(set(de.ACCOUNTING_EVIDENCE_KEYS), set(accounting))
+        self.assertEqual(len(set(de.ACCOUNTING_EVIDENCE_KEYS)),
+                         len(de.ACCOUNTING_EVIDENCE_KEYS), "a field is listed twice")
+
+    def test_the_accounting_scope_keys_are_exactly_arm_accountings_own_scope_block_keys(self):
+        accounting = _rr_simple_accounting()
+        self.assertEqual(set(accounting["scopes"]), set(wf.ACCOUNTING_SCOPES),
+                         "the fixture's scopes are not the owner's own scopes")
+        self.assertTrue(accounting["scopes"], "no scope block to check -- this test would be "
+                                              "vacuous")
+        for name, block in sorted(accounting["scopes"].items()):
+            with self.subTest(scope=name):
+                self.assertEqual(set(de.ACCOUNTING_SCOPE_KEYS), set(block))
+        self.assertEqual(len(set(de.ACCOUNTING_SCOPE_KEYS)), len(de.ACCOUNTING_SCOPE_KEYS),
+                         "a field is listed twice")
+
     # -- stop fields required --------------------------------------------------------------------
 
     def test_a_complete_operator_plan_has_no_missing_fields_and_does_not_block(self):
         plan = de.operator_plan(_rr_declarations())
         self.assertEqual(plan["missing"], [])
-        self.assertTrue(plan["complete"])
+        self.assertTrue(plan["own_declarations_complete"])
         self.assertEqual(plan["status"], "own-declarations-complete")
         self.assertFalse(plan["blocks_promotion_on_these_fields"])
         self.assertIsNone(plan["note"])
@@ -1268,7 +1652,7 @@ class RecoveryReportTests(unittest.TestCase):
                 declarations[name] = None
                 plan = de.operator_plan(declarations)
                 self.assertEqual(plan["missing"], [name])
-                self.assertFalse(plan["complete"])
+                self.assertFalse(plan["own_declarations_complete"])
                 self.assertEqual(plan["status"], "own-declarations-incomplete")
                 self.assertTrue(plan["blocks_promotion_on_these_fields"])
                 self.assertIn("INCOMPLETE", plan["note"])
@@ -1291,7 +1675,7 @@ class RecoveryReportTests(unittest.TestCase):
         `primary_endpoint` and `sample_size` are required by `workflow_eval.live_requirements`
         and are untouched by this plan entirely."""
         plan = de.operator_plan(_rr_declarations())
-        self.assertTrue(plan["complete"])
+        self.assertTrue(plan["own_declarations_complete"])
         self.assertEqual(sorted(plan["not_covered"]["fields"]),
                          sorted(de.RECOVERY_PLAN_UNCOVERED_DECLARATIONS))
         self.assertIn("primary_endpoint", plan["not_covered"]["fields"])
@@ -1312,7 +1696,7 @@ class RecoveryReportTests(unittest.TestCase):
         document = de.join([_rr_row()])
         report = de.recovery_report(provenance="synthetic", join_document=document,
                                     operator_declarations=_rr_declarations())
-        self.assertTrue(report["operator"]["complete"])
+        self.assertTrue(report["operator"]["own_declarations_complete"])
         self.assertIn(de.SCOPE_NOTE, report["labels"],
                      "a complete plan's report dropped the scope caveat from its own labels")
 
@@ -1379,6 +1763,121 @@ class RecoveryReportTests(unittest.TestCase):
         del accounting["conditional_recovery"]
         with self.assertRaises(dc.ContractError):
             de.resource_evidence([accounting])
+
+    # -- what the relay does not know, it refuses rather than drops ------------------------------
+    #
+    # THE DEFECT THESE THREE FIX. `resource_evidence` relays by WHITELIST PROJECTION --
+    # `{key: _copy(block[key]) for key in ACCOUNTING_SCOPE_KEYS}` and a hand-written literal for
+    # the top level. A projection answers "what did I ask for", never "what was I given", so an
+    # accounting carrying a field those tuples do not list relayed WITHOUT it and WITHOUT a word,
+    # under a `RESOURCE_EVIDENCE_NOTE` that says every figure was carried field for field. The
+    # drift direction is silent UNDER-reporting of resources.
+    #
+    # The third is the one with teeth. `_assert_bases_kept_apart` checked the PRESENCE of the five
+    # bases and then swept `('proxy', 'unpriced')` BY NAME for a priced `usd` -- never closure. So
+    # an undeclared SIXTH basis carrying a `usd` figure satisfied the presence check, was never
+    # reached by the name sweep, and relayed straight through the guard that exists to stop
+    # exactly that. A subscription-plan proxy dollar entering a priced total is the specific thing
+    # this repo forbids, and an unrecognised basis is the path it would have taken.
+    #
+    # ANTI-MASKING, in every one of them: the refusal is asserted to carry `unknown-field` and the
+    # word `undeclared`, which no other check in `resource_evidence` produces -- the missing-field
+    # checks say `is missing`, the mapping check says `must be a mapping`, the priced-proxy check
+    # says `carries a priced`, and each is asserted ABSENT. And each test ends by relaying the
+    # same accounting with the added name removed, so what refused is the NAME and not the fixture.
+
+    def test_an_undeclared_top_level_field_is_refused_rather_than_silently_dropped(self):
+        accounting = _rr_simple_accounting()
+        accounting["settled_usd"] = 3.0
+        with self.assertRaises(dc.ContractError) as caught:
+            de.resource_evidence([accounting])
+        message = str(caught.exception)
+        self.assertEqual(caught.exception.code, "unknown-field")
+        self.assertIn("undeclared field(s)", message)
+        self.assertIn("'settled_usd'", message)
+        self.assertNotIn("is missing", message)
+        self.assertNotIn("must be a mapping", message)
+        del accounting["settled_usd"]
+        self.assertEqual(de.resource_evidence([accounting])[0]["arm"], accounting["arm"])
+
+    def test_an_undeclared_field_inside_a_scope_block_is_refused_rather_than_dropped(self):
+        accounting = _rr_simple_accounting()
+        accounting["scopes"]["recovery-only"]["settled_usd"] = 4.0
+        with self.assertRaises(dc.ContractError) as caught:
+            de.resource_evidence([accounting])
+        message = str(caught.exception)
+        self.assertEqual(caught.exception.code, "unknown-field")
+        self.assertIn("undeclared field(s)", message)
+        self.assertIn("'settled_usd'", message)
+        self.assertIn("recovery-only", message)
+        self.assertNotIn("is missing", message)
+        del accounting["scopes"]["recovery-only"]["settled_usd"]
+        self.assertIn("recovery-only", de.resource_evidence([accounting])[0]["scopes"])
+
+    def test_an_undeclared_sixth_basis_carrying_usd_is_refused_rather_than_relayed(self):
+        """THE ONE THAT MATTERS. Every declared basis is present, so the missing-basis check is
+        satisfied; the priced-`usd` sweep only ever looks at `proxy` and `unpriced` by name, so it
+        never sees this at all. Before closure this relayed a `usd` figure on a basis nothing in
+        either module has ever vouched for."""
+        accounting = _rr_simple_accounting()
+        totals = accounting["scopes"]["recovery-only"]["totals"]
+        self.assertEqual(set(de.RESOURCE_BASES) - set(totals), set(),
+                         "the fixture is already missing a basis, so this proves nothing about "
+                         "an undeclared sixth one")
+        totals["subscription"] = {"n": 1, "usd": 12.5}
+        with self.assertRaises(dc.ContractError) as caught:
+            de.resource_evidence([accounting])
+        message = str(caught.exception)
+        self.assertEqual(caught.exception.code, "unknown-field")
+        self.assertIn("undeclared basis(es)", message)
+        self.assertIn("'subscription'", message)
+        self.assertNotIn("missing basis", message)
+        self.assertNotIn("carries a priced", message)
+        del totals["subscription"]
+        self.assertIsNotNone(de.resource_evidence([accounting]))
+
+    def test_the_two_basis_guards_are_distinct_refusals_and_not_one_wearing_two_names(self):
+        """A priced `proxy` and an undeclared sixth basis are different defects and must be
+        distinguishable in the message, or a test asserting one could be satisfied by the other."""
+        priced_proxy = _rr_simple_accounting()
+        priced_proxy["scopes"]["recovery-only"]["totals"]["proxy"]["usd"] = 9.0
+        with self.assertRaises(dc.ContractError) as proxy_caught:
+            de.resource_evidence([priced_proxy])
+        self.assertIn("carries a priced", str(proxy_caught.exception))
+        self.assertNotIn("undeclared", str(proxy_caught.exception))
+        self.assertEqual(proxy_caught.exception.code, "value-invalid")
+
+        sixth = _rr_simple_accounting()
+        sixth["scopes"]["recovery-only"]["totals"]["subscription"] = {"n": 1, "usd": 12.5}
+        with self.assertRaises(dc.ContractError) as sixth_caught:
+            de.resource_evidence([sixth])
+        self.assertIn("undeclared basis(es)", str(sixth_caught.exception))
+        self.assertEqual(sixth_caught.exception.code, "unknown-field")
+
+    def test_a_well_formed_accounting_still_relays_every_field_it_was_given(self):
+        """THE POSITIVE CONTROL for all three closure guards. `RESOURCE_EVIDENCE_NOTE` claims
+        every figure is relayed field for field; this is what holds the claim to the whole key
+        set of a real `arm_accounting` result rather than to the tuples this module happens to
+        know. A guard made over-broad by the three tests above would break the relay here."""
+        accounting = _rr_simple_accounting()
+        relayed = de.resource_evidence([accounting])[0]
+        self.assertEqual(set(relayed), set(accounting),
+                         "the relay's own key set no longer matches the accounting it was given")
+        for key in sorted(accounting):
+            with self.subTest(field=key):
+                self.assertEqual(relayed[key], accounting[key])
+        for name, block in sorted(accounting["scopes"].items()):
+            with self.subTest(scope=name):
+                self.assertEqual(set(relayed["scopes"][name]), set(block))
+                self.assertEqual(relayed["scopes"][name], block)
+                # including the totals block's own non-basis `note`, which is a field like any
+                # other and would be the first casualty of a bases-only projection.
+                self.assertEqual(relayed["scopes"][name]["totals"]["note"],
+                                 block["totals"]["note"])
+        # ...and it is a copy, not the caller's own objects handed back.
+        relayed["scopes"]["recovery-only"]["totals"]["estimated"]["usd"] = -1.0
+        self.assertNotEqual(
+            accounting["scopes"]["recovery-only"]["totals"]["estimated"]["usd"], -1.0)
 
     # -- synthetic labeled --------------------------------------------------------------------------
 
@@ -1519,6 +2018,127 @@ class RecoveryReportTests(unittest.TestCase):
             de.recovery_report(provenance="synthetic", join_document=document,
                                operator_declarations=_rr_declarations(),
                                full_task_study={"status": "definitely-happened"})
+
+    # -- no bare `complete`: the third over-broad name --------------------------------------------
+
+    def test_the_plan_carries_no_bare_complete_key_to_be_misread(self):
+        """THE DEFECT THIS FIXES. `operator_plan` renamed two fields so neither could be read as
+        ranging over more than its own six declarations, and left a third: a bare `complete`
+        sitting beside `status` and `blocks_promotion_on_these_fields`. With all six supplied it
+        read True while `primary_endpoint`, `sample_size` and `independent_evaluation` were
+        neither declared nor checked -- exactly the reading `SCOPE_NOTE` exists to rule out, and
+        `SCOPE_NOTE`'s own prose already calls the field `own_declarations_complete`. The old key
+        must be GONE, not shadowed by a second spelling of the same boolean."""
+        for declarations in (_rr_declarations(), _rr_declarations(stopping_rule=None)):
+            plan = de.operator_plan(declarations)
+            with self.subTest(status=plan["status"]):
+                self.assertNotIn("complete", plan)
+                self.assertIn("own_declarations_complete", plan)
+        complete = de.operator_plan(_rr_declarations())
+        self.assertTrue(complete["own_declarations_complete"])
+        self.assertFalse(de.operator_plan(
+            _rr_declarations(stopping_rule=None))["own_declarations_complete"])
+        # The payload's own name and the note that bounds it must stay one vocabulary.
+        self.assertIn("own_declarations_complete", de.SCOPE_NOTE)
+        # And the same boolean inside a report is spelled the same way.
+        document = de.join([_rr_row()])
+        report = de.recovery_report(provenance="synthetic", join_document=document,
+                                    operator_declarations=_rr_declarations())
+        self.assertNotIn("complete", report["operator"])
+        self.assertTrue(report["operator"]["own_declarations_complete"])
+
+    # -- the causal fence on THIS function, through the routes that can actually carry one --------
+
+    #: The three `recovery_report` arguments copied into the report VERBATIM, keys and all. Each
+    #: is the caller's own structure -- D18's protocol block, D18's accounting comparisons, and a
+    #: caller-declared subgroup breakdown -- so each is a route by which a causal key can reach a
+    #: report that no field of this module's own vocabulary could ever spell.
+    CAUSAL_ROUTES = {
+        "full_task_study": lambda key: {"status": "prospective", key: "the context package"},
+        "comparisons": lambda key: [{"arm": "B", key: "the context package"}],
+        "slices": lambda key: {"by_failure_class": {key: "the context package"}},
+    }
+
+    def _report_with(self, **over):
+        return de.recovery_report(provenance="synthetic", join_document=de.join([_rr_row()]),
+                                  operator_declarations=_rr_declarations(), **over)
+
+    def test_a_causal_key_is_refused_through_every_caller_supplied_route(self):
+        """THE MUTATION THIS PROVES. `recovery_report`'s closing
+        `assert_no_causal_claim(report, where="the recovery report")` was the one call site of
+        that sweep nobody pinned -- `join_row`'s and `calibration_report`'s are pinned in
+        `tests/test_decision_eval.py` -- and replacing it with `return report` broke nothing,
+        because no field this function builds from its own vocabulary can be spelled like
+        causation. Three of its arguments are not from its own vocabulary: `full_task_study`,
+        `comparisons` and `slices` are copied in verbatim. So a causal key CAN reach a report,
+        by each of those three routes, and this function's own return is the only thing that
+        refuses it.
+
+        ANTI-MASKING. Each refusal is checked to be that closing sweep and not an earlier type
+        check on the same argument: the message names `the recovery report` and carries
+        `NO_CAUSAL_CLAIM`, which no other check in this function produces. And the identical
+        argument with the causal key removed is asserted to pass all the way through, so the
+        refusal is the KEY's doing rather than the route's shape.
+        """
+        for route, build in sorted(self.CAUSAL_ROUTES.items()):
+            for key in ("caused_by", "root_cause"):
+                with self.subTest(route=route, key=key):
+                    with self.assertRaises(dc.ContractError) as caught:
+                        self._report_with(**{route: build(key)})
+                    message = str(caught.exception)
+                    self.assertIn(f"{key!r}", message)
+                    self.assertIn("the recovery report", message)
+                    self.assertIn(de.NO_CAUSAL_CLAIM, message)
+            with self.subTest(route=route, key="<none>"):
+                report = self._report_with(**{route: build("note")})
+                self.assertIsNotNone(report[route])
+
+    def test_the_token_list_carries_the_base_forms_and_not_only_the_inflections(self):
+        """`_is_causal_key` matches a WHOLE reduced key, never a substring, so `caused` did not
+        catch `cause` and `causedby` did not catch `root_cause`. D14's four demonstration
+        spellings each happened to contain a listed token, which is why the gap stayed invisible;
+        `bin/decision_context.py`'s `DEPENDENCY_TOKENS` carries its base forms for this reason.
+        Each spelling below is asserted on its own -- one that only ever fails beside another
+        proves nothing about itself."""
+        for key in ("cause", "root_cause", "rootcause", "Root-Cause", "led_to", "resulted_in",
+                    "triggered_by", "effect_of", "attributable_to", "metrics.cause"):
+            with self.subTest(key=key):
+                with self.assertRaises(dc.ContractError) as caught:
+                    de.assert_no_causal_claim({"recovery": {key: "the context package"}})
+                self.assertIn("authority-field", str(caught.exception))
+        # And the widened vocabulary reaches the real surface, not just the helper.
+        with self.assertRaises(dc.ContractError):
+            self._report_with(slices={"by_failure_class": {"root_cause": "flaky-host"}})
+
+    def test_a_causal_word_in_a_value_is_still_allowed(self):
+        """THE POSITIVE CONTROL ON THE WIDENING. The sweep refuses KEYS, deliberately: a
+        `relation` or `edge_label` whose value is a causal word comes from evidence some other
+        tool produced, and refusing it would let a third-party extractor's choice of word break
+        an honest report. Widening the key vocabulary must not start failing those."""
+        self.assertIsNotNone(de.assert_no_causal_claim(
+            {"relation": "caused_by", "edge_label": "cause", "note": "root_cause analysis"}))
+        report = self._report_with(
+            slices={"relation": "caused_by", "edge_label": "root_cause", "rows": 2})
+        self.assertEqual(report["slices"]["relation"], "caused_by")
+        # `RELATIONS`, the vocabulary this module does own, still admits no causal word at all.
+        for relation in de.RELATIONS:
+            self.assertFalse(de._is_causal_key(relation))
+
+    def test_the_module_states_the_sweep_as_a_token_list_and_never_as_a_guarantee(self):
+        """SHAPE A AT THE VOCABULARY LAYER. The module docstring used to say categorically that
+        a joined row "carries no causal claim" while the check behind it was a list of spellings.
+        Widening that list moves the line and never removes it, so the claim -- not only the
+        vocabulary -- had to be narrowed. This holds both halves at once: a spelling the list
+        does not carry really does pass, and the module says so rather than promising absence."""
+        # The limit, demonstrated rather than asserted: these are not caught, today.
+        for uncaught in ("causation", "causality", "proximate_cause", "why_it_passed"):
+            with self.subTest(uncaught=uncaught):
+                self.assertIsNotNone(de.assert_no_causal_claim({uncaught: "x"}))
+        self.assertNotIn("carries no causal claim", de.__doc__)
+        self.assertIn("CAUSAL_TOKENS", de.__doc__)
+        self.assertIn("is NOT caught", de.__doc__)
+        self.assertIn("Shape-matching cannot establish absence",
+                      de.assert_no_causal_claim.__doc__)
 
 
 if __name__ == "__main__":  # pragma: no cover

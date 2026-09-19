@@ -37,9 +37,12 @@ WHAT THIS IS. A read-only join, one row per decision, with four rules that do th
 WHAT IT REFUSES. It writes nothing, anywhere: it opens no file, takes no path, and is handed
 projections that their own owners read. It never totals two durations measured by different
 clocks -- `duration_by_basis` keeps them apart, as `attempt_history.duration_totals` does. It
-carries no causal claim: `_assert_no_causal_claim` sweeps every row it emits for a key spelled
-like causation, so a later reporting task extending this module cannot quietly add one. And it
-does not carry the provider's free-text note (`NOTE_WITHHELD`).
+refuses a KEY SPELLED LIKE ONE OF `CAUSAL_TOKENS`: `assert_no_causal_claim` sweeps every row and
+every report it emits and raises on a key whose letters and digits reduce to one of those
+tokens, so a later reporting task extending this module cannot quietly add a `caused_by`. That
+is a token list, not a proof: a causal claim spelled some way the list never anticipated, or
+written into a VALUE rather than a key, is NOT caught, and no sentence here says one cannot get
+through. And it does not carry the provider's free-text note (`NOTE_WITHHELD`).
 
 ONE AUTHORITY PER CONCERN. Four siblings are loaded for their VOCABULARY and nothing else --
 `bin/decision_contract.py` for the contract version and its refusal codes, `bin/decision_policy.py`
@@ -175,11 +178,31 @@ MAX_HISTORY_RECORDS = 512
 MAX_REFUSAL_REASONS = 16
 MAX_ROWS = 4096
 
-#: Keys and values spelled like an assertion that one fact caused another, reduced the way
-#: `decision_contract._is_banned_key` reduces a banned field name so punctuation cannot dress
-#: one up. The join establishes ordering; nothing here may claim more than that.
-CAUSAL_TOKENS = ("caused", "causedby", "causes", "causal", "because", "proves", "proven",
-                 "provesthat", "dueto", "therefore", "responsiblefor", "explains", "attributedto")
+#: KEY spellings that would turn an ordering into an assertion that one fact caused another,
+#: reduced the way `decision_contract._is_banned_key` reduces a banned field name so punctuation
+#: cannot dress one up. The join establishes ordering; nothing here may claim more than that.
+#:
+#: BASE FORMS BESIDE INFLECTIONS, ON PURPOSE. `_is_causal_key` matches a WHOLE reduced key (or a
+#: whole dotted segment of one) against this tuple -- never a substring -- so `caused` does not
+#: catch `cause` and `causedby` does not catch `root_cause`. Both base forms are listed for that
+#: reason, as `bin/decision_context.py`'s `DEPENDENCY_TOKENS` lists `depends`, `blocks` and
+#: `uses` beside their inflections.
+#:
+#: WHAT THIS IS NOT. A list of spellings is not a decision procedure for causal claims. A key
+#: this list never anticipated -- `causation`, `causality`, `proximate_cause`, `why_it_passed`
+#: -- is not caught, and widening the tuple can only ever move that line, never remove it.
+#: `assert_no_causal_claim` therefore promises exactly "no key here reduces to one of these",
+#: and this module says nothing stronger anywhere.
+#:
+#: VALUES ARE DELIBERATELY NOT SWEPT. A `relation` or `edge_label` whose VALUE is a causal word
+#: passes: values arrive from evidence other tools produced, and refusing one would let a
+#: third-party extractor's choice of word break an honest report. The claim this fence exists
+#: to stop is the one THIS module's own schema would make, and a schema makes it with a field
+#: name.
+CAUSAL_TOKENS = ("cause", "caused", "causedby", "causes", "causal", "rootcause", "because",
+                 "proves", "proven", "provesthat", "dueto", "therefore", "responsiblefor",
+                 "explains", "attributedto", "attributableto", "ledto", "resultedin",
+                 "triggeredby", "effectof")
 
 
 # ---- sibling loaders (bin/ is not a package) -------------------------------------------------
@@ -301,6 +324,13 @@ def assert_no_causal_claim(value, where="the joined row"):
     reporting tasks that come after this one, and a `caused_by` added to a recovery block would
     turn an ordering into a finding. A successful recovery after a diagnosis is co-occurrence;
     the arrow is a claim, and this module is not entitled to make it.
+
+    WHAT IT DOES NOT PROVE. This is a token match over KEY spellings (`CAUSAL_TOKENS`), not a
+    judgement about meaning. A key spelled some way that list never anticipated is not caught,
+    and a causal claim written into a VALUE is not caught by design (see `CAUSAL_TOKENS`).
+    Shape-matching cannot establish absence, so what returning normally means here is exactly
+    "no key in this structure reduces to one of those tokens" -- never "this structure carries
+    no causal claim".
     """
     hits = []
     stack = [value]
@@ -1500,7 +1530,7 @@ def calibration_report(rows, *, question, field, artifact=None, report_partition
         "false_action_risk": action_risk,
         "notes": [RULE_LABEL_NOTE, RAW_VS_CALIBRATED_NOTE],
     }
-    return assert_no_causal_claim(report)
+    return assert_no_causal_claim(report, where="the calibration report")
 
 
 def calibration_report_pair(rows, *, question, artifact=None, report_partition=None,
@@ -1593,15 +1623,27 @@ RECOVERY_REPORT_DECLARATIONS = ("independent_label_source", "observation_window"
 #: The five cost bases `workflow_eval.add_cost`/`priced_usd` keep separate, mirrored here the same
 #: way `RECOVERED_RESULTS`/`FAILED_RESULTS` above mirror a subset of another owner's vocabulary: a
 #: literal this module reads FROM evidence, never a name it reaches across the module boundary to
-#: fetch.
+#: fetch. Equality with `workflow_eval.BASES` is pinned in `tests/test_decision_trial_protocol.py`
+#: -- being spelled alike is a fact a test holds, not a coincidence this module hopes for.
 RESOURCE_BASES = ("model-reported", "estimated", "proxy", "credits", "unpriced")
 
+#: The keys a `workflow_eval.empty_totals()` block carries that are NOT a cost basis. Today that
+#: is its own `note` alone. This exists so `_assert_bases_kept_apart` can check CLOSURE -- every
+#: key in a totals block is either one of the five bases or a declared non-basis -- rather than
+#: only the presence of the five it knows. The same test pins
+#: `RESOURCE_BASES | TOTALS_NON_BASIS_KEYS` to `empty_totals()`'s own whole key set in both
+#: directions, so a sixth basis added by workflow_eval fails a test here rather than relaying.
+TOTALS_NON_BASIS_KEYS = ("note",)
+
 #: The exact field set `resource_evidence` requires on every `workflow_eval.arm_accounting`
-#: result before it will relay it. A result missing one of these is refused rather than padded.
+#: result before it will relay it -- EXACT in both directions: a result missing one of these is
+#: refused rather than padded, and a result carrying a name that is not one of these is refused
+#: rather than silently dropped by the whitelist projection that relays it.
 ACCOUNTING_EVIDENCE_KEYS = ("arm", "collapsed_from", "items", "accepted", "failed", "censored",
                             "conditional_recovery", "initial_attempt", "scopes", "labels")
 
-#: The exact field set inside each of an accounting's own `scopes[...]` blocks.
+#: The exact field set inside each of an accounting's own `scopes[...]` blocks, exact in the same
+#: two directions as `ACCOUNTING_EVIDENCE_KEYS` and for the same reason.
 ACCOUNTING_SCOPE_KEYS = ("totals", "priced_usd", "scope", "items", "cost_per_accepted_usd",
                          "undefined_reason", "label")
 
@@ -1663,7 +1705,11 @@ NO_REGRESSION_CAP_NOTE = (
 RESOURCE_EVIDENCE_NOTE = (
     "every figure here was computed by workflow_eval.arm_accounting and is relayed field for "
     "field; this module computes no cost of its own and refuses evidence that no longer agrees "
-    "with that function's own zero-accepted and separate-bases invariants"
+    "with that function's own zero-accepted and separate-bases invariants. 'field for field' is "
+    "EXACT: an accounting carrying a name this module does not know -- a top-level field, a "
+    "field inside a scope block, or a sixth cost basis -- is REFUSED, never relayed without it, "
+    "because a relay that silently narrowed its input would under-report resources while "
+    "claiming to have carried them whole"
 )
 
 
@@ -1678,6 +1724,12 @@ def _rr_mapping(value, where):
 def operator_plan(declarations):
     """The six stop fields an operator must pin before any live evaluation -> which are present,
     which are missing, and whether THIS PLAN's own six are complete.
+
+    THE KEY IS `own_declarations_complete`, NOT `complete`. A bare `complete` beside
+    `blocks_promotion_on_these_fields` reads as "this plan is complete", which is the exact
+    misreading `SCOPE_NOTE` exists to rule out: three of `workflow_eval.OPERATOR_DECLARATIONS`'s
+    seven (`RECOVERY_PLAN_UNCOVERED_DECLARATIONS`) are neither declared nor checked here, so no
+    field of this payload may be spelled as though it ranged over more than these six.
 
     Absence is `own-declarations-incomplete`, never a default this module fills in and never
     `insufficient-evidence` -- that status describes evidence too thin to score, and an operator
@@ -1712,7 +1764,7 @@ def operator_plan(declarations):
         "fields": list(RECOVERY_REPORT_DECLARATIONS),
         "declared": declared,
         "missing": missing,
-        "complete": complete,
+        "own_declarations_complete": complete,
         "status": "own-declarations-complete" if complete else "own-declarations-incomplete",
         "blocks_promotion_on_these_fields": not complete,
         "not_covered": {
@@ -1744,14 +1796,30 @@ def _assert_zero_ratio_undefined(accounting, where):
 
 
 def _assert_bases_kept_apart(block, where):
-    """Refuse a scope block whose totals lost the five-basis structure `workflow_eval` keeps, or
-    that smuggled a priced `usd` figure under `proxy` or `unpriced`."""
+    """Refuse a scope block whose totals lost the five-basis structure `workflow_eval` keeps,
+    that carry a SIXTH basis this module never declared, or that smuggled a priced `usd` figure
+    under `proxy` or `unpriced`.
+
+    THE CLOSURE CHECK IS THE POINT, not the presence check beside it. Checking only that the
+    five known bases are present leaves an undeclared sixth -- with a `usd` figure on it --
+    relaying straight through the guard that exists to stop exactly that, because the priced-usd
+    sweep below iterates names it already knows rather than names the evidence actually carries.
+    A subscription-plan proxy dollar entering a priced total is the specific thing this repo
+    forbids, and an unrecognised basis is the path it would take.
+    """
     totals = block.get("totals") or {}
     missing = sorted(set(RESOURCE_BASES) - set(totals))
     if missing:
         raise _refuse("missing-field",
                       f"{where}.totals is missing basis(es) {missing}; a total that dropped a "
                       f"basis cannot prove the bases stayed separate")
+    undeclared = sorted(set(totals) - set(RESOURCE_BASES) - set(TOTALS_NON_BASIS_KEYS))
+    if undeclared:
+        raise _refuse(
+            "unknown-field",
+            f"{where}.totals carries undeclared basis(es) {undeclared}; this module vouches for "
+            f"exactly {list(RESOURCE_BASES)} and refuses a total it cannot prove kept its bases "
+            f"apart rather than relaying an unrecognised one")
     for basis in ("proxy", "unpriced"):
         if "usd" in (totals.get(basis) or {}):
             raise _refuse(
@@ -1762,7 +1830,20 @@ def _assert_bases_kept_apart(block, where):
 
 def resource_evidence(accountings):
     """Every arm's cohort accounting, exactly as `workflow_eval.arm_accounting` computed it --
-    read and copied field for field, never recomputed. See `RESOURCE_EVIDENCE_NOTE`."""
+    read and copied field for field, never recomputed. See `RESOURCE_EVIDENCE_NOTE`.
+
+    WHY THE FIELD SETS ARE CHECKED IN BOTH DIRECTIONS. What relays each block is a whitelist
+    projection over `ACCOUNTING_EVIDENCE_KEYS`/`ACCOUNTING_SCOPE_KEYS`. A projection answers
+    "what did I ask for", never "what was I given", so before this an accounting carrying a name
+    those tuples do not list was relayed WITHOUT it and WITHOUT a word -- the drift direction
+    being silent UNDER-reporting of resources, from a document whose own note says every figure
+    was carried field for field. So an undeclared name is refused here rather than dropped: this
+    module's whole job in this section is declining to relay evidence it cannot vouch for, and a
+    field it has never heard of is the clearest case of that there is. The cost is that a name
+    genuinely added to `arm_accounting` stops this relay until it is declared here; that is the
+    intended price, and `tests/test_decision_trial_protocol.py` pins both tuples to that
+    function's own output so the failure lands in a test first.
+    """
     if not isinstance(accountings, (list, tuple)):
         raise _refuse("wrong-type", "resource_evidence reads a list of arm_accounting() results")
     out = []
@@ -1774,6 +1855,13 @@ def resource_evidence(accountings):
             raise _refuse("missing-field",
                           f"{where} is missing {missing}; this module reads "
                           f"workflow_eval.arm_accounting's own output and fills in none of it")
+        undeclared = sorted(set(acc) - set(ACCOUNTING_EVIDENCE_KEYS))
+        if undeclared:
+            raise _refuse(
+                "unknown-field",
+                f"{where} carries undeclared field(s) {undeclared}; this relay vouches for "
+                f"exactly {list(ACCOUNTING_EVIDENCE_KEYS)} and refuses evidence carrying a name "
+                f"it cannot check rather than dropping it silently")
         _assert_zero_ratio_undefined(acc, where)
         scopes = {}
         for name, raw_block in (acc.get("scopes") or {}).items():
@@ -1782,6 +1870,14 @@ def resource_evidence(accountings):
             if block_missing:
                 raise _refuse("missing-field",
                               f"{where}.scopes[{name!r}] is missing {block_missing}")
+            block_undeclared = sorted(set(block) - set(ACCOUNTING_SCOPE_KEYS))
+            if block_undeclared:
+                raise _refuse(
+                    "unknown-field",
+                    f"{where}.scopes[{name!r}] carries undeclared field(s) {block_undeclared}; "
+                    f"this relay vouches for exactly {list(ACCOUNTING_SCOPE_KEYS)} and refuses a "
+                    f"scope block carrying a name it cannot check rather than dropping it "
+                    f"silently")
             _assert_bases_kept_apart(block, f"{where}.scopes[{name!r}]")
             scopes[name] = {key: _copy(block[key]) for key in ACCOUNTING_SCOPE_KEYS}
         out.append({
@@ -1993,6 +2089,6 @@ def recovery_report(*, provenance, join_document, operator_declarations, calibra
         "blocks_promotion_on_these_fields": plan["blocks_promotion_on_these_fields"],
         "labels": labels,
     }
-    return assert_no_causal_claim(report)
+    return assert_no_causal_claim(report, where="the recovery report")
 
 # END OF D19: OUTCOMES AND STOPPING

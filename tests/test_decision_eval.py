@@ -1299,6 +1299,48 @@ class CalibrationReportingTests(unittest.TestCase):
         finally:
             de.assert_no_causal_claim = original
 
+    def test_the_calibration_reports_sweep_labels_itself_the_calibration_report(self):
+        """A refusal that mislabels what it refused. `assert_no_causal_claim`'s `where` default
+        is `"the joined row"`, which is right for `join_row` -- its only correct caller -- and
+        wrong for every other call site: `calibration_report` took the default, so a causal key
+        found in a CALIBRATION report would have been reported as a defect in a joined row, which
+        is a different object built by a different function from different inputs.
+        `recovery_report` had the same defect and was given `where="the recovery report"`; this
+        is the same fix at the remaining call site.
+
+        WHAT THIS PROVES AND WHAT IT DOES NOT. It pins the ARGUMENT the call site passes, by
+        recording it, plus the fact that the label reaches the message when the sweep does refuse.
+        It is deliberately not the end-to-end shape `tests/test_decision_trial_protocol.py` uses
+        for `recovery_report`: that function copies three caller-supplied structures in verbatim,
+        so a causal key can genuinely reach it, whereas every key in a calibration report is built
+        from this module's own vocabulary or from a `_validated_artifact`'s closed field set, and
+        no route was found by which a caller can put one there today. Pinning the label is
+        therefore forward work, exactly as the sweep itself is.
+        """
+        original = de.assert_no_causal_claim
+        seen = []
+
+        def _record(value, where="the joined row"):
+            seen.append(where)
+            return value
+
+        de.assert_no_causal_claim = _record
+        try:
+            de.calibration_report(bulk_rows(20), question=Q, field="raw")
+        finally:
+            de.assert_no_causal_claim = original
+        self.assertEqual(seen, ["the calibration report"])
+        # The default itself is unchanged, because it is correct for the caller that takes it.
+        self.assertEqual(
+            inspect.signature(de.assert_no_causal_claim).parameters["where"].default,
+            "the joined row")
+        # And the label is what a real refusal would actually say.
+        error = self.refusal("authority-field", de.assert_no_causal_claim,
+                             {"caused_by": "the context package"},
+                             where="the calibration report")
+        self.assertIn("the calibration report", str(error))
+        self.assertNotIn("the joined row", str(error))
+
     # ---- sparse says insufficient IN THE BINS TOO ------------------------------------------------
     #
     # Four of the five metric helpers took a sample floor and `_reliability_bins` did not, so on
