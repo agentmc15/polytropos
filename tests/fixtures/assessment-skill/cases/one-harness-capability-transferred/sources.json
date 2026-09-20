@@ -1,0 +1,50 @@
+{
+  "access_denied": [],
+  "harness_support": {
+    "claude": "supported",
+    "codex": "unknown",
+    "copilot": "unknown",
+    "cursor": "unknown"
+  },
+  "kind": "agent-orchestrator",
+  "observations": [
+    {
+      "asserts": "verified",
+      "category": "confined-dispatch-verified-on-one-harness",
+      "id": "OBS-1",
+      "locator": "claude.confined_dispatch",
+      "path": "gale-asymmetry/capabilities/harness-capabilities.json",
+      "provenance": "record",
+      "statement": "the record for claude carries verified and a date; the other three carry the literal unknown",
+      "subject": "capability:claude:confined-dispatch"
+    },
+    {
+      "asserts": "verified",
+      "category": "confined-dispatch-verified-on-one-harness",
+      "id": "OBS-2",
+      "locator": "ClaudeBoundaryTests",
+      "path": "gale-asymmetry/tests/test_confined_dispatch.py",
+      "provenance": "test",
+      "statement": "the boundary suite exercises one harness and skips the other three with an explicit unsupported marker",
+      "subject": "capability:claude:confined-dispatch"
+    },
+    {
+      "asserts": "verified",
+      "category": "confined-dispatch-verified-on-one-harness",
+      "id": "OBS-3",
+      "locator": "line 22",
+      "path": "gale-asymmetry/src/confine/claude.py",
+      "provenance": "source",
+      "statement": "the confinement helper is written against one harness process model",
+      "subject": "capability:claude:confined-dispatch"
+    }
+  ],
+  "repository": "synthetic/gale-asymmetry",
+  "responsibilities": [
+    "shared-runtime-contracts",
+    "four-harnesses",
+    "skills-and-context-planning",
+    "evaluation-and-release"
+  ],
+  "revision": "fixture-revision-gale-a"
+}

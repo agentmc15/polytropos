@@ -434,7 +434,7 @@ PYTHONPATH=tests python3 -m unittest test_assessment_skill.SkillPackagingTests t
 ### D26 — Assessment fixtures
 - id: D26
 - title: Assessment fixtures
-- status: pending
+- status: done
 - model: opus
 - depends: D25
 **Brief.** Own `tests/test_assessment_skill.py:AssessmentSkillFixtureTests` and `tests/fixtures/assessment-skill/`; test healthy/partial/contradictory/unsafe claims for structured sources, unknowns, gaps, priorities and evidence.

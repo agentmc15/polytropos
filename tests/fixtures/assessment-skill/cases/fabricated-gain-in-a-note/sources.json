@@ -1,0 +1,60 @@
+{
+  "access_denied": [],
+  "harness_support": {
+    "claude": "supported",
+    "codex": "supported",
+    "copilot": "supported",
+    "cursor": "supported"
+  },
+  "kind": "agent-orchestrator",
+  "observations": [
+    {
+      "asserts": "bounded",
+      "category": "verify-step-exceeded-its-ceiling",
+      "id": "OBS-1",
+      "locator": "line 61",
+      "path": "atlas-orchestrator/src/verify/ceiling.py",
+      "provenance": "source",
+      "statement": "the verify step raises a timeout error when its ceiling elapses and the caller is handed no partial output at all",
+      "subject": "verify:ceiling"
+    },
+    {
+      "asserts": "bounded",
+      "category": "verify-step-exceeded-its-ceiling",
+      "id": "OBS-2",
+      "locator": "attempts[2]",
+      "path": "atlas-orchestrator/records/2031-02-04-run.json",
+      "provenance": "record",
+      "statement": "an attempt closed with outcome timed-out and an empty stderr tail",
+      "subject": "verify:ceiling"
+    },
+    {
+      "asserts": "bounded",
+      "category": "verify-step-exceeded-its-ceiling",
+      "id": "OBS-3",
+      "locator": "CeilingTests",
+      "path": "atlas-orchestrator/tests/test_verify_ceiling.py",
+      "provenance": "test",
+      "statement": "the suite asserts the timeout path returns an empty tail and does not assert anything about what the operator then sees",
+      "subject": "verify:ceiling"
+    },
+    {
+      "asserts": "manual",
+      "category": "runbook-describes-a-manual-retry",
+      "id": "OBS-4",
+      "locator": "Recovering a timed-out verify",
+      "path": "atlas-orchestrator/docs/RUNBOOK.md",
+      "provenance": "document",
+      "statement": "the runbook tells the operator to rerun the verify step by hand and read the console, which is the only stated recovery",
+      "subject": "runbook:retry"
+    }
+  ],
+  "repository": "synthetic/atlas-orchestrator",
+  "responsibilities": [
+    "shared-runtime-contracts",
+    "four-harnesses",
+    "skills-and-context-planning",
+    "evaluation-and-release"
+  ],
+  "revision": "fixture-revision-atlas-a"
+}

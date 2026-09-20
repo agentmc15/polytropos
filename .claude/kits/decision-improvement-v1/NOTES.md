@@ -2572,3 +2572,78 @@ the card's page has no "In practice" section. The `.cursor/`-absent assertion is
 the pre-existing state, so it stays correct for a developer who has legitimately installed the
 bundle into this checkout.
 outcome: D25 model=opus attempts=1 result=pass review=pending run=2026-09-16-aa6e
+
+## D26 — Assessment fixtures (opus) — Phase 6 task 2 of 3
+
+35-case corpus plus a structural checker. 32 tests; 18 mutants, 0 survivors. All four pins
+byte-identical — the card needed no change.
+
+**"No assertion in this task is about a model. Not one."** It audited every test name for the
+defect I warned about and **RENAMED FOUR** that read as behaviour claims — `…produces not
+applicable…`, `…concludes no supported intervention…`, `…is findable twice over…`, and
+`…states none of its contents` (a test cannot prove a statement leaks nothing, and the docstring
+now says so). I verified independently: no test name claims model behaviour; the only matches are
+`no_model_pin`, "the oracle records", and one that explicitly DISCLAIMS observing a model.
+
+**It reused the product's gain authority rather than copying it, and then pinned that it cannot be
+copied.** `we.assert_no_gain_claim` is called 6 times, and `inspect.getsource` asserts the
+checker's own source contains NONE of `we.GAIN_TOKENS`. I confirmed: zero literal copies in the
+test file. That is stronger than reuse — it makes the second implementation impossible to add
+quietly.
+
+**Every rule the checker enforces is parsed out of the shipped card/template AT CALL TIME** —
+evidence statuses, permitted assessments/recommendations/decisions, ranking basis, the four
+surfaces. None is a literal in D26's section; D25's `SkillPackagingTests` pins those same sets to
+literals. **D25 is the guard, D26 is the consumer** — the no-mirror discipline applied across a
+task boundary.
+
+**TWO SELF-CAUGHT NEAR-MISSES, and the first is a NEW variant for the catalogue:**
+1. **A no-op mutant SURVIVED and exposed real missing coverage.** Its determinism mutant returned
+   `[next(iter(findings))]` and passed, because **every case carried exactly ONE finding, so
+   `sorted()` pinned nothing at all.** Not a check behind a check — **a check over data too
+   simple to exercise it.** The guard was real, the test was real, the FIXTURE made the assertion
+   vacuous. Fixed by adding a two-finding case, pinning it by name as the only multi-finding one,
+   and re-mutating with `sorted(..., reverse=True)`.
+2. **Its harness produced a fake "4 persistent failures"** because `restore()` reverted the test
+   file and card but not the FIXTURE files, so a fixture-editing mutant contaminated the next
+   run's baseline. Same family as today's `__pycache__` stale-bytecode trap: **the harness lied,
+   not the code.**
+
+**It applied the D24 lesson back at me, unprompted.** Hidden-answer handling bans every finding
+code and conclusion token from `sources.json`, but **deliberately does NOT ban
+`unknown`/`unverified`** — those are evidence states a repository legitimately records about
+itself, and banning them would be *"an exclusion wider than its reason"*. That is the exact
+principle I had to send back to D24.
+
+**MY BRIEF WAS WRONG A TENTH TIME, precisely.** I said D25 made "a one-harness asymmetry"
+concrete because the card ships on Claude and Cursor. **Two harnesses is not one**, so it does not
+model the fixture the brief requires. It built that synthetically and instead tied the corpus to
+repo reality where safe: every fixture's harness key set is pinned equal to D25's
+`HARNESS_SKILL_ROOTS`, so a fixture cannot invent a fifth harness or drop one, while support
+VALUES stay synthetic. I had conflated "asymmetric across harnesses" with "supported by exactly
+one."
+
+- The contradiction is **DERIVED** (two observations on one subject asserting different things);
+  the sources never say a contradiction exists. Three reports over one byte-identical source:
+  carried → accepted, dropped → `contradiction-unreported`, settled → `contradiction-silently-
+  resolved`, invented → `contradiction-fabricated`.
+- No-home/network/CLI is proven with 13 armed seams AND a control that fires each one, with
+  `PROBES` pinned equal to `FORBIDDEN_SEAMS` by name and each seam asserted replaced BEFORE its
+  probe fires — so an arming failure cannot let a real call through.
+- Exactness throughout, per the D19 template: `accepted | refused ==` every case with empty
+  intersection; oracle key set == case set; corpus finding union == `FINDING_CODES` in BOTH
+  directions.
+- **The qualitative item done literally**: `QUALITATIVE-OBSERVATION.md` carries `Status:
+  qualitative`, the cases inspected, and "No model was run, dispatched or observed". Two tests
+  keep it a note and not an oracle — bounded to a STRICT subset of case ids, containing no finding
+  code and neither verdict key, and it passes `assert_no_gain_claim`.
+
+**Stated limitations:** `review_assessment` has NO production caller — it is a test-module checker
+over a test corpus, and making it reachable from an engine would need a deliberate move into
+`bin/` with its own ownership decision, which it declined to make. **The oracle is authored, like
+the corpus** — what carries weight instead is call-time-derived rules, byte-identical-sibling
+differentials (8 source documents, every multi-case group containing both an accept and a
+refusal), and the two-directional code partition. The fixture path guard would fail benignly if
+someone later created a top-level dir colliding with a synthetic tree name (it already hit and
+fixed one real collision: `docs/RELEASE.md`).
+outcome: D26 model=opus attempts=1 result=pass review=pending run=2026-09-16-aa6e

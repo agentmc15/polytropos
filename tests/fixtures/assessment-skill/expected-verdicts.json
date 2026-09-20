@@ -1,0 +1,193 @@
+{
+  "assessment-outside-the-template-vocabulary": {
+    "findings": [
+      "assessment-not-permitted"
+    ],
+    "verdict": "refused"
+  },
+  "broad-policy-language-deferred": {
+    "findings": [],
+    "verdict": "accepted"
+  },
+  "broad-policy-language-not-deferred": {
+    "findings": [
+      "redesign-not-deferred"
+    ],
+    "verdict": "refused"
+  },
+  "candidate-left-unranked": {
+    "findings": [
+      "unranked-candidate"
+    ],
+    "verdict": "refused"
+  },
+  "confidence-declared-with-provenance": {
+    "findings": [],
+    "verdict": "accepted"
+  },
+  "contradiction-declared-without-evidence": {
+    "findings": [
+      "contradiction-fabricated"
+    ],
+    "verdict": "refused"
+  },
+  "contradiction-left-unreported": {
+    "findings": [
+      "contradiction-unreported"
+    ],
+    "verdict": "refused"
+  },
+  "contradiction-reported-unresolved": {
+    "findings": [],
+    "verdict": "accepted"
+  },
+  "contradiction-resolved-by-picking-a-side": {
+    "findings": [
+      "contradiction-silently-resolved"
+    ],
+    "verdict": "refused"
+  },
+  "decision-outside-the-template-vocabulary": {
+    "findings": [
+      "decision-not-permitted"
+    ],
+    "verdict": "refused"
+  },
+  "evidence-id-that-no-source-carries": {
+    "findings": [
+      "unknown-evidence-id"
+    ],
+    "verdict": "refused"
+  },
+  "fabricated-gain-in-a-note": {
+    "findings": [
+      "gain-claim"
+    ],
+    "verdict": "refused"
+  },
+  "healthy-recurring-signal": {
+    "findings": [],
+    "verdict": "accepted"
+  },
+  "hidden-label-cited-as-evidence": {
+    "findings": [
+      "hidden-answer-use"
+    ],
+    "verdict": "refused"
+  },
+  "hidden-label-left-unread": {
+    "findings": [],
+    "verdict": "accepted"
+  },
+  "mature-repository-candidate-without-recurrence": {
+    "findings": [
+      "recurrence-unsupported"
+    ],
+    "verdict": "refused"
+  },
+  "mature-repository-no-change": {
+    "findings": [],
+    "verdict": "accepted"
+  },
+  "mutation-on-a-temporary-copy": {
+    "findings": [],
+    "verdict": "accepted"
+  },
+  "non-agent-repository-forced-candidate": {
+    "findings": [
+      "forced-recommendation"
+    ],
+    "verdict": "refused"
+  },
+  "non-agent-repository-not-applicable": {
+    "findings": [],
+    "verdict": "accepted"
+  },
+  "observed-status-on-a-document-only-claim": {
+    "findings": [
+      "observed-without-observation"
+    ],
+    "verdict": "refused"
+  },
+  "one-harness-capability-scoped": {
+    "findings": [],
+    "verdict": "accepted"
+  },
+  "one-harness-capability-transferred": {
+    "findings": [
+      "cross-harness-transfer"
+    ],
+    "verdict": "refused"
+  },
+  "one-harness-transfer-with-a-gain-note": {
+    "findings": [
+      "cross-harness-transfer",
+      "gain-claim"
+    ],
+    "verdict": "refused"
+  },
+  "partial-access-unknowns-carried": {
+    "findings": [],
+    "verdict": "accepted"
+  },
+  "partial-access-unknowns-dropped": {
+    "findings": [
+      "unknown-not-carried"
+    ],
+    "verdict": "refused"
+  },
+  "ranking-basis-invented": {
+    "findings": [
+      "ranking-basis-not-permitted"
+    ],
+    "verdict": "refused"
+  },
+  "recommendation-outside-the-template-vocabulary": {
+    "findings": [
+      "recommendation-not-permitted"
+    ],
+    "verdict": "refused"
+  },
+  "report-json-is-truncated": {
+    "findings": [
+      "malformed-json"
+    ],
+    "verdict": "refused"
+  },
+  "report-shape-is-not-a-report": {
+    "findings": [
+      "malformed-shape"
+    ],
+    "verdict": "refused"
+  },
+  "scope-overreach-beyond-the-assessed-surfaces": {
+    "findings": [
+      "scope-overreach"
+    ],
+    "verdict": "refused"
+  },
+  "silent-mutation-of-the-target": {
+    "findings": [
+      "silent-mutation"
+    ],
+    "verdict": "refused"
+  },
+  "source-shape-is-not-a-source": {
+    "findings": [
+      "malformed-sources"
+    ],
+    "verdict": "refused"
+  },
+  "status-outside-the-card-vocabulary": {
+    "findings": [
+      "status-not-permitted"
+    ],
+    "verdict": "refused"
+  },
+  "uncalibrated-confidence": {
+    "findings": [
+      "fabricated-confidence"
+    ],
+    "verdict": "refused"
+  }
+}

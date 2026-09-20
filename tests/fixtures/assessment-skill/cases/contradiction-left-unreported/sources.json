@@ -1,0 +1,50 @@
+{
+  "access_denied": [],
+  "harness_support": {
+    "claude": "supported",
+    "codex": "unknown",
+    "copilot": "unknown",
+    "cursor": "unknown"
+  },
+  "kind": "agent-orchestrator",
+  "observations": [
+    {
+      "asserts": "supported",
+      "category": "capability-claim-and-capability-record-disagree",
+      "id": "OBS-1",
+      "locator": "row cursor",
+      "path": "beacon-harnesses/docs/HARNESS-MATRIX.md",
+      "provenance": "document",
+      "statement": "the matrix row for cursor marks confined dispatch as supported",
+      "subject": "capability:cursor:confined-dispatch"
+    },
+    {
+      "asserts": "unknown",
+      "category": "capability-claim-and-capability-record-disagree",
+      "id": "OBS-2",
+      "locator": "cursor.confined_dispatch",
+      "path": "beacon-harnesses/capabilities/harness-capabilities.json",
+      "provenance": "record",
+      "statement": "the capability record for cursor carries the literal unknown and no verification date",
+      "subject": "capability:cursor:confined-dispatch"
+    },
+    {
+      "asserts": "shared",
+      "category": "dispatch-path-is-shared",
+      "id": "OBS-3",
+      "locator": "line 18",
+      "path": "beacon-harnesses/src/dispatch/entry.py",
+      "provenance": "source",
+      "statement": "every harness reaches dispatch through one entry function",
+      "subject": "dispatch:entry"
+    }
+  ],
+  "repository": "synthetic/beacon-harnesses",
+  "responsibilities": [
+    "shared-runtime-contracts",
+    "four-harnesses",
+    "skills-and-context-planning",
+    "evaluation-and-release"
+  ],
+  "revision": "fixture-revision-beacon-a"
+}
