@@ -498,7 +498,7 @@ PYTHONPATH=tests python3 -m unittest test_training_data.SnapshotTests
 ### D32 — Reviewed labels and eligibility lifecycle
 - id: D32
 - title: Reviewed labels and eligibility lifecycle
-- status: pending
+- status: done
 - model: opus
 - depends: D31
 

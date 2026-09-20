@@ -2800,3 +2800,81 @@ nothing acts on it), export/manifests/grouping/splits, the readiness report, and
 `REVIEW_ONLY_CLASSES` (`missing-context`, `implementation-error`, `multiple-causes`) which are
 asserted unreachable from any operational signal by design.
 outcome: D31 model=opus attempts=1 result=pass review=pending run=2026-09-16-aa6e
+
+## D32 — Reviewed labels and eligibility lifecycle (opus) — Phase 7 task 2 of 4
+
+68 tests (module now 134 with D31's 66). 30 mutants, 0 survivors. Three pins byte-identical;
+`runtime_data.py` needed no change because D31 already registered `training`.
+
+**"Without claiming model unlearning" is enforced in DATA, not prose — verified:**
+
+    derived-dataset    : invalidated
+    export-manifest    : invalidated
+    readiness-report   : invalidated
+    trained-checkpoint : identified-only        <- named, never unlearned
+
+`REVOCATION_UNREACHED = ('trained-weights-not-unlearned', 'exported-copies-not-recalled',
+'downstream-artifacts-not-rebuilt', 'byte-erasure-not-proven')` rides on EVERY `revoke()` record
+whether it names four dependents or none, and what revocation DOES reach is separately coded.
+`assert_no_unlearning_claim` refuses a dependent payload whose keys would claim otherwise
+(`unlearned`, `weights_purged`, `scrubbedFromWeights`, `model-forgot`), matched as whole words after
+splitting on punctuation AND camelCase humps — **and its docstring says a spelling list is not a
+decision procedure and that a claim in a VALUE is not caught.**
+
+**IT REMOVED TWO OF ITS OWN GUARDS FOR BEING DECORATION, BEFORE ANY MUTATION FOUND THEM.** This is
+the first time in the run an agent applied the standing rule prospectively rather than as a
+post-mortem. `attach_action` originally swept its payload with `assert_no_input_field` and
+`decision_eval.assert_no_causal_claim` — but every parameter is keyword-only and lands in a named
+field, so **there is no caller-keyed object for a sweep to inspect** and both would have survived
+deletion. Replaced with the closed schema plus a test pinning the exact 16-key set against both
+predicates.
+
+**It also caught the masking pattern IN DESIGN.** In `revoke`, the sweeps had to move BEFORE
+`_dependents`, because `_closed` would answer `unknown-field` first and the sweep would never see a
+nested `{"ref": {"id": "c", "scrubbedFromWeights": true}}` — `attempt_ledger.read_ref` ignores
+extra keys. Same shape as every masking instance this kit has found, spotted before shipping.
+
+**MY BRIEF WAS WRONG A TWELFTH TIME, and the correction is the most interesting one yet.** I said
+`LABEL_STATUSES` does not exist. **It exists in `decision_eval`** as
+`("resolved","disputed","missing","censored")`; my claim was true of `training_data` only. It then
+**DECLINED to map onto it**, correctly: the surjective map would force `unresolved` onto `missing`
+or `censored`, and *"somebody reviewed it and could not tell"* is neither "no label" nor "not yet
+knowable from a joined fact". **Reusing a vocabulary that NEARLY fits is how two different facts
+become one.** `LABEL_VOCABULARY_NOTE` states why they are apart, and a test asserts
+`UNSUPPORTED_REASONS ∩ decision_eval.METRIC_STATUSES == set()` so `insufficient-evidence` is not
+borrowed either (the D15 point).
+
+**Two first-sweep survivors, both real gaps:**
+1. `label_state([])["target"]["eligible"] = True` survived — the empty-history test asserted
+   `status` and `reason` but never the eligibility VALUE, and `export_eligibility` keys off
+   `status`, so **nothing read the field D33 will read.** Fixed by asserting the whole `target` dict.
+2. Replacing the `EXPORT_REFUSALS` self-check with `[]` survived — nothing made the function emit a
+   code outside its own vocabulary. Fixed by shrinking `EXPORT_REFUSALS` under `mock.patch.object`
+   and asserting the decision refuses to answer in a vocabulary it does not name.
+
+**The three origins are three slots**, not one field with a flag: `operational_observation` (copied
+off the snapshot, NEVER from the caller), `provider_suggestion` (caller's, `adjudicated: False`,
+supports nothing), and `cause`/`contributing` (only what review evidence supported).
+`assert_no_adjudicated_field` refuses a claim or suggestion arriving under an adjudicated field name.
+
+**Owner pins, both patched both ways:** `EVIDENCE_ADMISSIBILITY` against
+`decision_eval.LABEL_SOURCES` plus a third check that every `HUMAN_LABEL_SOURCES` member weighs as
+`review`; and `RESULT_TO_ACTION_OUTCOME` against
+`RECOVERED_RESULTS + FAILED_RESULTS + CENSORING_BY_RESULT` in THREE directions, so **a censored
+result read as a failure refuses.**
+
+**GAP TO CARRY INTO D33:** `attach_action` accepts an `ACTION_OUTCOMES` member DIRECTLY, so the
+censored→unknown rule only bites for a caller routing through `action_outcome()`. A caller can
+still declare `outcome="failure"` for an open attempt — the caller asserting, not the module
+inferring, consistent with D31's posture. **D33 exports these records, so it must know which field
+is derived and which is declared.** The named fix if wanted: an `outcome_basis` field
+(`attempt-result` vs `declared`), or taking `result=` instead of `outcome=`.
+Also: `export_eligibility` without `store_dir` yields `label-not-checked` +
+`revocation-not-checked` rather than an all-clear, and `EXPORT_NOT_ESTABLISHED` carries
+`enforcement-not-provided` unconditionally — **it decides, it does not prevent.**
+
+Locks verified still shut and **no training store created even after `training_data.py demo` ran**:
+`exists: False`, root contains only the pre-existing `journal`. No production caller —
+`release_gate` remains the only `bin/` module naming `training_data`, reading version constants
+only, still pinned as an exact set by D31's test.
+outcome: D32 model=opus attempts=1 result=pass review=pending run=2026-09-16-aa6e

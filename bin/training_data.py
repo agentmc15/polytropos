@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""D31 -- the evidence ONE decision had in front of it, frozen, and nothing else.
+"""The evidence ONE decision had in front of it, frozen -- and the label lifecycle beside it.
 
     training_data.py status   [--json]   # is collection on, where would it write, what is wired
     training_data.py taxonomy [--json]   # the cause taxonomy, reconciled against the ledger's
@@ -38,9 +38,11 @@ fill. `attach_label` returns the example unchanged -- byte-identical canonical f
 SEPARATE artifact that points at `input_sha`, and it refuses a label payload carrying an input
 field at any depth. `example_id` is derived from `input_sha`, so one id can never name two
 different inputs, and re-capturing identical evidence is idempotent rather than a second
-example. The label lifecycle itself -- review, correction history, disagreement, adjudicated
-targets -- is D32's, and this module deliberately implements none of it: `status` on a label
-reference is `unadjudicated` and nothing here can change it.
+example. The label LIFECYCLE is the section below `persist` -- `adjudicate`, `label_state`,
+`attach_action`, `eligibility_state`, `revoke`, `export_eligibility` -- and every one of those
+writes a separate artifact keyed by `example_id`: none of them has a route into a snapshot's
+bytes, and `attach_label`'s own `status` is still `unadjudicated` with nothing able to change it
+in place.
 
 ============================================================================================
  UNKNOWN IS UNKNOWN
@@ -68,9 +70,12 @@ POINTS at them, through that module's own `make_ref`. It is not a second validat
 objects: a question must arrive already parsed by `bin/decision_contract.py`. It is not a
 second serializer: canonical bytes and duplicate-key-safe parsing are that contract's `dumps`
 and `loads`. It is not a second path layer: every write goes through `bin/safe_paths.py` into a
-root `bin/runtime_data.py` resolved. It is not an exporter and it is not a trainer: local JSONL
-datasets and manifests are D33's, readiness is D34's, and no code path here reaches a network,
-a provider, a model or a real harness home.
+root `bin/runtime_data.py` resolved. It is not a second label-source or attempt-result
+vocabulary: `bin/decision_eval.py` owns both and `reconcile_label_sources` /
+`reconcile_action_outcomes` read them at call time. It is not an exporter and it is not a
+trainer: `export_eligibility` DECIDES and writes nothing, local JSONL datasets and manifests are
+D33's, readiness is D34's, and no code path here reaches a network, a provider, a model or a
+real harness home.
 """
 
 import argparse
@@ -435,46 +440,20 @@ def assert_no_input_field(value, where="the label"):
     and exactly the defect D14 had to fix when a field populated from what followed was
     presented as what the decision produced.
 
-    IT REFUSES WHAT IT CANNOT WALK, AND WHAT IS NOT JSON. A walker handed a container it does
-    not descend into inspects nothing and certifies everything, so bytes, a set, a view, a
-    generator and any other object are refusals rather than passes. A namedtuple is refused
-    although it IS a tuple, because walking it as one would inspect its values and never its
-    field names -- which is where an input-shaped key would be hiding.
+    IT REFUSES WHAT IT CANNOT WALK, AND WHAT IS NOT JSON. `_walk_keys` is the shared walker and
+    it refuses rather than descends: a container it does not enter inspects nothing and certifies
+    everything, so bytes, a set, a view, a generator and any other object are refusals rather
+    than passes, and a namedtuple is refused although it IS a tuple.
 
     WHAT IT DOES NOT PROVE. This matches KEY spellings. A label that writes the task statement
     into a VALUE under an innocent key is not caught here -- what stops that one is the
     separation of artifacts: the example's bytes are digested and never rewritten, so whatever a
     label says, the input it points at is still the input.
     """
-    hits = []
-    unwalkable = []
-    stack = [value]
-    while stack:
-        item = stack.pop()
-        if isinstance(item, Mapping):
-            for key, sub in item.items():
-                if _is_input_shaped(key):
-                    hits.append(key)
-                stack.append(sub)
-        elif isinstance(item, (str, int, float, type(None))):
-            continue  # the JSON scalars; `bool` is an `int` and arrives here
-        elif hasattr(item, "_fields"):
-            unwalkable.append(type(item).__name__)  # a namedtuple: values walked, names lost
-        elif isinstance(item, (list, tuple)):
-            stack.extend(item)
-        else:
-            unwalkable.append(type(item).__name__)
-    if hits:
-        raise _refuse(
-            "authority-field",
-            f"{where} carries {', '.join(repr(h) for h in sorted(set(hits)))}, which is "
-            f"input-time evidence. {LABEL_SEPARATE_NOTE}")
-    if unwalkable:
-        raise _refuse(
-            "authority-field",
-            f"{where} carries a value this sweep cannot inspect: "
-            f"{', '.join(sorted(set(unwalkable)))}. A container that is not walked is not "
-            f"checked, so it is refused rather than passed over")
+    keys, unwalkable = _walk_keys(value)
+    hits = [key for key in keys if _is_input_shaped(key)]
+    _refuse_keys(hits, unwalkable, where,
+                 f"which is input-time evidence. {LABEL_SEPARATE_NOTE}")
     return value
 
 
@@ -1074,10 +1053,11 @@ def attach_label(record, payload):
     label is a separate object carrying only `example_id` and `input_sha`, and a payload holding
     input-time evidence at any depth is refused by `assert_no_input_field`.
 
-    IT IS NOT THE LABEL LIFECYCLE. D32 owns review, correction history, disagreement and
-    adjudicated targets. What comes out of here is `status: "unadjudicated"` with the payload
-    quoted verbatim under `claim`, and nothing in this module can advance it -- a provider's or
-    a reviewer's opinion is a candidate, never independently verified truth.
+    IT IS NOT THE ADJUDICATION. What comes out of here is `status: "unadjudicated"` with the
+    payload quoted verbatim under `claim`, and nothing can advance THIS object: a review produces
+    a new `adjudication` artifact through `adjudicate`, which weighs evidence and leaves this one
+    exactly as it was. A provider's or a reviewer's opinion recorded here is a candidate, never
+    independently verified truth.
     """
     assert_intact(record, "the record being labelled")
     before = canonical({k: v for k, v in record.items() if k != "content_sha"})
@@ -1200,6 +1180,1493 @@ def persist(record, store_dir):
             "reason": None}
 
 
+# ==================================================================================================
+#  D32 -- THE LABEL LIFECYCLE: REVIEW, CORRECTION, ELIGIBILITY, RETENTION, REVOCATION
+# ==================================================================================================
+#
+# THREE THINGS THAT LOOK LIKE A LABEL, IN THREE DIFFERENT SLOTS, AND CONFLATING ANY TWO IS THE
+# DEFECT. `operational_observation` is what the system OBSERVED -- `attempt_ledger`'s own class,
+# read off the snapshot and never off the caller. `provider_suggestion` is what a model or a
+# service GUESSED -- carried verbatim, flagged, and unable to support anything. `cause` and
+# `contributing` are the ADJUDICATED target, and they are filled only when review evidence
+# supports them. A claim nobody can support does not land in `cause`: it stays under `claim`, the
+# status stays `unresolved`, and `unresolved_reason` names which support was missing.
+# `assert_no_adjudicated_field` is the structural half -- a caller's claim may not use the
+# adjudicated field names at all, so a suggestion can never arrive already wearing the target's
+# clothes.
+#
+# A REVIEW IS INFORMATION FROM AFTER THE DECISION, AND THE MIRROR OF D31's RULE ENFORCES IT. An
+# input entry is refused unless it places `at-or-before-prediction`; an adjudication and an action
+# record are refused when they place THERE. A review dated at or before the decision it reviews
+# would be a fact the decision could have been shown. D14's defect -- a field populated from what
+# merely followed, presented as what the decision produced -- is the same confusion from the other
+# side, so `attach_action` carries no field for a cause and none for an optimal action, and it
+# reuses `decision_eval.assert_no_causal_claim` rather than standing a second sweep beside it.
+#
+# WHAT REVOCATION REACHES, AND WHAT IT DOES NOT. Revoking a label refuses every future export,
+# invalidates the manifests and datasets built from it, and NAMES the downstream artifacts --
+# including a checkpoint. It cannot un-train a model. `REVOCATION_REACH` says which of those two a
+# downstream kind gets (`invalidated` or `identified-only`), `REVOCATION_UNREACHED` is carried on
+# every revocation record unconditionally, and no branch here can discharge one of those codes by
+# passing some other check. The precedent is `workflow_eval.APPROVAL_UNPROVEN`: machine-readable
+# codes rather than a paragraph, so a reader can check that no record ever claims more.
+#
+# WHAT THIS SECTION DOES NOT DO. It is not an exporter: `export_eligibility` DECIDES and writes
+# nothing, and the local JSONL dataset and its manifest are D33's. It is not a trainer, and it does
+# not turn collection on -- `COLLECTION_ENABLED` and `CAPTURE_WIRED` are still False and nothing
+# here reads either as anything else. It is not a second label vocabulary for the decision join:
+# `decision_eval.LABEL_STATUSES` describes a joined row's label and is left alone, because a
+# training example's adjudication lifecycle and a join's label status answer different questions
+# and mapping one onto the other would invent an equivalence neither module can support.
+
+#: The label lifecycle's own schema. ONE constant for the three artifacts below, the way
+#: `attempt_ledger.LEDGER_VERSION` stamps every event kind it writes: an adjudication, an action
+#: record and a revocation share one envelope (`example_id`, `input_sha`, `kind`, `recorded_at`,
+#: `content_sha`) and are revised together, and `kind` is the discriminator, so a reader that
+#: fetched one still knows which field names apply to IT. Registered in
+#: `release_gate.VERSION_SOURCES` in its own right, because it is a new STORED object.
+LIFECYCLE_VERSION = "polytropos.training-label-lifecycle/1"
+
+#: The three artifacts this section writes. Closed: a reader branches on this, and a fourth kind
+#: would need its own directory, its own builder and its own refusals.
+LIFECYCLE_KINDS = ("adjudication", "action", "revocation")
+
+#: Where each kind lands inside the store, one file per EXAMPLE rather than per day. Keyed by
+#: `example_id` on purpose: a revocation has to be findable BEFORE an export, and a gate that
+#: could only find one by scanning every day in the store would in practice not look.
+LIFECYCLE_DIRS = {
+    "adjudication": "labels",
+    "action": "actions",
+    "revocation": "revocations",
+}
+
+#: How many lifecycle records one example may accumulate. Corrections append rather than
+#: overwrite, so this bounds a HISTORY, and past it the append is refused rather than the oldest
+#: entry dropped -- losing correction history is exactly what must not happen.
+MAX_LIFECYCLE_ENTRIES = 32
+
+#: How many references may support one cause, and how many contributing causes one adjudication
+#: may name. A review cites what it looked at; a list that could hold hundreds is a bibliography.
+MAX_EVIDENCE = 8
+MAX_CONTRIBUTING = 8
+
+#: How many downstream artifacts one revocation may name.
+MAX_DEPENDENTS = 16
+
+#: What an adjudication's status can be in THIS module's lifecycle.
+#:
+#:   unadjudicated  a claim was recorded and nobody has reviewed it -- D31's `attach_label`
+#:                  status, and the state of an example with no adjudication at all.
+#:   unresolved     somebody reviewed it and the evidence does not support a target. NOT the same
+#:                  as `unadjudicated`: "nobody looked" and "somebody looked and could not tell"
+#:                  are different amounts of information, the distinction
+#:                  `workflow_eval.PROMOTION_APPROVAL_BLOCKERS` draws between a missing approval
+#:                  and one nobody re-derived.
+#:   resolved       review evidence supports the target this record names.
+#:   disputed       two adjudications, neither superseding the other, name different targets. It
+#:                  is the label, not a failure to label.
+LABEL_STATUSES = ("unadjudicated", "unresolved", "resolved", "disputed")
+
+#: The status of an example nobody has adjudicated.
+UNADJUDICATED = "unadjudicated"
+
+#: The only status that is a supervised target on its own. `disputed` becomes one only under a
+#: question that explicitly models ambiguity, and `unresolved` never does.
+SUPERVISED_TARGET_STATUS = "resolved"
+
+#: Which status may follow which -> an EXACT PARTITION of `LABEL_STATUSES` (every status is a key;
+#: every value is a member). A correction that keeps the status and changes the target is also
+#: admitted -- `resolved` with cause A becoming `resolved` with cause B is the commonest real
+#: correction -- and `_assert_label_transition` states that rule where it applies it.
+LABEL_STATUS_TRANSITIONS = {
+    "unadjudicated": ("unresolved", "resolved", "disputed"),
+    "unresolved": ("resolved", "disputed"),
+    "resolved": ("unresolved", "disputed"),
+    "disputed": ("unresolved", "resolved"),
+}
+
+#: The question an adjudication answers. Each shape has its OWN schema below, because the four
+#: cases `TRAINING-DATA.md` names do not fit one:
+#:
+#:   failure-cause  one adjudicated cause from `CAUSE_CLASSES`. `multiple-causes` is a member of
+#:                  that taxonomy and needs at least two separately supported contributing
+#:                  causes: review established that both contributed.
+#:   ambiguity      review could not tell WHICH of several causes it was. No single `cause`, at
+#:                  least two competing ones each with its own evidence, and the only shape under
+#:                  which a `disputed` history is a supervised target.
+#:   no-failure     a successful attempt, which `TRAINING-DATA.md` admits as a negative example
+#:                  "only under a compatible explicitly defined question". No cause may be named,
+#:                  and the record's operational class must be ABSENT -- a dispatch the ledger
+#:                  classified as failing cannot be relabelled a success.
+QUESTION_SHAPES = ("failure-cause", "no-failure", "ambiguity")
+
+#: Why an adjudication is `unresolved`, or why a status is not a target. Closed, and deliberately
+#: several codes rather than one: WHICH support was missing is the whole information.
+#:
+#: `insufficient-evidence` is DELIBERATELY not reused here. That string belongs to
+#: `decision_eval.METRIC_STATUSES` and means a metric had too few scoreable rows to report a
+#: number. A label with no independent reader is not a thin sample, and a review nobody has done
+#: is neither; borrowing the word would make three different situations read the same.
+UNSUPPORTED_REASONS = ("not-yet-reviewed", "no-supporting-evidence", "no-independent-reader",
+                       "provider-suggestion-only", "operational-signal-only",
+                       "contributing-causes-not-separately-supported",
+                       "disagreement-unresolved")
+
+#: How much one piece of evidence can carry.
+#:
+#:   review        an independent reader -- a person, or a recorded review verdict. The only
+#:                 weight that can establish a `REVIEW_ONLY_CLASSES` member, because "missing
+#:                 context" and "implementation error" are judgements and not readings.
+#:   mechanical    a reproduction or a tool failure stage. It narrows a cause and can support a
+#:                 deterministic one; it is an observation rather than a judgement.
+#:   operational   the ledger's own classification of the dispatch. This is the CANDIDATE route
+#:                 D31 built, and it supports NOTHING here: a nonzero exit is the symptom
+#:                 `TRAINING-DATA.md` says to keep distinct from a cause.
+EVIDENCE_WEIGHTS = ("review", "mechanical", "operational")
+
+#: How each `decision_eval.LABEL_SOURCES` member weighs as review evidence -> the whole
+#: reconciliation, checked by `reconcile_label_sources` as an EXACT PARTITION of that tuple read
+#: at call time. That module owns who produced an observation; this one owns what such an
+#: observation can support. A source it adds and this has no weight for would otherwise arrive
+#: weightless and quietly support a target.
+EVIDENCE_ADMISSIBILITY = {
+    "human-adjudication": "review",
+    "review-verdict": "review",
+    "tests-oracle": "mechanical",
+    "kit-acceptance": "mechanical",
+    "attempt-outcome": "operational",
+}
+
+#: What a later action's outcome can be, exactly as `TRAINING-DATA.md` names it.
+ACTION_OUTCOMES = ("success", "failure", "unknown")
+
+#: How an attempt result reads as an action outcome -> checked by `reconcile_action_outcomes`
+#: against `decision_eval`'s three result vocabularies read at call time, in BOTH directions: the
+#: map must name every result, and every recovered result must read as `success`, every failed one
+#: as `failure`, and every CENSORED one as `unknown`. That last rule is the one worth having -- a
+#: censored result is an outcome nobody has yet, and reading it as a failure would manufacture a
+#: negative example out of an attempt that is merely still open.
+RESULT_TO_ACTION_OUTCOME = {
+    "pass": "success",
+    "retry-pass": "success",
+    "escalated-pass": "success",
+    "verify-failed": "failure",
+    "dispatch-failed": "failure",
+    "blocked": "failure",
+    "open": "unknown",
+    "unknown": "unknown",
+    "dispatched": "unknown",
+    "budget-stop": "unknown",
+}
+
+#: Which eligibility state may follow which -> an EXACT PARTITION of `ELIGIBILITY_STATUSES`. Two
+#: properties are the point. `approved` appears in exactly one row, `unknown`'s: an expired record
+#: is never silently renewed and a revoked one is never reinstated. `revoked` is reachable from
+#: every state and leads nowhere, so a withdrawal cannot be undone to make an export valid again.
+#: (`approved` -> `unknown` is the degradation `eligibility_state` applies when a retention period
+#: cannot be computed at all: an approval nobody can enforce is not an approval.)
+ELIGIBILITY_TRANSITIONS = {
+    "unknown": ("approved", "refused", "revoked"),
+    "approved": ("unknown", "expired", "revoked"),
+    "refused": ("revoked",),
+    "expired": ("revoked",),
+    "revoked": (),
+}
+
+#: The states nothing leads out of.
+ELIGIBILITY_TERMINAL = ("revoked",)
+
+#: What can be built out of a training example, and therefore what a revocation has to say
+#: something about. Closed: a kind nobody mapped in `REVOCATION_REACH` is refused rather than
+#: silently reported as invalidated.
+DOWNSTREAM_KINDS = ("export-manifest", "derived-dataset", "readiness-report",
+                    "trained-checkpoint")
+
+#: How far revocation reaches into one downstream artifact.
+#:
+#:   invalidated       this store will not honour it again: a manifest, a dataset or a report
+#:                     built from a revoked example is marked invalid and no re-export reproduces
+#:                     it.
+#:   identified-only   it is NAMED, and nothing more.
+REACH_LEVELS = ("invalidated", "identified-only")
+
+#: Which reach each downstream kind gets -> an EXACT PARTITION of `DOWNSTREAM_KINDS`. The
+#: `trained-checkpoint` row is the most consequential line in this module: a checkpoint trained on
+#: a revoked example is IDENTIFIED and never unlearned. Deleting the example does not remove it
+#: from weights, and nothing here may read as though it did.
+REVOCATION_REACH = {
+    "export-manifest": "invalidated",
+    "derived-dataset": "invalidated",
+    "readiness-report": "invalidated",
+    "trained-checkpoint": "identified-only",
+}
+
+#: What revoking DOES establish, as codes rather than prose.
+REVOCATION_REACHES = ("future-exports-refused", "dependent-manifests-invalidated",
+                      "downstream-artifacts-identified")
+
+#: What revoking does NOT establish, whatever else was checked and however many dependents were
+#: named. UNCONDITIONAL, closed, and carried on every revocation record: nothing in this section
+#: can discharge one of these, so none is ever left off on the strength of some other check.
+REVOCATION_UNREACHED = ("trained-weights-not-unlearned", "exported-copies-not-recalled",
+                        "downstream-artifacts-not-rebuilt", "byte-erasure-not-proven")
+
+REVOCATION_UNREACHED_NOTES = {
+    "trained-weights-not-unlearned":
+        "a model already trained on this example does not forget it because the example was "
+        "withdrawn. Revocation NAMES the checkpoint; removing one example's influence from "
+        "trained weights is a training-side problem this module neither performs nor claims",
+    "exported-copies-not-recalled":
+        "bytes that already left this store are outside its reach. A revocation refuses the NEXT "
+        "export and invalidates the manifests it was shown; it does not travel to a copy "
+        "somebody already holds",
+    "downstream-artifacts-not-rebuilt":
+        "marking a manifest or a dataset invalid is a statement about it, not an action on it. "
+        "Nothing here rebuilds, retracts or deletes a downstream artifact -- D33 owns exports, "
+        "and what this module owns is the refusal that stops the next one",
+    "byte-erasure-not-proven":
+        "the tombstone records that the withdrawal happened. It does not prove the example's "
+        "bytes are gone: this tree is distributed, cached and often backed up, and a file "
+        "deletion is not an erasure proof",
+}
+
+UNLEARNING_NOTE = (
+    "revocation refuses future exports, invalidates the dependent manifests named on the record, "
+    "and IDENTIFIES the downstream artifacts built from this example. It does not un-train a "
+    "model: a checkpoint is named, never unlearned, and every code in `unreached` stays on the "
+    "record whatever else was checked")
+
+#: What no adjudication written here establishes. Unconditional, on every adjudication, for the
+#: reason `APPROVAL_UNPROVEN` is unconditional.
+ADJUDICATION_NOT_ESTABLISHED = ("reviewer-not-authenticated", "evidence-not-dereferenced",
+                                "cause-not-experimentally-confirmed")
+
+ADJUDICATION_NOT_ESTABLISHED_NOTES = {
+    "reviewer-not-authenticated":
+        "the reviewer is a name and a source this function was handed. There is no controller "
+        "identity, no signature and no session behind either, so an adjudication binds WHAT was "
+        "reviewed exactly and WHO reviewed it not at all",
+    "evidence-not-dereferenced":
+        "the evidence references are pointers. This function checks that each one IS a reference "
+        "and names the parts it is missing; it reads nothing at the other end, so it cannot say "
+        "the object exists or still says what it said",
+    "cause-not-experimentally-confirmed":
+        "review is reading, not intervention. A cause established by an independent reader is not "
+        "a cause established by changing one thing and watching the failure go away, and a "
+        "recovery that succeeded is not evidence the diagnosis behind it was right",
+}
+
+#: Every refusal an export decision may carry. Closed, and each one separately reachable --
+#: `tests/test_training_data.py` constructs a case for every member, because a code nothing can
+#: emit reads as a guard and is not one.
+EXPORT_REFUSALS = ("record-not-intact", "retention-unknown", "eligibility-unknown",
+                   "eligibility-refused", "eligibility-expired", "eligibility-revoked",
+                   "label-not-checked", "label-unadjudicated", "label-unresolved",
+                   "label-disputed", "revocation-not-checked", "purpose-not-declared",
+                   "purpose-outside-scope", "destination-not-declared")
+
+#: What an export DECISION does not establish, carried unconditionally on every one.
+EXPORT_NOT_ESTABLISHED = ("destination-not-contacted", "enforcement-not-provided",
+                          "purpose-strings-compared-not-interpreted")
+
+EXPORT_NOT_ESTABLISHED_NOTES = {
+    "destination-not-contacted":
+        "a destination is a string this decision was handed. Nothing here starts a connection, "
+        "authenticates to anything or transfers a byte, and no external transfer is part of V1",
+    "enforcement-not-provided":
+        "this function decides; it does not prevent. A process that ignores the decision and "
+        "reads the store directly is stopped by the store's own permissions and by the execution "
+        "boundary, which are other modules' business",
+    "purpose-strings-compared-not-interpreted":
+        "the declared export purpose is compared with the scope's permitted purpose as TEXT. Two "
+        "different wordings of the same purpose refuse, and a purpose that matches the words "
+        "while meaning something else passes -- a string comparison cannot read intent",
+}
+
+LABEL_VOCABULARY_NOTE = (
+    "this lifecycle's statuses are not decision_eval.LABEL_STATUSES. That vocabulary describes a "
+    "joined row's label; this one describes whether a training target has been adjudicated. "
+    "`unresolved` here means somebody reviewed it and could not tell, which is neither a missing "
+    "label nor a censored observation, so the two vocabularies are kept apart rather than mapped")
+
+
+# ---- the reconciliations D32 adds, each read from its owner at call time -------------------------
+
+def reconcile_label_sources():
+    """How `decision_eval.LABEL_SOURCES` weighs as review evidence -> the reconciliation.
+
+    An EXACT PARTITION of that tuple, read at call time and refused in both directions for the
+    reason `reconcile_operational_classes` gives: a source the owner adds and this module has no
+    weight for would arrive weightless, and a weight for a source the owner removed is a
+    vocabulary nobody writes.
+
+    THE LAST CHECK IS THE INTERESTING ONE. `decision_eval.HUMAN_LABEL_SOURCES` names which
+    sources are a person, and that module's rule is that a human verdict is not ground truth. A
+    human source that did not weigh as `review` would be a person's judgement counted as a
+    mechanical reading, so it refuses here.
+    """
+    de = _de()
+    owner = tuple(de.LABEL_SOURCES)
+    mapped = set(EVIDENCE_ADMISSIBILITY)
+    missing = sorted(set(owner) - mapped)
+    extra = sorted(mapped - set(owner))
+    if missing or extra:
+        raise _refuse(
+            "unknown-value",
+            f"the evidence reconciliation is no longer an exact partition of "
+            f"decision_eval.LABEL_SOURCES: unweighed {missing or 'none'}, unknown "
+            f"{extra or 'none'}. That module owns who produced an observation; this one owns "
+            f"what such an observation can support, and a silent gap would mean evidence "
+            f"weighing nothing while supporting a target")
+    bad = sorted(v for v in EVIDENCE_ADMISSIBILITY.values() if v not in EVIDENCE_WEIGHTS)
+    if bad:
+        raise _refuse("unknown-value",
+                      f"the evidence reconciliation weighs a source as {bad}, which are not "
+                      f"members of EVIDENCE_WEIGHTS")
+    human = tuple(de.HUMAN_LABEL_SOURCES)
+    stray = sorted(set(human) - set(owner))
+    if stray:
+        raise _refuse("unknown-value",
+                      f"decision_eval.HUMAN_LABEL_SOURCES names {stray}, which is not one of its "
+                      f"own LABEL_SOURCES")
+    misweighed = sorted(name for name in human if EVIDENCE_ADMISSIBILITY[name] != "review")
+    if misweighed:
+        raise _refuse(
+            "unknown-value",
+            f"{misweighed} is a human source weighed as something other than review. A person's "
+            f"judgement is an independent reader, never a mechanical reading")
+    return {
+        "lifecycle_v": LIFECYCLE_VERSION,
+        "owner": "bin/decision_eval.py:LABEL_SOURCES",
+        "sources": list(owner),
+        "weights": list(EVIDENCE_WEIGHTS),
+        "weight_of": dict(sorted(EVIDENCE_ADMISSIBILITY.items())),
+        "human_sources": list(human),
+        "review_only_classes": list(REVIEW_ONLY_CLASSES),
+        "note": CANDIDATE_LABEL_NOTE,
+    }
+
+
+def reconcile_action_outcomes():
+    """How an attempt result reads as an action outcome -> the reconciliation.
+
+    Checked three ways against `decision_eval`, read at call time: its three result vocabularies
+    must stay disjoint, the map must be an exact partition of their union, and each group must map
+    onto the outcome its own meaning implies. The third check is what stops a censored result --
+    an attempt still open, a budget stop, a dispatch nobody graded -- from reading as a failure
+    and becoming a negative training example.
+    """
+    de = _de()
+    recovered = tuple(de.RECOVERED_RESULTS)
+    failed = tuple(de.FAILED_RESULTS)
+    censored = tuple(de.CENSORING_BY_RESULT)
+    owner = recovered + failed + censored
+    dupes = sorted({name for name in owner if owner.count(name) > 1})
+    if dupes:
+        raise _refuse(
+            "duplicate-entry",
+            f"decision_eval now lists {dupes} in more than one of RECOVERED_RESULTS, "
+            f"FAILED_RESULTS and CENSORING_BY_RESULT. One result, one meaning: reconcile them "
+            f"there before this module reads them as an outcome")
+    mapped = set(RESULT_TO_ACTION_OUTCOME)
+    missing = sorted(set(owner) - mapped)
+    extra = sorted(mapped - set(owner))
+    if missing or extra:
+        raise _refuse(
+            "unknown-value",
+            f"the action-outcome reconciliation is no longer an exact partition of "
+            f"decision_eval's result vocabularies: unmapped {missing or 'none'}, unknown "
+            f"{extra or 'none'}")
+    for group, expected in ((recovered, "success"), (failed, "failure"), (censored, "unknown")):
+        wrong = sorted(name for name in group if RESULT_TO_ACTION_OUTCOME[name] != expected)
+        if wrong:
+            raise _refuse(
+                "unknown-value",
+                f"{wrong} should read as {expected!r} and does not. A recovered result is a "
+                f"success, a failed one is a failure, and a CENSORED one is unknown -- an "
+                f"outcome nobody has yet is not a negative example")
+    bad = sorted(v for v in RESULT_TO_ACTION_OUTCOME.values() if v not in ACTION_OUTCOMES)
+    if bad:
+        raise _refuse("unknown-value",
+                      f"the action-outcome reconciliation maps onto {bad}, which are not members "
+                      f"of ACTION_OUTCOMES")
+    return {
+        "lifecycle_v": LIFECYCLE_VERSION,
+        "owner": "bin/decision_eval.py:RECOVERED_RESULTS+FAILED_RESULTS+CENSORING_BY_RESULT",
+        "outcomes": list(ACTION_OUTCOMES),
+        "outcome_of": dict(sorted(RESULT_TO_ACTION_OUTCOME.items())),
+        "censored_results": sorted(censored),
+        "note": de.UNTRIED_ACTION_NOTE,
+    }
+
+
+def action_outcome(result):
+    """One attempt result -> its action outcome, or None when no result was recorded.
+
+    `None` in means nothing was graded, and `None` out says so. Nothing here invents a failure for
+    an action nobody graded.
+    """
+    reconcile_action_outcomes()
+    if result is None:
+        return None
+    if result not in RESULT_TO_ACTION_OUTCOME:
+        raise _refuse("unknown-value",
+                      f"{result!r} is not one of decision_eval's attempt results")
+    return RESULT_TO_ACTION_OUTCOME[result]
+
+
+def _assert_partition(mapping, owner_names, values, what, owner_label):
+    """One closed mapping, checked against the tuple that owns its keys -> the mapping."""
+    missing = sorted(set(owner_names) - set(mapping))
+    extra = sorted(set(mapping) - set(owner_names))
+    if missing or extra:
+        raise _refuse("unknown-value",
+                      f"{what} is not an exact partition of {owner_label}: unmapped "
+                      f"{missing or 'none'}, unknown {extra or 'none'}")
+    flat = []
+    for value in mapping.values():
+        flat.extend(value if isinstance(value, (list, tuple)) else [value])
+    bad = sorted(set(flat) - set(values))
+    if bad:
+        raise _refuse("unknown-value", f"{what} names {bad}, which are not admissible values")
+    return mapping
+
+
+# ---- refusing a claim that arrives already wearing the target's clothes --------------------------
+
+#: Key spellings that belong to an ADJUDICATED slot. A caller's claim, and a provider's
+#: suggestion, may not use one: `claim: {"cause": "missing-context"}` would be a guess written
+#: into the field review is supposed to fill, which is the three-way separation collapsing at the
+#: point of entry. `claimed_cause` is the spelling that works, and it is the one D31's own demo
+#: already used.
+_ADJUDICATED_SHAPED = frozenset(
+    _alnum(name) for name in ("cause", "causes", "contributing", "status", "adjudicated",
+                              "adjudication", "operational_observation", "candidate_cause",
+                              "supervised_target", "target", "evidence", "reviewer", "unreached",
+                              "not_established", "shape")
+)
+
+
+def _walk_keys(value):
+    """Every key in a JSON-shaped structure, plus the types the walk could not descend into.
+
+    ONE walker for the three key sweeps in this module, so "what counts as inspected" has one
+    answer. A container the walk does not enter inspects nothing and certifies everything, so
+    bytes, a set, a view, a generator and any other object come back as unwalkable rather than
+    silently passing. A namedtuple is unwalkable although it IS a tuple, because walking it as one
+    would inspect its values and never its field names -- which is where a banned key would hide.
+    """
+    keys = []
+    unwalkable = []
+    stack = [value]
+    while stack:
+        item = stack.pop()
+        if isinstance(item, Mapping):
+            for key, sub in item.items():
+                keys.append(key)
+                stack.append(sub)
+        elif isinstance(item, (str, int, float, type(None))):
+            continue  # the JSON scalars; `bool` is an `int` and arrives here
+        elif hasattr(item, "_fields"):
+            unwalkable.append(type(item).__name__)  # a namedtuple: values walked, names lost
+        elif isinstance(item, (list, tuple)):
+            stack.extend(item)
+        else:
+            unwalkable.append(type(item).__name__)
+    return keys, unwalkable
+
+
+def _refuse_keys(hits, unwalkable, where, why):
+    """The one refusal both key sweeps raise, so a caller branches on one code."""
+    if hits:
+        raise _refuse("authority-field",
+                      f"{where} carries {', '.join(repr(h) for h in sorted(set(hits)))}, {why}")
+    if unwalkable:
+        raise _refuse(
+            "authority-field",
+            f"{where} carries a value this sweep cannot inspect: "
+            f"{', '.join(sorted(set(unwalkable)))}. A container that is not walked is not "
+            f"checked, so it is refused rather than passed over")
+
+
+def assert_no_adjudicated_field(value, where="the claim"):
+    """Refuse a claim or a suggestion that uses an adjudicated field name at any depth.
+
+    WHAT IT DOES NOT PROVE. It matches KEY spellings, so a suggestion that writes a cause into a
+    VALUE under an innocent key passes. What stops that one is not a spelling list: `cause` on the
+    record is written by `adjudicate` from the SUPPORTED target and from nowhere else, so whatever
+    a claim says, the adjudicated slot still holds only what review established.
+    """
+    keys, unwalkable = _walk_keys(value)
+    hits = [key for key in keys
+            if isinstance(key, str) and (_alnum(key) in _ADJUDICATED_SHAPED
+                                         or any(_alnum(part) in _ADJUDICATED_SHAPED
+                                                for part in key.split(".")))]
+    _refuse_keys(hits, unwalkable, where,
+                 "which is an adjudicated field name. A raw observation and a provider's "
+                 "suggestion are recorded as claims; only review evidence fills the target")
+    return value
+
+
+#: Words that would claim a model forgot something. Matched as WHOLE WORDS after a key is split on
+#: punctuation and on camelCase humps, which is stricter than the dotted-segment match
+#: `assert_no_input_field` uses. `decision_eval.CAUSAL_TOKENS` has to list `cause` beside
+#: `rootcause` precisely because a whole-key match on `cause` would fire on the innocent
+#: `root_cause`; these words have no innocent compound in this record's vocabulary, so splitting
+#: into words catches `weights_purged` and `scrubbedFromWeights` without that hazard.
+UNLEARNING_WORDS = ("unlearn", "unlearned", "unlearning", "untrain", "untrained", "forget",
+                    "forgot", "forgotten", "scrub", "scrubbed", "purge", "purged", "erase",
+                    "erased", "expunge", "expunged", "amnesia")
+
+_UNLEARNING_WORDS = frozenset(UNLEARNING_WORDS)
+
+
+def _key_words(key):
+    if not isinstance(key, str):
+        return ()
+    humped = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", key)
+    return tuple(word for word in re.split(r"[^A-Za-z0-9]+", humped.lower()) if word)
+
+
+def assert_no_unlearning_claim(value, where="the revocation"):
+    """Refuse a structure whose keys would claim a model unlearned something.
+
+    THE ROUTE IS REAL. `revoke`'s dependents are the caller's own object with the caller's own
+    keys, and "we withdrew it, so the model no longer knows it" is the single most tempting false
+    claim in this file. A field called `unlearned`, `weights_purged` or `scrubbedFromWeights`
+    asserts exactly that, so it is refused rather than stored beside `REVOCATION_UNREACHED`
+    contradicting it.
+
+    WHAT IT DOES NOT PROVE. A spelling list is not a decision procedure. A key this list never
+    anticipated -- `weights_clean`, `no_longer_influences` -- is not caught, and a VALUE making
+    the claim is not caught either; widening the list can only move that line. What carries the
+    honest claim is structural: every revocation record carries every `REVOCATION_UNREACHED` code
+    unconditionally, and no branch here can take one off.
+    """
+    keys, unwalkable = _walk_keys(value)
+    hits = [key for key in keys if any(word in _UNLEARNING_WORDS for word in _key_words(key))]
+    _refuse_keys(hits, unwalkable, where,
+                 "which would claim a model forgot this example. Revocation refuses future "
+                 f"exports and names downstream artifacts; it un-trains nothing. {UNLEARNING_NOTE}")
+    return value
+
+
+# ---- the lifecycle envelope ---------------------------------------------------------------------
+
+def _example_id(value):
+    """An example id, checked as an identity AND as a single filename component."""
+    text = _label_text(value, "an example id", limit=64)
+    if not re.fullmatch(r"ex-[0-9a-f]{16}", text):
+        raise _refuse("value-invalid",
+                      f"an example id is 'ex-' and 16 hex characters derived from the input "
+                      f"digest, got {text!r}")
+    return _sp().validate_id(text, "an example id")
+
+
+def _example_rel(kind, example_id):
+    if kind not in LIFECYCLE_DIRS:
+        raise _refuse("unknown-value", f"{kind!r} is not one of {', '.join(LIFECYCLE_KINDS)}")
+    return f"{LIFECYCLE_DIRS[kind]}/{_example_id(example_id)}.jsonl"
+
+
+def _assert_labelable(record, what):
+    """A lifecycle artifact that IS training content is built only for an approved record.
+
+    Revocation is the one exempt path, and has to be: a record must be withdrawable precisely
+    when it is no longer approved.
+    """
+    status = record.get("eligibility", {}).get("status") if isinstance(record, Mapping) else None
+    if status != ELIGIBLE_TO_PERSIST:
+        raise _refuse(
+            "value-invalid",
+            f"the record's eligibility is {status!r}; only {ELIGIBLE_TO_PERSIST!r} records get "
+            f"{what}. Withdrawing one is always available; adding training content to one is not")
+    return record
+
+
+def _envelope(record, kind, *, recorded_at):
+    """The fields every lifecycle artifact carries, taken from the snapshot it points at."""
+    assert_intact(record, f"the record being given a {kind}")
+    return {
+        "v": LIFECYCLE_VERSION,
+        "kind": _one_of(kind, LIFECYCLE_KINDS, "the lifecycle kind"),
+        "example_id": _example_id(record["example_id"]),
+        "input_sha": _digest_or_none(record["input_sha"], "the record's input_sha"),
+        "taxonomy_v": TAXONOMY_VERSION,
+        "recorded_at": recorded_at,
+    }
+
+
+def _seal(entry):
+    """The content digest every lifecycle record carries -> the record, sealed and bounded."""
+    entry["content_sha"] = _sha({k: v for k, v in entry.items() if k != "content_sha"})
+    size = len(canonical(entry).encode("utf-8"))
+    if size > MAX_RECORD_BYTES:
+        raise _refuse("bounds-exceeded",
+                      f"the {entry['kind']} serializes to {size} bytes, past the "
+                      f"{MAX_RECORD_BYTES} one lifecycle record holds")
+    return entry
+
+
+def lifecycle_integrity(entry):
+    """Recompute a lifecycle record's digest -> `{"content_sha_ok", "recomputed"}`."""
+    if not isinstance(entry, Mapping) or entry.get("v") != LIFECYCLE_VERSION:
+        raise _refuse("not-a-reference", f"this is not a {LIFECYCLE_VERSION} record")
+    if entry.get("kind") not in LIFECYCLE_KINDS:
+        raise _refuse("unknown-value",
+                      f"a lifecycle record's kind is one of {', '.join(LIFECYCLE_KINDS)}, got "
+                      f"{entry.get('kind')!r}")
+    recomputed = _sha({k: v for k, v in entry.items() if k != "content_sha"})
+    return {"content_sha_ok": recomputed == entry.get("content_sha"), "recomputed": recomputed}
+
+
+def assert_lifecycle_intact(entry, where="the stored lifecycle record"):
+    if not lifecycle_integrity(entry)["content_sha_ok"]:
+        raise _refuse("value-invalid",
+                      f"{where} fails content_sha_ok: its bytes are not the bytes that were "
+                      f"digested, so it is not the record it claims to be")
+    return entry
+
+
+def _after_the_decision(instant, record, what):
+    """The mirror of D31's input rule: this fact must NOT place at or before the decision.
+
+    `_instant` has already refused anything unplaceable, so the only two answers left are the two
+    this branch tells apart, and the admissible-for-an-input one is the refusal here.
+    """
+    where = _de().placement(instant, record["prediction_at"])
+    if where == ADMISSIBLE_PLACEMENT:
+        raise _refuse(
+            "value-invalid",
+            f"{what} is dated {instant} and the decision was taken {record['prediction_at']}, so "
+            f"it places {where!r}. A later artifact must place after the decision: anything at or "
+            f"before it is evidence the decision could have been shown, and this record is not an "
+            f"input")
+    return where
+
+
+# ---- review evidence ----------------------------------------------------------------------------
+
+def review_evidence(*, source, ref, observed_at, stage=None):
+    """One piece of review evidence -> its payload, weighed by its source.
+
+    `stage` is `TRAINING-DATA.md`'s "tool failure stage": where in the run the tool gave up. Free
+    text, bounded, optional, because a reviewer honestly may not know it.
+
+    The placement recorded here is deliberate. Review evidence is normally information from AFTER
+    the decision, and saying so ON the evidence is how a reader knows it may never be moved into
+    an input. Nothing is refused for placing later -- that is what review IS.
+    """
+    weights = reconcile_label_sources()["weight_of"]
+    src = _one_of(source, tuple(sorted(weights)), "the evidence's source")
+    pointer = _al().read_ref(ref)
+    if pointer is None:
+        raise _refuse("not-a-reference",
+                      f"the evidence's ref must come from attempt_ledger.make_ref, got {ref!r}")
+    return {
+        "source": src,
+        "weight": weights[src],
+        "ref": dict(pointer),
+        "ref_gaps": _al().ref_gaps(pointer),
+        "observed_at": _instant(observed_at, "the evidence's observed_at"),
+        "stage": _label_text(stage, "the evidence's stage", optional=True),
+    }
+
+
+_EVIDENCE_KEYS = ("source", "weight", "ref", "ref_gaps", "observed_at", "stage")
+
+
+def _evidence_list(items, where):
+    """A caller's evidence sequence, re-derived through `review_evidence` -> the payloads.
+
+    Re-derived rather than trusted: the `weight` on a stored payload is recomputed from its
+    source, so a caller cannot hand over `{"source": "attempt-outcome", "weight": "review"}` and
+    have the ledger's own classification counted as an independent reader.
+    """
+    if isinstance(items, (str, bytes, Mapping)):
+        raise _refuse("wrong-type",
+                      f"{where} is a sequence of evidence payloads, not {type(items).__name__}")
+    built = list(items)
+    if len(built) > MAX_EVIDENCE:
+        raise _refuse("bounds-exceeded",
+                      f"{where} carries {len(built)} references, past the {MAX_EVIDENCE} one "
+                      f"adjudicated cause cites")
+    out = []
+    for index, item in enumerate(built):
+        payload = _closed(item, _EVIDENCE_KEYS, f"{where}[{index}]")
+        if payload.get("ref") is None or payload.get("source") is None:
+            raise _refuse("value-invalid",
+                          f"{where}[{index}] did not come from training_data.review_evidence")
+        out.append(review_evidence(source=payload["source"], ref=payload["ref"],
+                                   observed_at=payload["observed_at"],
+                                   stage=payload.get("stage")))
+    return out
+
+
+def _support(items):
+    """The weights present in one evidence list -> `{weight: count}`, every weight answered."""
+    tally = {weight: 0 for weight in EVIDENCE_WEIGHTS}
+    for item in items:
+        tally[item["weight"]] += 1
+    return tally
+
+
+def _supports_a_cause(cause, tally):
+    """Whether this evidence can establish this cause -> `(bool, reason or None)`.
+
+    Two rules, and WHICH one bit is the information. Any adjudicated cause needs support that is
+    not merely operational -- the ledger's classification of a dispatch is the candidate route,
+    never the target. A `REVIEW_ONLY_CLASSES` member needs an independent READER on top: those
+    three are judgements, and D31 asserted they are unreachable from any operational signal.
+    """
+    if tally["review"] + tally["mechanical"] == 0:
+        return False, ("operational-signal-only" if tally["operational"]
+                       else "no-supporting-evidence")
+    if cause in REVIEW_ONLY_CLASSES and tally["review"] == 0:
+        return False, "no-independent-reader"
+    return True, None
+
+
+# ---- adjudication -------------------------------------------------------------------------------
+
+def _reviewer(value):
+    payload = _closed(value, ("id", "source"), "the reviewer")
+    weights = reconcile_label_sources()["weight_of"]
+    source = _one_of(payload.get("source"), tuple(sorted(weights)), "the reviewer's source")
+    if weights[source] != "review":
+        raise _refuse("value-invalid",
+                      f"a reviewer's source weighs as {weights[source]!r}. An adjudication is "
+                      f"made by an independent reader, not by a mechanical signal and not by the "
+                      f"ledger's own classification of the dispatch")
+    return {"id": _label_text(payload.get("id"), "the reviewer's id"), "source": source}
+
+
+def _cause(value, where, *, optional=False):
+    if value is None:
+        if optional:
+            return None
+        raise _refuse("missing-field", f"{where} is required")
+    return _one_of(value, CAUSE_CLASSES, where)
+
+
+def _contributing(items, where):
+    """Each contributing cause with its OWN evidence -> the rows, each separately weighed.
+
+    Evidence is attached per cause rather than pooled, because "two causes contributed" is two
+    claims and pooling would let one well-evidenced cause carry a second nobody looked into.
+    """
+    if isinstance(items, (str, bytes, Mapping)):
+        raise _refuse("wrong-type",
+                      f"{where} is a sequence of {{cause, evidence}} entries, not "
+                      f"{type(items).__name__}")
+    built = list(items)
+    if len(built) > MAX_CONTRIBUTING:
+        raise _refuse("bounds-exceeded",
+                      f"{where} names {len(built)} causes, past the {MAX_CONTRIBUTING} one "
+                      f"adjudication holds")
+    out = []
+    seen = set()
+    for index, item in enumerate(built):
+        payload = _closed(item, ("cause", "evidence"), f"{where}[{index}]")
+        cause = _cause(payload.get("cause"), f"{where}[{index}].cause")
+        if cause in seen:
+            raise _refuse("duplicate-entry",
+                          f"{where} names {cause!r} twice; one contributing cause, one entry")
+        seen.add(cause)
+        items_for = _evidence_list(payload.get("evidence") or (), f"{where}[{index}].evidence")
+        tally = _support(items_for)
+        supported, reason = _supports_a_cause(cause, tally)
+        out.append({"cause": cause, "evidence": items_for, "support": tally,
+                    "supported": supported, "unsupported_reason": reason})
+    return out
+
+
+def _suggestion(value):
+    """A model's or a service's suggested label -> a CANDIDATE, recorded and never believed."""
+    if value is None:
+        return None
+    payload = _closed(value, ("by", "claim"), "the provider suggestion")
+    pointer = _al().read_ref(payload.get("by"))
+    if pointer is None:
+        raise _refuse("not-a-reference",
+                      "the suggestion's `by` must come from attempt_ledger.make_ref: a "
+                      "suggestion nobody can attribute cannot be weighed or withdrawn")
+    claim = payload.get("claim")
+    if not isinstance(claim, Mapping) or not claim:
+        raise _refuse("value-invalid", "a provider suggestion carries a non-empty claim object")
+    assert_no_input_field(claim, "the provider suggestion")
+    assert_no_adjudicated_field(claim, "the provider suggestion")
+    return {
+        "by": dict(pointer),
+        "claim": _copy(dict(claim)),
+        "adjudicated": False,
+        "note": ("a model's or a service's suggestion is a candidate label, never independently "
+                 "verified truth. It supports nothing here: an adjudicated target needs review "
+                 "evidence, and a suggestion is not evidence about itself"),
+    }
+
+
+def _assert_label_transition(current, target, *, changed):
+    """Refuse a correction that is not a transition, or one that re-derived nothing.
+
+    Same status with a different target is admitted, because `resolved` with cause A becoming
+    `resolved` with cause B is the commonest real correction. Same status AND the same target is
+    refused: a correction that changed nothing is a second record asserting the first, and
+    `workflow_eval` refuses an approval that re-derived nothing for the same reason.
+    """
+    _one_of(current, LABEL_STATUSES, "the prior status")
+    _one_of(target, LABEL_STATUSES, "the corrected status")
+    if current == target:
+        if not changed:
+            raise _refuse(
+                "value-invalid",
+                f"this correction leaves the status {current!r} and the target unchanged, so it "
+                f"re-derived nothing. A correction says what was wrong with the record it "
+                f"supersedes; one that asserts the same thing again is a duplicate")
+        return target
+    if target not in LABEL_STATUS_TRANSITIONS[current]:
+        raise _refuse("unknown-value",
+                      f"{current!r} does not lead to {target!r}; from {current!r} the transitions "
+                      f"are {LABEL_STATUS_TRANSITIONS[current] or 'none'}")
+    return target
+
+
+def _target_key(entry):
+    return (entry["shape"], entry["cause"],
+            tuple(row["cause"] for row in entry["contributing"]))
+
+
+def adjudicate(record, *, shape, reviewer, decided_at, claim=None, cause=None, contributing=(),
+               evidence=(), suggestion=None, prior=None, correction_reason=None):
+    """A reviewed label for one snapshot -> a separate `adjudication` artifact.
+
+    IT CANNOT TOUCH THE SNAPSHOT. What comes back points at `example_id` and `input_sha`; the
+    record is not copied into it, not rewritten and not returned. `assert_intact` runs first, so
+    an adjudication is never attached to a record whose bytes have moved.
+
+    AN UNSUPPORTED CLAIM STAYS UNRESOLVED. `cause` is an ASK. It is written to the record only
+    when the evidence supports it; otherwise the record carries `cause: None`, `status:
+    "unresolved"` and the `unresolved_reason` naming which support was missing, and the ask
+    survives under `claim` as what somebody proposed. Nothing is defaulted, nothing is guessed,
+    and no symptom is promoted to a cause.
+
+    THE THREE ORIGINS STAY APART. `operational_observation` is copied off the snapshot's own
+    `candidate_cause`, so the caller cannot supply it. `provider_suggestion` is the caller's and
+    weighs nothing. `cause`/`contributing` are the adjudicated target. A claim or a suggestion
+    arriving under one of the adjudicated field names is refused outright.
+    """
+    shape = _one_of(shape, QUESTION_SHAPES, "the question shape")
+    _assert_labelable(record, "an adjudicated target")
+    decided = _instant(decided_at, "the adjudication's decided_at")
+    entry = _envelope(record, "adjudication", recorded_at=decided)
+    _after_the_decision(decided, record, "the adjudication")
+    who = _reviewer(reviewer)
+    if claim is not None:
+        if not isinstance(claim, Mapping) or not claim:
+            raise _refuse("value-invalid", "a claim is a non-empty object")
+        assert_no_input_field(claim, "the adjudication's claim")
+        assert_no_adjudicated_field(claim, "the adjudication's claim")
+    primary = _cause(cause, "the adjudicated cause", optional=True)
+    rows = _contributing(contributing, "the contributing causes")
+    direct = _evidence_list(evidence, "the adjudication's evidence")
+    tally = _support(direct)
+    guess = _suggestion(suggestion)
+
+    status = "resolved"
+    reason = None
+    if shape == "no-failure":
+        if primary is not None or rows:
+            raise _refuse(
+                "value-invalid",
+                "a no-failure example names no cause: TRAINING-DATA.md's rule is that a "
+                "successful attempt may be a negative example only under a compatible question, "
+                "never forced into the failure-cause taxonomy")
+        if record["candidate_cause"]["from_operational"] is not None:
+            raise _refuse(
+                "value-invalid",
+                f"this record's operational class is "
+                f"{record['candidate_cause']['from_operational']!r}, so the ledger classified the "
+                f"dispatch as failing. A failed dispatch cannot be adjudicated as a no-failure "
+                f"example: None is classify_dispatch's own answer for one that did not fail")
+        if tally["review"] + tally["mechanical"] == 0:
+            status = "unresolved"
+            reason = ("operational-signal-only" if tally["operational"]
+                      else "no-supporting-evidence")
+    elif shape == "ambiguity":
+        if primary is not None:
+            raise _refuse(
+                "value-invalid",
+                "an ambiguity adjudication names no single cause -- that the causes cannot be "
+                "told apart is the target. Name the competing ones under `contributing`")
+        if len(rows) < 2:
+            raise _refuse("value-invalid",
+                          f"an ambiguity adjudication names at least two competing causes, got "
+                          f"{len(rows)}")
+        if tally["review"] == 0:
+            status, reason = "unresolved", "no-independent-reader"
+        elif any(not row["supported"] for row in rows):
+            status, reason = "unresolved", "contributing-causes-not-separately-supported"
+    else:
+        if primary is None:
+            raise _refuse("missing-field",
+                          "a failure-cause adjudication names the cause it establishes")
+        supported, why = _supports_a_cause(primary, tally)
+        if not supported:
+            status, reason = "unresolved", why
+        elif primary == "multiple-causes" and (
+                len(rows) < 2 or any(not row["supported"] for row in rows)):
+            status, reason = "unresolved", "contributing-causes-not-separately-supported"
+    if status == "unresolved" and guess is not None and not direct and not any(
+            row["evidence"] for row in rows):
+        reason = "provider-suggestion-only"
+    _one_of(reason, UNSUPPORTED_REASONS + (None,), "the unresolved reason")
+
+    entry.update({
+        "shape": shape,
+        "status": _one_of(status, LABEL_STATUSES, "the adjudication's status"),
+        "cause": primary if status == "resolved" else None,
+        "contributing": rows,
+        "claim": _copy(dict(claim)) if claim else None,
+        "unresolved_reason": reason,
+        "evidence": direct,
+        "support": tally,
+        "reviewer": who,
+        "decided_at": decided,
+        "decided_placement": _de().placement(decided, record["prediction_at"]),
+        "operational_observation": {
+            "class": record["candidate_cause"]["class"],
+            "from_operational": record["candidate_cause"]["from_operational"],
+            "adjudicated": False,
+            "note": CANDIDATE_LABEL_NOTE,
+        },
+        "provider_suggestion": guess,
+        "supersedes": None,
+        "correction": None,
+        "not_established": list(ADJUDICATION_NOT_ESTABLISHED),
+        "not_established_notes": dict(sorted(ADJUDICATION_NOT_ESTABLISHED_NOTES.items())),
+        "notes": [LABEL_SEPARATE_NOTE, LABEL_VOCABULARY_NOTE, REDACTION_LIMIT_NOTE],
+    })
+    if prior is not None:
+        before = assert_lifecycle_intact(prior, "the adjudication being corrected")
+        if before.get("kind") != "adjudication":
+            raise _refuse("wrong-type", "a correction supersedes an adjudication")
+        if (before["example_id"] != entry["example_id"]
+                or before["input_sha"] != entry["input_sha"]):
+            raise _refuse("value-invalid",
+                          "a correction supersedes an adjudication of the SAME example: the prior "
+                          "record names a different example or a different input")
+        _assert_label_transition(before["status"], status,
+                                 changed=_target_key(before) != _target_key(entry))
+        entry["supersedes"] = before["content_sha"]
+        entry["correction"] = {
+            "of": before["content_sha"],
+            "from_status": before["status"],
+            "from_cause": before["cause"],
+            "reason": _label_text(correction_reason, "the correction's reason"),
+            "note": ("the superseded record is never rewritten. It stays in this example's "
+                     "history exactly as it was written, and this record says what was wrong "
+                     "with it"),
+        }
+    elif correction_reason is not None:
+        raise _refuse("value-invalid",
+                      "a correction reason was given with no prior adjudication to correct")
+    return _seal(entry)
+
+
+def label_state(adjudications):
+    """Every adjudication for ONE example -> the current label, its history, its disagreements.
+
+    THE FILE IS THE HISTORY. Corrections append and each one names the digest it supersedes, so
+    the chain is reconstructed here rather than trusted: a record nothing supersedes is a HEAD,
+    and more than one head means more than one live opinion.
+
+    TWO HEADS THAT AGREE ARE CORROBORATION. Two independent reviewers reaching the same target is
+    not a disagreement, and the later record is the current one -- nothing is averaged, and no
+    reviewer wins for being a person. Two heads naming different targets are `disputed`, and
+    `decision_eval`'s rule applies: a human verdict and an oracle verdict that disagree are a
+    disagreement to report, never a vote to settle.
+
+    A DISAGREEMENT IS NOT A TARGET unless the question models ambiguity. That is the one exception
+    `TRAINING-DATA.md` allows, and it requires EVERY live head to declare the `ambiguity` shape
+    rather than one of them mentioning it.
+    """
+    entries = []
+    for item in adjudications:
+        entry = assert_lifecycle_intact(item, "an adjudication")
+        if entry.get("kind") != "adjudication":
+            raise _refuse("wrong-type",
+                          f"label_state reads adjudications; got a {entry.get('kind')!r}")
+        entries.append(entry)
+    ids = {entry["example_id"] for entry in entries}
+    if len(ids) > 1:
+        raise _refuse("value-invalid",
+                      f"label_state reads one example's history, got {sorted(ids)}")
+    ordered = sorted(entries, key=lambda entry: (entry["decided_at"], entry["content_sha"]))
+    superseded = {entry["supersedes"] for entry in entries if entry.get("supersedes")}
+    heads = [entry for entry in ordered if entry["content_sha"] not in superseded]
+    out = {
+        "lifecycle_v": LIFECYCLE_VERSION,
+        "example_id": sorted(ids)[0] if ids else None,
+        "recorded": len(entries),
+        "heads": [entry["content_sha"] for entry in heads],
+        "corrections": [{"of": entry["supersedes"], "to": entry["content_sha"],
+                         "from_status": entry["correction"]["from_status"],
+                         "to_status": entry["status"],
+                         "reason": entry["correction"]["reason"]}
+                        for entry in ordered if entry.get("supersedes")],
+        "reviewers": sorted({entry["reviewer"]["id"] for entry in entries}),
+        "note": LABEL_VOCABULARY_NOTE,
+    }
+    if not entries:
+        out.update({"status": UNADJUDICATED, "current": None, "disagreement": None,
+                    "target": {"eligible": False, "reason": "not-yet-reviewed",
+                               "status": UNADJUDICATED, "shape": None, "cause": None,
+                               "note": "nobody has reviewed this example"}})
+        return out
+    disagreement = None
+    if len(heads) > 1:
+        disagreement = {
+            "heads": [entry["content_sha"] for entry in heads],
+            "reviewers": sorted({entry["reviewer"]["id"] for entry in heads}),
+            "sources": sorted({entry["reviewer"]["source"] for entry in heads}),
+            "causes": sorted({str(entry["cause"]) for entry in heads}),
+            "shapes": sorted({entry["shape"] for entry in heads}),
+            "resolved_by": None,
+            "note": None,
+        }
+    if len(heads) > 1 and len({_target_key(entry) for entry in heads}) > 1:
+        models_ambiguity = all(entry["shape"] == "ambiguity" for entry in heads)
+        disagreement["note"] = (
+            "two live adjudications name different targets. Neither is preferred: a human verdict "
+            "and a recorded review verdict that disagree are a disagreement to report, never a "
+            "vote to settle")
+        out.update({
+            "status": "disputed",
+            "current": None,
+            "disagreement": disagreement,
+            "target": {
+                "eligible": models_ambiguity,
+                "reason": None if models_ambiguity else "disagreement-unresolved",
+                "status": "disputed",
+                "shape": "ambiguity" if models_ambiguity else None,
+                "cause": None,
+                "note": ("every live adjudication declares the ambiguity shape, so the "
+                         "disagreement IS the target"
+                         if models_ambiguity else
+                         "an unresolved disagreement is excluded from supervised targets"),
+            },
+        })
+        return out
+    current = heads[-1]
+    if disagreement is not None:
+        disagreement["resolved_by"] = "agreement"
+        disagreement["note"] = (
+            "two live adjudications reach the same target. That is corroboration rather than a "
+            "disagreement, and the later record is the current one")
+    eligible = current["status"] == SUPERVISED_TARGET_STATUS
+    out.update({
+        "status": current["status"],
+        "current": current["content_sha"],
+        "disagreement": disagreement,
+        "target": {
+            "eligible": eligible,
+            "reason": None if eligible else (current["unresolved_reason"] or "not-yet-reviewed"),
+            "status": current["status"],
+            "shape": current["shape"],
+            "cause": current["cause"],
+            "note": None if eligible else
+            "a target is only what review evidence supported; this record's did not",
+        },
+    })
+    return out
+
+
+# ---- the later action, which is a third artifact -------------------------------------------------
+
+def attach_action(record, *, taken, outcome, observed_at, verification=(), alternatives=None,
+                  retries=None, intervention=None):
+    """What was done AFTER the decision -> a separate `action` artifact.
+
+    IT IS NOT THE INPUT AND IT IS NOT THE LABEL. `observed_at` must place after the decision, so
+    an action record can never be back-dated into the evidence the decision was shown; and the
+    record carries no cause field, because an action that succeeded is not a diagnosis. D14's
+    defect -- a field populated from what merely followed, presented as what the decision
+    produced -- is exactly this confusion.
+
+    THERE IS NO SLOT FOR AN OPTIMAL ACTION, AND NO FREE-FORM SLOT AT ALL. `TRAINING-DATA.md`:
+    distinguish the observed outcome from an optimal-action label. `taken` is what was attempted
+    and `alternatives` is what was permitted, if that is known; neither says what should have been
+    done, and nothing here computes it. Every parameter is keyword-only and every one lands in a
+    named field, so unlike `adjudicate`'s `claim` there is no caller-keyed object for a key sweep
+    to inspect -- which is why none runs here. What enforces the rule is the CLOSED schema, and
+    `tests/test_training_data.py` pins this record's exact key set against
+    `decision_eval._is_causal_key` and against `_is_input_shaped`, so a later `root_cause` or
+    `task_statement` field fails there rather than being swept at run time.
+
+    `outcome` comes from `action_outcome`, so a censored attempt result reads as `unknown` rather
+    than as a failure.
+    """
+    _assert_labelable(record, "an action record")
+    if isinstance(alternatives, (str, bytes, Mapping)):
+        raise _refuse("wrong-type",
+                      f"the permitted alternatives are a sequence of strings, not "
+                      f"{type(alternatives).__name__}")
+    seen = _instant(observed_at, "the action's observed_at")
+    entry = _envelope(record, "action", recorded_at=seen)
+    placement = _after_the_decision(seen, record, "the action")
+    entry.update({
+        "taken": _label_text(taken, "the action taken", limit=MAX_FIELD_CHARS),
+        "outcome": _one_of(outcome, ACTION_OUTCOMES, "the action's outcome"),
+        "observed_at": seen,
+        "placement": placement,
+        "verification": _evidence_list(verification, "the action's verification"),
+        "alternatives": (None if alternatives is None else
+                         [_label_text(item, "a permitted alternative")
+                          for item in tuple(alternatives)]),
+        "retries": _count(retries, "the action's retries", maximum=2 ** 16),
+        "intervention": _label_text(intervention, "the human intervention", optional=True),
+        "unknown": sorted(name for name, value in (("alternatives", alternatives),
+                                                   ("retries", retries),
+                                                   ("intervention", intervention))
+                          if value is None),
+        "notes": [_de().UNTRIED_ACTION_NOTE, _de().NO_CAUSAL_CLAIM, LABEL_SEPARATE_NOTE],
+    })
+    return _seal(entry)
+
+
+# ---- eligibility, retention and revocation ------------------------------------------------------
+
+def transition_eligibility(current, target):
+    """One eligibility transition, or a refusal -> the target state.
+
+    The table is the whole rule and it is consulted rather than remembered: `approved` appears in
+    one row only, so nothing renews an expired record or reinstates a revoked one, and `revoked`
+    leads nowhere.
+    """
+    _assert_partition(ELIGIBILITY_TRANSITIONS, ELIGIBILITY_STATUSES, ELIGIBILITY_STATUSES,
+                      "the eligibility transition table", "training_data.ELIGIBILITY_STATUSES")
+    _one_of(current, ELIGIBILITY_STATUSES, "the current eligibility")
+    _one_of(target, ELIGIBILITY_STATUSES, "the target eligibility")
+    if current == target:
+        return target
+    if target not in ELIGIBILITY_TRANSITIONS[current]:
+        raise _refuse(
+            "unknown-value",
+            f"{current!r} does not lead to {target!r}; from {current!r} the transitions are "
+            f"{ELIGIBILITY_TRANSITIONS[current] or 'none'}. An expired record is not renewed and "
+            f"a revoked one is not reinstated")
+    return target
+
+
+def eligibility_state(record, *, now, revocations=()):
+    """What this record's use rights are RIGHT NOW -> the state, acted on rather than recorded.
+
+    `now` is required and has no default. A retention decision taken against whatever clock the
+    reader happened to hold is not a decision anybody can reproduce, so the instant is passed in
+    -- stricter than `bin/memory_store.py`, whose `--now` defaults to today at the CLI while its
+    library never reads a clock either.
+
+    THREE THINGS OVERRIDE THE DECLARED STATUS, in this order. A revocation wins outright and is
+    terminal. A status that was never `approved` stands as it is -- there is no retention period
+    to enforce on rights nobody granted. Otherwise the retention period IS enforced: past
+    `expires_on` the state is `expired`, and the expiry date itself is the last usable day. An
+    approved record whose `expires_on` could not be computed degrades to `unknown` rather than
+    staying approved, because an approval nobody can enforce fails closed like any other unknown.
+    """
+    assert_intact(record, "the record whose eligibility is being read")
+    today = _instant(now, "now")[:10]
+    declared = _one_of(record["eligibility"]["status"], ELIGIBILITY_STATUSES,
+                       "the record's declared eligibility")
+    expires = record["eligibility"]["expires_on"]
+    live = []
+    for item in revocations:
+        entry = assert_lifecycle_intact(item, "a revocation")
+        if entry.get("kind") != "revocation":
+            raise _refuse("wrong-type",
+                          f"eligibility_state reads revocations; got a {entry.get('kind')!r}")
+        if entry["example_id"] != record["example_id"]:
+            raise _refuse("value-invalid",
+                          f"{entry['example_id']} revokes a different example than "
+                          f"{record['example_id']}")
+        live.append(entry)
+    if live:
+        state, reason = "revoked", "revoked"
+    elif declared != ELIGIBLE_TO_PERSIST:
+        state, reason = declared, None
+    elif expires is None:
+        state, reason = "unknown", "retention-unknown"
+    elif today > expires:
+        state, reason = "expired", "retention-expired"
+    else:
+        state, reason = declared, None
+    transition_eligibility(declared, state)
+    return {
+        "lifecycle_v": LIFECYCLE_VERSION,
+        "example_id": record["example_id"],
+        "declared": declared,
+        "state": state,
+        "reason": reason,
+        "expires_on": expires,
+        "checked_at": today,
+        "expired": state == "expired",
+        "revoked": bool(live),
+        "revocations": sorted(entry["content_sha"] for entry in live),
+        "terminal": state in ELIGIBILITY_TERMINAL,
+        "reaches": list(REVOCATION_REACHES) if live else [],
+        "unreached": list(REVOCATION_UNREACHED) if live else [],
+        "note": UNLEARNING_NOTE if live else None,
+    }
+
+
+def _dependents(items):
+    """The downstream artifacts a revocation names -> what it reaches in each one."""
+    if isinstance(items, (str, bytes, Mapping)):
+        raise _refuse("wrong-type",
+                      f"the dependents are a sequence of {{kind, ref}} entries, not "
+                      f"{type(items).__name__}")
+    _assert_partition(REVOCATION_REACH, DOWNSTREAM_KINDS, REACH_LEVELS,
+                      "the revocation reach table", "training_data.DOWNSTREAM_KINDS")
+    built = list(items)
+    if len(built) > MAX_DEPENDENTS:
+        raise _refuse("bounds-exceeded",
+                      f"the revocation names {len(built)} dependents, past the {MAX_DEPENDENTS} "
+                      f"one tombstone holds")
+    out = []
+    for index, item in enumerate(built):
+        payload = _closed(item, ("kind", "ref"), f"dependents[{index}]")
+        kind = _one_of(payload.get("kind"), DOWNSTREAM_KINDS, f"dependents[{index}].kind")
+        pointer = _al().read_ref(payload.get("ref"))
+        if pointer is None:
+            raise _refuse("not-a-reference",
+                          f"dependents[{index}].ref must come from attempt_ledger.make_ref: an "
+                          f"artifact nobody can name has not been identified")
+        out.append({"kind": kind, "ref": dict(pointer), "ref_gaps": _al().ref_gaps(pointer),
+                    "reach": REVOCATION_REACH[kind]})
+    return out
+
+
+def revoke(record, *, revoked_at, reason, by, dependents=()):
+    """Withdraw one example's use rights -> a `revocation` artifact.
+
+    WHAT IT REACHES. Every future export of this example refuses; every dependent manifest,
+    dataset and readiness report named here is `invalidated`; and every downstream artifact -- a
+    checkpoint included -- is IDENTIFIED. `REVOCATION_REACHES` says that as codes.
+
+    WHAT IT DOES NOT REACH. `REVOCATION_UNREACHED` is on this record unconditionally, whatever was
+    passed and whatever else holds. A checkpoint trained on this example is named and NOT
+    unlearned; copies already exported are not recalled; nothing downstream is rebuilt; and the
+    tombstone records the withdrawal rather than proving the bytes are gone. A dependent payload
+    whose keys would claim otherwise is refused by `assert_no_unlearning_claim`.
+
+    THE TOMBSTONE IS MINIMAL. It carries the example id, the input digest, who withdrew it, when,
+    and a bounded redacted reason -- and no input evidence at all, because a tombstone quoting
+    what it withdraws would keep the thing it removes.
+
+    IT IS AVAILABLE IN EVERY STATE. Unlike an adjudication, a revocation is built whatever the
+    record's eligibility is: withdrawal has to work precisely when the record is no longer
+    approved.
+    """
+    withdrawn = _instant(revoked_at, "the revocation's revoked_at")
+    entry = _envelope(record, "revocation", recorded_at=withdrawn)
+    # The sweeps run BEFORE `_dependents`, and the order is the point. `_closed` would refuse a
+    # top-level `unlearned` as an unknown field, which is a weaker and less specific answer, and
+    # it would not look inside a `ref` at all -- `attempt_ledger.read_ref` reads the three parts
+    # it knows and ignores anything else, so a claim nested one level down would sail through.
+    assert_no_input_field(dependents, "the revocation's dependents")
+    assert_no_unlearning_claim(dependents, "the revocation's dependents")
+    rows = _dependents(dependents)
+    pointer = _al().read_ref(by)
+    if pointer is None:
+        raise _refuse("not-a-reference",
+                      "the revocation's `by` must come from attempt_ledger.make_ref: an "
+                      "unattributed withdrawal cannot be audited")
+    cleaned = _rd().redact(_label_text(reason, "the revocation's reason"), limit=MAX_LABEL_CHARS)
+    declared = _one_of(record["eligibility"]["status"], ELIGIBILITY_STATUSES,
+                       "the record's declared eligibility")
+    entry.update({
+        "revoked_at": withdrawn,
+        "by": dict(pointer),
+        "prior_status": declared,
+        "status": transition_eligibility(declared, "revoked"),
+        "reason": cleaned["text"],
+        "redactions": dict(sorted(cleaned["redactions"].items())),
+        "dependents": rows,
+        "invalidated": sorted(row["ref"]["id"] for row in rows if row["reach"] == "invalidated"),
+        "identified": sorted(row["ref"]["id"] for row in rows
+                             if row["reach"] == "identified-only"),
+        "reaches": list(REVOCATION_REACHES),
+        "unreached": list(REVOCATION_UNREACHED),
+        "unreached_notes": dict(sorted(REVOCATION_UNREACHED_NOTES.items())),
+        "reach_of": dict(sorted(REVOCATION_REACH.items())),
+        "notes": [UNLEARNING_NOTE, REDACTION_LIMIT_NOTE],
+    })
+    return _seal(entry)
+
+
+def export_eligibility(record, *, now, purpose, destination, store_dir=None,
+                       adjudications=None, revocations=None):
+    """May this example be exported, right now, for this purpose -> a decision, never a write.
+
+    IT DECIDES AND NOTHING MORE. No file is written, no dataset built and no destination
+    contacted; D33 owns exports and this is the gate it has to pass.
+    `EXPORT_NOT_ESTABLISHED` rides on every decision saying so.
+
+    AN UNMADE CHECK IS NOT A PASSED ONE. `store_dir` makes this gate read the example's own label
+    and revocation files, which is the real check and is cheap because both are keyed by
+    `example_id`. Without it a caller must pass what it read; passing NOTHING is not "there were
+    none" -- it is `label-not-checked` and `revocation-not-checked`, the distinction
+    `workflow_eval.PROMOTION_APPROVAL_BLOCKERS` draws between a missing approval and one nobody
+    re-derived.
+
+    UNKNOWN REFUSES. Unknown use rights, an unenforceable retention period, an expired record, a
+    revoked one, an unreviewed label, an unresolved one, a live disagreement, an undeclared
+    purpose or destination, a purpose that is not the one the scope permitted: each is a code, and
+    the export is permitted only when the refusal list is EMPTY.
+    """
+    refusals = []
+    report = integrity(record)
+    if not all(value for name, value in report.items() if name.endswith("_ok")):
+        # Nothing further is read. A record whose bytes are not the bytes that were digested is
+        # not the evidence it claims to be, so its eligibility block and its purpose are not
+        # facts to weigh -- and `eligibility_state` would raise on it rather than answer.
+        return {
+            "lifecycle_v": LIFECYCLE_VERSION,
+            "example_id": record.get("example_id") if isinstance(record, Mapping) else None,
+            "exportable": False,
+            "refusals": ["record-not-intact"],
+            "checked": None,
+            "eligibility": None,
+            "label": None,
+            "declared_purpose": purpose,
+            "permitted_purpose": None,
+            "destination": destination,
+            "not_established": list(EXPORT_NOT_ESTABLISHED),
+            "not_established_notes": dict(sorted(EXPORT_NOT_ESTABLISHED_NOTES.items())),
+            "unreached": [],
+            "notes": [UNLEARNING_NOTE, REDACTION_LIMIT_NOTE],
+        }
+    if store_dir is not None:
+        found_labels = read_lifecycle(store_dir, record["example_id"], "adjudication")
+        found_revocations = read_lifecycle(store_dir, record["example_id"], "revocation")
+        checked = "store"
+    else:
+        found_labels = None if adjudications is None else list(adjudications)
+        found_revocations = None if revocations is None else list(revocations)
+        checked = "caller"
+    if found_revocations is None:
+        refusals.append("revocation-not-checked")
+        found_revocations = ()
+    if found_labels is None:
+        refusals.append("label-not-checked")
+        found_labels = ()
+    rights = eligibility_state(record, now=now, revocations=found_revocations)
+    if rights["expires_on"] is None:
+        refusals.append("retention-unknown")
+    if rights["state"] != ELIGIBLE_TO_PERSIST:
+        refusals.append(f"eligibility-{rights['state']}")
+    label = label_state(found_labels)
+    if label["status"] == UNADJUDICATED:
+        if "label-not-checked" not in refusals:
+            refusals.append("label-unadjudicated")
+    elif not label["target"]["eligible"]:
+        refusals.append("label-disputed" if label["status"] == "disputed" else "label-unresolved")
+    permitted = record["eligibility"]["purpose"]
+    if purpose is None:
+        refusals.append("purpose-not-declared")
+    elif _label_text(purpose, "the export purpose", limit=MAX_FIELD_CHARS) != permitted:
+        refusals.append("purpose-outside-scope")
+    if destination is None:
+        refusals.append("destination-not-declared")
+    else:
+        _label_text(destination, "the export destination")
+    unknown = sorted(set(refusals) - set(EXPORT_REFUSALS))
+    if unknown:
+        raise _refuse("unknown-value",
+                      f"this decision produced {unknown}, which EXPORT_REFUSALS does not name")
+    return {
+        "lifecycle_v": LIFECYCLE_VERSION,
+        "example_id": record["example_id"],
+        "exportable": not refusals,
+        "refusals": sorted(set(refusals)),
+        "checked": checked,
+        "eligibility": rights,
+        "label": label,
+        "declared_purpose": purpose,
+        "permitted_purpose": permitted,
+        "destination": destination,
+        "not_established": list(EXPORT_NOT_ESTABLISHED),
+        "not_established_notes": dict(sorted(EXPORT_NOT_ESTABLISHED_NOTES.items())),
+        "unreached": list(REVOCATION_UNREACHED) if rights["revoked"] else [],
+        "notes": [UNLEARNING_NOTE, REDACTION_LIMIT_NOTE],
+    }
+
+
+# ---- lifecycle persistence, through the same store seam -----------------------------------------
+
+def read_lifecycle(store_dir, example_id, kind):
+    """Every intact lifecycle record of one kind for one example. Refuses whole.
+
+    A store that does not exist holds nothing, and reading never creates it -- only a write does.
+    """
+    sp = _sp()
+    root = Path(store_dir)
+    rel = _example_rel(kind, example_id)  # validated first: an argument is wrong whether or not
+    if not root.is_dir():                 # the store happens to exist yet
+        return []
+    raw = sp.confined_read_bytes(root, rel, what="training lifecycle", missing_ok=True)
+    if not raw:
+        return []
+    out = []
+    for number, line in enumerate(raw.decode("utf-8").splitlines(), start=1):
+        if not line.strip():
+            continue
+        entry = _contract().loads(line)
+        if not isinstance(entry, dict) or entry.get("v") != LIFECYCLE_VERSION:
+            raise _refuse("unknown-value",
+                          f"line {number} of {rel} is stamped {(entry or {}).get('v')!r}; this "
+                          f"reader reads {LIFECYCLE_VERSION!r}")
+        if entry.get("kind") != kind:
+            raise _refuse("unknown-value",
+                          f"line {number} of {rel} is a {entry.get('kind')!r} in the {kind!r} "
+                          f"file")
+        out.append(assert_lifecycle_intact(entry, f"line {number} of {rel}"))
+    return out
+
+
+def persist_lifecycle(entry, store_dir):
+    """Append one lifecycle record -> `{"written", "path", "content_sha", "reason"}`.
+
+    APPEND-ONLY, WHICH IS WHAT MAKES CORRECTION HISTORY REAL. A correction never overwrites the
+    record it supersedes; it lands beside it and names its digest, so the history IS the file and
+    cannot be quietly rewritten into a tidier one.
+
+    IDEMPOTENT BY CONTENT DIGEST: recording the same adjudication twice writes once.
+    """
+    assert_lifecycle_intact(entry, "the lifecycle record being persisted")
+    kind = entry["kind"]
+    sp = _sp()
+    root = Path(store_dir)
+    rel = _example_rel(kind, entry["example_id"])
+    existing = read_lifecycle(root, entry["example_id"], kind)
+    for other in existing:
+        if other["content_sha"] == entry["content_sha"]:
+            return {"written": False, "path": str(root / rel),
+                    "content_sha": entry["content_sha"], "reason": "already-recorded"}
+    if len(existing) >= MAX_LIFECYCLE_ENTRIES:
+        raise _refuse(
+            "bounds-exceeded",
+            f"{entry['example_id']} already carries {len(existing)} {kind} records, the "
+            f"{MAX_LIFECYCLE_ENTRIES} one example holds. The append is refused rather than the "
+            f"oldest dropped: losing correction history is the one thing this file may not do")
+    data = (canonical(entry) + "\n").encode("utf-8")
+    if len(data) > MAX_RECORD_BYTES:
+        raise _refuse("bounds-exceeded", f"refusing a {len(data)}-byte {kind} line")
+    _rt().ensure_private(root)
+    sp.confined_append_bytes(root, rel, data, what=f"training {kind}")
+    return {"written": True, "path": str(root / rel), "content_sha": entry["content_sha"],
+            "reason": None}
+
+
 # ---- the opt-in hook ----------------------------------------------------------------------------
 
 def capture_hook(build, *, store_dir=None, scope=None, enabled=None):
@@ -1259,6 +2726,7 @@ def status(repo_root=None, env=None):
     return {
         "v": SNAPSHOT_VERSION,
         "taxonomy_v": TAXONOMY_VERSION,
+        "lifecycle_v": LIFECYCLE_VERSION,
         "collection_enabled": bool(COLLECTION_ENABLED),
         "capture_wired": bool(CAPTURE_WIRED),
         "store": STORE,
@@ -1295,6 +2763,61 @@ def _demo_question():
         "rubric": {}, "outcomes": ["false", "true"], "abstention": "permitted",
         "dependencies": [], "sensitivity": "project-internal",
     })
+
+
+def _demo_lifecycle(record, store):
+    """D32's half of the walkthrough: review, correct, export, revoke, refuse. Offline."""
+    steps = []
+    later = "2026-09-19T12:00:00Z"
+    reviewed = _al().make_ref("review-1", version="fixture/1")
+    thin = adjudicate(record, shape="failure-cause", cause="missing-context",
+                      reviewer={"id": "synthetic-reviewer", "source": "human-adjudication"},
+                      decided_at=later, claim={"claimed_cause": "missing-context"},
+                      suggestion={"by": _al().make_ref("synthetic-model"),
+                                  "claim": {"guessed_cause": "missing-context"}})
+    steps.append({"step": "unsupported claim", "status": thin["status"],
+                  "cause": thin["cause"], "reason": thin["unresolved_reason"]})
+    supported = adjudicate(
+        record, shape="failure-cause", cause="missing-context",
+        reviewer={"id": "synthetic-reviewer", "source": "human-adjudication"},
+        decided_at=later,
+        evidence=[review_evidence(source="human-adjudication", ref=reviewed,
+                                  observed_at=later, stage="verify")],
+        prior=thin, correction_reason="an independent reader looked at the reproduction")
+    persist_lifecycle(thin, store)
+    persist_lifecycle(supported, store)
+    state = label_state(read_lifecycle(store, record["example_id"], "adjudication"))
+    steps.append({"step": "reviewed and corrected", "status": state["status"],
+                  "corrections": len(state["corrections"]),
+                  "target_eligible": state["target"]["eligible"]})
+    allowed = export_eligibility(record, now="2026-09-20T09:00:00Z",
+                                 purpose=record["eligibility"]["purpose"],
+                                 destination="local-development-partition", store_dir=store)
+    steps.append({"step": "export decided", "exportable": allowed["exportable"],
+                  "refusals": allowed["refusals"]})
+    stale = export_eligibility(record, now="2027-09-20T09:00:00Z",
+                               purpose=record["eligibility"]["purpose"],
+                               destination="local-development-partition", store_dir=store)
+    steps.append({"step": "retention expired", "exportable": stale["exportable"],
+                  "refusals": stale["refusals"]})
+    tombstone = revoke(record, revoked_at="2026-09-21T08:00:00Z",
+                       reason="the owner withdrew this example",
+                       by=_al().make_ref("synthetic-owner"),
+                       dependents=[{"kind": "export-manifest",
+                                    "ref": _al().make_ref("manifest-1")},
+                                   {"kind": "trained-checkpoint",
+                                    "ref": _al().make_ref("checkpoint-1")}])
+    persist_lifecycle(tombstone, store)
+    steps.append({"step": "revoked", "invalidated": tombstone["invalidated"],
+                  "identified": tombstone["identified"],
+                  "unreached": tombstone["unreached"]})
+    refused = export_eligibility(record, now="2026-09-22T09:00:00Z",
+                                 purpose=record["eligibility"]["purpose"],
+                                 destination="local-development-partition", store_dir=store)
+    steps.append({"step": "re-export refused", "exportable": refused["exportable"],
+                  "refusals": refused["refusals"],
+                  "unreached": refused["unreached"]})
+    return steps
 
 
 def _demo(as_json=False):
@@ -1372,6 +2895,7 @@ def _demo(as_json=False):
                 "example_bytes_unchanged": canonical(pair["example"]) == canonical(stored[0]),
                 "label_points_at": pair["label"]["input_sha"][:12],
                 "label_status": pair["label"]["status"]})
+            out["steps"].extend(_demo_lifecycle(stored[0], temp))
     finally:
         shutil.rmtree(temp, ignore_errors=True)
     if as_json:

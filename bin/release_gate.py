@@ -165,6 +165,7 @@ VERSION_SOURCES = (
     ("context candidate manifest", "decision_context", "CONTEXT_VERSION"),
     ("training snapshot", "training_data", "SNAPSHOT_VERSION"),
     ("training cause taxonomy", "training_data", "TAXONOMY_VERSION"),
+    ("training label lifecycle", "training_data", "LIFECYCLE_VERSION"),
 )
 
 #: Pricing files, one per harness, never merged. Read for `cached_date` and roster size only.
