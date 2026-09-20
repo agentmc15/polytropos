@@ -2647,3 +2647,71 @@ refusal), and the two-directional code partition. The fixture path guard would f
 someone later created a top-level dir colliding with a synthetic tree name (it already hit and
 fixed one real collision: `docs/RELEASE.md`).
 outcome: D26 model=opus attempts=1 result=pass review=pending run=2026-09-16-aa6e
+
+## D27 — Whole-repo assessment (opus) — Phase 6 task 3 of 3, phase COMPLETE
+
+`docs/ASSESSMENTS/polytropos-decision-improvement-v1.{md,json}` — 21 findings, 49 evidence rows
+across 28 files, 7 surfaces. Verify exit 0 read UNPIPED. All three pins byte-identical: D27
+changed no engine, no card, no test.
+
+**CORRECTION TO A FACT I CARRIED SINCE PHASE 4 AND REPEATED IN FOUR BRIEFS.** I have been asserting
+that five decision modules are "referenced in `bin/` only by each other and by `release_gate`".
+**That is FALSE at this HEAD and I never re-measured after the task that changed it.** D21's
+`bin/improvement_loop.py` gave two of them a runnable entry point. I verified by instrumenting the
+sibling loader — my first attempt found nothing because `improvement_loop` loads siblings through
+its OWN `_sibling` (`spec_from_file_location` makes a FRESH module object), so my wrappers were on
+the `sys.modules` instance, a different object:
+
+    improvement_loop.py demo reaches:  decision_policy.bundle_ref
+      + workflow_eval.{baseline_workflow, draft_budget, draft_ceiling, draft_key,
+        draft_partitions, label_vocabulary, validate_draft, validate_draft_batch, workflow_stages}
+
+The agent traced three decision-module functions (`decision_contract.parse_bundle`,
+`parse_proposal`, `decision_policy.bundle_ref`); my single-loader wrap caught one of the three, the
+other two going through `workflow_eval`'s own loader. **The honest residual: ~3 exercised symbols
+out of ~70, and NONE of `workflow_eval`'s five offline verbs (`demo`, `activation`, `policy`,
+`approvals`, `list`) loads a decision module at all** — traced against temp dirs. Also corrected:
+**70** public symbols not 69, and there is a **SIXTH** module, `improvement_loop.py` (12 symbols,
+the only one with a `__main__`). **D30's handoff must use these figures, not Phase 4's.**
+
+**THE GAIN SWEEP REFUSES ITS OWN REPORT, and the cause is wider than this kit.** The checkout
+directory is named `polytropos-decision-improvement-plan`, so **any absolute path quoted from this
+worktree trips the token `improvement`.** Measured on the final document: 945 strings swept, 42
+carry a token, 37 inside identifiers, 5 as bare words, 1 distinct token. All five bare occurrences
+name the body of work or a quoted search pattern; none claims performance. Cross-checked by a
+second sweeper that keeps no copy of the vocabulary, asserted via `inspect.getsource` — D26's
+method. **Anything that sweeps paths in this checkout will hit this.**
+
+**New material the kit's record did not have:**
+- **`bin/docs_build.py:_HARNESS_SKILL_ROOTS` has THREE harnesses** (claude, copilot, codex) —
+  **Cursor is absent**, so the card PUBLISHES as Claude-only while it SHIPS on two. D25's
+  two-harness fact was half the story: packaging and publication disagree.
+- **`primitives/harness-capabilities.json` → `claude-code.capabilities.confined_dispatch` is
+  `verified: "unsupported"`**, source "measured on macOS", because subscription credentials live in
+  a keychain the profile blocks. The report links this to the activation blocker **without merging
+  them** — conflating a host limitation with a design decision would misread both. **31 of 57
+  capability rows across 5 harness entries are `verified: unknown`.**
+- **Cursor's `skill_files` is `verified: "unknown"`** — the very install surface shipping the card
+  is unverified.
+- **Two unrelated things share the word "rollback"**: `rollback_policy` (CLI-reachable, policy
+  files) and `rollback_entry` (reachable from nothing). Flagged before either reaches an operator.
+- `bin/decision_eval.py:528`'s `"failure_class_basis": "trusted-event" if cls else None` overclaim
+  is still open at this HEAD (its F03).
+
+**Three defects of its own, caught and fixed:** it nearly reported four red gates because `bin/$c`
+in zsh does not word-split an unquoted expansion (**the same class of error I have made three times
+today**); `.strip()` on `git status --porcelain` ate the leading dot of `.claude/...`; and its first
+draft claimed "every occurrence is an identifier" when 5 were bare words, then said "three kinds"
+when only two occur.
+
+**No generator needed rebuilding**, and it verified why rather than assuming: `docs_build`
+enumerates `(root/"docs").glob("*.md")` — NON-recursive — and `copilot_docs`' recursive walk is
+rooted at `copilot-docs/`, so a file under `docs/ASSESSMENTS/` is invisible to both. The six census
+pins use the same non-recursive glob.
+
+**What it could not assess, stated:** whether any model follows the card (it added no such
+assertion); whether a confined dispatch would work (no such path exists to run); whether non-Claude
+hosts discover what the bundles install (those rows are `unknown` and stay `unknown`); and whether
+the 3-of-70 fraction is stable, since it was measured on one command path and a verb behind absent
+state may reach further once that state exists.
+outcome: D27 model=opus attempts=1 result=pass review=pending run=2026-09-16-aa6e

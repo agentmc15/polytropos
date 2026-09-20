@@ -450,7 +450,7 @@ PYTHONPATH=tests python3 -m unittest test_assessment_skill.AssessmentSkillFixtur
 ### D27 — Whole-repo assessment
 - id: D27
 - title: Whole-repo assessment
-- status: pending
+- status: done
 - model: opus
 - depends: D24, D26
 **Brief.** Own dated `docs/ASSESSMENTS/polytropos-decision-improvement-v1.md` and JSON. Apply D26 read-only, label HEAD versus dirty/branch observations, link security/parity/readiness gaps and never infer measured gains.
