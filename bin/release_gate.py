@@ -606,11 +606,20 @@ CONTRACTS = (
                 "test_kit_verify_hook.StaticSafetyTests.test_module_never_calls_path_home",
                 # Training-data collection (D31-D34). It ships OFF, so what these prove is the
                 # eligibility gate rather than a running collector: unknown use rights fail
-                # closed before a payload exists, free text is redacted and reported by kind and
-                # count, an export refuses on every code it names, provenance stays out of the
-                # model's input, and the readiness report says what it does not establish.
+                # closed before a payload exists, an export refuses on every code it names,
+                # provenance stays out of the model's input, and the readiness report says what
+                # it does not establish.
+                #
+                # THE REDACTION ROW HERE IS TWO FIELDS WIDE, NOT WHOLE-RECORD. `training_data`
+                # puts exactly two fields through `bin/redact.py` -- an input entry's text and a
+                # revocation's reason -- and the test named below is the input-entry one. The
+                # question's wording and rubric are stored and exported byte-exact because
+                # `decision_contract` digests them, so a credential shape typed into a question
+                # is not caught and is not counted; `training_data.REDACTION_SCOPE_NOTE` says so
+                # on every record and the scope test below pins the claim to the call sites.
                 "test_training_data.SnapshotTests.test_every_non_approved_eligibility_refuses_before_a_payload_exists",
-                "test_training_data.SnapshotTests.test_a_credential_shape_is_labelled_and_never_reaches_the_record_or_the_disk",
+                "test_training_data.SnapshotTests.test_a_credential_shape_in_an_input_entry_is_labelled_and_never_reaches_the_record_or_the_disk",
+                "test_training_data.SnapshotTests.test_the_redaction_claim_names_exactly_the_two_fields_that_are_redacted",
                 "test_training_data.LabelEligibilityTests.test_every_export_refusal_code_is_reachable_by_its_own_case",
                 "test_training_data.DatasetExportTests.test_a_payload_line_carries_no_provenance_and_the_audit_line_carries_all_of_it",
                 "test_training_data.ReadinessTests",

@@ -493,6 +493,43 @@ class SnapshotTests(unittest.TestCase):
 
     # ---- late labels cannot change input -----------------------------------------------------
 
+    def test_a_snapshot_cannot_be_dated_before_the_decision_it_claims_to_describe(self):
+        """The unchecked instant F2 found: the two were validated INDEPENDENTLY.
+
+        A record captured at 10:00:05 could declare its decision at 23:00, be filed under the
+        capture date, and export -- a reading taken thirteen hours before the thing it reads.
+        The controls matter as much as the case: capture at the same instant and capture long
+        afterwards both stand, because capturing a still-existing source late is exactly what
+        the module says is fine.
+        """
+        with self.assertRaises(dc.ContractError) as raised:
+            _snapshot(prediction_at=LATER, captured_at=CAPTURED,
+                      input={"observed_error": [_entry("boom", observed_at=EARLIER)]})
+        self.assertEqual(raised.exception.code, "value-invalid")
+        self.assertIn("had not been taken yet", str(raised.exception))
+        self.assertIn(LATER, str(raised.exception))
+        self.assertIn(CAPTURED, str(raised.exception))
+        same = _snapshot(prediction_at=PREDICTED, captured_at=PREDICTED)
+        self.assertEqual(same["captured_at"], same["prediction_at"])
+        late = _snapshot(prediction_at=PREDICTED, captured_at="2027-01-01T00:00:00Z")
+        self.assertEqual(late["prediction_at"], PREDICTED)
+        self.assertFalse(self.store.exists())
+
+    def test_the_operational_class_records_where_it_came_from_and_declared_is_the_default(self):
+        """F3's half of the pair. The VALUE cannot say whether a machine read it or a caller
+        said it, so the basis is recorded beside it -- and the default is the weaker one,
+        because an unstated provenance is never the stronger one."""
+        self.assertEqual(td.OPERATIONAL_CLASS_BASES, ("ledger", "declared"))
+        silent = _snapshot(operational_class=None)
+        self.assertEqual(silent["candidate_cause"]["basis"], "declared")
+        self.assertIsNone(silent["candidate_cause"]["from_operational"])
+        read = _snapshot(operational_class=None, operational_class_basis="ledger")
+        self.assertEqual(read["candidate_cause"]["basis"], "ledger")
+        self.assertIn("caller's own word", read["candidate_cause"]["basis_note"])
+        with self.assertRaises(dc.ContractError) as raised:
+            _snapshot(operational_class_basis="inferred")
+        self.assertEqual(raised.exception.code, "unknown-value")
+
     def test_attaching_a_label_leaves_the_example_byte_identical(self):
         record = _snapshot()
         before = td.canonical(record)
@@ -633,7 +670,13 @@ class SnapshotTests(unittest.TestCase):
 
     # ---- secrets, bounds, and what redaction does not promise --------------------------------
 
-    def test_a_credential_shape_is_labelled_and_never_reaches_the_record_or_the_disk(self):
+    def test_a_credential_shape_in_an_input_entry_is_labelled_and_never_reaches_the_record_or_the_disk(
+            self):
+        """NAMED FOR ITS FIELD, deliberately. It puts the token in `input.observed_error` and
+        proves the claim for THAT field; it was called
+        `..._is_labelled_and_never_reaches_the_record_or_the_disk`, which generalised past its
+        own fixture and was cited by `release_gate` as evidence for a whole-record guarantee.
+        The question wording's case is the next test and it goes the other way."""
         record = _snapshot(input={"observed_error": [
             _entry(f"401 unauthorized using {SYNTHETIC_TOKEN} from the config")]})
         td.persist(record, self.store)
@@ -659,6 +702,71 @@ class SnapshotTests(unittest.TestCase):
         record = _snapshot()
         self.assertIn("cannot prove", record["redaction"]["note"])
         self.assertIn(td.REDACTION_LIMIT_NOTE, record["disclosures"])
+
+    def test_the_redaction_claim_names_exactly_the_two_fields_that_are_redacted(self):
+        """The claim and the call sites, checked against each other rather than believed.
+
+        The module and `docs/TRAINING-DATA-READINESS.md` both said "Every free-text entry goes
+        through `bin/redact.py` before it is persisted." By AST there are exactly TWO call sites
+        in 4700 lines, and the question's wording -- which `_payload_line` copies into the
+        model's own input file -- is not one of them. This pins the narrowed sentence to the
+        narrow behaviour in three places at once: a third call site, a removed one, or either
+        sentence widening back fails here.
+        """
+        tree = ast.parse((BIN_DIR / "training_data.py").read_text("utf-8"))
+        calls, callers = 0, set()
+        for node in ast.walk(tree):
+            if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                    and node.func.attr == "redact"):
+                calls += 1
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.FunctionDef):
+                continue
+            for inner in ast.walk(node):
+                if (isinstance(inner, ast.Call) and isinstance(inner.func, ast.Attribute)
+                        and inner.func.attr == "redact"):
+                    callers.add(node.name)
+        self.assertEqual(calls, 2, "a redact call site appeared or disappeared")
+        self.assertEqual(sorted(callers), ["_entry", "revoke"])
+        self.assertEqual(td.REDACTED_FIELDS, ("input.<field>[].text", "revocation.reason"))
+        doc = (ROOT / td.READINESS_DOC).read_text("utf-8")
+        for where, text in (("the module docstring", td.__doc__), ("the document", doc)):
+            with self.subTest(where=where):
+                self.assertIn("input entries and the revocation reason", text)
+                self.assertNotIn("Every free-text entry goes through", text)
+        self.assertIn("question.spec.question", td.NOT_REDACTED_FIELDS)
+
+    def test_a_credential_shape_in_the_question_wording_is_not_redacted_and_the_record_says_so(
+            self):
+        """The limit the narrowed sentence has to carry, asserted rather than described.
+
+        Reached through the sanctioned API only -- `parse_question` then `snapshot` then
+        `_payload_line` -- and the export path is the one that matters: the wording lands in the
+        MODEL'S input file. The record does not pretend otherwise; `redaction.fields`,
+        `redaction.not_redacted` and `scope_note` say what the `{}` was computed over. The
+        digest assertion is why it is not simply redacted: `QuestionSpec.digest()` covers the
+        wording, so a redacted spec would be stored beside a digest that no longer identifies it.
+        """
+        spec = dc.parse_question({
+            "id": "q-leaky-wording", "version": "1", "kind": "boolean",
+            "question": f"Did the attempt fail because the token {SYNTHETIC_TOKEN} was refused?",
+            "rubric": {}, "outcomes": ["false", "true"], "abstention": "permitted",
+            "dependencies": [], "sensitivity": "project-internal"})
+        record = _snapshot(question=spec)
+        self.assertIn(SYNTHETIC_TOKEN, record["question"]["spec"]["question"])
+        self.assertEqual(record["redaction"]["redactions"], {})
+        self.assertEqual(record["redaction"]["fields"], list(td.REDACTED_FIELDS))
+        self.assertIn("question.spec.question", record["redaction"]["not_redacted"])
+        self.assertIn("not a whole-record report", record["redaction"]["scope_note"])
+        self.assertIn(td.REDACTION_SCOPE_NOTE, record["disclosures"])
+        payload = td._payload_line(record, {"shape": "no-failure", "cause": None,
+                                            "contributing": [], "taxonomy_v": td.TAXONOMY_VERSION})
+        self.assertIn(SYNTHETIC_TOKEN, td.canonical(payload))
+        self.assertEqual(record["question"]["digest"], spec.digest())
+        redacted = dict(spec.content(),
+                        question="Did the attempt fail because the token "
+                                 "[redacted:anthropic-key] was refused?")
+        self.assertNotEqual(dc.parse_question(redacted).digest(), record["question"]["digest"])
 
     def test_an_oversize_entry_is_refused_rather_than_quietly_truncated(self):
         big = "x" * (td.MAX_FIELD_CHARS + 1)
@@ -696,6 +804,43 @@ class SnapshotTests(unittest.TestCase):
         self.assertTrue(str(resolved).startswith(str(home)))
         self.assertNotIn(str(ROOT / td.STORE), str(resolved))
         self.assertFalse(Path(resolved).exists())
+
+    def test_the_four_bounds_are_pinned_by_VALUE_beside_the_document_that_quotes_them(self):
+        """F6. The suite pinned the MECHANISM and not the number: the cases are built as
+        `range(MAX_ENTRIES_PER_FIELD + 1)` and the constant is patched, which is the right way
+        to reach a branch and leaves the value free. `MAX_ENTRIES_PER_FIELD` 8 -> 800 and
+        `MAX_DATASET_EXAMPLES` 2_000 -> 2_000_000 both survived the whole suite, while
+        `docs/TRAINING-DATA-READINESS.md` quotes all four as facts. One assertion, both sides.
+        """
+        self.assertEqual(td.MAX_ENTRIES_PER_FIELD, 8)
+        self.assertEqual(td.MAX_FIELD_CHARS, 2_000)
+        self.assertEqual(td.MAX_RECORD_BYTES, 16 * 1024)
+        self.assertEqual(td.MAX_DATASET_EXAMPLES, 2_000)
+        doc = (ROOT / td.READINESS_DOC).read_text("utf-8")
+        for quoted in (f"at most {td.MAX_ENTRIES_PER_FIELD} entries each",
+                       f"at most {td.MAX_FIELD_CHARS} characters per entry",
+                       f"at most {td.MAX_RECORD_BYTES // 1024} KiB per record",
+                       f"of {td.MAX_DATASET_EXAMPLES} examples"):
+            with self.subTest(quoted=quoted):
+                self.assertTrue(quoted in doc, f"{td.READINESS_DOC} no longer quotes {quoted!r}")
+        # MAX_RECORD_BYTES cites a reason; MAX_DATASET_EXAMPLES says plainly that it is chosen.
+        source = (BIN_DIR / "training_data.py").read_text("utf-8")
+        self.assertIn("attempt_ledger.MAX_LINE_BYTES", source)
+        self.assertIn("ITS BASIS IS THAT IT IS A CHOSEN BOUND", source)
+        self.assertIn("chosen** bound", doc)
+
+    def test_the_training_store_has_exactly_one_engine_naming_it(self):
+        """F10. The analogue of `test_decision_evaluation_manifest`'s `evals` guard, which D31
+        leaned on when it rejected reusing `evals`/`prefs` and then did not leave one behind for
+        its own store. "One local store, written by its own engine ONLY": `bin/runtime_data.py`
+        declares it and `bin/training_data.py` is the only module that resolves it, so a second
+        writer has to name itself here."""
+        naming = sorted(path.name for path in BIN_DIR.glob("*.py")
+                        if '"training"' in path.read_text("utf-8")
+                        or "'training'" in path.read_text("utf-8"))
+        self.assertEqual(naming, ["runtime_data.py", "training_data.py"])
+        self.assertIn(td.STORE, _load("runtime_data").STORES)
+        self.assertEqual(td.STORE, "training")
 
     def test_the_store_carries_a_root_anchored_ignore_rule(self):
         rules = {line.strip()
@@ -1060,6 +1205,50 @@ class LabelEligibilityTests(unittest.TestCase):
                 self.assertEqual(thin["unresolved_reason"], "no-independent-reader")
                 self.assertIsNone(thin["cause"])
 
+    def test_a_recorded_verdict_that_can_be_an_agents_is_not_the_independent_reader(self):
+        """F5. `decision_eval` mints `review-verdict` for any trial acceptance whose
+        `acceptance_by` is not `kit-check` -- an AGENT'S verdict -- and it weighs as `review`, so
+        the rule written to keep a model's judgement out of the three review-only classes was
+        satisfied by a model. The count that decides is now `HUMAN_LABEL_SOURCES`, READ FROM ITS
+        OWNER: the last block patches that tuple and watches the answer follow it, which is what
+        makes this reuse rather than a second copy of the vocabulary.
+        """
+        de = _load("decision_eval")
+        self.assertEqual(td.EVIDENCE_ADMISSIBILITY["review-verdict"], "review")
+        self.assertNotIn("review-verdict", de.HUMAN_LABEL_SOURCES)
+        for name in td.REVIEW_ONLY_CLASSES:
+            with self.subTest(review_only=name):
+                verdict = _adjudicate(
+                    self.record, cause=name,
+                    contributing=[{"cause": "missing-context",
+                                   "evidence": [_ev(source="review-verdict")]},
+                                  {"cause": "implementation-error",
+                                   "evidence": [_ev(source="review-verdict", ref_id="t-2")]}],
+                    evidence=[_ev(source="review-verdict")])
+                self.assertEqual(verdict["status"], "unresolved")
+                self.assertEqual(verdict["unresolved_reason"], "no-independent-reader")
+                self.assertIsNone(verdict["cause"])
+                self.assertEqual(verdict["support"]["review"], 1)
+                self.assertEqual(verdict["human_readers"], 0)
+        # THE CONTROL: the same shape with a person reading resolves, so the case above is not
+        # failing for some unrelated reason.
+        person = _adjudicate(self.record, cause="missing-context",
+                             evidence=[_ev(source="human-adjudication")])
+        self.assertEqual(person["status"], "resolved")
+        self.assertEqual(person["human_readers"], 1)
+        # A recorded verdict still carries every cause that is NOT review-only.
+        mechanical = _adjudicate(self.record, cause="environment-infrastructure",
+                                 evidence=[_ev(source="review-verdict")])
+        self.assertEqual(mechanical["status"], "resolved")
+        self.assertEqual(mechanical["human_readers"], 0)
+        # And the owner's tuple is read at call time, never copied.
+        with mock.patch.object(td._de(), "HUMAN_LABEL_SOURCES",
+                               ("human-adjudication", "review-verdict")):
+            widened = _adjudicate(self.record, cause="missing-context",
+                                  evidence=[_ev(source="review-verdict")])
+        self.assertEqual(widened["status"], "resolved")
+        self.assertEqual(widened["human_readers"], 1)
+
     def test_the_ledgers_own_class_supports_nothing_and_its_weight_cannot_be_faked(self):
         """`attempt-outcome` is the candidate route D31 built. Passing it with `weight: review`
         does not make it one: `_evidence_list` re-derives the weight from the source."""
@@ -1120,7 +1309,9 @@ class LabelEligibilityTests(unittest.TestCase):
         self.assertEqual(both["cause"], "missing-context")
         self.assertEqual(both["operational_observation"],
                          {"class": "unknown", "from_operational": "unknown",
-                          "adjudicated": False, "note": td.CANDIDATE_LABEL_NOTE})
+                          "basis": "declared", "adjudicated": False,
+                          "note": td.CANDIDATE_LABEL_NOTE,
+                          "basis_note": td.OPERATIONAL_BASIS_NOTE})
         self.assertEqual(both["provider_suggestion"]["claim"],
                          {"guessed_cause": "implementation-error"})
         self.assertEqual(both["provider_suggestion"]["adjudicated"], False)
@@ -1482,7 +1673,7 @@ class LabelEligibilityTests(unittest.TestCase):
     # ---- the four explicit schemas ------------------------------------------------------------
 
     def test_a_no_failure_example_is_evidence_and_is_not_forced_into_the_taxonomy(self):
-        clean = _snapshot(operational_class=None)
+        clean = _snapshot(operational_class=None, operational_class_basis="ledger")
         entry = _adjudicate(clean, shape="no-failure", cause=None)
         self.assertEqual(entry["status"], "resolved")
         self.assertIsNone(entry["cause"])
@@ -1503,13 +1694,43 @@ class LabelEligibilityTests(unittest.TestCase):
         self.assertIsNone(al.classify_dispatch(0, "everything passed", None))
 
     def test_a_no_failure_example_still_needs_support(self):
-        clean = _snapshot(operational_class=None)
+        clean = _snapshot(operational_class=None, operational_class_basis="ledger")
         thin = _adjudicate(clean, shape="no-failure", cause=None, evidence=())
         self.assertEqual(thin["status"], "unresolved")
         self.assertEqual(thin["unresolved_reason"], "no-supporting-evidence")
         operational = _adjudicate(clean, shape="no-failure", cause=None,
                                   evidence=[_ev(source="attempt-outcome")])
         self.assertEqual(operational["unresolved_reason"], "operational-signal-only")
+
+    def test_a_no_failure_example_refuses_an_operational_absence_the_caller_merely_declared(self):
+        """F3's other half, and the pair is one finding. `adjudicate` copies the operational
+        observation off the snapshot and never from ITS caller -- true, and false one step
+        earlier, because `snapshot(operational_class=...)` is a caller's argument cross-checked
+        against nothing. So a failed attempt became an exported negative example by OMITTING one
+        argument. The reviewer's own reproduction is the case below: an input entry reading
+        `AttributeError`, `boundary.event = "attempt.failed"`, captured with no class at all."""
+        failed = _snapshot(operational_class=None,
+                           boundary={"sequence": 3, "event": "attempt.failed"},
+                           input={"observed_error": [
+                               _entry("AttributeError: no attribute 'emit'")]})
+        self.assertEqual(failed["candidate_cause"]["basis"], "declared")
+        with self.assertRaises(dc.ContractError) as raised:
+            _adjudicate(failed, shape="no-failure", cause=None)
+        self.assertEqual(raised.exception.code, "value-invalid")
+        self.assertIn("caller's silence", str(raised.exception))
+        self.assertIn("operational_class_basis='ledger'", str(raised.exception))
+        read = _snapshot(operational_class=None, operational_class_basis="ledger",
+                         boundary={"sequence": 3, "event": "attempt.failed"},
+                         input={"observed_error": [
+                             _entry("AttributeError: no attribute 'emit'")]})
+        entry = _adjudicate(read, shape="no-failure", cause=None)
+        self.assertEqual(entry["status"], "resolved")
+        self.assertEqual(entry["operational_observation"]["basis"], "ledger")
+        declared_failure = _snapshot(operational_class="infrastructure",
+                                     operational_class_basis="ledger")
+        with self.assertRaises(dc.ContractError) as raised:
+            _adjudicate(declared_failure, shape="no-failure", cause=None)
+        self.assertIn("classified", str(raised.exception))
 
     def test_an_ambiguity_adjudication_needs_two_competing_causes_each_supported(self):
         with self.assertRaises(dc.ContractError) as raised:
@@ -2577,6 +2798,21 @@ class DatasetExportTests(unittest.TestCase):
         self.resolve(forged)
         self.assertEqual(self.codes(self.export([forged])), ["input-truncated"])
 
+    def test_a_record_captured_before_its_own_decision_refuses_at_export_too(self):
+        """The belt to `snapshot()`'s braces, and the reason is D18's: `assert_intact` proves the
+        bytes are the bytes that were digested, and `_forge` recomputes all three digests
+        correctly around the change. So a hand-built record skips the capture-time check unless
+        the comparison is made again over what is actually about to be exported. The control is
+        the same forging that leaves the two instants in order."""
+        forged = _forge(self.record, lambda r: r.update({"prediction_at": LATER}))
+        self.assertEqual(sorted(k for k, v in td.integrity(forged).items()
+                                if k.endswith("_ok") and not v), [])
+        self.resolve(forged)
+        self.assertEqual(self.codes(self.export([forged])), ["captured-before-the-decision"])
+        control = _forge(self.record, lambda r: r.update({"prediction_at": PREDICTED}))
+        self.resolve(control)
+        self.assertEqual(self.export([control])["manifest"]["content"]["counts"]["included"], 1)
+
     def test_an_input_the_export_cannot_walk_refuses_rather_than_being_skipped(self):
         """Two refusals, and the messages are what tell them apart: the outer one names the FIELD
         and its type, the inner one names the entry. Pinned, because otherwise the outer guard
@@ -3054,7 +3290,8 @@ class DatasetExportTests(unittest.TestCase):
         for mutate in (lambda r: r["input"]["observed_error"][0].update({"observed_at": LATER}),
                        lambda r: r["input"]["observed_error"][0].update(
                            {"observed_at": "whenever"}),
-                       lambda r: r["input"]["observed_error"][0].update({"truncated": True})):
+                       lambda r: r["input"]["observed_error"][0].update({"truncated": True}),
+                       lambda r: r.update({"prediction_at": LATER})):
             forged = _forge(self.record, mutate)
             self.resolve(forged)
             add(self.export([forged], exposure_dir=self.tmp / "clean-evals"))
@@ -3551,6 +3788,66 @@ class ReadinessTests(unittest.TestCase):
         self.assertEqual(blind["exposure"]["checked"], False)
         self.assertEqual(blind["exposure"]["entries"], None)
 
+    def test_the_grouping_gate_is_derived_from_the_exclusions_and_can_actually_read_unmet(self):
+        """F4. The gate used to be computed over the manifest's `examples` -- ungrouped rows and
+        out-of-partition groups -- and `build_dataset` excludes exactly those BEFORE they reach
+        `examples`, so both lists were always empty and the gate could only read `met` or
+        `unknown`. Replacing its whole expression with the constant `"met"` passed the suite, and
+        no test named it. It now reads the exclusion codes the export actually emitted, so a
+        record whose task sits outside the trainable partition makes it fail.
+        """
+        self.walked()
+        clean = self.report(dataset=self.export()["manifest"])
+        self.assertEqual(self.gates(clean)["grouped-partition-assigned"], "met")
+        self.assertEqual(self.detail(clean, "grouped-partition-assigned")["excluded_by_grouping"],
+                         {})
+        offsite = self.export([self.record],
+                              eval_manifest=_eval_manifest(allocation={"promotion": 1}))
+        self.assertIn("partition-not-trainable",
+                      offsite["manifest"]["content"]["excluded_by_code"])
+        report = self.report(dataset=offsite["manifest"])
+        self.assertEqual(self.gates(report)["grouped-partition-assigned"], "unknown",
+                         "nothing was drawn, so nothing was placed")
+        mixed = self.export([self.record, _dsnap("T-NOT-MINED", "a task nobody mined")])
+        drawn = self.report(dataset=mixed["manifest"])
+        self.assertEqual(mixed["manifest"]["content"]["counts"]["included"], 1)
+        self.assertEqual(self.gates(drawn)["grouped-partition-assigned"], "unmet")
+        self.assertEqual(self.detail(drawn, "grouped-partition-assigned")["excluded_by_grouping"],
+                         {"source-not-in-manifest": 1})
+        self.assertEqual(self.detail(drawn, "grouped-partition-assigned")["codes_watched"],
+                         list(td.GROUPING_EXCLUSIONS))
+
+    def test_every_code_the_grouping_gate_watches_is_one_an_export_can_emit(self):
+        """A gate derived from a code nothing produces reads `met` forever -- the decorative
+        guard one indirection further along. Renaming one in `DATASET_EXCLUSIONS` refuses."""
+        self.assertEqual(sorted(set(td.GROUPING_EXCLUSIONS) - set(td.exclusion_codes())), [])
+        with mock.patch.object(td, "GROUPING_EXCLUSIONS",
+                               td.GROUPING_EXCLUSIONS + ("partition-renamed-away",)):
+            with self.assertRaises(dc.ContractError) as raised:
+                td.readiness_gates()
+            self.assertEqual(raised.exception.code, "unknown-value")
+            self.assertIn("partition-renamed-away", str(raised.exception))
+
+    def test_an_export_with_nothing_in_it_closes_no_gate(self):
+        """`build_dataset([])` happily produces a valid manifest with nothing in it, and both
+        the grouping gate and the EXPOSURE gate -- the one that names this phase's own live
+        hazard -- used to flip to `met` over it. An empty draw is `unknown`: there was nothing
+        to place and nothing whose exposure anybody could have recorded."""
+        empty = self.export([])
+        self.assertEqual(empty["manifest"]["content"]["counts"]["included"], 0)
+        gates = self.gates(self.report([], dataset=empty["manifest"]))
+        self.assertEqual(gates["grouped-partition-assigned"], "unknown")
+        self.assertEqual(gates["exposure-recorded-in-the-eval-store"], "unknown")
+        self.assertEqual(gates["dataset-exported-and-readable"], "unmet")
+        self.assertNotIn("met", {gates["grouped-partition-assigned"],
+                                 gates["exposure-recorded-in-the-eval-store"]})
+        # THE CONTROL: with one example drawn and nothing recorded, the exposure gate is `unmet`
+        # rather than `unknown`, so the guard above is not simply suppressing the gate.
+        self.walked()
+        drawn = self.gates(self.report(dataset=self.export()["manifest"]))
+        self.assertEqual(drawn["exposure-recorded-in-the-eval-store"], "unmet")
+        self.assertEqual(drawn["grouped-partition-assigned"], "met")
+
     def test_the_runbook_names_the_call_the_operator_must_make_and_nothing_here_makes_it(self):
         """The remedy names the function; the module never calls it. The second half is by AST --
         a substring check would be satisfied by the runbook's own text, which is exactly the
@@ -3993,7 +4290,9 @@ class ReadinessTests(unittest.TestCase):
         rg = _load("release_gate")
         row = next(c for c in rg.CONTRACTS if c["id"] == "privacy-eligibility")
         mapped = [tid for tid in row["tests"]["shared"] if tid.startswith("test_training_data.")]
-        self.assertEqual(len(mapped), 5)
+        # Six since F1: the credential test was renamed to name its own field, and the scope
+        # test that pins the redaction claim to its two call sites was added beside it.
+        self.assertEqual(len(mapped), 6)
         self.assertIn("test_training_data.ReadinessTests", mapped)
         resolved = rg.resolve_test_ids(mapped)
         self.assertEqual(sorted(resolved), sorted(mapped))

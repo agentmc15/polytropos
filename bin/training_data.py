@@ -53,14 +53,28 @@ observed one; a missing usage record is not 0 tokens; an unknown sequence number
 tell "absent" from "zero" by guessing, and resource bases are kept apart and never summed.
 
 ============================================================================================
- WHAT THE REDACTOR DOES AND DOES NOT PROMISE
+ WHAT THE REDACTOR REACHES, AND WHAT IT DOES NOT PROMISE ABOUT WHAT IT REACHES
 ============================================================================================
-Every free-text entry goes through `bin/redact.py` before it is persisted, and its findings
-ride on the record as `{kind: count}` -- enough to see that something was caught, never enough
-to reconstruct it. Shape-matching cannot prove absence: a password that looks like a word, a
-customer name or an address has no shape and is not caught. No sentence here claims otherwise,
-and the honest claim is field-level -- THESE fields, bounded to THIS length, with known
-credential shapes labelled and the counts reported.
+What goes through `bin/redact.py` is input entries and the revocation reason: each input
+entry's text (`_entry`) and a revocation's `reason` (`revoke`). That is the whole list, it is
+`REDACTED_FIELDS`, and nothing else on a record is redacted. The findings ride on the record as
+`{kind: count}` beside the names of the fields they were computed over -- enough to see that
+something was caught, never enough to reconstruct it.
+
+THE QUESTION'S WORDING AND RUBRIC ARE NOT AMONG THEM, and they are the unredacted text that
+reaches the model's own input file. `decision_contract.QuestionSpec.digest()` is taken over the
+complete wording and rubric, so a stored spec must stay byte-exact: redacting it would leave a
+digest that no longer identifies what it is stored beside, and would break the pin a request
+declares over its own question set. A credential shape typed into a question wording is
+therefore stored as typed, reaches `payload.jsonl`, and is counted NOWHERE -- `redaction.
+redactions` covers the two fields above and will read `{}`. `_question` says so at the call
+site and `REDACTION_SCOPE_NOTE` says so on every record; `NOT_REDACTED_FIELDS` is the rest of
+the list, which is audit-side.
+
+Shape-matching cannot prove absence even for the two fields it does reach: a password that
+looks like a word, a customer name or an address has no shape and is not caught. No sentence
+here claims otherwise, and the honest claim is field-level -- THESE two fields, bounded to THIS
+length, with known credential shapes labelled and the counts reported.
 
 ============================================================================================
  WHAT THIS MODULE IS NOT
@@ -134,6 +148,30 @@ NOT_WIRED_LABEL = (
 REDACTION_LIMIT_NOTE = (
     "shape-matching redaction reports what it caught by kind and count; it cannot prove that "
     "no secret remains, because a secret with no distinctive shape has none to match")
+
+#: The ONLY fields this module puts through `bin/redact.py`. Named as data rather than left as
+#: prose so the claim and the call sites can be checked against each other: `_entry` redacts an
+#: input entry's text and `revoke` redacts the revocation reason, and
+#: `tests/test_training_data.py` re-derives that pair BY AST -- every `redact` call site in this
+#: module, resolved to its enclosing function -- and asserts it against this tuple and against
+#: the sentences in this module's docstring and in `docs/TRAINING-DATA-READINESS.md`. A third
+#: call site, or a sentence that widens past these two, fails there.
+REDACTED_FIELDS = ("input.<field>[].text", "revocation.reason")
+
+#: What redaction does NOT reach, so a reader of an empty `{kind: count}` report knows what the
+#: emptiness was computed over. The first two are the consequential ones: they are the only
+#: unredacted caller text that reaches the MODEL'S input file, because `_payload_line` copies the
+#: question spec verbatim. The rest are audit-side -- persisted, never in a payload line.
+NOT_REDACTED_FIELDS = ("question.spec.question", "question.spec.rubric", "boundary.event",
+                       "reproducibility.*", "eligibility.purpose", "sources.*",
+                       "adjudication.claim", "adjudication.reviewer.id",
+                       "dataset.built_by", "dataset.destination")
+
+REDACTION_SCOPE_NOTE = (
+    "these counts cover exactly two fields -- each input entry's text and a revocation's reason "
+    "-- and are not a whole-record report. The question's wording and rubric are stored byte-for-"
+    "byte because decision_contract digests them, so a credential shape typed into a question "
+    "reaches this record and the exported payload with nothing counted here")
 
 LABEL_SEPARATE_NOTE = (
     "an input snapshot carries no label and has no slot for one. A cause established later is a "
@@ -259,6 +297,32 @@ CANDIDATE_LABEL_NOTE = (
     "a candidate cause derived from an operational class is an OBSERVATION, never an adjudicated "
     "target: the ledger classified a dispatch from its exit status and its output, and a "
     "supervised label needs review evidence instead")
+
+#: Where a snapshot's `operational_class` came from, recorded because the VALUE alone cannot say.
+#:
+#:   ledger      the caller read it off the attempt this snapshot points at, so `None` here is
+#:               `attempt_ledger.classify_dispatch`'s own answer for a dispatch that did not fail.
+#:   declared    the caller supplied it themselves, or omitted it. `None` then means "nobody said",
+#:               which is not the same fact and must not be read as one.
+#:
+#: The gap this closes is the mirror image of the one D32 named for `attach_action`'s `outcome`:
+#: `adjudicate` copies the operational observation off the snapshot and never from its own caller,
+#: which is true and was never the whole story, because the snapshot took it from a caller one step
+#: earlier. Without a basis, omitting a single argument turned a failed attempt into an exported
+#: `no-failure` negative example. `DECLARED_BASIS` is the DEFAULT for the reason every default here
+#: is the closed one: an unstated provenance is the weaker one, never the stronger.
+OPERATIONAL_CLASS_BASES = ("ledger", "declared")
+
+#: The basis that means a machine read it, and the one a caller gets when they say nothing.
+LEDGER_BASIS = "ledger"
+DECLARED_BASIS = "declared"
+
+OPERATIONAL_BASIS_NOTE = (
+    "`from_operational` is only as good as its basis. Under 'declared' it is the caller's own "
+    "word -- including the absence of one -- and nothing here cross-checks it against the "
+    "attempt_ref this record carries; under 'ledger' the caller read it off that attempt. A "
+    "no-failure adjudication rests on the ABSENCE of an operational class, so it needs the "
+    "ledger's absence rather than a caller's silence and refuses on a declared basis")
 
 # ---- sibling loaders (bin/ is not a package) --------------------------------------------------
 
@@ -778,6 +842,18 @@ def _question(spec):
     validating them a second time in a module whose job is to store them. The duck type is on
     purpose too -- `bin/` is not a package, two loaders produce two unrelated classes, and an
     `isinstance` check here would refuse a valid spec for having been parsed by the other copy.
+
+    THE SPEC IS NOT REDACTED, AND THAT IS A CHOICE WITH A REASON RATHER THAN AN OVERSIGHT.
+    `QuestionSpec.digest()` is `sha256` over the spec's COMPLETE content -- wording and rubric
+    included -- and `decision_contract.questions_digest` pins a request's whole question set the
+    same way. Rewriting `sk-ant-...` to `[redacted:anthropic-key]` here would store a payload the
+    digest beside it no longer identifies, and would break the join between this record and the
+    request that asked the question. So the wording is copied byte-for-byte, `_payload_line`
+    copies it onward into the model's input file byte-for-byte, and `redaction.redactions` does
+    NOT count it: see `REDACTED_FIELDS`, `NOT_REDACTED_FIELDS` and `REDACTION_SCOPE_NOTE`, which
+    ride on every record so no reader has to infer the scope of an empty report. What keeps a
+    question honest instead is that an operator AUTHORS it: it is a versioned, reviewable
+    contract object, not text scraped off a run.
     """
     maker = getattr(spec, "to_payload", None)
     digester = getattr(spec, "digest", None)
@@ -929,7 +1005,8 @@ def _unknown_paths(record):
 
 
 def snapshot(*, question, prediction_at, sources, scope, captured_at, input=None,
-             boundary=None, reproducibility=None, resources=None, operational_class=None):
+             boundary=None, reproducibility=None, resources=None, operational_class=None,
+             operational_class_basis=DECLARED_BASIS):
     """One decision-time snapshot -> an immutable record. Raises on anything unsafe.
 
     `captured_at` dates the record by CAPTURE, never by the decision it describes: a record is
@@ -937,6 +1014,14 @@ def snapshot(*, question, prediction_at, sources, scope, captured_at, input=None
     A snapshot taken late about a source that still exists is fine; one reconstructed from prose
     is not, and nothing here can produce one -- every field comes from a caller who had the
     artifact in hand, with the instant it was observed and the digest it had.
+
+    CAPTURE MAY BE LATE AND MAY NEVER BE EARLY. The two instants used to be validated
+    independently, which let a record captured at 10:00:05 declare its decision at 23:00 -- filed
+    under the capture date, exported, and describing a decision that had not been taken when the
+    reading was supposedly made. `prediction_at` must therefore place at or before `captured_at`,
+    through `decision_eval.placement`, which is the same primitive every entry is placed with;
+    and because `assert_intact` cannot tell a forged record from a captured one, `_input_refusals`
+    re-derives exactly this comparison at export as `captured-before-the-decision`.
 
     `scope` must be an eligible `CollectionScope`. This function builds the training content, so
     it refuses to build any for a scope that is not `approved`: unknown use rights fail closed
@@ -959,6 +1044,17 @@ def snapshot(*, question, prediction_at, sources, scope, captured_at, input=None
             f"and revoked all fail closed, and no snapshot is built for them")
     captured = _instant(captured_at, "captured_at")
     predicted = _instant(prediction_at, "prediction_at")
+    if _de().placement(predicted, captured) != ADMISSIBLE_PLACEMENT:
+        raise _refuse(
+            "value-invalid",
+            f"the decision is declared at {predicted} and the record is dated {captured}, so "
+            f"this snapshot claims to have read the evidence for a decision that had not been "
+            f"taken yet. A capture is a reading of what already existed: it may follow the "
+            f"decision by any amount -- capturing a still-existing source late is fine -- and it "
+            f"can never precede it. Each is validated on its own too, and neither check is the "
+            f"other: an instant that parses is not an instant that can have happened")
+    basis = _one_of(operational_class_basis, OPERATIONAL_CLASS_BASES,
+                    "the operational class's basis")
     block, redactions, truncations = _input_block(input, predicted)
     source_block, gaps = _sources(sources)
     immutable = {
@@ -984,9 +1080,11 @@ def snapshot(*, question, prediction_at, sources, scope, captured_at, input=None
         "candidate_cause": {
             "class": candidate_cause(operational_class),
             "from_operational": operational_class,
+            "basis": basis,
             "taxonomy_v": TAXONOMY_VERSION,
             "adjudicated": False,
             "note": CANDIDATE_LABEL_NOTE,
+            "basis_note": OPERATIONAL_BASIS_NOTE,
         },
         "reproducibility": _reproducibility(reproducibility),
         "resources": _resources(resources),
@@ -994,11 +1092,14 @@ def snapshot(*, question, prediction_at, sources, scope, captured_at, input=None
         "redaction": {
             "redactions": redactions,
             "truncated": truncations,
+            "fields": list(REDACTED_FIELDS),
+            "not_redacted": list(NOT_REDACTED_FIELDS),
             "note": REDACTION_LIMIT_NOTE,
+            "scope_note": REDACTION_SCOPE_NOTE,
         },
         "label_note": LABEL_SEPARATE_NOTE,
-        "disclosures": [LABEL_SEPARATE_NOTE, REDACTION_LIMIT_NOTE, NEVER_SUM_NOTE,
-                        CANDIDATE_LABEL_NOTE, NOT_WIRED_LABEL],
+        "disclosures": [LABEL_SEPARATE_NOTE, REDACTION_LIMIT_NOTE, REDACTION_SCOPE_NOTE,
+                        NEVER_SUM_NOTE, CANDIDATE_LABEL_NOTE, NOT_WIRED_LABEL],
     }
     record["unknown"] = _unknown_paths(record)
     record["content_sha"] = _sha({k: v for k, v in record.items() if k != "content_sha"})
@@ -1316,6 +1417,9 @@ QUESTION_SHAPES = ("failure-cause", "no-failure", "ambiguity")
 #: `decision_eval.METRIC_STATUSES` and means a metric had too few scoreable rows to report a
 #: number. A label with no independent reader is not a thin sample, and a review nobody has done
 #: is neither; borrowing the word would make three different situations read the same.
+#: `no-independent-reader` means no PERSON read it: for a `REVIEW_ONLY_CLASSES` member the count
+#: that decides is `decision_eval.HUMAN_LABEL_SOURCES`, not the `review` weight, because a
+#: `review-verdict` can be an agent's acceptance.
 UNSUPPORTED_REASONS = ("not-yet-reviewed", "no-supporting-evidence", "no-independent-reader",
                        "provider-suggestion-only", "operational-signal-only",
                        "contributing-causes-not-separately-supported",
@@ -1323,9 +1427,13 @@ UNSUPPORTED_REASONS = ("not-yet-reviewed", "no-supporting-evidence", "no-indepen
 
 #: How much one piece of evidence can carry.
 #:
-#:   review        an independent reader -- a person, or a recorded review verdict. The only
-#:                 weight that can establish a `REVIEW_ONLY_CLASSES` member, because "missing
-#:                 context" and "implementation error" are judgements and not readings.
+#:   review        an independent reader -- a person, OR a recorded verdict that may be an
+#:                 agent's: `decision_eval` mints `review-verdict` for any trial acceptance whose
+#:                 `acceptance_by` is not `kit-check`. Necessary for a `REVIEW_ONLY_CLASSES`
+#:                 member and NOT sufficient for one, which is the correction F5 made: "missing
+#:                 context" and "implementation error" are judgements, so `_supports_a_cause`
+#:                 additionally requires a `decision_eval.HUMAN_LABEL_SOURCES` member, read from
+#:                 its owner at call time. This weight alone still carries every other cause.
 #:   mechanical    a reproduction or a tool failure stage. It narrows a cause and can support a
 #:                 deterministic one; it is an observation rather than a judgement.
 #:   operational   the ledger's own classification of the dispatch. This is the CANDIDATE route
@@ -1920,18 +2028,37 @@ def _support(items):
     return tally
 
 
-def _supports_a_cause(cause, tally):
+def _human_readers(items):
+    """How many of these evidence items came from a PERSON -> a count.
+
+    `decision_eval.HUMAN_LABEL_SOURCES` is read at call time and never copied, for
+    `reconcile_label_sources`'s reason: that module owns which of its sources is a person, and a
+    tuple remembered here would keep answering after the owner changed its mind.
+    """
+    human = frozenset(_de().HUMAN_LABEL_SOURCES)
+    return sum(1 for item in items if item["source"] in human)
+
+
+def _supports_a_cause(cause, tally, humans):
     """Whether this evidence can establish this cause -> `(bool, reason or None)`.
 
     Two rules, and WHICH one bit is the information. Any adjudicated cause needs support that is
     not merely operational -- the ledger's classification of a dispatch is the candidate route,
     never the target. A `REVIEW_ONLY_CLASSES` member needs an independent READER on top: those
     three are judgements, and D31 asserted they are unreachable from any operational signal.
+
+    AND AN INDEPENDENT READER MEANS A PERSON. This rule used to ask `tally["review"] == 0`, which
+    a `review-verdict` satisfies -- and `decision_eval` mints `review-verdict` for any trial
+    acceptance whose `acceptance_by` is not `kit-check`, i.e. for an AGENT'S acceptance verdict.
+    So the rule written to keep a model's judgement out of `missing-context`,
+    `implementation-error` and `multiple-causes` was satisfied by a model. The count that decides
+    is now `HUMAN_LABEL_SOURCES`, read from its owner at call time; a recorded verdict still
+    weighs as `review` everywhere else, including as the support any non-review-only cause needs.
     """
     if tally["review"] + tally["mechanical"] == 0:
         return False, ("operational-signal-only" if tally["operational"]
                        else "no-supporting-evidence")
-    if cause in REVIEW_ONLY_CLASSES and tally["review"] == 0:
+    if cause in REVIEW_ONLY_CLASSES and not humans:
         return False, "no-independent-reader"
     return True, None
 
@@ -1947,6 +2074,11 @@ def _reviewer(value):
                       f"a reviewer's source weighs as {weights[source]!r}. An adjudication is "
                       f"made by an independent reader, not by a mechanical signal and not by the "
                       f"ledger's own classification of the dispatch")
+    # AND THE REVIEWER MAY STILL BE A RECORDED VERDICT, deliberately. What F5 tightened is the
+    # EVIDENCE a review-only cause needs -- a `HUMAN_LABEL_SOURCES` member -- not who may record
+    # an adjudication. An agent's verdict may file one; it cannot by itself establish
+    # `missing-context`, `implementation-error` or `multiple-causes`. Both facts are on the
+    # record: `reviewer.source` and `human_readers`.
     return {"id": _label_text(payload.get("id"), "the reviewer's id"), "source": source}
 
 
@@ -1984,9 +2116,11 @@ def _contributing(items, where):
         seen.add(cause)
         items_for = _evidence_list(payload.get("evidence") or (), f"{where}[{index}].evidence")
         tally = _support(items_for)
-        supported, reason = _supports_a_cause(cause, tally)
+        humans = _human_readers(items_for)
+        supported, reason = _supports_a_cause(cause, tally, humans)
         out.append({"cause": cause, "evidence": items_for, "support": tally,
-                    "supported": supported, "unsupported_reason": reason})
+                    "human_readers": humans, "supported": supported,
+                    "unsupported_reason": reason})
     return out
 
 
@@ -2060,9 +2194,16 @@ def adjudicate(record, *, shape, reviewer, decided_at, claim=None, cause=None, c
     and no symptom is promoted to a cause.
 
     THE THREE ORIGINS STAY APART. `operational_observation` is copied off the snapshot's own
-    `candidate_cause`, so the caller cannot supply it. `provider_suggestion` is the caller's and
+    `candidate_cause`, so THIS caller cannot supply it. `provider_suggestion` is the caller's and
     weighs nothing. `cause`/`contributing` are the adjudicated target. A claim or a suggestion
     arriving under one of the adjudicated field names is refused outright.
+
+    AND THE SNAPSHOT'S CALLER IS A CALLER TOO. "Copied off the snapshot, never from the caller"
+    was true here and false one step earlier: `snapshot(operational_class=...)` is a caller's
+    argument, cross-checked against nothing. So the observation carries its `basis` and the
+    `no-failure` branch -- the one shape whose whole content is the ABSENCE of an operational
+    class -- refuses a `declared` one. See `OPERATIONAL_CLASS_BASES`; the pair is one finding and
+    neither half closes it alone.
     """
     shape = _one_of(shape, QUESTION_SHAPES, "the question shape")
     _assert_labelable(record, "an adjudicated target")
@@ -2079,6 +2220,7 @@ def adjudicate(record, *, shape, reviewer, decided_at, claim=None, cause=None, c
     rows = _contributing(contributing, "the contributing causes")
     direct = _evidence_list(evidence, "the adjudication's evidence")
     tally = _support(direct)
+    humans = _human_readers(direct)
     guess = _suggestion(suggestion)
 
     status = "resolved"
@@ -2097,6 +2239,20 @@ def adjudicate(record, *, shape, reviewer, decided_at, claim=None, cause=None, c
                 f"{record['candidate_cause']['from_operational']!r}, so the ledger classified the "
                 f"dispatch as failing. A failed dispatch cannot be adjudicated as a no-failure "
                 f"example: None is classify_dispatch's own answer for one that did not fail")
+        if record["candidate_cause"].get("basis") != LEDGER_BASIS:
+            # THE CHECK ABOVE IS ONLY WORTH WHAT ITS INPUT IS WORTH. It reads the ABSENCE of an
+            # operational class as "the dispatch did not fail" -- but on a `declared` basis that
+            # absence is the caller having said nothing, so a failed attempt became a negative
+            # example by omitting one argument. See `OPERATIONAL_CLASS_BASES`.
+            raise _refuse(
+                "value-invalid",
+                f"this record's operational class rests on a "
+                f"{record['candidate_cause'].get('basis')!r} basis, so its absence is the "
+                f"caller's silence rather than the ledger's answer. A no-failure example is "
+                f"exactly the claim that the attempt did not fail, and it may not be built on an "
+                f"unchecked absence: capture with "
+                f"operational_class_basis={LEDGER_BASIS!r} after reading the class off the "
+                f"attempt this snapshot points at, or adjudicate a shape that does not turn on it")
         if tally["review"] + tally["mechanical"] == 0:
             status = "unresolved"
             reason = ("operational-signal-only" if tally["operational"]
@@ -2119,7 +2275,7 @@ def adjudicate(record, *, shape, reviewer, decided_at, claim=None, cause=None, c
         if primary is None:
             raise _refuse("missing-field",
                           "a failure-cause adjudication names the cause it establishes")
-        supported, why = _supports_a_cause(primary, tally)
+        supported, why = _supports_a_cause(primary, tally, humans)
         if not supported:
             status, reason = "unresolved", why
         elif primary == "multiple-causes" and (
@@ -2139,14 +2295,17 @@ def adjudicate(record, *, shape, reviewer, decided_at, claim=None, cause=None, c
         "unresolved_reason": reason,
         "evidence": direct,
         "support": tally,
+        "human_readers": humans,
         "reviewer": who,
         "decided_at": decided,
         "decided_placement": _de().placement(decided, record["prediction_at"]),
         "operational_observation": {
             "class": record["candidate_cause"]["class"],
             "from_operational": record["candidate_cause"]["from_operational"],
+            "basis": record["candidate_cause"].get("basis"),
             "adjudicated": False,
             "note": CANDIDATE_LABEL_NOTE,
+            "basis_note": OPERATIONAL_BASIS_NOTE,
         },
         "provider_suggestion": guess,
         "supersedes": None,
@@ -2757,6 +2916,17 @@ TRAINABLE_PARTITION = "development"
 #: How many examples one export may carry. Past it the export is refused rather than trimmed: an
 #: export silently capped is a dataset whose manifest describes material it does not contain, and
 #: the caller decides which bounded slice to export.
+#:
+#: ITS BASIS IS THAT IT IS A CHOSEN BOUND, and saying so is the honest alternative to deriving
+#: one. `MAX_RECORD_BYTES` cites `attempt_ledger.MAX_LINE_BYTES` because a record and a ledger
+#: line share a reason to be bounded; nothing shares a reason with this. It is NOT a sufficiency
+#: threshold, a target, or a measurement of anything -- `readiness_report` reports it as
+#: `sufficiency.ceiling` beside a `minimum_examples` of None precisely so the two are not
+#: confused. What it is for: an export is held in memory, digested whole, and written as one
+#: create-once file, so SOME ceiling has to exist, and 2000 examples at the 16 KiB record bound is
+#: a few tens of megabytes -- large enough that no honest local dataset meets it by accident,
+#: small enough that hitting it is a decision rather than a surprise. `tests/test_training_data.py`
+#: pins the number beside the doc that quotes it; changing it is a visible edit in both places.
 MAX_DATASET_EXAMPLES = 2_000
 
 #: What a model input line carries. CLOSED, and it shares exactly one name with `AUDIT_FIELDS`.
@@ -2783,6 +2953,7 @@ DATASET_EXCLUSIONS = ("source-reference-missing", "source-not-in-manifest", "sou
                       "partition-quarantined", "leak-screened-positive", "item-retired",
                       "item-exposed-elsewhere", "exposure-not-checked",
                       "input-after-the-decision", "input-placement-unknown", "input-truncated",
+                      "captured-before-the-decision",
                       "audit-identity-in-payload", "target-not-single-headed")
 
 #: What an export does NOT establish, carried unconditionally on every manifest, for the reason
@@ -2957,6 +3128,12 @@ def _payload_line(record, target):
         "input": block,
         "target": target,
     }
+    # A DRIFT GUARD, NOT AN ARRIVAL GUARD, and worth saying because the difference is invisible
+    # from the call. Nothing can ARRIVE in `line` that is not written three lines up, so replacing
+    # this with `return line` passes every test today. What it catches is a LATER edit: a sixth
+    # key added to this literal without a matching entry in `PAYLOAD_FIELDS` fails here rather
+    # than shipping a model input whose schema the manifest misdescribes. The same reading applies
+    # to `_audit_line`'s closing call, for the same reason.
     return _closed(line, PAYLOAD_FIELDS, "the payload line")
 
 
@@ -3057,6 +3234,12 @@ def _audit_line(record, *, decision, placement, label):
             "question_digest": record["question"]["digest"],
         },
     }
+    # A DRIFT GUARD, NOT AN ARRIVAL GUARD -- see `_payload_line`'s closing call. It closes a dict
+    # literal it just built, so it can only bite on a later edit that adds a field here without
+    # adding it to `AUDIT_FIELDS`; deleting it changes nothing a test can see today. It is kept
+    # because `PAYLOAD_FIELDS` and `AUDIT_FIELDS` are what the manifest publishes as the two
+    # schemas, and a file that no longer matches its published schema is worse than a redundant
+    # check.
     return _closed(line, AUDIT_FIELDS, "the audit line")
 
 
@@ -3097,9 +3280,18 @@ def _input_refusals(record):
     A truncated entry is refused for D31's own reason: an example cut in half is a corrupt example,
     and `redact` can shorten a field even inside the length bound when a placeholder is longer than
     what it replaced.
+
+    THE RECORD'S OWN TWO INSTANTS ARE RE-DERIVED HERE TOO, for the same reason and against the same
+    hole. Every entry above is placed against `record["prediction_at"]` -- which is the caller's own
+    value, and until F2 was compared to nothing. A record whose decision is DECLARED hours after it
+    was CAPTURED cannot be a reading of that decision's evidence, so `snapshot()` refuses it and
+    this refuses it again over the record actually about to be exported: `assert_intact` proves the
+    bytes are the bytes that were digested, and a hand-built record carries a correct digest.
     """
     inadmissible = _placement_codes()
     codes = []
+    if _de().placement(record["prediction_at"], record["captured_at"]) != ADMISSIBLE_PLACEMENT:
+        codes.append("captured-before-the-decision")
     for field in INPUT_FIELDS:
         offered = record["input"][field]
         if offered is None:
@@ -3781,6 +3973,24 @@ READINESS_GATES = ("collection-switched-on", "capture-wired-to-a-caller",
                    "exposure-recorded-in-the-eval-store", "dataset-exported-and-readable",
                    "collection-target-chosen")
 
+#: The exclusion codes that mean a record could not be soundly GROUPED and PLACED. The
+#: `grouped-partition-assigned` gate is derived from these, read off the manifest's own
+#: `excluded_by_code`, and every one of them is reached by its own case in
+#: `tests/test_training_data.py`.
+#:
+#: WHAT THIS REPLACED AND WHY IT HAD TO. The gate used to read two lists computed over the
+#: manifest's `examples`: rows with no group, and groups whose partition was not the draw's.
+#: Both are STRUCTURALLY empty for any manifest this module produces -- `build_dataset` excludes
+#: exactly those records BEFORE they reach `examples` -- so through the product's own API the
+#: gate could read `met` or `unknown` and never `unmet`. Replacing its whole expression with the
+#: constant `"met"` passed the entire suite, and no test named it at all. What actually enforces
+#: the grouping is these codes plus `workflow_eval.verify_manifest`, whose findings refuse the
+#: whole export rather than excluding a record; the gate's job is to REPORT that, and a gate
+#: that cannot report a failure is decoration in a document whose subject is honesty.
+GROUPING_EXCLUSIONS = ("source-reference-missing", "source-not-in-manifest", "source-ambiguous",
+                       "partition-not-trainable", "partition-held-out", "partition-single-use",
+                       "partition-quarantined", "leak-screened-positive", "item-retired")
+
 #: What a gate may be. `unknown` is NOT `unmet`: it means this report could not SEE the thing --
 #: no dataset was offered, no exposure log was given, no scope was passed -- and keeping the two
 #: apart is the distinction `harness_adapter.requires` draws when it treats `unknown` as no while
@@ -3941,9 +4151,24 @@ def readiness_notes():
 
 
 def readiness_gates():
-    """The gate -> remedy table, checked as an exact partition of `READINESS_GATES`."""
+    """The gate -> remedy table, checked as an exact partition of `READINESS_GATES`.
+
+    It also checks that every `GROUPING_EXCLUSIONS` member is still a code an export can emit.
+    A gate derived from codes nothing produces is the decoration F4 found, one indirection
+    further along: renaming `partition-not-trainable` in `DATASET_EXCLUSIONS` would otherwise
+    leave `grouped-partition-assigned` watching a name that can never appear and reading `met`
+    for it.
+    """
     _assert_partition(GATE_REMEDIES, READINESS_GATES, tuple(GATE_REMEDIES.values()),
                       "the gate remedy table", "training_data.READINESS_GATES")
+    stray = sorted(set(GROUPING_EXCLUSIONS) - set(exclusion_codes()))
+    if stray:
+        raise _refuse(
+            "unknown-value",
+            f"the grouping gate watches {stray}, which no export can emit: they are in neither "
+            f"EXPORT_REFUSALS nor DATASET_EXCLUSIONS. A gate derived from a code nothing produces "
+            f"reads `met` forever, which is exactly the decorative guard this gate was rebuilt to "
+            f"stop being")
     return dict(sorted(GATE_REMEDIES.items()))
 
 
@@ -4135,11 +4360,13 @@ def readiness_report(records, *, store_dir, now, dataset=None, eval_manifest=Non
                       f"read_dataset, got {(manifest or {}).get('v')!r}")
     identity = None if manifest is None else dataset_integrity(manifest)
     content = None if manifest is None else manifest["content"]
-    ungrouped = [] if content is None else sorted(row["example_id"]
-                                                  for row in content["examples"]
-                                                  if not row["group"])
-    offsite = [] if content is None else sorted(
-        {row["partition"] for row in content["groups"].values()} - {content["partition"]})
+    # Derived from the exclusions the export actually emitted, NOT from its `examples`. Anything
+    # ungrouped or out-of-partition is excluded by `build_dataset` before it reaches `examples`,
+    # so a gate computed over that list can only ever be empty. See `GROUPING_EXCLUSIONS`.
+    drawn_count = 0 if content is None else content["counts"]["included"]
+    misplaced = {} if content is None else {
+        code: count for code, count in sorted(content["excluded_by_code"].items())
+        if code in GROUPING_EXCLUSIONS}
 
     drawn, unrecorded, exposure = [], [], None
     if content is not None and eval_manifest is not None and exposure_dir is not None:
@@ -4178,16 +4405,25 @@ def readiness_report(records, *, store_dir, now, dataset=None, eval_manifest=Non
               "unknown" if not intact else ("unmet" if unexpiring else "met"),
               {"by_state": dict(sorted(eligibilities.items())),
                "expiry_not_computable": sorted(unexpiring)}, remedies),
+        # BOTH OF THE NEXT TWO ARE GUARDED ON A NON-EMPTY DRAW. `build_dataset([])` produces a
+        # perfectly valid manifest with nothing in it, and a gate that reads `met` over nothing
+        # drawn is the emptiest kind of pass -- the exposure one worst of all, because it names
+        # this phase's own live hazard.
         _gate("grouped-partition-assigned",
-              "unknown" if content is None else
-              ("met" if not ungrouped and not offsite else "unmet"),
-              {"ungrouped": ungrouped, "partitions_outside_the_draw": offsite,
-               "groups": None if content is None else content["counts"]["groups"]}, remedies),
+              "unknown" if not drawn_count else ("unmet" if misplaced else "met"),
+              {"included": drawn_count, "excluded_by_grouping": misplaced,
+               "codes_watched": list(GROUPING_EXCLUSIONS),
+               "groups": None if content is None else content["counts"]["groups"],
+               "note": None if drawn_count else
+               "no dataset with an example in it was offered, so nothing here was placed"},
+              remedies),
         _gate("exposure-recorded-in-the-eval-store",
-              "unknown" if exposure is None else ("unmet" if unrecorded else "met"),
+              "unknown" if exposure is None or not drawn else
+              ("unmet" if unrecorded else "met"),
               {"checked": exposure is not None, "drawn_items": drawn,
                "items_with_no_exposure_entry": unrecorded, "recorded_by_this_module": False,
-               "note": DATASET_NOT_ESTABLISHED_NOTES["exposure-not-recorded-in-the-eval-store"]},
+               "note": DATASET_NOT_ESTABLISHED_NOTES["exposure-not-recorded-in-the-eval-store"]
+               if drawn else "no items were drawn, so there is no exposure to have recorded"},
               remedies),
         _gate("dataset-exported-and-readable",
               "unknown" if manifest is None else

@@ -3029,3 +3029,112 @@ would add a path seam to a module whose `safe_paths` surface is pinned at exactl
 Label "agreement" is a count of live heads reaching the same target, **not an inter-rater statistic
 and not corrected for chance**.
 outcome: D34 model=opus attempts=1 result=pass review=pending run=2026-09-16-aa6e
+
+## Phase 7 review — ACCEPT WITH FINDINGS, all seven closed
+
+**The collection lock could NOT be broken, and that is a result.** The reviewer attacked with a
+C-level `sys.addaudithook` trap — which fires inside CPython regardless of what the module imported,
+strictly harder to defeat than the 16 patched seams D33 armed — across `status`, `taxonomy`,
+`readiness`, `demo` and four `capture_hook` shapes. **Zero post-import file-write, mkdir, socket or
+subprocess events with collection off.** Not "no writes outside temp" — no events at all. `demo`
+produced 39, all under a `mkdtemp` root, all removed by its `finally`. **The D18 hand-built-document
+route does not exist here**: `persist` re-derives `assert_intact` AND re-checks eligibility, so a
+record with correct digests still cannot persist with a non-`approved` block.
+
+**F1 (HIGH) — a sentence outran its code, in the PRIVACY layer.** `redact()` is called in exactly
+TWO places in 4662 lines (I verified by AST) while the module header and the readiness doc both said
+*"Every free-text entry goes through `bin/redact.py` before it is persisted."* False for the
+QuestionSpec wording — which is copied verbatim into `payload.jsonl`, **the model's input file**. A
+credential shape reaches the export while `record["redaction"]["redactions"]` reports `{}`. **The
+test that should have caught it generalised past its fixture**: named
+`..._never_reaches_the_record_or_the_disk`, it only ever put the token in one field — and
+`release_gate.py` cited it as evidence for a guarantee row.
+**Closed by narrowing, and the reason the other closure is unavailable is solid:**
+`QuestionSpec.digest()` is over the COMPLETE wording, so redacting inside `_question` would store a
+payload its own digest no longer identifies, and `questions_digest` pins whole sets the same way.
+Both sentences now say "input entries and the revocation reason"; every record carries
+`REDACTED_FIELDS` (2) and `NOT_REDACTED_FIELDS` (10) so a reader of an empty `{}` knows its scope;
+the test is renamed to name its field; the release-gate row no longer reads as whole-record
+coverage. **It also named the option I did not offer** — refusing a credential shape at capture —
+and left it undone rather than pretending the choice was binary.
+
+**F2 (HIGH) — the late-evidence defence measured against an unchecked instant.** Nothing compared
+`prediction_at` to `captured_at`. A record captured at 10:00:05Z declaring its decision at 23:00:00Z
+was accepted, filed and exported — and the reviewer got "the patch that fixed it" into decision-time
+input **through the sanctioned API alone, no digest forging.** Closed in `snapshot()` reusing the
+same `placement` primitive every entry uses, AND re-derived at export as the new exclusion code
+`captured-before-the-decision`. I verified: the impossible ordering refuses, and **both controls
+still stand** — same instant and captured-a-year-after both accepted, so it is not over-broad.
+
+**F3 (MEDIUM) — the mirror of a gap D32 named and did not connect.** `adjudicate`'s `no-failure`
+branch checks `from_operational is not None`, but that value is the SNAPSHOT CALLER'S argument with
+no cross-check against `attempt_ref` — so a failed attempt is exported as a negative example by
+OMITTING ONE ARGUMENT. Same shape as `attach_action`'s `outcome_basis`, one field over.
+**`operational_class_basis` now defaults to `"declared"` — the WEAKER value — so unstated provenance
+can never pass as a ledger reading.** The opposite default would have made every existing caller
+silently claim ledger authority. D32's sentence is corrected IN PLACE: *"'Copied off the snapshot,
+never from the caller' was true here and false one step earlier."*
+
+**F4 (MEDIUM) — the one decorative guard that shipped, and it shipped in the honesty report.**
+`grouped-partition-assigned` survived replacement by the constant `"met"`, appeared in ZERO tests,
+and was structurally unable to read `unmet` (its lists are computed over examples that `build_dataset`
+already excluded). Worse: `build_dataset([])` produced a valid empty dataset that flipped BOTH it and
+`exposure-recorded-in-the-eval-store` to `met` — the gate naming this phase's own live hazard.
+**Kept and made able to fail rather than deleted**, because deleting would also remove its runbook
+step and remedy row, and the gate is what a reader looks for. Now derived from the manifest's own
+`excluded_by_code`, both gates `unknown` on an empty draw, and **`readiness_gates()` refuses if a
+watched code is not one an export can emit** — otherwise renaming a code leaves the gate watching a
+name that can never appear, *the same decoration one indirection further along.*
+
+**F5 (MEDIUM) — a model's verdict satisfied the "independent reader" rule.**
+`decision_eval` produces `review-verdict` for any trial acceptance not by `kit-check`, i.e. an
+agent's. `_supports_a_cause` asked only `tally["review"] == 0` and never consulted
+`HUMAN_LABEL_SOURCES`, which was already computed. Now a review-only class needs a human reader,
+read from the owner AT CALL TIME. **Two adjacent gaps deliberately NOT taken and named for D30**:
+`ambiguity`'s top-level check still gates on any review weight, and `_reviewer` still admits
+`review-verdict` as the filing reviewer — an agent's verdict may FILE an adjudication, it cannot by
+itself ESTABLISH a review-only cause, and both facts ride on the record.
+
+**F6/F7/F10 closed**: four ceilings pinned BY VALUE beside the doc that quotes them (and it corrected
+the review — `MAX_FIELD_CHARS` did NOT survive mutation, so only two of four were value-free);
+`MAX_DATASET_EXAMPLES` now states its basis as a chosen bound with an explicit denial that it is a
+sufficiency threshold; the two `_closed` drift guards keep a comment saying they guard drift not
+arrival, proven by running both deletions (236 OK) and the control (46 errors); and
+`test_the_training_store_has_exactly_one_engine_naming_it` is the analogue D31 leaned on.
+
+**THE INTERMITTENT SUITE FAILURE, SIGHTING THREE — and the reviewer lost it to a pipe again**,
+the exact mistake the standing rule at this file forbids, written after sighting two cost the same
+thing. **But it added the only new information in three sightings: this was `failures=1` where
+sighting two was `errors=1`.** An assertion failed rather than an exception escaping — either a
+second flake or a narrowing of the first. Four subsequent runs green.
+
+### What D28–D30 must NOT claim (adjudicated, carry verbatim)
+
+- **D28**: no `harness-capabilities.json` row or matrix cell presenting training-data collection as
+  available or verified on ANY harness — it has no call site anywhere and `unknown` still means no.
+  No dataset, manifest or store enters packaging; `| training/ | present |` as an ignore rule is the
+  correct and only claim. **Five `VERSION_SOURCES` rows are stored-object schemas with ZERO stored
+  objects**; a matrix counting schema versions as shipped surface must say so.
+- **D29**: the 224 (now 236) Phase 7 tests are NOT evidence that collection works — every one
+  constructs its own record. **No migration has ever been exercised against a stored record, because
+  no record has ever been stored.** The private store does not ENFORCE access. The exposure
+  obligation is *unavailable/operator-owned*, not passed.
+- **D30**: never state or imply revocation removes anything from a model. **"0 examples collected"
+  is the absence of a call site, not a gate met or a privacy achievement.** The named-unfinished
+  register is now FOUR items, not two: `attach_action`'s `outcome_basis`; the operator's exposure
+  step 10; no collection target (pilot not run); **and F3's `operational_class` basis pair.** Plus
+  F5's two adjacent gaps and F1's disclosed question-wording exposure.
+
+**Residual hazard, stated asymmetrically because it is asymmetric**: the TRAINING side is protected
+— `build_dataset` reads the exposure log and emits `item-exposed-elsewhere`/`item-retired`, both
+mutation-caught. **The EVALUATION side — the next held-out draw — has nothing to read, because
+nobody wrote the entry.** That is where the spend happens and it is the one direction no code in
+this repository closes. Keep the design (writing another engine's store would break the one-writer
+rule D31 invoked); **D30 records it as an OPEN OPERATOR OBLIGATION, never as a closed gate.**
+
+**Store-prefix precision for D30**: `decision_context.store_prefixes()` reads `runtime_data.STORES`,
+so `training/` is in the prefix set — but prefixes are repo-relative and the scan is rooted at the
+repo, so the prefix is load-bearing only for a LEGACY IN-TREE store; for the default out-of-tree
+store the protection is scan confinement. D31's claim is true and the consequence real, but it is
+not the only mechanism.
+reviewer: P7 model=opus findings=10 confirmed=10 result=accepted

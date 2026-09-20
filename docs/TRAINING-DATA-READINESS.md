@@ -26,9 +26,11 @@ says the green suite behind it does not establish the thing the name suggests.
   nothing was altered after the export. It never establishes that the inputs were real — a correct
   digest is computable over a forged record.
 - **No collection target exists.** No minimum sample count is asserted anywhere in the module and
-  none is invented here. `MAX_DATASET_EXAMPLES` is a **ceiling** that refuses past itself rather
-  than trimming; there is no floor. A target comes from a pilot and learning curves on a separate
-  development validation split, and nobody has run one.
+  none is invented here. `MAX_DATASET_EXAMPLES` is a **ceiling** of 2000 examples that refuses past
+  itself rather than trimming; there is no floor. It is a **chosen** bound, not a derived or
+  measured one — an export is held in memory, digested whole and written as one file, so some
+  ceiling has to exist, and the constant states what it is chosen against. A target comes from a
+  pilot and learning curves on a separate development validation split, and nobody has run one.
 - **No checkpoint exists.** `CHECKPOINT_LINK_FIELDS` names what a later run would have to bind and
   every field is `None`. There is no trainer here, nothing downloads or uploads a model, and
   revoking an example only ever **identifies** a checkpoint.
@@ -143,10 +145,23 @@ operator makes and the module records.
 **What is bounded, and what redaction does not promise.** A snapshot holds five closed input
 fields, at most 8 entries each, at most 2000 characters per entry, at most 16 KiB per record —
 refused past any of those rather than truncated, because a training input silently halved is a
-corrupt example. Every free-text entry goes through `bin/redact.py`, and its findings ride on the
-record as `{kind: count}` — enough to see that something was caught, never enough to reconstruct
-it. Shape-matching **cannot prove absence**: a password that looks like a word, a customer name or
-an address has no shape and is not caught.
+corrupt example. What goes through `bin/redact.py` is **input entries and the revocation reason** —
+each input entry's text and a revocation's `reason`, which is the whole of `REDACTED_FIELDS` — and
+its findings ride on the record as `{kind: count}` beside the names of the fields they were
+computed over: enough to see that something was caught, never enough to reconstruct it.
+
+**The question's wording and rubric are not redacted, and they reach the model's input file.**
+`decision_contract.QuestionSpec.digest()` is taken over the complete wording and rubric, so a
+stored spec has to stay byte-exact or the digest beside it stops identifying it; `_payload_line`
+copies that spec verbatim into `payload.jsonl`. A credential shape typed into a question wording is
+therefore stored and exported as typed, and `redaction.redactions` — which covers the two fields
+above and nothing else — will read `{}` for it. Every record carries `redaction.fields`,
+`redaction.not_redacted` and `REDACTION_SCOPE_NOTE` so no reader has to infer that scope. What
+keeps a question honest instead is that an operator authors it: it is a versioned contract object,
+not text scraped off a run.
+
+Shape-matching **cannot prove absence** even for the two fields it does reach: a password that
+looks like a word, a customer name or an address has no shape and is not caught.
 
 ## Retention
 
