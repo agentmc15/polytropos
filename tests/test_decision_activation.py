@@ -69,6 +69,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+import test_decision_eval as tde
 import test_decision_evaluation_manifest as tem
 import test_decision_policy_bundle as tpb
 import test_decision_trial_protocol as ttp
@@ -89,6 +90,7 @@ def _load(name):
 we = _load("workflow_eval")
 rg = _load("release_gate")
 rt = _load("runtime_data")
+rs = _load("routing_scorecard")   # D24's own additive markdown projection over the report
 dp = we._dp()                    # the decision_policy instance workflow_eval itself reads
 de = we._de()                    # ... and the decision_eval instance its declaration gate reads
 kc = we._kc()
@@ -1388,6 +1390,645 @@ class ProtectedActivationGateTests(unittest.TestCase):
         for banned in ("activate", "canary", "promote", "rollback-activation"):
             with self.subTest(command=banned):
                 self.assertNotIn(banned, actions)
+
+
+class PolicyEvidenceReportTests(unittest.TestCase):
+    """D24 -- workflow_eval's read-only projection over what D14-D23 already computed, decided
+    or refused: lineage (approval -> evaluation -> profile -> manifest -> partition), scope,
+    interventions, resource bases, quality (with the invalid/abstain distinction D15 draws),
+    monitoring (a PROPOSAL only, never an action) and delayed/censored escaped defects.
+
+    NOTHING HERE MEASURES A LIVE OUTCOME. Every fixture below is synthetic, exactly as D19-D23's
+    own fixtures are, and the same `fixture-proves-mechanics-not-safety` limit applies: a
+    passing test here shows this section relays what its owners already computed, never that
+    any of it has been observed for real. `we.MECHANICS_NOT_PERFORMANCE_LABEL` is on every
+    assembled report for that reason, and this file never asserts a number as a gain.
+    """
+
+    N_TASKS = 3
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory(prefix="polytropos-policy-evidence-")
+        self.addCleanup(tmp.cleanup)
+        self.root = Path(tmp.name)
+
+    # -- fixtures, every one from the generator that owns its shape -----------------------------
+
+    def tasks(self, n=None):
+        return [tem.task(f"task-{i}", issue=i + 1,
+                         statement=f"defect {i} shows up in the widget",
+                         reference_patch=tem.diff(f"src/mod{i}.py", f"    old_{i}()",
+                                                  f"    new_{i}()"))
+                for i in range(self.N_TASKS if n is None else n)]
+
+    def manifest(self):
+        return we.build_manifest(tem.REPO, tem.BASE, self.tasks(), acceptance=tem.TEST_CMD,
+                                 allocation={"promotion": 1}, labels=())
+
+    def candidate(self, manifest):
+        return tpb.proposal_payload(
+            evaluation={"endpoint": "accepted-completion", "partition": "promotion",
+                        "manifest_ref": we.manifest_ref(manifest)})
+
+    def envelope(self, **kw):
+        kw.setdefault("n_tasks", self.N_TASKS)
+        return twe.synthetic_envelope(**kw)
+
+    def scope_dict(self):
+        return {"project": tpb.PROJECT, "task_classes": [tpb.TASK_CLASS],
+                "intended_uses": [tpb.USE]}
+
+    def approved(self, manifest=None, *, envelope=None, scope=None, decision="accept"):
+        """A granted (or refused) D22 approval over a complete evaluation -> `(record, case)`."""
+        manifest = manifest or self.manifest()
+        candidate = self.candidate(manifest)
+        case = we.approval_case(candidate=candidate, manifest=manifest, partition="promotion",
+                                envelope=self.envelope() if envelope is None else envelope,
+                                in_force={}, proposed_by="pat")
+        record = we.decide_approval(
+            case, by="alex", scope=dict(case["scope"]) if scope is None else scope,
+            decision=decision)
+        return record, case
+
+    def sentinel(self):
+        return ttp._sentinel_report()
+
+    def arm_record(self, item, accepted, *, initial=0.40, reused=False, recovery=()):
+        return {"item": item, "accepted": accepted,
+                "initial_attempt": {"basis": "estimated", "usd": initial},
+                "initial_attempt_reused": reused,
+                "recovery_costs": [{"basis": "estimated", "usd": usd} for usd in recovery],
+                "overhead": []}
+
+    def recovery_with_accounting(self):
+        accounting = we.arm_accounting({"arm": "repair"},
+                                       [self.arm_record("item-0001", True, recovery=(0.2,))])
+        return de.recovery_report(provenance="synthetic",
+                                  join_document=de.join([]), operator_declarations={},
+                                  accountings=[accounting]), accounting
+
+    def recovery_with_intervention(self):
+        """A real D14 join, through D14's OWN separately-loaded module (`tde`), carrying one
+        `human-adjudication` label source -- built exactly the way
+        `test_decision_eval.PredictionTimeJoinTests` builds its own disagreement fixture."""
+        req = tde.request()
+        res = tde.result_for(req)
+        rec = tde.record_for(req, res)
+        trial = tde.trial_record(solved=False, accepted=True, acceptance_by="kit-check")
+        env = tde.envelope_with(trial, [{"trial": "t-1", "by": "a-person", "verdict": "solved",
+                                         "note": "", "at": tde.LATER}])
+        row = tde.de.join_row(req, prediction_at=tde.PREDICT, result=res, record=rec,
+                              targets=[tde.recovery_target(), tde.graded_target()],
+                              envelope=env, trial_id="t-1")
+        joined = tde.de.join([row])
+        return tde.de.recovery_report(provenance="synthetic", join_document=joined,
+                                      operator_declarations={})
+
+    def recovery_with_quality(self):
+        pair = de.calibration_report_pair(tde.bulk_rows(25), question=tde.Q)
+        return de.recovery_report(provenance="synthetic", join_document=de.join([]),
+                                  operator_declarations={}, calibration=pair)
+
+    # ==========================================================================================
+    #  LINEAGE: APPROVAL -> EVALUATION -> PROFILE -> MANIFEST -> PARTITION
+    # ==========================================================================================
+
+    def test_lineage_is_always_the_same_five_links_whatever_was_supplied(self):
+        """"Lineage complete" is a STRUCTURAL property of the function, not a fact about which
+        arguments happened to be supplied: calling it with nothing at all still returns all
+        five names, in order, each explicitly absent -- a projection that quietly narrowed
+        itself when its input thinned out would assert a completeness it never checked."""
+        lin = we.lineage_report()
+        self.assertEqual([link["link"] for link in lin["links"]], list(we.LINEAGE_LINKS))
+        self.assertEqual(lin["missing"], list(we.LINEAGE_LINKS))
+        for link in lin["links"]:
+            with self.subTest(link=link["link"]):
+                self.assertFalse(link["present"])
+
+    def test_lineage_is_complete_and_present_over_a_real_approved_case(self):
+        manifest = self.manifest()
+        record, case = self.approved(manifest)
+        sentinel_report = self.sentinel()
+        lin = we.lineage_report(approval=record, case=case, sentinel_report=sentinel_report)
+        self.assertEqual(lin["missing"], [])
+        for link in lin["links"]:
+            with self.subTest(link=link["link"]):
+                self.assertTrue(link["present"], link.get("reason"))
+        approval_link = lin["links"][0]
+        self.assertEqual(approval_link["id"], record["id"])
+        self.assertEqual(approval_link["state"], "approved")
+        for link in lin["links"][1:]:
+            if "content_identity_rederived" in link:
+                with self.subTest(link=link["link"]):
+                    self.assertIs(link["content_identity_rederived"], True, link)
+
+    def test_lineage_relays_promotion_eligibility_rather_than_redeciding(self):
+        """Every fact on the approval and profile links comes from `promotion_eligibility`'s OWN
+        rows, relayed whole. Patching that function to answer differently changes what this
+        section reports, which is the proof it is a relay and not a second decision."""
+        fake_reason = "a patched reason nothing here computed"
+        fake_verdict = {
+            "eligible": False,
+            "requirements": [
+                {"requirement": "exact-approval", "satisfied": False, "reason": fake_reason,
+                 "blocker": "exact-approval-missing", "re_derived_by": "a patched function",
+                 "evidence": {}, "note": "patched note", "relayed_from": None},
+                {"requirement": "protected-profile-certified", "satisfied": True, "reason": None,
+                 "blocker": None, "re_derived_by": "a patched function",
+                 "evidence": {"patched": True}, "note": "patched profile note",
+                 "relayed_from": None},
+                {"requirement": "confining-and-ledgered-dispatch", "satisfied": False,
+                 "reason": "unwired", "blocker": "confining-dispatch-unwired",
+                 "re_derived_by": "workflow_eval.CONFINED_DISPATCH_WIRED", "evidence": None,
+                 "note": None, "relayed_from": None},
+            ],
+            "blockers": ["exact-approval-missing", "confining-dispatch-unwired"],
+            "holds": None, "unproven": list(we.APPROVAL_UNPROVEN), "labels": [],
+        }
+        with mock.patch.object(we, "promotion_eligibility", return_value=fake_verdict) as patched:
+            lin = we.lineage_report(approval={"id": "appr-x"})
+        self.assertTrue(patched.called)
+        approval_link = lin["links"][0]
+        self.assertEqual(approval_link["reason"], fake_reason)
+        self.assertFalse(approval_link["present"] and approval_link["satisfied"])
+        self.assertFalse(approval_link["satisfied"])
+        profile_link = lin["links"][2]
+        self.assertTrue(profile_link["present"])
+        self.assertEqual(profile_link["certificate"], {"patched": True})
+        self.assertTrue(profile_link["satisfied"])
+
+    def test_lineage_naming_note_disambiguates_evaluation_from_manifest(self):
+        lin = we.lineage_report()
+        self.assertIn("D22", lin["naming_note"])
+        self.assertIn("evaluation", lin["naming_note"])
+        self.assertIn("manifest", lin["naming_note"])
+        self.assertEqual(lin["naming_note"], we.LINEAGE_NAMING_NOTE)
+
+    def test_content_identity_moves_only_on_the_link_that_actually_changed(self):
+        """A manifest rewritten after approval moves ONLY the `manifest` link's content-identity
+        re-derivation -- `evaluation` (the run) and `partition` (unaffected membership) still
+        hold, which is the proof this is a real per-slot re-derivation and not one flag for the
+        whole record."""
+        manifest = self.manifest()
+        record, case = self.approved(manifest)
+        forged = json.loads(json.dumps(manifest))
+        forged["content"]["labels"] = ["rewritten after it was approved"]
+        forged_case = we.approval_case(candidate=self.candidate(manifest), manifest=forged,
+                                       partition="promotion", envelope=case["documents"]["envelope"],
+                                       in_force={}, proposed_by="pat")
+        lin = we.lineage_report(approval=record, case=forged_case, sentinel_report=self.sentinel())
+        by_link = {link["link"]: link for link in lin["links"]}
+        # A re-derived hash that simply DIFFERS (rather than failing to re-derive at all)
+        # carries no `reason` -- D22's own `approval_holds` only fills that in when the slot
+        # could not be re-derived, or was never bound; `matches: False` is the fact itself.
+        self.assertIs(by_link["manifest"]["content_identity_rederived"], False)
+        self.assertIs(by_link["evaluation"]["content_identity_rederived"], True)
+        self.assertIs(by_link["partition"]["content_identity_rederived"], True)
+
+    # ==========================================================================================
+    #  SCOPE, VISIBLE EVEN WHEN ABSENT
+    # ==========================================================================================
+
+    def test_scope_visibility_reports_absence_explicitly(self):
+        scope = we.scope_visibility()
+        self.assertEqual(scope["present"], {"approver": False, "candidate": False,
+                                            "activation": False})
+        self.assertIsNone(scope["agrees"])
+
+    def test_scope_visibility_agrees_when_the_approver_scoped_it_the_same_way(self):
+        record, _case = self.approved()
+        scope = we.scope_visibility(approval=record)
+        self.assertTrue(scope["present"]["approver"])
+        self.assertTrue(scope["present"]["candidate"])
+        self.assertIs(scope["agrees"], True)
+
+    def test_scope_visibility_disagrees_when_the_approver_scoped_it_differently(self):
+        manifest = self.manifest()
+        candidate = self.candidate(manifest)
+        case = we.approval_case(candidate=candidate, manifest=manifest, partition="promotion",
+                                envelope=self.envelope(), in_force={}, proposed_by="pat")
+        other_scope = {"project": "somewhere-else", "task_classes": [tpb.TASK_CLASS],
+                      "intended_uses": [tpb.USE]}
+        record = we.decide_approval(case, by="alex", scope=other_scope, decision="accept")
+        scope = we.scope_visibility(approval=record)
+        self.assertIs(scope["agrees"], False)
+        self.assertEqual(scope["approver_scope"]["project"], "somewhere-else")
+
+    def test_scope_visibility_relays_a_running_entrys_own_scope(self):
+        entry = we.retirement_entry(scope=self.scope_dict(), by="sam", reason="done")
+        scope = we.scope_visibility(entry=entry)
+        self.assertTrue(scope["present"]["activation"])
+        self.assertEqual(scope["activation_scope"], entry["scope"])
+
+    def test_scope_visibility_relays_the_whole_scope_object_never_a_narrowed_one(self):
+        """A relay that silently dropped a key -- `task_classes`, say -- would still show
+        `present["approver"]` True and `agrees` True, exactly as D19's own relay carried an
+        undeclared basis straight through while looking clean: a projection that narrows its
+        input asserts a completeness it never checked. This checks the WHOLE object against the
+        approval record's own stored fields, not one key picked out of it."""
+        record, _case = self.approved()
+        scope = we.scope_visibility(approval=record)
+        self.assertEqual(scope["approver_scope"], record["scope"])
+        self.assertEqual(scope["candidate_scope"], record["candidate_scope"])
+        self.assertEqual(set(scope["approver_scope"]), set(record["scope"]),
+                         "the approver scope lost or gained a key relative to the record")
+        self.assertEqual(set(scope["candidate_scope"]), set(record["candidate_scope"]),
+                         "the candidate scope lost or gained a key relative to the record")
+
+    # ==========================================================================================
+    #  INTERVENTIONS: HUMAN LABEL SOURCES, READ FROM THEIR OWNER AT CALL TIME
+    # ==========================================================================================
+
+    def test_intervention_evidence_absent_when_nothing_was_supplied(self):
+        result = we.intervention_evidence(None)
+        self.assertFalse(result["present"])
+        self.assertIsNone(result["counts"])
+
+    def test_intervention_evidence_counts_a_real_human_adjudication(self):
+        recovery = self.recovery_with_intervention()
+        result = we.intervention_evidence(recovery)
+        self.assertTrue(result["present"])
+        self.assertEqual(result["counts"]["human-adjudication"], 1)
+        self.assertNotIn("kit-acceptance", result["counts"],
+                         "an automatic source was counted as an intervention")
+
+    def test_intervention_evidence_reads_human_label_sources_from_its_owner_at_call_time(self):
+        """A mutant that copied `HUMAN_LABEL_SOURCES` into a literal would pass every test above
+        and fail this one: the owner is patched and the counted set follows."""
+        recovery = self.recovery_with_intervention()
+        with mock.patch.object(de, "HUMAN_LABEL_SOURCES", ("kit-acceptance",)):
+            result = we.intervention_evidence(recovery)
+        self.assertEqual(result["human_sources"], ["kit-acceptance"])
+        self.assertEqual(result["counts"], {"kit-acceptance": 1})
+
+    # ==========================================================================================
+    #  RESOURCE BASES: RELAYED WHOLE, KEPT APART, READ FROM THEIR OWNER AT CALL TIME
+    # ==========================================================================================
+
+    def test_resource_basis_report_absent_when_nothing_was_supplied(self):
+        result = we.resource_basis_report(None)
+        self.assertFalse(result["present"])
+        self.assertIsNone(result["accountings"])
+        self.assertEqual(result["bases"], list(de.RESOURCE_BASES))
+
+    def test_resource_basis_report_invalid_input_abstains_rather_than_raises(self):
+        for bad in ({"v": "not-a-recovery-report"}, {"no": "version-at-all"}, "a string",
+                   123):
+            with self.subTest(bad=bad if isinstance(bad, dict) else type(bad).__name__):
+                result = we.resource_basis_report(bad)
+                self.assertFalse(result["present"])
+                self.assertIn("abstain", result["reason"])
+
+    def test_resource_basis_report_relays_a_real_accounting_whole(self):
+        recovery, accounting = self.recovery_with_accounting()
+        result = we.resource_basis_report(recovery)
+        self.assertTrue(result["present"])
+        self.assertEqual(len(result["accountings"]), 1)
+        self.assertEqual(result["accountings"][0]["arm"], "repair")
+        self.assertEqual(result["note"], recovery["resources_note"])
+
+    def test_resource_basis_report_present_is_false_over_an_empty_accountings_list(self):
+        """`decision_eval.recovery_report` ALWAYS sets `resources` to a list, empty when no
+        accounting was supplied -- never `None`. `present` must answer whether an accounting
+        actually exists, not merely whether the key is there: a `resources is not None` check
+        would read every valid-but-empty recovery report as resource evidence being present."""
+        empty = de.recovery_report(provenance="synthetic", join_document=de.join([]),
+                                   operator_declarations={})
+        self.assertEqual(empty["resources"], [])
+        result = we.resource_basis_report(empty)
+        self.assertFalse(result["present"])
+        self.assertIn("no resource evidence", result["reason"])
+
+    def test_resource_basis_report_refuses_evidence_that_lost_a_basis(self):
+        """The closure check: a scope block that lost one of the five bases is refused, never
+        relayed as though the missing basis were simply absent evidence."""
+        recovery, _accounting = self.recovery_with_accounting()
+        corrupted = json.loads(json.dumps(recovery))
+        del corrupted["resources"][0]["scopes"]["whole-task"]["totals"]["unpriced"]
+        with self.assertRaises(we.EvalError) as raised:
+            we.resource_basis_report(corrupted)
+        self.assertIn("unpriced", str(raised.exception))
+
+    def test_resource_basis_report_reads_resource_bases_from_its_owner_at_call_time(self):
+        """A mutant that copied `RESOURCE_BASES` into a five-item literal would pass every test
+        above and fail this one: patching the owner to a SIXTH basis makes a real accounting --
+        which only ever carries the five decision_eval knew about when it was built -- look like
+        it lost one, and this function refuses it rather than silently accepting five when six
+        were promised."""
+        recovery, _accounting = self.recovery_with_accounting()
+        with mock.patch.object(de, "RESOURCE_BASES",
+                               tuple(de.RESOURCE_BASES) + ("a-sixth-basis",)):
+            with self.assertRaises(we.EvalError) as raised:
+                we.resource_basis_report(recovery)
+        self.assertIn("a-sixth-basis", str(raised.exception))
+
+    # ==========================================================================================
+    #  QUALITY: INVALID / UNKNOWN / REPORTED, NEVER ONE READ AS ANOTHER
+    # ==========================================================================================
+
+    def test_quality_evidence_unknown_when_nothing_was_supplied(self):
+        self.assertEqual(we.quality_evidence(None)["status"], "unknown")
+
+    def test_quality_evidence_invalid_input_abstains_rather_than_fabricates(self):
+        for bad in ({"v": "garbage"}, "not-a-document", 42):
+            with self.subTest(bad=bad if isinstance(bad, dict) else type(bad).__name__):
+                result = we.quality_evidence(bad)
+                self.assertEqual(result["status"], "invalid")
+                self.assertIsNone(result["raw"])
+                self.assertIsNone(result["calibrated"])
+
+    def test_quality_evidence_reports_a_real_recovery_report_with_no_quality_block(self):
+        recovery, _accounting = self.recovery_with_accounting()
+        result = we.quality_evidence(recovery)
+        self.assertEqual(result["status"], "no-quality-block")
+
+    def test_quality_evidence_relays_abstained_and_insufficient_evidence_as_distinct(self):
+        recovery = self.recovery_with_quality()
+        result = we.quality_evidence(recovery)
+        self.assertEqual(result["status"], "reported")
+        for field in ("raw", "calibrated"):
+            with self.subTest(field=field):
+                self.assertIn("abstained", result[field])
+                self.assertIn("classification_status", result[field])
+                self.assertIn(result[field]["classification_status"], de.METRIC_STATUSES)
+        self.assertIn("insufficient-evidence", result["note"])
+        self.assertIn("abstained", result["note"])
+
+    # ==========================================================================================
+    #  MONITORING: A READOUT, AND A PROPOSAL THAT IS NEVER AN ACTION
+    # ==========================================================================================
+
+    def test_monitor_readout_is_total_and_never_fabricates_a_zero(self):
+        readout = we.monitor_readout(None, None)
+        self.assertEqual(readout["monitors"], [])
+        readout = we.monitor_readout(list(we.ACTIVATION_MONITORS[:2]), None)
+        self.assertEqual([row["status"] for row in readout["monitors"]], ["unknown", "unknown"])
+        self.assertTrue(all(row["value"] is None for row in readout["monitors"]))
+
+    def test_monitor_readout_refuses_a_monitor_or_observation_outside_the_vocabulary(self):
+        with self.assertRaises(we.EvalError):
+            we.monitor_readout(["not-a-real-monitor"], None)
+        with self.assertRaises(we.EvalError):
+            we.monitor_readout(None, {"not-a-real-monitor": True})
+
+    def test_monitor_readout_never_silently_merges_an_undeclared_observation(self):
+        code = we.ACTIVATION_MONITORS[0]
+        readout = we.monitor_readout([], {code: True})
+        self.assertEqual(readout["monitors"], [])
+        self.assertEqual(readout["undeclared_observations"], [code])
+
+    def test_monitor_proposal_abstains_without_a_named_procedure(self):
+        readout = we.monitor_readout(list(we.ACTIVATION_MONITORS[:1]),
+                                     {we.ACTIVATION_MONITORS[0]: True})
+        result = we.monitor_proposal(readout, rollback_monitors=[we.ACTIVATION_MONITORS[0]],
+                                     procedure=None)
+        self.assertEqual(result["proposal"], "abstain-invalid-input")
+        self.assertIn("no approved procedure", result["reason"])
+
+    def test_monitor_proposal_abstains_on_a_non_boolean_observation(self):
+        """INVALID INPUT PRODUCES AN ABSTENTION. A truthy non-boolean is not read as `True`: a
+        monitor proposing rollback over a number it never validated is exactly the fabricated
+        verdict this function refuses to produce."""
+        code = we.ACTIVATION_MONITORS[0]
+        readout = we.monitor_readout([code], {code: 7})
+        result = we.monitor_proposal(readout, rollback_monitors=[code], procedure="proc-1")
+        self.assertEqual(result["proposal"], "abstain-invalid-input")
+        self.assertIn(code, result["evidence"]["invalid"])
+
+    def test_monitor_proposal_reports_unknown_over_an_unread_monitor(self):
+        code = we.ACTIVATION_MONITORS[0]
+        readout = we.monitor_readout([code], None)
+        result = we.monitor_proposal(readout, rollback_monitors=[code], procedure="proc-1")
+        self.assertEqual(result["proposal"], "unknown")
+
+    def test_monitor_proposal_no_signal_when_everything_observed_is_clean(self):
+        codes = list(we.ACTIVATION_MONITORS[:2])
+        readout = we.monitor_readout(codes, {codes[0]: False, codes[1]: False})
+        result = we.monitor_proposal(readout, rollback_monitors=[codes[0]],
+                                     drift_monitors=[codes[1]], procedure="proc-1")
+        self.assertEqual(result["proposal"], "no-signal")
+
+    def test_monitor_proposal_proposes_rollback_or_drift_when_a_monitor_fires(self):
+        codes = list(we.ACTIVATION_MONITORS[:2])
+        rollback_readout = we.monitor_readout([codes[0]], {codes[0]: True})
+        rollback_result = we.monitor_proposal(rollback_readout, rollback_monitors=[codes[0]],
+                                              procedure="proc-1")
+        self.assertEqual(rollback_result["proposal"], "propose-rollback")
+        drift_readout = we.monitor_readout([codes[1]], {codes[1]: True})
+        drift_result = we.monitor_proposal(drift_readout, drift_monitors=[codes[1]],
+                                           procedure="proc-1")
+        self.assertEqual(drift_result["proposal"], "propose-drift-flag")
+
+    def test_monitor_proposal_reads_review_authority_from_its_owner_at_call_time(self):
+        code = we.ACTIVATION_MONITORS[0]
+        readout = we.monitor_readout([code], {code: True})
+        with mock.patch.object(we, "REVIEW_AUTHORITY", "a-patched-authority"):
+            result = we.monitor_proposal(readout, rollback_monitors=[code], procedure="proc-1")
+        self.assertEqual(result["authority"], "a-patched-authority")
+
+    def test_monitor_proposal_never_touches_the_controller_or_the_approval_writer(self):
+        """MONITORING CANNOT REWRITE CONTROLLER CONDITIONS OR GRANT APPROVAL. Every seam that
+        could move the pointer or decide an approval is armed with a raiser for the duration;
+        `monitor_proposal` still reaches the right answer, which is the proof it never needed
+        them."""
+        code = we.ACTIVATION_MONITORS[0]
+        readout = we.monitor_readout([code], {code: True})
+        saved = []
+        for name in ("rollback_entry", "swap_activation", "decide_approval", "activation_entry",
+                    "retirement_entry"):
+            saved.append((name, getattr(we, name)))
+            setattr(we, name, _RaisingSeam(f"we.{name}"))
+        try:
+            result = we.monitor_proposal(readout, rollback_monitors=[code], procedure="proc-1")
+        finally:
+            for name, original in saved:
+                setattr(we, name, original)
+        self.assertEqual(result["proposal"], "propose-rollback")
+
+    # ==========================================================================================
+    #  DELAYED / CENSORED ESCAPED DEFECTS, ATTRIBUTED AND NEVER DROPPED
+    # ==========================================================================================
+
+    def test_defect_instant_matches_decision_evals_own_over_a_table_of_cases(self):
+        """Spelled alike on purpose rather than reached into as a private cross-module call --
+        see `decision_eval.RESOURCE_BASES`'s own comment for why this kit prefers a test-pinned
+        equivalence. If the two ever drifted apart this is where it would be caught."""
+        cases = ["2026-09-19T00:00:00Z", "2026-09-19T00:00:00+00:00",
+                "2026-09-19T00:00:00-02:00", "2026-09-19T00:00:00", "not-a-timestamp", "",
+                None, 12345]
+        for case in cases:
+            with self.subTest(case=case):
+                self.assertEqual(we._defect_instant(case), de._instant(case))
+
+    def test_defect_window_report_places_every_defect_and_drops_none(self):
+        window = "2026-09-19T00:00:00+00:00"
+        defects = [
+            {"decision_id": "d-within", "discovered_at": "2026-09-18T00:00:00+00:00",
+             "status": "confirmed"},
+            {"decision_id": "d-delayed", "discovered_at": "2026-09-20T00:00:00+00:00",
+             "status": "confirmed"},
+            {"decision_id": "d-censored", "discovered_at": "2026-09-20T00:00:00+00:00",
+             "status": "censored"},
+            {"decision_id": "d-no-timestamp", "status": "confirmed"},
+            "not-even-an-object",
+        ]
+        result = we.defect_window_report(window, defects)
+        self.assertEqual(result["total"], len(defects))
+        self.assertEqual(result["counts"], {"within-window": 1, "delayed": 1, "censored": 1,
+                                            "unknown-window": 1, "invalid": 1})
+        by_id = {row["decision_id"]: row for row in result["defects"] if row["decision_id"]}
+        self.assertEqual(by_id["d-within"]["placement"], "within-window")
+        self.assertEqual(by_id["d-delayed"]["placement"], "delayed")
+        self.assertEqual(by_id["d-delayed"]["decision_id"], "d-delayed",
+                         "a delayed defect must stay attributed to the decision that caused it")
+        self.assertEqual(by_id["d-censored"]["placement"], "censored")
+        self.assertEqual(by_id["d-no-timestamp"]["placement"], "unknown-window")
+        invalid_row = next(row for row in result["defects"] if row["placement"] == "invalid")
+        self.assertTrue(invalid_row["reason"])
+
+    def test_defect_window_report_unknown_window_when_none_was_declared(self):
+        """No `observation_window` at all makes every entry `unknown-window` rather than a
+        guess at `within-window` -- absence must never read as the earliest possible date."""
+        result = we.defect_window_report(None, [
+            {"decision_id": "d1", "discovered_at": "2026-09-18T00:00:00+00:00",
+             "status": "confirmed"}])
+        self.assertEqual(result["counts"]["unknown-window"], 1)
+        self.assertEqual(result["counts"]["within-window"], 0)
+
+    def test_defect_window_report_a_malformed_window_never_guesses_a_placement(self):
+        result = we.defect_window_report("not-a-timestamp", [
+            {"decision_id": "d1", "discovered_at": "2026-09-18T00:00:00+00:00",
+             "status": "confirmed"},
+            {"decision_id": "d2", "discovered_at": "2026-09-20T00:00:00+00:00",
+             "status": "censored"}])
+        self.assertTrue(result["window_invalid"])
+        self.assertEqual(result["counts"]["invalid"], 1)
+        self.assertEqual(result["counts"]["censored"], 1, "censored stays visible regardless")
+
+    def test_defect_window_report_never_raises_on_a_batch_of_garbage(self):
+        garbage = [None, 1, "x", {}, {"decision_id": "d1"}, {"status": "confirmed"},
+                  {"decision_id": "d1", "status": "not-a-status"}]
+        result = we.defect_window_report("2026-09-19T00:00:00+00:00", garbage)
+        self.assertEqual(result["total"], len(garbage))
+        self.assertTrue(all(row["placement"] == "invalid" for row in result["defects"]))
+
+    # ==========================================================================================
+    #  THE ASSEMBLED DOCUMENT: NO GAIN CLAIM, EVERY SECTION PRESENT
+    # ==========================================================================================
+
+    def test_policy_evidence_report_assembles_every_section(self):
+        manifest = self.manifest()
+        record, case = self.approved(manifest)
+        report = we.policy_evidence_report(
+            approval=record, case=case, sentinel_report=self.sentinel(),
+            recovery=self.recovery_with_accounting()[0],
+            monitors=list(we.ACTIVATION_MONITORS[:2]),
+            observations={we.ACTIVATION_MONITORS[0]: True},
+            rollback_monitors=[we.ACTIVATION_MONITORS[0]], procedure="proc-1",
+            observation_window="2026-09-19T00:00:00+00:00",
+            defects=[{"decision_id": "d1", "discovered_at": "2026-09-18T00:00:00+00:00",
+                     "status": "confirmed"}])
+        for key in ("v", "lineage", "scope", "interventions", "resources", "quality",
+                   "monitoring", "defects", "unproven", "labels"):
+            with self.subTest(key=key):
+                self.assertIn(key, report)
+        self.assertEqual(report["v"], we.POLICY_EVIDENCE_VERSION)
+        self.assertEqual(report["monitoring"]["proposal"]["proposal"], "propose-rollback")
+        self.assertEqual(report["unproven"], list(we.POLICY_EVIDENCE_UNPROVEN))
+
+    def test_policy_evidence_report_never_claims_a_gain(self):
+        """"No gain claim": nothing on this report may read as an improvement, a win rate, a
+        speedup or a saving, over the fully-populated document above.
+
+        THE EXEMPTION IS NARROW, BY IDENTITY, NOT BY DROPPING THE WHOLE `labels` KEY. Only the
+        three KNOWN disclaimer constants legitimately NAME "win rate"/"saving" in order to
+        disclaim them (`MECHANICS_NOT_PERFORMANCE_LABEL` in particular) -- exactly the way
+        `decision_eval.assert_no_causal_claim` sweeps KEYS, never disclaiming prose, for a
+        causal token. Dropping the whole `labels` key would exempt a FOURTH label nobody wrote
+        yet along with the three that earned the exemption, which is this kit's most-produced
+        defect wearing test clothing: an exclusion broader than the reason for it. So this
+        sweeps `labels` too, with only entries EQUAL to the three named constants removed --
+        and the second half of the test proves that narrowing actually bites.
+        """
+        manifest = self.manifest()
+        record, case = self.approved(manifest)
+        report = we.policy_evidence_report(
+            approval=record, case=case, sentinel_report=self.sentinel(),
+            recovery=self.recovery_with_quality(),
+            monitors=list(we.ACTIVATION_MONITORS[:2]),
+            observations={we.ACTIVATION_MONITORS[0]: False, we.ACTIVATION_MONITORS[1]: False},
+            rollback_monitors=[we.ACTIVATION_MONITORS[0]],
+            drift_monitors=[we.ACTIVATION_MONITORS[1]], procedure="proc-1",
+            observation_window="2026-09-19T00:00:00+00:00", defects=[])
+        known_disclaimers = {we.MECHANICS_NOT_PERFORMANCE_LABEL, we.MONITORING_NOT_AUTHORITY_LABEL,
+                            we.LINEAGE_NAMING_NOTE}
+        forbidden = ("winrate", "improvement", "improved", "speedup", "savings", "saved",
+                    "roi", "fasterthan", "cheaperthan")
+
+        def sweep(doc):
+            """Every field, `labels` included, with only entries EQUAL to a known disclaimer
+            constant removed -- never the whole key, and never by position."""
+            swept = dict(doc)
+            swept["labels"] = [label for label in doc.get("labels") or []
+                               if label not in known_disclaimers]
+            blob = json.dumps(swept).lower().replace(" ", "").replace("_", "")
+            return [token for token in forbidden if token in blob]
+
+        hits = sweep(report)
+        self.assertEqual(hits, [], f"gain-claim token(s) found: {hits}")
+
+        # PROVE THE TIGHTENING BITES. A fourth label -- not one of the three known constants --
+        # that genuinely claims a gain must NOT be exempted just because it lives under
+        # `labels`. If this does not go red, the narrowing did nothing.
+        tampered = dict(report, labels=list(report["labels"]) +
+                        ["this candidate showed a 12% win rate improvement over baseline"])
+        tampered_hits = sweep(tampered)
+        self.assertNotEqual(tampered_hits, [],
+                            "an injected gain-claiming label was not caught by the sweep")
+        self.assertIn("winrate", tampered_hits)
+
+    def test_policy_evidence_unproven_notes_are_closed_and_readable(self):
+        self.assertEqual(sorted(we.POLICY_EVIDENCE_UNPROVEN_NOTES),
+                         sorted(we.POLICY_EVIDENCE_UNPROVEN))
+        for code, note in we.POLICY_EVIDENCE_UNPROVEN_NOTES.items():
+            with self.subTest(code=code):
+                self.assertGreater(len(note), 80, f"{code} has no note worth reading")
+
+    def test_the_version_is_registered_and_no_existing_version_moved(self):
+        rows = {row["contract"]: row for row in rg.contract_versions()}
+        self.assertEqual(rows["policy evidence report"]["version"], we.POLICY_EVIDENCE_VERSION)
+        self.assertEqual(rows["policy evidence report"]["owner"], "bin/workflow_eval.py")
+        for name in ("EVAL_VERSION", "PROPOSAL_VERSION", "POLICY_VERSION", "MANIFEST_VERSION",
+                    "POLICY_REFS_VERSION", "APPROVAL_VERSION", "TRIAL_PROTOCOL_VERSION",
+                    "ACTIVATION_VERSION"):
+            with self.subTest(constant=name):
+                self.assertTrue(getattr(we, name).endswith("/1"))
+        version_constants = [n for n in dir(we) if n.endswith("_VERSION")
+                            and isinstance(getattr(we, n), str)]
+        self.assertEqual(len(version_constants), 9,
+                         "exactly eight pre-existing *_VERSION constants plus this task's own")
+
+    # ==========================================================================================
+    #  ROUTING_SCORECARD'S OWN ADDITIVE PROJECTION: A RENDERER, NOTHING COMPUTED
+    # ==========================================================================================
+
+    def test_routing_scorecard_renders_the_report_without_computing_anything_new(self):
+        """`render_policy_evidence_markdown` is additive to `bin/routing_scorecard.py` -- a new
+        function beside its other `render_*` cards, reusing `_int_or_na` -- and it is proven
+        here rather than left uninvoked: every section of a real report appears in the
+        rendered text, and a count this report never measured renders `n/a`, never `0`."""
+        manifest = self.manifest()
+        record, case = self.approved(manifest)
+        report = we.policy_evidence_report(approval=record, case=case,
+                                           sentinel_report=self.sentinel())
+        text = rs.render_policy_evidence_markdown(report)
+        self.assertIn(we.POLICY_EVIDENCE_VERSION, text)
+        for heading in ("Lineage", "Scope", "Interventions", "Resource bases", "Quality",
+                       "Monitoring", "Delayed / censored"):
+            with self.subTest(heading=heading):
+                self.assertIn(heading, text)
+        self.assertIn("n/a", text, "an unmeasured count must render n/a, never a fabricated 0")
+        self.assertNotIn("None", text.split("\n")[0])
 
 
 if __name__ == "__main__":

@@ -151,6 +151,7 @@ VERSION_SOURCES = (
     ("policy reference block", "workflow_eval", "POLICY_REFS_VERSION"),
     ("policy approval record", "workflow_eval", "APPROVAL_VERSION"),
     ("policy activation pointer", "workflow_eval", "ACTIVATION_VERSION"),
+    ("policy evidence report", "workflow_eval", "POLICY_EVIDENCE_VERSION"),
     ("three-arm trial protocol", "workflow_eval", "TRIAL_PROTOCOL_VERSION"),
     ("lessons store", "lessons_store", "SCHEMA"),
     ("protected profile sentinels", "exec_policy", "SENTINEL_VERSION"),

@@ -400,7 +400,7 @@ PYTHONPATH=tests python3 -m unittest test_decision_activation.ProtectedActivatio
 ### D24 — Policy evidence report
 - id: D24
 - title: Policy evidence report
-- status: pending
+- status: done
 - model: sonnet
 - depends: D19, D23
 **Brief.** Own workflow_eval projection and `PolicyEvidenceReportTests`. Report lineage/scope/interventions/resource bases/invalid-abstain/drift/delayed-censored quality; never call mechanics performance.

@@ -6521,6 +6521,542 @@ def activation_report(prefs_dir):
 # END OF THE PROTECTED ACTIVATION SECTION (decision-improvement D23)
 
 
+# =================================================================================================
+# POLICY EVIDENCE REPORT: WHAT PHASE 5 HAS SHOWN, AND WHAT IT HAS NOT (decision-improvement D24)
+# =================================================================================================
+#
+# WHAT THIS SECTION IS. Every function above it decides one gate or writes one record; nothing
+# put the RESULTS of D14-D23 beside each other where an operator could read them as one document.
+# This section assembles a read-only PROJECTION over what those owners already computed, decided
+# or refused: the lineage a candidate travelled (approval, the run it was evaluated in, the
+# protected-profile certification, the manifest, the partition), the scope it is about, how many
+# of its labels came from a human, its five resource bases kept apart, its quality with the
+# invalid/abstain distinction D15 already draws, a monitor's own PROPOSAL (never an action), and
+# every escaped defect placed against the operator's declared observation window. It computes
+# NONE of that arithmetic itself -- every section below calls the function that already owns the
+# number and relays it whole, or reports it explicitly unknown when nothing was supplied.
+#
+# THE SENTENCE THIS WHOLE SECTION IS WRITTEN AGAINST: never call mechanics performance. Every
+# gate Phase 5 built can be, and has been, made to pass over a synthetic fixture --
+# `fixture-proves-mechanics-not-safety` is on every D23 record for exactly that reason. A report
+# that RENDERED that material as though it were a measured outcome would be the worst thing this
+# kit could ship, because a reader trusts a report the way they do not trust a docstring. So this
+# section computes no rate, invents no threshold, and reports no gain, win rate, speedup or
+# saving anywhere -- see MECHANICS_NOT_PERFORMANCE_LABEL, carried on every assembled report.
+#
+# WHAT MONITORING MAY AND MAY NOT DO. `monitor_proposal` below can conclude
+# `propose-drift-flag` or `propose-rollback` -- a PROPOSAL a human acts on under a procedure that
+# human already approved. It never calls `rollback_entry`, `swap_activation` or
+# `decide_approval`: moving the pointer, rewriting a controller condition and granting an
+# approval all stay outside its reach. See MONITORING_NOT_AUTHORITY_LABEL.
+#
+# ONE AUTHORITY PER CONCERN, AGAIN. `decision_eval` owns resource bases, calibration quality and
+# human label sources; this section reads its vocabulary (`RESOURCE_BASES`,
+# `RECOVERY_REPORT_VERSION`, `HUMAN_LABEL_SOURCES`) AT CALL TIME through `_de()`, never copies it
+# into a literal, and re-implements none of its arithmetic. `promotion_eligibility` (D22) owns
+# whether an approval's four bindings still hold; `lineage_report` relays its rows whole rather
+# than re-deriving them. The one deliberate exception is `_defect_instant`, spelled identically
+# to `decision_eval._instant` on purpose -- see decision_eval's own comment on `RESOURCE_BASES`
+# for why this kit pins such an equivalence in a TEST rather than reaching into a sibling's
+# private helper for a function call, and `tests/test_decision_activation.py` pins the two equal.
+
+POLICY_EVIDENCE_VERSION = "polytropos.policy-evidence-report/1"
+
+#: approval -> evaluation -> profile -> manifest -> partition, in the order a reader inspects
+#: them. Always exactly these five: `lineage_report` returns one row per name whatever was
+#: supplied, so "lineage complete" is a structural property of the function and never depends on
+#: which arguments a caller happened to pass.
+LINEAGE_LINKS = ("approval", "evaluation", "profile", "manifest", "partition")
+
+LINEAGE_NAMING_NOTE = (
+    "this report's 'evaluation' link is the RUN that produced the numbers -- D22's own 'source' "
+    "binding slot -- and its 'manifest' link is the grouped/exposure document -- D22's own "
+    "binding slot spelled 'evaluation', because D22 names a bound hash after what was evaluated "
+    "AGAINST rather than after the run itself. The two names collide in D22's own vocabulary on "
+    "purpose (see its section note); this report keeps the two objects apart under different "
+    "names rather than leaving a reader to guess which object a bare 'evaluation' row is about"
+)
+
+MECHANICS_NOT_PERFORMANCE_LABEL = (
+    "every figure on this report was computed over synthetic fixtures, or is relayed whole from "
+    "a document another owner already validated. Nothing here has ever run a canary, dispatched "
+    "a model, or observed a live outcome, because workflow_eval.CONFINED_DISPATCH_WIRED is "
+    "False and nothing in this repository can reach a protected runtime today. A gate that can "
+    "be made to pass over a fixture, or a projection that assembles what such a gate produced, "
+    "proves the MECHANISM reads what it claims to read -- it is never a measurement of "
+    "PERFORMANCE, and no number on this report may be read as a gain, a win rate, or a saving"
+)
+
+MONITORING_NOT_AUTHORITY_LABEL = (
+    "a monitor's own verdict is a PROPOSAL: 'propose-rollback' and 'propose-drift-flag' name "
+    "what a human could choose to do next, under a procedure that human already approved. "
+    "Nothing in workflow_eval.monitor_proposal calls workflow_eval.rollback_entry, "
+    "workflow_eval.swap_activation, or workflow_eval.decide_approval -- moving the pointer, "
+    "rewriting a controller condition, and granting an approval all stay outside this "
+    "function's reach, on purpose, whatever its own verdict says"
+)
+
+#: What this section's own machinery never establishes, whatever it assembled -- closed and
+#: UNCONDITIONAL, the same way `ACTIVATION_UNPROVEN` and `APPROVAL_UNPROVEN` are: nothing here
+#: can discharge any of these, so none is ever left off a record because some other check passed.
+POLICY_EVIDENCE_UNPROVEN = ("mechanics-not-performance", "no-live-outcome-observed",
+                            "monitoring-not-authority")
+
+POLICY_EVIDENCE_UNPROVEN_NOTES = {
+    "mechanics-not-performance": MECHANICS_NOT_PERFORMANCE_LABEL,
+    "no-live-outcome-observed": (
+        "workflow_eval.CONFINED_DISPATCH_WIRED is False, so no canary this report could ever "
+        "describe has run; every quality, resource, intervention and defect figure on this "
+        "report is either synthetic-fixture evidence or an explicit 'unknown', never a live "
+        "observation, and reading any of it as one would be mistaking a rehearsal for a result"),
+    "monitoring-not-authority": MONITORING_NOT_AUTHORITY_LABEL,
+}
+
+#: Where an escaped defect sits against the operator's declared observation window. `censored`
+#: is cross-cut with the other four -- a defect still under investigation is `censored` however
+#: late it was reported -- and `invalid` never guesses a placement for a malformed entry.
+DEFECT_PLACEMENTS = ("within-window", "delayed", "censored", "unknown-window", "invalid")
+
+#: Every verdict `monitor_proposal` may return. The first two propose nothing; the middle two
+#: propose an action a human takes under an already-approved procedure; the last is what an
+#: invalid observation or a missing procedure produces -- an abstention, never a fabricated
+#: verdict.
+MONITOR_PROPOSALS = ("no-signal", "unknown", "propose-drift-flag", "propose-rollback",
+                     "abstain-invalid-input")
+
+
+def _defect_instant(value):
+    """An ISO-8601 timestamp -> comparable seconds, or `None` for "names no instant".
+
+    Spelled identically to `decision_eval._instant` ON PURPOSE, and not called by reaching into
+    that module's private helper: `tests/test_decision_activation.py` pins the two functions
+    equal over one table of cases, the same way `decision_eval.RESOURCE_BASES`'s own comment
+    says this kit prefers a test-pinned equivalence to one module reaching into a sibling's
+    private name for a function call.
+    """
+    if not isinstance(value, str) or not value.strip():
+        return None
+    text = value.strip()
+    if text.endswith(("Z", "z")):
+        text = text[:-1] + "+00:00"
+    try:
+        moment = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if moment.tzinfo is None:
+        return None
+    return moment.timestamp()
+
+
+# ---- lineage: approval -> evaluation -> profile -> manifest -> partition -----------------------
+
+def lineage_report(*, approval=None, case=None, sentinel_report=None):
+    """One row per `LINEAGE_LINKS` name, ALWAYS all five, each explicitly present or absent.
+
+    EVERY FACT HERE IS RELAYED FROM D22'S `promotion_eligibility`, NEVER RE-DECIDED. Calling it
+    with `approval=None` is not a caller defect -- `promotion_eligibility` already degrades a
+    missing record to an unsatisfied `exact-approval` row with its own reason, and this function
+    reads that row rather than special-casing the absence itself, which is what keeps this
+    section's row count fixed at five whatever was supplied: a projection that quietly narrowed
+    itself when its input thinned out would assert a completeness it never checked.
+    """
+    verdict = promotion_eligibility(approval, case=case, sentinel_report=sentinel_report)
+    rows = {row["requirement"]: row for row in verdict["requirements"]}
+    approval_row = rows["exact-approval"]
+    profile_row = rows["protected-profile-certified"]
+    bindings = (approval or {}).get("bindings") or {}
+    holds = verdict.get("holds")
+
+    def binding_link(name, slot):
+        b = bindings.get(slot) or {}
+        hold_row = None
+        if holds is not None:
+            hold_row = next((r for r in holds["rows"] if r["slot"] == slot), None)
+        present = b.get("hash") is not None
+        return {
+            "link": name, "present": present, "hash": b.get("hash"),
+            "establishes": b.get("establishes"),
+            "does_not_establish": list(b.get("does_not_establish") or APPROVAL_UNPROVEN),
+            "re_derived_by": b.get("re_derived_by"),
+            "reason": None if present else (b.get("reason")
+                                            or "no approval binding was supplied for this link"),
+            "content_identity_rederived": None if hold_row is None else hold_row["matches"],
+            "content_identity_reason": None if hold_row is None else hold_row["reason"],
+        }
+
+    links = [
+        {"link": "approval", "present": bool((approval or {}).get("id")),
+         "id": (approval or {}).get("id"), "state": (approval or {}).get("state"),
+         "granted": (approval or {}).get("granted"), "satisfied": approval_row["satisfied"],
+         "reason": approval_row["reason"], "re_derived_by": approval_row["re_derived_by"],
+         "note": approval_row["note"]},
+        binding_link("evaluation", "source"),
+        {"link": "profile", "present": profile_row["evidence"] is not None,
+         "certificate": profile_row["evidence"], "satisfied": profile_row["satisfied"],
+         "reason": profile_row["reason"], "re_derived_by": profile_row["re_derived_by"],
+         "note": profile_row["note"]},
+        binding_link("manifest", "evaluation"),
+        binding_link("partition", "partition"),
+    ]
+    if [link["link"] for link in links] != list(LINEAGE_LINKS):  # pragma: no cover -- structural
+        raise EvalError("lineage_report assembled the wrong link order; LINEAGE_LINKS drifted")
+    return {
+        "v": POLICY_EVIDENCE_VERSION, "links": links, "link_names": list(LINEAGE_LINKS),
+        "missing": [link["link"] for link in links if not link["present"]],
+        "naming_note": LINEAGE_NAMING_NOTE,
+        "relayed_from": "workflow_eval.promotion_eligibility (D22)",
+        "unproven": list(APPROVAL_UNPROVEN),
+    }
+
+
+# ---- scope, visible even when absent ------------------------------------------------------------
+
+def scope_visibility(*, approval=None, entry=None):
+    """The scope this evidence is ABOUT, explicit even when nothing was supplied.
+
+    D22 already keeps an approver's own `scope` and a candidate's `candidate_scope` apart --
+    they answer different questions, what the approver said they were approving FOR and what
+    the candidate itself claims -- and this relays both rather than picking one, plus a running
+    entry's own `scope` when one was minted.
+    """
+    approver_scope = (approval or {}).get("scope")
+    candidate_scope = (approval or {}).get("candidate_scope")
+    activation_scope = (entry or {}).get("scope")
+    return {
+        "approver_scope": _frozen(approver_scope) if approver_scope is not None else None,
+        "candidate_scope": _frozen(candidate_scope) if candidate_scope is not None else None,
+        "activation_scope": _frozen(activation_scope) if activation_scope is not None else None,
+        "present": {"approver": approver_scope is not None,
+                    "candidate": candidate_scope is not None,
+                    "activation": activation_scope is not None},
+        "agrees": (None if approver_scope is None or candidate_scope is None
+                  else approver_scope == candidate_scope),
+    }
+
+
+# ---- interventions: human label sources, read from their owner at call time ---------------------
+
+def intervention_evidence(recovery):
+    """How many labels this evidence carries from a HUMAN source, read from
+    `decision_eval.HUMAN_LABEL_SOURCES` AT CALL TIME -- never copied into a literal here -- and
+    relayed from the join's own `coverage().label_sources`, which `decision_eval.recovery_report`
+    already carries whole under `coverage`. This function computes no rate and decides no
+    threshold: an intervention count is evidence an operator reads, not a verdict this report
+    renders.
+    """
+    de = _de()
+    human_sources = tuple(de.HUMAN_LABEL_SOURCES)
+    if recovery is None:
+        return {"human_sources": list(human_sources), "present": False, "counts": None,
+                "reason": "no recovery report was supplied"}
+    coverage = recovery.get("coverage") if isinstance(recovery, dict) else None
+    sources = (coverage or {}).get("label_sources")
+    if not isinstance(sources, dict):
+        return {"human_sources": list(human_sources), "present": False, "counts": None,
+                "reason": "the recovery report carried no coverage().label_sources block"}
+    counts = {name: sources.get(name) for name in human_sources}
+    return {"human_sources": list(human_sources), "present": True, "counts": counts,
+            "all_sources": _frozen(sources),
+            "note": "a source outside decision_eval.HUMAN_LABEL_SOURCES is automatic and never "
+                    "counted here as an intervention"}
+
+
+# ---- resource bases, relayed whole and kept apart -------------------------------------------------
+
+def resource_basis_report(recovery):
+    """D19's own five resource bases, relayed whole and never recomputed. `RESOURCE_BASES` is
+    read from `decision_eval` AT CALL TIME, never copied into a literal here, so a basis
+    `decision_eval` adds shows up here automatically.
+
+    A DEFENSIVE, NEVER A SECOND, CHECK. `decision_eval.recovery_report` already refuses an
+    accounting that lost the five-basis structure or smuggled a priced `usd` figure under
+    `proxy`/`unpriced` before this function ever sees one -- this is not a second implementation
+    of that private check, which stays unreached from here, but a refusal to relay evidence that
+    no longer agrees with what that function already guaranteed. Silent under-reporting is the
+    direction that matters, the same reason `decision_eval.resource_evidence`'s own docstring
+    gives for checking a field set in both directions.
+
+    INVALID INPUT PRODUCES AN ABSTENTION, NEVER A FABRICATED FIGURE. A `recovery` that is not a
+    real `decision_eval.recovery_report()` document reports no bases present and says why,
+    rather than raising or guessing at a shape it cannot verify.
+    """
+    de = _de()
+    bases = tuple(de.RESOURCE_BASES)
+    if recovery is None:
+        return {"bases": list(bases), "present": False, "accountings": None,
+                "reason": "no recovery report was supplied"}
+    if not isinstance(recovery, dict) or recovery.get("v") != de.RECOVERY_REPORT_VERSION:
+        return {"bases": list(bases), "present": False, "accountings": None,
+                "reason": f"recovery is not a {de.RECOVERY_REPORT_VERSION} document (got "
+                          f"{type(recovery).__name__}); this report abstains rather than guess "
+                          f"at its shape"}
+    resources = recovery.get("resources")
+    accountings = resources if isinstance(resources, list) else []
+    for accounting in accountings:
+        for scope_name, block in (accounting.get("scopes") or {}).items():
+            totals = block.get("totals") or {}
+            missing = sorted(set(bases) - set(totals))
+            if missing:
+                raise EvalError(
+                    f"accounting {accounting.get('arm')!r} scope {scope_name!r} lost basis(es) "
+                    f"{missing}; this report refuses to relay resource evidence that no longer "
+                    f"keeps its bases apart")
+    # `resources` is never None on a VALID recovery report -- decision_eval.recovery_report
+    # always sets it to `resource_evidence(accountings)`, empty list included -- so `present`
+    # answers whether an accounting actually exists rather than merely whether the key does.
+    return {"bases": list(bases), "present": bool(accountings),
+            "accountings": _frozen(resources) if resources is not None else None,
+            "note": recovery.get("resources_note"),
+            "reason": (None if accountings
+                      else "the recovery report carried no resource evidence (an empty "
+                           "accountings list, or none at all)")}
+
+
+# ---- quality, with the invalid/abstain distinction D15 already draws ----------------------------
+
+def quality_evidence(recovery):
+    """D19's own quality block (`raw`/`calibrated` `calibration_report_pair` results), relayed
+    whole, plus D15's own `abstained`/`scoreable`/`resolved` counts kept distinct from a
+    metric's own `insufficient-evidence` status -- `decision_eval`'s own comment on
+    `METRIC_STATUSES` says `insufficient-evidence` is evidence too thin to score, never a
+    planning gap and never a refusal, and this function never reports one as the other.
+
+    INVALID INPUT PRODUCES AN ABSTENTION, NEVER A FABRICATED FIGURE. A `recovery` that is not a
+    real `decision_eval.recovery_report()` document reports `status: 'invalid'` and nothing
+    numeric -- it does not raise (a report is a reader, not a gate) and it does not guess at a
+    shape it cannot verify.
+    """
+    de = _de()
+    if recovery is None:
+        return {"present": False, "status": "unknown", "raw": None, "calibrated": None,
+                "reason": "no recovery report was supplied"}
+    if not isinstance(recovery, dict) or recovery.get("v") != de.RECOVERY_REPORT_VERSION:
+        return {"present": False, "status": "invalid", "raw": None, "calibrated": None,
+                "reason": f"recovery is not a {de.RECOVERY_REPORT_VERSION} document (got "
+                          f"{type(recovery).__name__}); this report abstains rather than "
+                          f"fabricate a quality figure over it"}
+    quality = recovery.get("quality")
+    if quality is None:
+        return {"present": True, "status": "no-quality-block", "raw": None, "calibrated": None,
+                "reason": "this recovery report carries no calibration quality block"}
+    out = {}
+    for field in ("raw", "calibrated"):
+        block = quality.get(field) or {}
+        out[field] = {"resolved": block.get("resolved"), "scoreable": block.get("scoreable"),
+                     "abstained": block.get("abstained"),
+                     "classification_status": (block.get("classification") or {}).get("status")}
+    return {"present": True, "status": "reported", "raw": out["raw"],
+            "calibrated": out["calibrated"],
+            "note": "abstained is a legitimate non-answer counted by decision_eval's own join; "
+                    "insufficient-evidence (inside classification_status) means a metric had too "
+                    "few scoreable rows. The two are kept distinct and neither is read as the "
+                    "other"}
+
+
+# ---- monitoring: a readout, and a proposal that is never an action -------------------------------
+
+def monitor_readout(monitors, observations):
+    """Every DECLARED monitor input -> its observation, explicitly `unknown` when none was
+    supplied. `monitors` is the plan -- an activation entry's own `monitors` list, or any subset
+    of `ACTIVATION_MONITORS` a caller declares watching -- and `observations` is what came back,
+    keyed the same way. TOTAL: a caller with nothing running yet passes `None` for both and gets
+    an empty, honest readout, never a fabricated zero for a monitor nobody is watching.
+
+    CLOSURE. An observation for a code outside `ACTIVATION_MONITORS` entirely is a caller defect
+    and refused. An observation for a code that IS in that vocabulary but was never DECLARED is
+    not silently merged into the read rows -- it is named under `undeclared_observations`,
+    visible and excluded, because a canary watched for three things reporting a fourth is
+    evidence about what changed, not evidence to fold in quietly.
+    """
+    declared = sorted(set(monitors or ()))
+    unknown_monitors = sorted(set(declared) - set(ACTIVATION_MONITORS))
+    if unknown_monitors:
+        raise EvalError(f"monitor(s) {unknown_monitors} are outside ACTIVATION_MONITORS "
+                        f"({', '.join(ACTIVATION_MONITORS)})")
+    obs = observations or {}
+    if not isinstance(obs, dict):
+        raise EvalError("observations must be an object keyed by monitor code")
+    unknown_observations = sorted(set(obs) - set(ACTIVATION_MONITORS))
+    if unknown_observations:
+        raise EvalError(f"observation(s) for {unknown_observations} are outside "
+                        f"ACTIVATION_MONITORS ({', '.join(ACTIVATION_MONITORS)})")
+    undeclared = sorted(set(obs) - set(declared))
+    rows = []
+    for code in declared:
+        present = code in obs and obs[code] is not None
+        rows.append({"monitor": code, "present": present,
+                    "value": _frozen(obs[code]) if present else None,
+                    "status": "observed" if present else "unknown"})
+    return {"monitors": rows, "declared": declared, "vocabulary": list(ACTIVATION_MONITORS),
+            "undeclared_observations": undeclared}
+
+
+def monitor_proposal(readout, *, drift_monitors=(), rollback_monitors=(), procedure=None):
+    """A monitor's own verdict over a `monitor_readout()` result -> a PROPOSAL, never an action.
+
+    `procedure` is the name of the operator-approved procedure this proposal is taken under --
+    checked only for being non-empty, exactly as D20's `authority` field is. Its absence makes
+    this function ABSTAIN rather than invent one: a monitor proposing action under no named
+    procedure is exactly the authority `MONITORING_NOT_AUTHORITY_LABEL` withholds.
+
+    INVALID INPUT PRODUCES AN ABSTENTION, NEVER A FABRICATED VERDICT. A declared drift/rollback
+    monitor whose own observed value is not a boolean is not read as true or false -- it is
+    `abstain-invalid-input`, distinct from `unknown` (a monitor never observed at all) and from
+    `no-signal` (every declared monitor observed, cleanly, and none fired).
+
+    NEVER AN ACTION. This function calls `rollback_entry`, `swap_activation` and
+    `decide_approval` nowhere in its body; a caller who wants to actually MOVE the pointer must
+    make that decision through those functions, by name, separately.
+    """
+    if not isinstance(readout, dict) or "monitors" not in readout:
+        raise EvalError("monitor_proposal reads a monitor_readout() result")
+    if not procedure:
+        return {"proposal": "abstain-invalid-input", "procedure": None,
+                "reason": "no approved procedure was named; this function proposes nothing "
+                          "without one", "evidence": {},
+                "labels": [MONITORING_NOT_AUTHORITY_LABEL]}
+    for group_name, names in (("rollback_monitors", rollback_monitors),
+                             ("drift_monitors", drift_monitors)):
+        unknown = sorted(set(names) - set(ACTIVATION_MONITORS))
+        if unknown:
+            raise EvalError(f"{group_name} names {unknown}, outside ACTIVATION_MONITORS")
+    rows = {row["monitor"]: row for row in readout["monitors"]}
+
+    def _read(names):
+        fired, invalid, unread = False, [], []
+        for name in names:
+            row = rows.get(name)
+            if row is None or not row["present"]:
+                unread.append(name)
+                continue
+            if not isinstance(row["value"], bool):
+                invalid.append(name)
+                continue
+            fired = fired or row["value"]
+        return fired, invalid, unread
+
+    rb_fired, rb_invalid, rb_unread = _read(rollback_monitors)
+    dr_fired, dr_invalid, dr_unread = _read(drift_monitors)
+    evidence = {"rollback_monitors": list(rollback_monitors), "drift_monitors": list(drift_monitors),
+               "rollback_fired": rb_fired, "drift_fired": dr_fired,
+               "invalid": sorted(set(rb_invalid) | set(dr_invalid)),
+               "unread": sorted(set(rb_unread) | set(dr_unread))}
+    if evidence["invalid"]:
+        proposal = "abstain-invalid-input"
+        reason = (f"monitor(s) {evidence['invalid']} carried a non-boolean observation; this "
+                 f"function abstains rather than guess what a non-boolean reading means")
+    elif rb_fired:
+        proposal, reason = "propose-rollback", "rollback monitor(s) fired; see evidence"
+    elif dr_fired:
+        proposal, reason = "propose-drift-flag", "drift monitor(s) fired; see evidence"
+    elif evidence["unread"]:
+        proposal = "unknown"
+        reason = (f"monitor(s) {evidence['unread']} were never observed; a clean verdict cannot "
+                 f"be reported over unread monitors")
+    else:
+        proposal, reason = "no-signal", "every declared monitor was observed and none fired"
+    return {"proposal": proposal, "reason": reason, "evidence": evidence, "procedure": procedure,
+            "authority": REVIEW_AUTHORITY, "labels": [MONITORING_NOT_AUTHORITY_LABEL]}
+
+
+# ---- delayed and censored escaped defects, attributed and never dropped -------------------------
+
+def defect_window_report(observation_window, defects):
+    """Every escaped defect this evaluation was handed, placed against the operator's own
+    declared `observation_window` -- and never dropped, whatever it says.
+
+    A defect discovered AFTER the window closed still belongs to the decision that caused it:
+    `decision_id` travels with it unchanged, and this function never re-attributes it to
+    whichever run happens to be current. A defect still under investigation is `censored` --
+    visible, unresolved, and kept distinct from `delayed`, which IS resolved but late. A
+    malformed entry is `invalid`, kept in the list with its reason rather than silently dropped,
+    and no `observation_window` at all makes every entry `unknown-window` rather than a guess at
+    `within-window`.
+    """
+    window = _defect_instant(observation_window) if observation_window not in (None, "") else None
+    window_invalid = observation_window not in (None, "") and window is None
+    rows = []
+    for index, raw in enumerate(defects or ()):
+        if not isinstance(raw, dict):
+            rows.append({"index": index, "placement": "invalid", "decision_id": None,
+                        "discovered_at": None, "status": None,
+                        "reason": f"defects[{index}] is a {type(raw).__name__}, not an object"})
+            continue
+        decision_id = raw.get("decision_id")
+        discovered_at = raw.get("discovered_at")
+        status = raw.get("status")
+        discovered = _defect_instant(discovered_at) if discovered_at is not None else None
+        malformed = (not decision_id or status not in ("confirmed", "censored")
+                    or (discovered_at is not None and discovered is None))
+        if malformed:
+            rows.append({"index": index, "placement": "invalid", "decision_id": decision_id,
+                        "discovered_at": discovered_at, "status": status,
+                        "reason": "a defect entry needs a decision_id, a status of 'confirmed' "
+                                  "or 'censored', and a discovered_at that either names an "
+                                  "instant or is absent"})
+            continue
+        if status == "censored":
+            placement = "censored"
+        elif window_invalid:
+            placement = "invalid"
+        elif window is None or discovered is None:
+            placement = "unknown-window"
+        elif discovered <= window:
+            placement = "within-window"
+        else:
+            placement = "delayed"
+        rows.append({"index": index, "placement": placement, "decision_id": decision_id,
+                    "discovered_at": discovered_at, "status": status, "reason": None})
+    counts = {p: 0 for p in DEFECT_PLACEMENTS}
+    for row in rows:
+        counts[row["placement"]] += 1
+    return {"observation_window": observation_window, "window_invalid": window_invalid,
+            "defects": rows, "counts": counts, "total": len(rows),
+            "note": "a delayed defect is still attributed to the decision_id it names; nothing "
+                    "here reassigns it to whichever run is current, and a censored defect stays "
+                    "visible rather than being dropped until it resolves"}
+
+
+# ---- the assembled document ----------------------------------------------------------------------
+
+def policy_evidence_report(*, approval=None, case=None, sentinel_report=None, entry=None,
+                           recovery=None, monitors=None, observations=None,
+                           drift_monitors=(), rollback_monitors=(), procedure=None,
+                           observation_window=None, defects=None, notes=()):
+    """One document assembling what D14-D23 already computed, decided or refused: lineage,
+    scope, interventions, resource bases, quality (with the invalid/abstain distinction),
+    monitoring (a PROPOSAL only), and delayed/censored escaped defects.
+
+    IT COMPUTES NONE OF THAT ITSELF. Every section below calls the function that already owns
+    the number and this assembler's only job is to keep them next to each other without letting
+    one leak into another's basis. See `MECHANICS_NOT_PERFORMANCE_LABEL`: nothing here has ever
+    run a canary, dispatched a model, or observed a live outcome, and no field on this report
+    may be read as though it had -- never a gain, a win rate, or a saving.
+    """
+    lineage = lineage_report(approval=approval, case=case, sentinel_report=sentinel_report)
+    scope = scope_visibility(approval=approval, entry=entry)
+    interventions = intervention_evidence(recovery)
+    resources = resource_basis_report(recovery)
+    quality = quality_evidence(recovery)
+    readout = monitor_readout(monitors, observations)
+    proposal = monitor_proposal(readout, drift_monitors=drift_monitors,
+                                rollback_monitors=rollback_monitors, procedure=procedure)
+    defect_window = defect_window_report(observation_window, defects)
+    return {
+        "v": POLICY_EVIDENCE_VERSION,
+        "lineage": lineage,
+        "scope": scope,
+        "interventions": interventions,
+        "resources": resources,
+        "quality": quality,
+        "monitoring": {"readout": readout, "proposal": proposal},
+        "defects": defect_window,
+        "unproven": list(POLICY_EVIDENCE_UNPROVEN),
+        "labels": list(notes) + [MECHANICS_NOT_PERFORMANCE_LABEL, MONITORING_NOT_AUTHORITY_LABEL,
+                                 LINEAGE_NAMING_NOTE],
+    }
+
+# END OF THE POLICY EVIDENCE REPORT SECTION (decision-improvement D24)
 
 
 # ---- CLI --------------------------------------------------------------------------------------------------------

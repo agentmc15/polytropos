@@ -2331,3 +2331,62 @@ supplied — D22's `origin-not-dereferenced` applies one layer up. Several tests
 and would be code nobody has shown to work; every such test restores it and then asserts the same
 pointer reads as legacy in the world as it is.
 outcome: D23 model=opus attempts=1 result=pass review=pending run=2026-09-16-aa6e
+
+## D24 — Policy evidence report (sonnet) — Phase 5 task 5 of 5, phase COMPLETE
+
+Projects lineage/scope/interventions/resource bases/quality/monitoring/defect windows without ever
+calling mechanics performance. 43 tests. `POLICY_EVIDENCE_VERSION` new (9th constant; it recounted
+`dir(we)` itself rather than trusting my number — I had miscounted twice).
+
+**`POLICY_EVIDENCE_UNPROVEN = ("mechanics-not-performance", "no-live-outcome-observed",
+"monitoring-not-authority")` is unconditional on every assembled report**, mirroring D22/D23's
+pattern. Every figure a caller could feed this today is synthetic-fixture evidence or an explicit
+`unknown`, because `CONFINED_DISPATCH_WIRED` is still `False`.
+
+**THE EXCHANGE WORTH REMEMBERING — I flagged on a pattern match; the agent PROVED the gap before
+closing it.** I noted `scope_visibility` was "a direct relay, not separately mutation-killed" and
+said direct relays are where D19's closure defect lived. Rather than take my word or defensively
+add a test, it mutated the function to silently drop `task_classes` from the relayed scope, ran
+all 42 tests, and **every one passed**. The hole was real and demonstrated. It then added a
+whole-object equality test, reapplied the identical mutation, and confirmed the new test is the
+ONLY failure among 43. **A test added on suspicion tells you nothing about whether it was needed;
+a test added after the gap is demonstrated tells you exactly what it catches.**
+
+**Fix I sent, and why it mattered:** `test_policy_evidence_report_never_claims_a_gain` excluded
+the WHOLE `labels` key from its sweep. The reasoning was sound — a disclaimer must name the thing
+it disclaims, as `assert_no_causal_claim` sweeps keys and never disclaiming prose — but **the
+exclusion was written wider than its reason**. Safe today (I verified labels held only the three
+disclaimer constants); tomorrow a gain-claiming label passes the guard on this task's single most
+important property. This is the kit's signature defect wearing test clothing. Now narrowed to the
+three KNOWN constants read off the constants themselves, with nested `labels` lists swept too —
+**and it asserts the POSITIVE**: it plants "a 12% win rate improvement over baseline" as a fourth
+label and asserts `winrate` is found. A fix to a test that does not change what the test catches
+is decoration.
+
+- **It found its own bug**: `present = resources is not None` is `True` for a valid but EMPTY
+  accounting list; fixed to `bool(accountings)`.
+- **It disambiguated a naming collision that is D22's, rather than silently picking one.** D22's
+  binding slot spelled `evaluation` is the manifest; this report's `evaluation` is the run (D22's
+  `source` binding). `LINEAGE_NAMING_NOTE` states it on the record.
+- `monitor_proposal` never calls `rollback_entry`/`swap_activation`/`decide_approval` — proven by
+  patching all four with the file's own `_RaisingSeam` and confirming the right proposal still
+  returns. Monitoring can propose; it cannot grant.
+- Reads at call time, proven by patching the owner: `decision_eval.HUMAN_LABEL_SOURCES`,
+  `de.RESOURCE_BASES`. A hardcoded 5-tuple copy dies when the owner grows a sixth basis.
+- `routing_scorecard.py` gained ONE function, additive-only fence intact, 125 tests including its
+  golden/demo byte-stability tests still green.
+
+**Stated limitations, volunteered:** no production path invokes any of it and no CLI verb was
+added (the brief required none; D23's `activation` precedent does not oblige one). **The
+escaped-defect and monitor-observation record shapes are NEW vocabulary this task introduced, not
+relayed from an owner** — no D01–D23 task defined either, so those inputs are hand-built by
+necessity; it drew that distinction rather than letting them read as relays. Several branches are
+proven by direct example rather than a mutation kill, and it said so rather than implying a
+systematic sweep it did not run.
+
+**MY FALSE ALARM, caught before reporting it:** I ran `routing_scorecard.py demo` and got exit 1.
+The documented form is `--demo`, which exits 0. The bare form exits 1 **at HEAD too**, so my
+invocation was wrong, not D24's change. Third near-miss today from a wrong invocation (the `where=`
+parameter, hand-rolled fixtures, this). **Check the failing form against HEAD before calling
+anything a regression.**
+outcome: D24 model=sonnet attempts=2 result=pass review=revised run=2026-09-16-aa6e

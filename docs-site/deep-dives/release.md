@@ -119,6 +119,7 @@ Contract versions are read from the module that owns each one; package versions 
 | policy reference block | `bin/workflow_eval.py` | `polytropos.policy-refs/1` |
 | policy approval record | `bin/workflow_eval.py` | `polytropos.policy-approval/1` |
 | policy activation pointer | `bin/workflow_eval.py` | `polytropos.policy-activation/1` |
+| policy evidence report | `bin/workflow_eval.py` | `polytropos.policy-evidence-report/1` |
 | three-arm trial protocol | `bin/workflow_eval.py` | `polytropos.trial-protocol/1` |
 | lessons store | `bin/lessons_store.py` | `polytropos.lessons/2` |
 | protected profile sentinels | `bin/exec_policy.py` | `polytropos.sentinels/1` |
