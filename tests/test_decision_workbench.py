@@ -784,6 +784,55 @@ class WorkflowEvalOwnershipTests(unittest.TestCase):
                  "--store-dir", str(self.store), "--prefs-dir", str(self.prefs)]))
         self.assertIn("rewritten", str(cm.exception))
 
+    # ==========================================================================================
+    #  PHASE 5 REVIEW, F5: TEXT THAT BECOMES A FILENAME IS TEXT THAT CAN NAME A PATH
+    # ==========================================================================================
+
+    def traversing_proposal(self, pid):
+        """A real proposal from the real builder, with only its id replaced. The id is the only
+        thing under test, so nothing else about the record is hand-written."""
+        proposal = we.build_proposal(self.envelope(), {"workflow": "kit"}, "proposer", self.prefs)
+        return dict(proposal, id=pid)
+
+    def test_write_proposal_refuses_an_id_that_can_leave_the_prefs_directory(self):
+        """`paths["proposals"] / f"{proposal['id']}.json"` is a hand-composed destination path
+        into a CALLER-SELECTED root, which the repo invariant sends through `bin/safe_paths.py`.
+        `write_approval` next door had the same shape and the same escape; `swap_activation`, one
+        commit later in the same phase, is the answer this follows -- `validate_id` first,
+        because text that becomes a filename is text that can name a path."""
+        outside = self.root / "OUTSIDE"
+        for bad in ("../../OUTSIDE/pwned", "/etc/pwned", "..", ".hidden", "a/b", ""):
+            with self.subTest(id=bad):
+                with self.assertRaises(we._sp().SafePathError) as raised:
+                    we.write_proposal(self.prefs, self.traversing_proposal(bad))
+                self.assertIn("safe identifier", str(raised.exception))
+        self.assertFalse(outside.exists(), "a write escaped the prefs directory")
+        # POSITIVE CONTROL: the ids `build_proposal` actually mints are accepted.
+        _env, proposal = self.proposed()
+        self.assertTrue(proposal["id"].startswith("prop-"))
+        self.assertEqual(we.read_proposal(self.prefs, proposal["id"])["id"], proposal["id"])
+
+    def test_read_and_review_proposal_refuse_a_traversing_id(self):
+        """`review_proposal` READS and WRITES BACK from its `--proposal` CLI argument, so it is
+        the one of the pair that could both disclose a file and overwrite one. Both halves are
+        closed, and the write-back reuses the validated id rather than the caller's string."""
+        planted = self.root / "secret.json"
+        planted.write_text(json.dumps({"v": we.PROPOSAL_VERSION, "id": "secret",
+                                       "status": "proposed", "reviews": []}) + "\n")
+        before = planted.read_text()
+        (self.prefs / we.POLICY_PROPOSALS).mkdir(parents=True)
+        for bad in ("../../secret", "/etc/passwd", ".."):
+            with self.subTest(id=bad):
+                with self.assertRaises(we._sp().SafePathError):
+                    we.read_proposal(self.prefs, bad)
+                with self.assertRaises(we._sp().SafePathError):
+                    we.review_proposal(self.prefs, bad, "alex", "accept")
+        self.assertEqual(planted.read_text(), before, "the planted file was rewritten")
+        # POSITIVE CONTROL: a real id still reviews, so neither guard refuses everything.
+        _env, proposal = self.proposed()
+        reviewed = we.review_proposal(self.prefs, proposal["id"], "alex", "accept")
+        self.assertEqual(reviewed["status"], "accepted")
+
 
 class BoundedProposalTests(unittest.TestCase):
     """D21 -- what the evaluator admits as a bounded draft, and what `bin/improvement_loop.py`

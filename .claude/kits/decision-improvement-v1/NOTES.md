@@ -2390,3 +2390,116 @@ invocation was wrong, not D24's change. Third near-miss today from a wrong invoc
 parameter, hand-rolled fixtures, this). **Check the failing form against HEAD before calling
 anything a regression.**
 outcome: D24 model=sonnet attempts=2 result=pass review=revised run=2026-09-16-aa6e
+
+## Phase 5 review — ACCEPT WITH FINDINGS, all five closed before Phase 6
+
+The review earned its keep by **beating the test I trusted most.** 22 of its 24 planted mutants
+died; the chain could not be made to activate, dispatch, or claim a live outcome. But the fifth
+link broke in three ways this kit has a catalogue for.
+
+**F2 (HIGH, I reproduced it) — the gate named `exact-approval` was satisfied by a record that
+bound nothing.** `approval_ok = granted and (holds is None or holds["holds"])`, and `case` defaults
+to `None`, so `{"state":"approved","granted":True,"bindings":None}` gave
+`exact-approval satisfied=True, re_derived_by=None`. **This is the SAME defect I personally closed
+in Phase 4 for `trial_cohort`** — satisfied because an argument was PASSED, not because anything
+was checked — reappearing one function away, in the gate that consumes what I fixed. The file even
+states the rule, in `manifest_currency`: *"an unmade check is not a passed one."* D23 applied it to
+its own gate; D22 never applied it to the one D23 relays.
+The reviewer then **beat D23's load-bearing test** with it: same fixtures, hand-built approval, no
+case, inside `wired()` → `permitted: True`, `blockers: []`, a minted entry, a written generation,
+`runtime_activation` reporting canary. **The only thing refusing today was
+`CONFINED_DISPATCH_WIRED`, and D18's note says that flag gets flipped in the same edit that adds a
+confining runner.** Closed: `granted and holds is not None and holds["holds"]`, new closed
+vocabulary `PROMOTION_APPROVAL_BLOCKERS`. Verified: the forged record now yields
+`satisfied=False, blocker=exact-approval-not-re-derived`, and D23's control still passes because it
+supplies a real case.
+
+**F1 (HIGH, I reproduced it) — `quality_evidence` read the wrong nesting level.** `resolved`,
+`scoreable`, `abstained` live under `coverage`; it read them at top level, so all three were always
+`None` while `status` said `"reported"` and `present` was `True` — and
+`render_policy_evidence_markdown` printed `resolved=n/a` to an operator. **Known evidence rendered
+as unknown, on a report whose contract is "unknown visible."** 43 tests missed it because the
+assertion checked KEY PRESENCE, and the key is always present since the dict literal writes it.
+Verified fixed: 25/25/0. The renderer needed no change — it was rendering what it was given.
+
+**F5 (MEDIUM) — my open question answered against my instinct: THE NEIGHBOUR IS THE BUG.** A
+demonstrated traversal: `write_approval` returned `.../approvals/../../OUTSIDE/pwned.json` and the
+file existed outside the prefs root. Same for the proposal pair. The decisive evidence is inside
+Phase 5: **D23's `swap_activation` writes to the SAME store through `safe_paths.validate_id` one
+commit later**, saying *"text that becomes a filename is text that can name a path."* Two opposite
+answers to one concern, one commit apart — following the neighbour added a third state, it did not
+avoid one. Closed with `validate_id` on six functions, before the `mkdir`, so a refused id creates
+nothing.
+
+**F4 (MEDIUM) — Phase 4's F4 reproduced exactly**, in `resource_basis_report`: one-directional
+closure plus a wholesale `_frozen` copy, so an undeclared sixth basis carrying `usd: 12.5` arrived
+intact on a report whose `bases` field says five. The docstring NAMED bidirectional checking as its
+reason and checked one direction.
+
+**F3 (MEDIUM-HIGH) — "no gain claim" had no product-side enforcement.** Caller `notes` went
+straight onto the report; the injected claim rendered as a blockquote directly above the disclaimer
+denying it. **A capability claim whose only enforcement is a test over one fixture is not
+enforcement.** Now `assert_no_gain_claim` in the product, with the limit disclosed the way D19
+disclosed `causation`/`causality`.
+
+### Two places the implementer improved on MY brief
+
+1. **I said exempt the three disclaimer constants from the gain sweep. It measured which actually
+   contain a gain token — only `MECHANICS_NOT_PERFORMANCE_LABEL` does — and exempted ONLY that
+   one**, pinning the other two as inert so a claim landing in either refuses loudly rather than
+   riding an exemption it never needed. That applies my own principle more strictly than I stated
+   it.
+2. **`roi` as a substring collides with ordinary prose**: `"zero identity"` → `"zeroidentity"`
+   contains `roi`. The EXISTING test listed it as a substring and passed only because no such
+   phrase was in the document. Now word-anchored; verified `[]` for that phrase and `['roi']` for
+   "the ROI was 3x".
+
+### A SECOND LIMIT ON MY OWN MANDATED TECHNIQUE — record this
+
+Its harness first reported two F5 mutants as SURVIVING. They do not survive: **the rsync'd temp
+tree carried `__pycache__` and importlib served PRE-MUTATION BYTECODE**, so the mutation was
+applied to source that never ran. Cleared cache plus `python3 -B` turned both red.
+
+**Several agents this run built temp trees by copying `bin/` and `tests/`, and I never specified
+clearing `__pycache__` or `-B`.** A stale-bytecode mutant is indistinguishable from a real
+survivor. Unlike the `Ran N tests` line issue — which only weakened a secondary check — this one
+can invert the verdict on a guard. **The kills that named a specific failing test remain sound
+(positive evidence). What I cannot claim retroactively is that every reported SURVIVOR in earlier
+sweeps was a real survivor.** Both limits have the same cause: I specified WHAT to check without
+specifying HOW, and that gap is where a check goes quietly inert. Standing brief now says: parse
+the integer, and run `-B` on a cache-cleared tree.
+
+### Adjudications
+
+- **Whole-task study as an activation gate: YES, but conditional on `target_state == "active"`,
+  not a fifth unconditional gate.** The review compared both lists: four of five live requirements
+  have activation counterparts (two strictly stronger), and `whole-task-study` is the only one with
+  none. The shared PLAN scopes it to "before general rollout", and `RUNNING_STATES` already
+  separates bounded `canary` from `active`. D23's implementer was right to decline inventing it.
+  **Now an architect decision before D30's matrix claims what `active` requires** — and note it
+  will be a caller assertion whichever task takes it, since nothing offline can re-derive that a
+  study ran.
+- **`classify_dispatch`: untouched by Phase 5, neither better nor worse.** But the review found an
+  adjacent pre-existing D14 overclaim: `decision_eval.py:528` sets
+  `"failure_class_basis": "trusted-event" if cls else None` unconditionally, so a class that
+  arrived via the NOTES prose projection is labelled `trusted-event`. **The field whose whole job
+  is to name trustworthiness overclaims.** Folds into whichever task takes the D17 trigger
+  question.
+- **No-bundle-store gap: a D30 disclosure, not a Phase 6 blocker — and it is load-bearing in FIVE
+  places, not three.** Add D23's `activation_entry(bundle_ref=...)` and `rollback_entry`'s
+  `resolution`. D30's matrix cannot claim canary/active "unavailable absent D23 evidence" without
+  also saying the bundle a pointer would name has no store and no origin evidence.
+
+**Two F5 guards survive by construction and say so in their own source**: `review_proposal` and
+`apply_proposal` both call `read_proposal` first, which validates, so their mutants are unkillable.
+Documented as deliberate defence in depth with no mutation kill claimed — a function composing a
+path from a caller's string should not depend on a neighbour having checked it.
+
+**Behaviour changes callers should know:** `policy_evidence_report` and `resource_basis_report` now
+RAISE where they previously returned. `quality_evidence` blocks gained `coverage`/`coverage_reason`
+(additive).
+
+**Artefact for future temp-tree sweeps:** `tests/test_release_gate.py` has three cases that read
+the real checkout's git revision and fail in a `git archive` tree for reasons that are not the
+code's. Exclude that module rather than reading its failure as a finding.
+reviewer: P5 model=opus findings=10 confirmed=10 result=accepted

@@ -1053,6 +1053,130 @@ class ExactApprovalTests(unittest.TestCase):
             with self.subTest(envelope=bad), self.assertRaises(we.EvalError):
                 we.envelope_digest(bad)
 
+    # ==========================================================================================
+    #  PHASE 5 REVIEW, F2: A GATE NAMED `exact-approval` IS NOT SATISFIED BY A RECORD THAT
+    #  BOUND NOTHING AND THAT NOTHING RE-DERIVED
+    # ==========================================================================================
+
+    def forged(self, **over):
+        """A hand-built record, by the same name that proposed it, whose `bindings` are `None`.
+        No `approval_case` and no `decide_approval` were involved: every field here is a string
+        a caller chose, which is exactly what the gate must not accept as evidence."""
+        row = {"v": we.APPROVAL_VERSION, "id": "appr-forged", "state": "approved",
+               "granted": True, "bindings": None, "by": "mallory", "proposed_by": "mallory"}
+        row.update(over)
+        return row
+
+    def exact_row(self, verdict):
+        return next(r for r in verdict["requirements"] if r["requirement"] == "exact-approval")
+
+    def test_an_approval_with_no_case_does_not_satisfy_the_exact_approval_gate(self):
+        """`approval_ok = granted and (holds is None or holds['holds'])` made `holds is None` --
+        "no `case` was supplied, so nothing was re-derived" -- satisfy the gate. That is
+        `trial_cohort`'s Phase 4 defect in a second place: `satisfied: True` because a `granted`
+        KEY was passed, the way `frozen: True` was because a `manifest` ARGUMENT was passed.
+
+        ASSERTED ON `satisfied` AND ON THE BLOCKER SET, NEVER ON `eligible`. `eligible` is False
+        here for two other reasons (the profile and the dispatch constant), and asserting on it
+        is precisely how this hid for a whole phase.
+
+        `approval_holds` already stated the rule this now applies -- "a slot that was never bound
+        counts as moved" -- and `manifest_currency` in the same file says "an unmade check is not
+        a passed one".
+        """
+        verdict = we.promotion_eligibility(self.forged())
+        row = self.exact_row(verdict)
+        self.assertIs(row["satisfied"], False)
+        self.assertIsNone(row["re_derived_by"], "nothing re-derived it, and the row says so")
+        self.assertEqual(row["blocker"], "exact-approval-not-re-derived")
+        self.assertEqual(sorted(verdict["blockers"]),
+                         ["confining-dispatch-unwired", "exact-approval-not-re-derived",
+                          "protected-profile-uncertified"])
+        self.assertIn("no case", row["reason"])
+        self.assertIsNone(verdict["holds"])
+
+    def test_a_genuinely_granted_record_also_fails_the_gate_with_no_case(self):
+        """The finding is not about forgery, it is about an unmade check. A REAL record from
+        `decide_approval` over a REAL case is still not evidence for this gate when the case is
+        not supplied to re-derive it from: what the record says and what the objects in hand
+        re-derive to are different facts."""
+        case = self.case()
+        record = self.decide(case)
+        self.assertIs(record["granted"], True)
+        bare = self.exact_row(we.promotion_eligibility(record))
+        self.assertIs(bare["satisfied"], False)
+        self.assertEqual(bare["blocker"], "exact-approval-not-re-derived")
+        # ... and with the case, the same record satisfies it. Without this control the guard
+        # above would be satisfied by a gate that refuses everything.
+        supplied = self.exact_row(we.promotion_eligibility(record, case=case))
+        self.assertIs(supplied["satisfied"], True)
+        self.assertEqual(supplied["re_derived_by"], "workflow_eval.approval_holds")
+        self.assertIsNone(supplied["blocker"])
+
+    def test_the_two_approval_blockers_are_a_closed_vocabulary_and_mean_different_things(self):
+        """"The approval was refused" and "nothing re-derived the approval" are two facts and
+        the record keeps them apart, for `PROTOCOL_BLOCKERS`' own stated reason: a reader who
+        could not tell them apart would read an unchecked approval as a rejected one."""
+        self.assertEqual(we.PROMOTION_APPROVAL_BLOCKERS,
+                         ("exact-approval-missing", "exact-approval-not-re-derived"))
+        case = self.case()
+        refused = self.decide(case, decision="reject")
+        self.assertEqual(self.exact_row(we.promotion_eligibility(refused, case=case))["blocker"],
+                         "exact-approval-missing")
+        self.assertEqual(self.exact_row(we.promotion_eligibility(self.decide(case)))["blocker"],
+                         "exact-approval-not-re-derived")
+        for verdict in (we.promotion_eligibility(None),
+                        we.promotion_eligibility(self.forged()),
+                        we.promotion_eligibility(refused, case=case)):
+            row = self.exact_row(verdict)
+            with self.subTest(blocker=row["blocker"]):
+                self.assertIn(row["blocker"], we.PROMOTION_APPROVAL_BLOCKERS)
+
+    # ==========================================================================================
+    #  PHASE 5 REVIEW, F5: TEXT THAT BECOMES A FILENAME IS TEXT THAT CAN NAME A PATH
+    # ==========================================================================================
+
+    def test_write_approval_refuses_an_id_that_can_leave_the_prefs_directory(self):
+        """`paths["approvals"] / f"{record['id']}.json"` is a hand-composed destination path, and
+        the repo invariant is that every write into a caller-selected root goes through
+        `bin/safe_paths.py`. The demonstration was a real escape: an id of `../../OUTSIDE/pwned`
+        wrote a file outside the prefs directory entirely.
+
+        The strongest evidence that the neighbouring plain write was the bug rather than the
+        precedent is one commit later in this same phase: `swap_activation` writes to this same
+        store through `safe_paths.confined_create_bytes` with `validate_id` first, saying "text
+        that becomes a filename is text that can name a path".
+        """
+        outside = self.root / "OUTSIDE"
+        for bad in ("../../OUTSIDE/pwned", "/etc/pwned", "..", ".hidden", "a/b", ""):
+            with self.subTest(id=bad):
+                with self.assertRaises(we._sp().SafePathError) as raised:
+                    we.write_approval(self.prefs, self.forged(id=bad))
+                self.assertIn("safe identifier", str(raised.exception))
+        self.assertFalse(outside.exists(), "a write escaped the prefs directory")
+        self.assertEqual(sorted(p.name for p in self.root.rglob("*.json")), [])
+        # POSITIVE CONTROL: the ids this code actually mints are accepted, so the guard is not
+        # simply refusing everything.
+        record = self.decide(self.case())
+        self.assertTrue(record["id"].startswith("appr-"))
+        path = we.write_approval(self.prefs, record)
+        self.assertEqual(path.parent, self.prefs / we.POLICY_APPROVALS)
+        self.assertEqual(we.read_approval(self.prefs, record["id"])["id"], record["id"])
+
+    def test_read_approval_refuses_a_traversing_id_rather_than_reading_what_it_names(self):
+        """The reader is the other half. A reader that follows `../..` out of the store is an
+        arbitrary-file read through an id, and it would report whatever it found as an approval
+        record of this repository's own."""
+        planted = self.root / "secret.json"
+        planted.write_text(json.dumps({"v": we.APPROVAL_VERSION, "id": "secret"}) + "\n")
+        (self.prefs / we.POLICY_APPROVALS).mkdir(parents=True)
+        for bad in ("../../secret", "/etc/passwd", ".."):
+            with self.subTest(id=bad):
+                with self.assertRaises(we._sp().SafePathError):
+                    we.read_approval(self.prefs, bad)
+        with self.assertRaises(FileNotFoundError):
+            we.read_approval(self.prefs, "appr-nothing-here")
+
 
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()

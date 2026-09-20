@@ -1391,6 +1391,53 @@ class ProtectedActivationGateTests(unittest.TestCase):
             with self.subTest(command=banned):
                 self.assertNotIn(banned, actions)
 
+    # ==========================================================================================
+    #  PHASE 5 REVIEW, F2: A WIRED RUNTIME STILL REFUSES AN APPROVAL NOTHING RE-DERIVED
+    # ==========================================================================================
+
+    def forged_approval(self):
+        """A hand-built record that bound NOTHING, by the same name that proposed it. Every
+        field is a string a caller chose; no `approval_case` and no `decide_approval` was
+        involved, which is the whole point."""
+        return {"v": we.APPROVAL_VERSION, "id": "appr-forged", "state": "approved",
+                "granted": True, "bindings": None, "by": "mallory", "proposed_by": "mallory"}
+
+    def test_a_wired_runtime_refuses_an_approval_that_bound_and_re_derived_nothing(self):
+        """THE END-TO-END FORM OF THE PHASE 5 F2 FINDING, in the one world where the pointer
+        mechanics are reachable at all. Today the refusal is entirely `CONFINED_DISPATCH_WIRED`:
+        flip that constant and a forged approval with no `case` minted an entry, wrote a
+        generation and read back as a canary, because
+        `approval_ok = granted and (holds is None or holds['holds'])` read "nobody checked" as
+        "the check passed" -- `trial_cohort`'s Phase 4 defect ("frozen because a `manifest`
+        argument was PASSED") in a second place.
+
+        Asserted on `permitted` and on the blocker SET. NOT on whether an entry could be minted,
+        because in the world as it is that is False for the dispatch reason regardless -- which
+        is exactly why this hid behind a gate that contributes nothing.
+        """
+        manifest = self.manifest()
+        kw = {"case": None, "target_state": "canary", "sentinel_report": ttp._sentinel_report(),
+              "store_dir": self.fresh_store(manifest), "manifest": manifest,
+              "partition": "promotion", "declarations": self.declarations()}
+        with self.wired():
+            decision = we.activation_decision(self.forged_approval(), **kw)
+            self.assertIs(decision["permitted"], False)
+            self.assertEqual(self.blockers(decision), ["exact-approval-not-re-derived"])
+            row = next(r for r in decision["requirements"]
+                       if r["requirement"] == "exact-approval")
+            self.assertIs(row["satisfied"], False)
+            self.assertIsNone(row["re_derived_by"])
+            with self.assertRaises(we.EvalError) as raised:
+                we.activation_entry(decision, scope=self.scope(), bundle_ref=self.bundle()[1],
+                                    eligibility=self.eligibility(), monitors=self.monitors(),
+                                    by="mallory")
+            self.assertIn("exact-approval-not-re-derived", str(raised.exception))
+        self.assertIs(we.CONFINED_DISPATCH_WIRED, False)
+        # And nothing was written on the way through: no generation exists for this scope.
+        reading = we.read_activation(self.prefs, self.scope())
+        self.assertEqual(reading["generations"], [])
+        self.assertIsNone(reading["entry"])
+
 
 class PolicyEvidenceReportTests(unittest.TestCase):
     """D24 -- workflow_eval's read-only projection over what D14-D23 already computed, decided
@@ -2029,6 +2076,256 @@ class PolicyEvidenceReportTests(unittest.TestCase):
                 self.assertIn(heading, text)
         self.assertIn("n/a", text, "an unmeasured count must render n/a, never a fabricated 0")
         self.assertNotIn("None", text.split("\n")[0])
+
+    # ==========================================================================================
+    #  PHASE 5 REVIEW, F1: THE COUNTS ARE READ FROM THE BLOCK THEY LIVE IN, AND ASSERTED AS
+    #  VALUES AGAINST THE GENERATOR -- NEVER AS KEY PRESENCE
+    # ==========================================================================================
+
+    def quality_pair(self, resolved=20, abstained=5):
+        """A REAL `calibration_report_pair` whose three coverage counts are three DIFFERENT
+        numbers, so no assertion below can be satisfied by a coincidence: `resolved` is every
+        row, `scoreable` is the rows that carried a distribution, and `abstained` is the rest."""
+        rows = tde.bulk_rows(resolved) + tde.bulk_rows(abstained, abstained=True)
+        return de.calibration_report_pair(rows, question=tde.Q)
+
+    def recovery_with_quality_pair(self, pair):
+        return de.recovery_report(provenance="synthetic", join_document=de.join([]),
+                                  operator_declarations={}, calibration=pair)
+
+    def test_quality_evidence_reads_the_counts_from_the_coverage_block_they_live_in(self):
+        """`resolved`/`scoreable`/`abstained` live under `coverage` on a
+        `decision_eval.calibration_report()` document, NOT at its top level. Reading the top
+        level yields `None` for all three while `status` is still `reported` and the keys are
+        still present -- known evidence rendered as unknown, on a report whose contract is
+        "unknown visible".
+
+        ASSERTED AS VALUES AGAINST THE GENERATOR. The test this replaces checked only that the
+        keys existed, and the keys exist unconditionally because the dict literal always writes
+        them; that is the vacuous assertion this kit keeps finding. Here every count is compared
+        to the number `decision_eval` itself computed, and the three are deliberately different
+        (25 / 20 / 5) so a projection that read the wrong one cannot pass.
+        """
+        pair = self.quality_pair()
+        result = we.quality_evidence(self.recovery_with_quality_pair(pair))
+        self.assertEqual(result["status"], "reported")
+        for field in ("raw", "calibrated"):
+            with self.subTest(field=field):
+                truth = pair[field]["coverage"]
+                # What the owner actually computed, pinned here so a fixture that stopped
+                # producing three distinct counts fails loudly instead of weakening the test.
+                self.assertEqual((truth["resolved"], truth["scoreable"], truth["abstained"]),
+                                 (25, 20, 5))
+                self.assertIsNone(pair[field].get("resolved"),
+                                  "the top level carries no count; that is the whole finding")
+                block = result[field]
+                self.assertEqual(block["resolved"], 25)
+                self.assertEqual(block["scoreable"], 20)
+                self.assertEqual(block["abstained"], 5)
+                self.assertEqual(block["classification_status"],
+                                 pair[field]["classification"]["status"])
+
+    def test_quality_evidence_relays_coverage_whole_so_a_new_count_cannot_vanish(self):
+        """The four-field projection was ALSO unclosed: a count `decision_eval` adds to its own
+        coverage block would disappear here silently, which is the same defect F4 names in
+        `resource_basis_report`. The block is relayed WHOLE beside the named projection, so a
+        field this function never heard of still reaches the reader."""
+        pair = self.quality_pair()
+        recovery = json.loads(json.dumps(self.recovery_with_quality_pair(pair)))
+        for field in ("raw", "calibrated"):
+            recovery["quality"][field]["coverage"]["a-seventh-count"] = 7
+        result = we.quality_evidence(recovery)
+        for field in ("raw", "calibrated"):
+            with self.subTest(field=field):
+                self.assertEqual(result[field]["coverage"],
+                                 recovery["quality"][field]["coverage"])
+                self.assertEqual(result[field]["coverage"]["a-seventh-count"], 7)
+                self.assertIsNone(result[field]["coverage_reason"])
+
+    def test_quality_evidence_says_so_when_a_count_it_projects_is_not_there(self):
+        """The other direction of the same closure. A coverage block that no longer carries one
+        of the three projected counts must be REPORTED as a shape change, not rendered as an
+        unmeasured `n/a`: `None` because nobody counted and `None` because this function looked
+        in the wrong place are the two facts the finding conflated, and a reader is owed the
+        difference."""
+        pair = self.quality_pair()
+        recovery = json.loads(json.dumps(self.recovery_with_quality_pair(pair)))
+        del recovery["quality"]["raw"]["coverage"]["resolved"]
+        result = we.quality_evidence(recovery)
+        self.assertIsNone(result["raw"]["resolved"])
+        self.assertIn("resolved", result["raw"]["coverage_reason"])
+        # The other field is untouched and still reports its real numbers: a shape change in one
+        # block never blanks a block that is fine.
+        self.assertEqual(result["calibrated"]["resolved"], 25)
+        self.assertIsNone(result["calibrated"]["coverage_reason"])
+
+    def test_quality_evidence_reads_the_projected_count_names_from_one_place(self):
+        """The three names this function projects are a declared, closed tuple rather than three
+        string literals spread through a dict comprehension -- so the closure check above and the
+        projection below it can never disagree about what "the counts" are."""
+        self.assertEqual(we.QUALITY_COVERAGE_COUNTS, ("resolved", "scoreable", "abstained"))
+        pair = self.quality_pair()
+        result = we.quality_evidence(self.recovery_with_quality_pair(pair))
+        for field in ("raw", "calibrated"):
+            for name in we.QUALITY_COVERAGE_COUNTS:
+                with self.subTest(field=field, count=name):
+                    self.assertEqual(result[field][name], pair[field]["coverage"][name])
+
+    def test_the_operator_sees_the_real_counts_rather_than_n_a(self):
+        """THE OPERATOR-FACING CONSEQUENCE, end to end through the renderer that actually prints
+        this to a human. `routing_scorecard.render_policy_evidence_markdown` was printing
+        `resolved=n/a scoreable=n/a abstained=n/a` over a report whose counts were all known.
+        Nothing in the renderer changed -- it renders what it is given, and what it was given
+        was wrong."""
+        manifest = self.manifest()
+        record, case = self.approved(manifest)
+        report = we.policy_evidence_report(approval=record, case=case,
+                                           sentinel_report=self.sentinel(),
+                                           recovery=self.recovery_with_quality_pair(
+                                               self.quality_pair()))
+        text = rs.render_policy_evidence_markdown(report)
+        self.assertIn("resolved=25 scoreable=20 abstained=5", text)
+        self.assertNotIn("resolved=n/a", text)
+
+    # ==========================================================================================
+    #  PHASE 5 REVIEW, F4: THE BASIS CHECK RUNS IN BOTH DIRECTIONS
+    # ==========================================================================================
+
+    def test_resource_basis_report_refuses_an_undeclared_sixth_basis(self):
+        """Phase 4's F4, reproduced here one phase later. `missing` checked only
+        `bases - totals`; the payload is then copied WHOLESALE, so an undeclared sixth basis
+        carrying real dollars relayed intact onto a report whose own `bases` field named five.
+        This is the direction that lies -- a subscription proxy dollar entering a priced total
+        is exactly what this repo forbids, and an unrecognised basis is the path it takes."""
+        recovery, _accounting = self.recovery_with_accounting()
+        smuggled = json.loads(json.dumps(recovery))
+        smuggled["resources"][0]["scopes"]["whole-task"]["totals"]["a-sixth-basis"] = {"usd": 12.5}
+        with self.assertRaises(we.EvalError) as raised:
+            we.resource_basis_report(smuggled)
+        message = str(raised.exception)
+        self.assertIn("a-sixth-basis", message)
+        self.assertIn("whole-task", message)
+
+    def test_resource_basis_report_still_relays_a_well_formed_accounting(self):
+        """POSITIVE CONTROL for the direction just added, and the reason a naive subtraction
+        would have been wrong: every real `arm_accounting` total carries a `note` key, which is
+        not a basis and must not be refused as one. Without this, the guard above would be
+        satisfied by a check that refuses every honest accounting."""
+        recovery, accounting = self.recovery_with_accounting()
+        totals = accounting["scopes"]["whole-task"]["totals"]
+        self.assertIn("note", totals)
+        self.assertEqual(sorted(set(totals) - set(de.RESOURCE_BASES)),
+                         sorted(de.TOTALS_NON_BASIS_KEYS))
+        result = we.resource_basis_report(recovery)
+        self.assertTrue(result["present"])
+        self.assertEqual(result["accountings"][0]["arm"], "repair")
+
+    def test_resource_basis_report_reads_the_non_basis_keys_from_their_owner(self):
+        """THE MUTANT THIS KILLS: a copy of `{"note"}` written as a literal here. Patching
+        `decision_eval.TOTALS_NON_BASIS_KEYS` to empty makes a REAL accounting's own `note` key
+        undeclared, and this must refuse it -- a hardcoded exemption would keep passing and
+        would go on exempting `note` after its owner stopped declaring it."""
+        recovery, _accounting = self.recovery_with_accounting()
+        with mock.patch.object(de, "TOTALS_NON_BASIS_KEYS", ()):
+            with self.assertRaises(we.EvalError) as raised:
+                we.resource_basis_report(recovery)
+        self.assertIn("note", str(raised.exception))
+
+    # ==========================================================================================
+    #  PHASE 5 REVIEW, F3: "NO GAIN CLAIM" IS ENFORCED BY THE PRODUCT, NOT ONLY BY A TEST
+    # ==========================================================================================
+
+    def populated_report(self, **over):
+        manifest = self.manifest()
+        record, case = self.approved(manifest)
+        kw = {"approval": record, "case": case, "sentinel_report": self.sentinel(),
+              "recovery": self.recovery_with_quality_pair(self.quality_pair()),
+              "monitors": list(we.ACTIVATION_MONITORS[:2]),
+              "observations": {we.ACTIVATION_MONITORS[0]: False,
+                               we.ACTIVATION_MONITORS[1]: False},
+              "rollback_monitors": [we.ACTIVATION_MONITORS[0]],
+              "drift_monitors": [we.ACTIVATION_MONITORS[1]], "procedure": "proc-1",
+              "observation_window": "2026-09-19T00:00:00+00:00", "defects": []}
+        kw.update(over)
+        return we.policy_evidence_report(**kw)
+
+    def test_a_caller_supplied_note_claiming_a_gain_is_refused_by_the_product(self):
+        """A capability claim whose only enforcement is a test over one fixture is not
+        enforcement. `notes` went straight onto `labels` and rendered as a blockquote directly
+        above the disclaimer denying it; `decision_eval.assert_no_causal_claim` is the precedent,
+        one phase earlier in this same kit, and it is CALLED at the end of the two reports that
+        own it rather than asserted about from outside."""
+        with self.assertRaises(we.EvalError) as raised:
+            self.populated_report(
+                notes=["this candidate showed a 12% win rate improvement over baseline"])
+        message = str(raised.exception)
+        self.assertIn("winrate", message)
+        self.assertIn(we.NO_GAIN_CLAIM, message)
+
+    def test_the_gain_sweep_exempts_exactly_the_one_disclaimer_that_needs_it(self):
+        """POSITIVE CONTROL plus the narrowing that makes it worth having.
+
+        `MECHANICS_NOT_PERFORMANCE_LABEL` has to NAME "a win rate, or a saving" in order to
+        disclaim them, so a fully populated report must still build. The other two disclaimers
+        this report carries contain no token AT ALL, so exempting them would be an exclusion wider
+        than its reason -- this kit's signature defect, and exactly what the Phase 4 review caught
+        in the TEST that preceded this constant. Asserted here in both directions: the exempt set
+        is one entry, that entry really does carry a token, and the other two really are inert, so
+        an edit that put a claim into one of them refuses loudly instead of riding an exemption it
+        never needed.
+        """
+        report = self.populated_report()
+        self.assertIn(we.MECHANICS_NOT_PERFORMANCE_LABEL, report["labels"])
+        self.assertEqual(we.GAIN_CLAIM_EXEMPT, (we.MECHANICS_NOT_PERFORMANCE_LABEL,))
+        self.assertEqual(we._gain_hits(we.MECHANICS_NOT_PERFORMANCE_LABEL), ["winrate"])
+        for label in (we.MONITORING_NOT_AUTHORITY_LABEL, we.LINEAGE_NAMING_NOTE):
+            with self.subTest(label=label[:40]):
+                self.assertNotIn(label, we.GAIN_CLAIM_EXEMPT)
+                self.assertEqual(we._gain_hits(label), [],
+                                 "this disclaimer now carries a token and is NOT exempt, so "
+                                 "every report refuses; exempt it on purpose or reword it")
+        tampered = dict(report, labels=list(report["labels"]) +
+                        ["a 12% win rate improvement over baseline"])
+        with self.assertRaises(we.EvalError):
+            we.assert_no_gain_claim(tampered, where="a tampered report")
+
+    def test_the_gain_sweep_reaches_a_claim_buried_anywhere_in_the_document(self):
+        """Not only `labels`. The sweep walks every string in the document, keys included, the
+        way `assert_no_causal_claim` walks every key -- a claim smuggled into a nested `reason`
+        or a monitor note is the same claim."""
+        report = self.populated_report()
+        claim = "measured a 30% speedup"
+        places = {
+            "a nested link's reason": lambda d: d["lineage"]["links"][0].__setitem__("reason",
+                                                                                    claim),
+            "a monitor proposal's own labels": lambda d: d["monitoring"]["proposal"]["labels"]
+                                                          .append(claim),
+            "a quality note": lambda d: d["quality"].__setitem__("note", claim),
+            "a KEY rather than a value": lambda d: d["resources"].__setitem__("speedup", 1.3),
+        }
+        for label, bury in places.items():
+            with self.subTest(at=label):
+                buried = json.loads(json.dumps(report))
+                bury(buried)
+                with self.assertRaises(we.EvalError) as raised:
+                    we.assert_no_gain_claim(buried, where="a report with a buried claim")
+                self.assertIn("speedup", str(raised.exception))
+
+    def test_the_gain_sweep_discloses_what_shape_matching_cannot_prove(self):
+        """D19 now says this about `causation`/`causality`: it is a token list, shape-matching
+        cannot establish absence, and the note names spellings that are NOT caught. Widening a
+        list under a categorical claim only moves the line, so the limit is stated rather than
+        implied."""
+        self.assertIn("winrate", we.GAIN_TOKENS)
+        limit = we.assert_no_gain_claim.__doc__ + we.NO_GAIN_CLAIM
+        for uncaught in ("outperform", "uplift", "beat the baseline"):
+            with self.subTest(spelling=uncaught):
+                self.assertNotIn(uncaught.replace(" ", ""), we.GAIN_TOKENS)
+        self.assertIn("cannot", limit.lower())
+        self.assertIn("outperform", limit)
+        # And the named-uncaught spellings really do pass, which is what makes the disclosure
+        # true rather than decorative.
+        self.assertEqual(we._gain_hits("this run outperformed the baseline"), [])
 
 
 if __name__ == "__main__":

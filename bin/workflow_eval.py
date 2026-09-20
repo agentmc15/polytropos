@@ -4143,9 +4143,18 @@ def _variant_field(envelope, variant_id, key):
 
 
 def write_proposal(prefs_dir, proposal):
+    """Persist one proposal under the prefs directory the caller named.
+
+    THE ID IS VALIDATED BEFORE IT BECOMES A FILENAME (Phase 5 review, F5). `proposal['id']` was
+    interpolated straight into a path under a CALLER-SELECTED root, and the repo invariant sends
+    every write into such a root through `bin/safe_paths.py`. `swap_activation` states the rule
+    this follows: text that becomes a filename is text that can name a path. The check precedes
+    the `mkdir` so a refused id creates nothing.
+    """
+    proposal_id = _sp().validate_id(proposal.get("id"), what="proposal id")
     paths = _prefs_paths(prefs_dir)
     paths["proposals"].mkdir(parents=True, exist_ok=True)
-    path = paths["proposals"] / f"{proposal['id']}.json"
+    path = paths["proposals"] / f"{proposal_id}.json"
     path.write_text(json.dumps(proposal, indent=2) + "\n")
     _journal(paths, "policy.proposed", proposal=proposal["id"], run=proposal["source_run"],
              by=proposal["proposed_by"], change=proposal["change"], refs=_ref_ids(proposal))
@@ -4153,6 +4162,10 @@ def write_proposal(prefs_dir, proposal):
 
 
 def read_proposal(prefs_dir, proposal_id):
+    """One proposal by id, with the id validated as a filename component FIRST: a reader that
+    followed `../..` out of the store would disclose an arbitrary file and report it as this
+    repository's own proposal."""
+    proposal_id = _sp().validate_id(proposal_id, what="proposal id")
     paths = _prefs_paths(prefs_dir)
     path = paths["proposals"] / f"{proposal_id}.json"
     if not path.exists():
@@ -4164,6 +4177,19 @@ def read_proposal(prefs_dir, proposal_id):
 
 
 def review_proposal(prefs_dir, proposal_id, by, decision, note=""):
+    """Record one review on a proposal and write it back.
+
+    It READS AND WRITES the same caller-named id -- straight off the `--proposal` CLI argument --
+    so it is the one of the pair that could both disclose a file and overwrite one. The id is
+    validated here as well as inside `read_proposal`, and the write-back uses the VALIDATED
+    string rather than the caller's, so the two paths cannot diverge.
+
+    DELIBERATE DEFENCE IN DEPTH, AND ITS MUTANT SURVIVES. `read_proposal` below already refuses
+    anything that could name a path, so deleting this line leaves every test green; the local
+    check is here because a function composing a destination path from a caller's string should
+    not depend on a neighbour having checked it, and no mutation kill is claimed for it.
+    """
+    proposal_id = _sp().validate_id(proposal_id, what="proposal id")
     if decision not in ("accept", "reject"):
         raise EvalError("decision must be accept or reject")
     if not by:
@@ -4184,7 +4210,17 @@ def review_proposal(prefs_dir, proposal_id, by, decision, note=""):
 
 
 def apply_proposal(prefs_dir, proposal_id):
-    """Write the next policy version from an accepted, current proposal; keep the old one."""
+    """Write the next policy version from an accepted, current proposal; keep the old one.
+
+    The id is validated here as well as inside `read_proposal`, because the proposal write-back
+    at the end composes a destination path out of it. DELIBERATE DEFENCE IN DEPTH, AND ITS MUTANT
+    SURVIVES: `read_proposal` runs first and already refuses anything that could name a path, so
+    deleting this line leaves every test green. It is here anyway because a function that composes
+    a path from a caller's string should not depend on a neighbour having checked it -- an
+    inherited guarantee is the shape this whole concern is about -- and no claim of a mutation
+    kill is made for it.
+    """
+    proposal_id = _sp().validate_id(proposal_id, what="proposal id")
     paths = _prefs_paths(prefs_dir)
     proposal = read_proposal(prefs_dir, proposal_id)
     if proposal["status"] == "applied":
@@ -4225,6 +4261,7 @@ def apply_proposal(prefs_dir, proposal_id):
     tmp.replace(paths["policy"])
     proposal["status"] = "applied"
     proposal["applied_version"] = version
+    # `proposal_id` is the string this function validated on the way in, not the caller's.
     (paths["proposals"] / f"{proposal_id}.json").write_text(json.dumps(proposal, indent=2) + "\n")
     _journal(paths, "policy.applied", proposal=proposal_id, version=version,
              previous=(current or {}).get("version"), refs=_ref_ids(new))
@@ -4806,6 +4843,22 @@ APPROVAL_BINDINGS = ("candidate", "evaluation", "partition", "source")
 #: ever claims more than this.
 BINDING_ESTABLISHES = "content-identity"
 
+#: Every blocker `promotion_eligibility`'s own `exact-approval` row may emit. Closed, and
+#: deliberately TWO codes rather than one, for the reason `PROTOCOL_BLOCKERS` gives about
+#: `manifest-unverified` and `no-held-out-evidence`:
+#:
+#:   exact-approval-missing          the record itself establishes nothing -- it is not granted,
+#:                                   or it is not in the 'approved' state, or a binding it
+#:                                   carries no longer re-derives.
+#:   exact-approval-not-re-derived   no `case` was supplied, so nothing was re-derived at all.
+#:                                   "The approval was refused" and "nobody checked the approval"
+#:                                   are different amounts of information and a reader is owed
+#:                                   the second. `approval_holds` states the rule this applies --
+#:                                   "a slot that was never bound counts as moved" -- and
+#:                                   `manifest_currency` states the general form: an unmade check
+#:                                   is not a passed one.
+PROMOTION_APPROVAL_BLOCKERS = ("exact-approval-missing", "exact-approval-not-re-derived")
+
 #: What no record written here establishes, whatever its state and however many of its bindings
 #: re-derive. Machine-readable, closed, and UNCONDITIONAL: nothing in this section can discharge
 #: any of them, so none is ever left off a record on the strength of some other check passing.
@@ -5261,9 +5314,20 @@ def promotion_eligibility(record, *, case=None, sentinel_report=None):
     Three requirements, and the approval is only one of them. D18 established the shape and the
     reason: a row that says `satisfied` over evidence nobody consulted is a name broader than its
     check. So the exact-approval row is re-derived only when a `case` is supplied to re-derive it
-    FROM and says so when there is not; the profile row is `exec_policy.certify_profile`'s verdict
+    FROM and REFUSES when there is not; the profile row is `exec_policy.certify_profile`'s verdict
     through this module's own `_certification_evidence`, never a word the caller chose; and the
     dispatch row reads `CONFINED_DISPATCH_WIRED`, which is False.
+
+    AN UNMADE CHECK IS NOT A PASSED ONE (Phase 5 review, F2). This row used to read
+    `granted and (holds is None or holds["holds"])`, which made "no `case` was supplied, so
+    nothing was re-derived" SATISFY a gate named `exact-approval`: a hand-built record carrying
+    `{"granted": True, "state": "approved", "bindings": None}` passed it, by whatever name the
+    record chose for itself. That is `trial_cohort`'s Phase 4 defect in a second place --
+    `frozen: True` because a `manifest` ARGUMENT was passed, `satisfied: True` because a
+    `granted` KEY was passed. `holds is None` now blocks with its own code
+    (`PROMOTION_APPROVAL_BLOCKERS`), kept distinct from a refused record, and the four-hash
+    presence check is subsumed by it: without a case there is nothing to compare a hash TO, and
+    with one `approval_holds` already counts an unbound slot as moved.
 
     THIS IS NOT AN ACTIVATION AND CANNOT BECOME ONE. `eligible` is the conjunction of the rows,
     so while no dispatch path in this repository both confines and is ledgered it is False by
@@ -5276,29 +5340,41 @@ def promotion_eligibility(record, *, case=None, sentinel_report=None):
     holds = None if not documents else approval_holds(
         record, candidate=documents["candidate"], manifest=documents["manifest"],
         partition=documents["partition"], envelope=documents.get("envelope"))
-    approval_ok = granted and (holds is None or holds["holds"])
+    bound = {slot: (((record or {}).get("bindings") or {}).get(slot) or {}).get("hash")
+             for slot in APPROVAL_BINDINGS}
+    approval_ok = granted and holds is not None and holds["holds"]
     if not granted:
         approval_reason = (f"the approval record is in the {state!r} state with "
                            f"granted={bool((record or {}).get('granted'))}; only a granted record "
                            f"in the 'approved' state establishes this")
-    elif holds is not None and not holds["holds"]:
+        approval_blocker = "exact-approval-missing"
+    elif holds is None:
+        unbound = sorted(slot for slot, digest in bound.items() if not digest)
+        carries = (f"it carries no hash at all in the {', '.join(unbound)} slot(s)" if unbound
+                   else "it carries all four hashes, which says what they hash TO and nothing "
+                        "about what they were hashed OVER")
+        approval_reason = (f"no case was supplied, so nothing was re-derived: the record says it "
+                           f"is granted and {carries}. An unmade check is not a passed one")
+        approval_blocker = "exact-approval-not-re-derived"
+    elif not holds["holds"]:
         approval_reason = (f"the approval was granted, and its {', '.join(holds['moved'])} "
                            f"binding(s) no longer re-derive: what was approved is not what is "
                            f"in hand")
+        approval_blocker = "exact-approval-missing"
     else:
-        approval_reason = None
+        approval_reason, approval_blocker = None, None
     certificate, cert_reason = _certification_evidence(sentinel_report)
     rows = [
         {"requirement": "exact-approval",
          "owner": "workflow_eval.decide_approval over workflow_eval.approval_case (D22)",
          "satisfied": approval_ok, "reason": approval_reason,
-         "evidence": {slot: (((record or {}).get("bindings") or {}).get(slot) or {}).get("hash")
-                      for slot in APPROVAL_BINDINGS},
-         "blocker": None if approval_ok else "exact-approval-missing",
+         "evidence": bound,
+         "blocker": approval_blocker,
          "re_derived_by": "workflow_eval.approval_holds" if holds is not None else None,
          "note": (BINDING_NOT_AUTHORITY_LABEL if holds is not None else
                   f"no case was supplied, so the state on the record was READ and not "
-                  f"re-derived. {BINDING_NOT_AUTHORITY_LABEL}")},
+                  f"re-derived, and this row is unsatisfied for exactly that reason. "
+                  f"{BINDING_NOT_AUTHORITY_LABEL}")},
         {"requirement": "protected-profile-certified",
          "owner": "exec_policy.certify_profile over exec_policy.run_sentinels (D07)",
          "satisfied": cert_reason is None, "reason": cert_reason, "evidence": certificate,
@@ -5342,12 +5418,26 @@ def write_approval(prefs_dir, record):
     approval is an immutable record of one decision, so a second decision is a second record and
     never an edit of the first. This uses the same plain write the proposal writer beside it
     uses rather than introducing a third pattern into this store.
+
+    THE ID IS VALIDATED BEFORE IT BECOMES A FILENAME (Phase 5 review, F5). `record['id']` was
+    interpolated straight into a path under a CALLER-SELECTED root, so an id of
+    `../../OUTSIDE/pwned` wrote a file outside the prefs directory -- demonstrated, not
+    hypothetical. `swap_activation`, one commit later in this same phase, already says the rule:
+    text that becomes a filename is text that can name a path. `safe_paths.validate_id` raises
+    before anything is created, which is why the check comes before the `mkdir`.
+
+    WHAT THIS DOES AND DOES NOT CLOSE. It closes the id-derived traversal in both this writer and
+    `read_approval`. The write itself is still a plain `write_text` rather than one of
+    `safe_paths`' confined writers: the read-compare-refuse-write sequence above is deliberate
+    (writing identical content twice is a no-op) and no confined writer offers it, so this keeps
+    the sequence and validates the only caller-controlled component of the path.
     """
     if record.get("v") != APPROVAL_VERSION:
         raise EvalError(f"not a {APPROVAL_VERSION} approval record")
+    approval_id = _sp().validate_id(record.get("id"), what="approval id")
     paths = _prefs_paths(prefs_dir)
     paths["approvals"].mkdir(parents=True, exist_ok=True)
-    path = paths["approvals"] / f"{record['id']}.json"
+    path = paths["approvals"] / f"{approval_id}.json"
     body = json.dumps(record, indent=2, sort_keys=True) + "\n"
     if path.exists() and path.read_text() != body:
         raise EvalError(f"approval {record['id']} already exists with DIFFERENT content; an "
@@ -5361,6 +5451,10 @@ def write_approval(prefs_dir, record):
 
 
 def read_approval(prefs_dir, approval_id):
+    """One approval record by id. The id is validated as a filename component FIRST, for
+    `write_approval`'s reason: a reader that followed `../..` out of the store would disclose an
+    arbitrary file and report it as an approval record of this repository's own."""
+    approval_id = _sp().validate_id(approval_id, what="approval id")
     paths = _prefs_paths(prefs_dir)
     path = paths["approvals"] / f"{approval_id}.json"
     if not path.exists():
@@ -6612,6 +6706,106 @@ POLICY_EVIDENCE_UNPROVEN_NOTES = {
     "monitoring-not-authority": MONITORING_NOT_AUTHORITY_LABEL,
 }
 
+#: Token spellings that read as a claim about PERFORMANCE rather than about mechanism. Matched
+#: over every string in an assembled report -- keys and values alike -- after lowercasing and
+#: dropping every non-alphanumeric character, so "a 12% Win-Rate improvement" is caught by
+#: `winrate` and `improvement` both.
+#:
+#: THIS IS THE `assert_no_causal_claim` DEVICE, one phase later and pointed at a different claim.
+#: The difference is which direction the danger runs: `decision_eval` sweeps KEYS and deliberately
+#: lets a causal VALUE through, because its values come from evidence other tools produced. Here
+#: the values ARE the hazard -- `policy_evidence_report(notes=...)` puts caller prose straight onto
+#: the report, where it renders as a blockquote directly above the disclaimer denying it.
+GAIN_TOKENS = ("winrate", "improvement", "improved", "speedup", "savings", "saved", "roi",
+               "fasterthan", "cheaperthan")
+
+#: The subset of `GAIN_TOKENS` matched as a whole WORD instead of a substring. `roi` is three
+#: letters and collides inside ordinary prose the moment word boundaries are normalised away
+#: ("zero identity" -> "zeroidentity" contains it), so substring-matching it would refuse honest
+#: documents. Every other entry is a compound nobody writes by accident.
+GAIN_WORD_TOKENS = ("roi",)
+
+#: The ONLY strings exempt from the sweep, by exact identity. `MECHANICS_NOT_PERFORMANCE_LABEL`
+#: has to NAME "a gain, a win rate, or a saving" in order to disclaim them, the same way
+#: `decision_eval.NO_CAUSAL_CLAIM` names causation.
+#:
+#: DELIBERATELY ONE ENTRY, NOT THREE. The other two disclaimers this report carries
+#: (`MONITORING_NOT_AUTHORITY_LABEL`, `LINEAGE_NAMING_NOTE`) contain no token at all, so exempting
+#: them would be an exclusion wider than its reason -- this kit's signature defect, and the exact
+#: thing the Phase 4 review caught in the TEST that preceded this constant. A test pins that those
+#: two are inert, so if either is ever edited into carrying a claim this refuses loudly instead of
+#: waving it through on an exemption it never needed.
+GAIN_CLAIM_EXEMPT = (MECHANICS_NOT_PERFORMANCE_LABEL,)
+
+NO_GAIN_CLAIM = (
+    "no figure assembled here is a gain, a win rate, a speedup or a saving: nothing in this "
+    "repository has run a canary, dispatched a model or observed a live outcome. WHAT THIS CHECK "
+    "DOES NOT PROVE: it is a token match over GAIN_TOKENS, not a judgement about meaning. "
+    "Shape-matching cannot establish absence, so returning normally means exactly 'no string in "
+    "this document reduces to one of those tokens' and never 'this document claims no gain'. "
+    "Spellings it does NOT catch include outperform, outperformed, uplift, lift, beat the "
+    "baseline, better than, ahead of, efficiency, reduction and cheaper/faster used on their own "
+    "-- and widening the list would only move that line, never remove it"
+)
+
+_GAIN_STRIP_RE = re.compile(r"[^a-z0-9]+")
+_GAIN_WORD_RE = re.compile(r"[a-z0-9]+")
+
+
+def _gain_hits(text):
+    """Every `GAIN_TOKENS` entry this one string carries -> a sorted list, empty for anything
+    that is not a string. The whole of the matching rule, in one place, so the sweep below and
+    every test over it agree about what "carries a claim" means."""
+    if not isinstance(text, str):
+        return []
+    lowered = text.lower()
+    blob = _GAIN_STRIP_RE.sub("", lowered)
+    words = set(_GAIN_WORD_RE.findall(lowered))
+    hits = {token for token in GAIN_TOKENS
+            if (token in words if token in GAIN_WORD_TOKENS else token in blob)}
+    return sorted(hits)
+
+
+def assert_no_gain_claim(value, where="this report"):
+    """Refuse a document whose text reads as a claim about performance. Returns `value`.
+
+    THE TEST'S OWN LOGIC, MOVED INTO THE PRODUCT (Phase 5 review, F3). "No gain claim" is D24's
+    acceptance and its only enforcement was a test over one fixture: `policy_evidence_report`
+    ended with `"labels": list(notes) + [...]`, so caller text went onto the report unexamined and
+    a claim injected end-to-end rendered as a blockquote above the disclaimer denying it. A
+    capability claim whose only enforcement is a test over one fixture is not enforcement.
+    `decision_eval.assert_no_causal_claim` is the precedent -- one phase earlier in this same kit,
+    and CALLED at the end of `calibration_report` and `recovery_report` rather than asserted about
+    from outside.
+
+    EVERY STRING, KEYS INCLUDED, not only `labels`: a claim smuggled into a nested `reason` or a
+    monitor note is the same claim. Only strings EQUAL to a `GAIN_CLAIM_EXEMPT` entry are skipped.
+
+    WHAT IT DOES NOT PROVE. See `NO_GAIN_CLAIM`: this is a token match over spellings, it names
+    the spellings it misses, and shape-matching cannot establish absence. It refuses in the safe
+    direction, which means it can also refuse an HONEST document whose relayed data happens to
+    contain a token -- an arm named `improved-repair`, say. That is a loud, visible refusal rather
+    than a silent claim, and it is the direction this kit prefers.
+    """
+    hits, stack = {}, [value]
+    while stack:
+        item = stack.pop()
+        if isinstance(item, dict):
+            for key, sub in item.items():
+                for token in _gain_hits(key):
+                    hits.setdefault(token, f"key {key!r}")
+                stack.append(sub)
+        elif isinstance(item, (list, tuple)):
+            stack.extend(item)
+        elif isinstance(item, str) and item not in GAIN_CLAIM_EXEMPT:
+            for token in _gain_hits(item):
+                hits.setdefault(token, f"the text {item[:60]!r}")
+    if hits:
+        found = ", ".join(f"{token} (in {place})" for token, place in sorted(hits.items()))
+        raise EvalError(f"{where} carries gain-claim token(s): {found}. {NO_GAIN_CLAIM}")
+    return value
+
+
 #: Where an escaped defect sits against the operator's declared observation window. `censored`
 #: is cross-cut with the other four -- a defect still under investigation is `censored` however
 #: late it was reported -- and `invalid` never guesses a placement for a malformed entry.
@@ -6772,9 +6966,16 @@ def resource_basis_report(recovery):
     accounting that lost the five-basis structure or smuggled a priced `usd` figure under
     `proxy`/`unpriced` before this function ever sees one -- this is not a second implementation
     of that private check, which stays unreached from here, but a refusal to relay evidence that
-    no longer agrees with what that function already guaranteed. Silent under-reporting is the
-    direction that matters, the same reason `decision_eval.resource_evidence`'s own docstring
-    gives for checking a field set in both directions.
+    no longer agrees with what that function already guaranteed.
+
+    BOTH DIRECTIONS, BECAUSE THE PAYLOAD IS COPIED WHOLESALE (Phase 5 review, F4). This checked
+    only `bases - totals` while relaying `_frozen(resources)` entire, so an UNDECLARED sixth
+    basis carrying `usd: 12.5` relayed intact onto a report whose own `bases` field named five --
+    Phase 4's F4 in `decision_eval.resource_evidence`, reproduced here one phase later, and the
+    docstring already named bidirectional checking as its reason while checking one direction.
+    `decision_eval.TOTALS_NON_BASIS_KEYS` is read AT CALL TIME for the other direction; it exists
+    for exactly this, and it is why a naive `set(totals) - set(bases)` would refuse every
+    well-formed accounting (every real `arm_accounting` total carries a `note`).
 
     INVALID INPUT PRODUCES AN ABSTENTION, NEVER A FABRICATED FIGURE. A `recovery` that is not a
     real `decision_eval.recovery_report()` document reports no bases present and says why,
@@ -6792,6 +6993,7 @@ def resource_basis_report(recovery):
                           f"at its shape"}
     resources = recovery.get("resources")
     accountings = resources if isinstance(resources, list) else []
+    non_basis = tuple(de.TOTALS_NON_BASIS_KEYS)
     for accounting in accountings:
         for scope_name, block in (accounting.get("scopes") or {}).items():
             totals = block.get("totals") or {}
@@ -6801,6 +7003,15 @@ def resource_basis_report(recovery):
                     f"accounting {accounting.get('arm')!r} scope {scope_name!r} lost basis(es) "
                     f"{missing}; this report refuses to relay resource evidence that no longer "
                     f"keeps its bases apart")
+            undeclared = sorted(set(totals) - set(bases) - set(non_basis))
+            if undeclared:
+                raise EvalError(
+                    f"accounting {accounting.get('arm')!r} scope {scope_name!r} carries "
+                    f"undeclared basis(es) {undeclared}; this report names exactly "
+                    f"{list(bases)} as the bases it keeps apart and relays every accounting "
+                    f"WHOLE, so a basis nobody declared would travel onto the report intact "
+                    f"under a `bases` field that never mentioned it -- a subscription-plan proxy "
+                    f"dollar entering a priced total is the specific thing that forbids")
     # `resources` is never None on a VALID recovery report -- decision_eval.recovery_report
     # always sets it to `resource_evidence(accountings)`, empty list included -- so `present`
     # answers whether an accounting actually exists rather than merely whether the key does.
@@ -6814,12 +7025,36 @@ def resource_basis_report(recovery):
 
 # ---- quality, with the invalid/abstain distinction D15 already draws ----------------------------
 
+#: The counts this report projects by name out of a `decision_eval.calibration_report()`
+#: document's own `coverage` block. Declared once so the closure check and the projection can
+#: never disagree about what "the counts" are, and so the names live in one place rather than as
+#: three literals inside a dict display. `classification` is NOT here: it sits at the report's TOP
+#: level, not under `coverage`, and reading it from the wrong level is the mistake this constant
+#: exists to stop being repeated.
+QUALITY_COVERAGE_COUNTS = ("resolved", "scoreable", "abstained")
+
+
 def quality_evidence(recovery):
     """D19's own quality block (`raw`/`calibrated` `calibration_report_pair` results), relayed
     whole, plus D15's own `abstained`/`scoreable`/`resolved` counts kept distinct from a
     metric's own `insufficient-evidence` status -- `decision_eval`'s own comment on
     `METRIC_STATUSES` says `insufficient-evidence` is evidence too thin to score, never a
     planning gap and never a refusal, and this function never reports one as the other.
+
+    THE COUNTS LIVE UNDER `coverage` (Phase 5 review, F1). This read them from the TOP level of a
+    `calibration_report()` document, where they do not exist, so all three were always `None`
+    while `status` stayed `reported` and every key stayed present -- and
+    `routing_scorecard.render_policy_evidence_markdown` printed `resolved=n/a scoreable=n/a
+    abstained=n/a` to an operator over evidence that was fully known. Known evidence rendered as
+    unknown, on a report whose own contract is "unknown visible". The test that should have caught
+    it asserted key PRESENCE, and the keys are present unconditionally because the dict literal
+    writes them; the replacement asserts VALUES against the generator.
+
+    `coverage` IS RELAYED WHOLE, AND CLOSED IN BOTH DIRECTIONS. The four-field projection was also
+    unclosed -- F4's defect in a second place -- so a count `decision_eval` ADDS to its own
+    coverage block now travels through untouched, and a count it stops carrying is reported as a
+    shape change (`coverage_reason`) rather than rendered as an unmeasured `n/a`. "Nobody counted
+    it" and "this function looked in the wrong place" are the two facts the finding conflated.
 
     INVALID INPUT PRODUCES AN ABSTENTION, NEVER A FABRICATED FIGURE. A `recovery` that is not a
     real `decision_eval.recovery_report()` document reports `status: 'invalid'` and nothing
@@ -6842,15 +7077,31 @@ def quality_evidence(recovery):
     out = {}
     for field in ("raw", "calibrated"):
         block = quality.get(field) or {}
-        out[field] = {"resolved": block.get("resolved"), "scoreable": block.get("scoreable"),
-                     "abstained": block.get("abstained"),
-                     "classification_status": (block.get("classification") or {}).get("status")}
+        coverage = block.get("coverage")
+        if not isinstance(coverage, dict):
+            row = {name: None for name in QUALITY_COVERAGE_COUNTS}
+            row["coverage"] = None
+            row["coverage_reason"] = (
+                f"this {field} report carries no coverage block, so the counts that live in it "
+                f"are genuinely unknown here -- not zero, and not read off some other level")
+        else:
+            row = {name: coverage.get(name) for name in QUALITY_COVERAGE_COUNTS}
+            absent = sorted(name for name in QUALITY_COVERAGE_COUNTS if name not in coverage)
+            row["coverage"] = _frozen(coverage)
+            row["coverage_reason"] = None if not absent else (
+                f"this {field} report's coverage block no longer carries {absent}; the count(s) "
+                f"are reported as unknown BECAUSE THE SHAPE MOVED, which is a different fact "
+                f"from nobody having counted them. The block is relayed whole above")
+        row["classification_status"] = (block.get("classification") or {}).get("status")
+        out[field] = row
     return {"present": True, "status": "reported", "raw": out["raw"],
             "calibrated": out["calibrated"],
+            "counts": list(QUALITY_COVERAGE_COUNTS),
             "note": "abstained is a legitimate non-answer counted by decision_eval's own join; "
                     "insufficient-evidence (inside classification_status) means a metric had too "
                     "few scoreable rows. The two are kept distinct and neither is read as the "
-                    "other"}
+                    "other. The three counts come from the report's own coverage block, which is "
+                    "relayed whole beside them"}
 
 
 # ---- monitoring: a readout, and a proposal that is never an action -------------------------------
@@ -7032,6 +7283,11 @@ def policy_evidence_report(*, approval=None, case=None, sentinel_report=None, en
     one leak into another's basis. See `MECHANICS_NOT_PERFORMANCE_LABEL`: nothing here has ever
     run a canary, dispatched a model, or observed a live outcome, and no field on this report
     may be read as though it had -- never a gain, a win rate, or a saving.
+
+    AND THAT LAST SENTENCE IS ENFORCED, NOT ONLY STATED. `assert_no_gain_claim` sweeps the
+    assembled document before it is returned -- `notes` included, which is where caller prose
+    enters -- exactly as `decision_eval.calibration_report` and `recovery_report` end with
+    `assert_no_causal_claim`. Read `NO_GAIN_CLAIM` for what a token sweep cannot prove.
     """
     lineage = lineage_report(approval=approval, case=case, sentinel_report=sentinel_report)
     scope = scope_visibility(approval=approval, entry=entry)
@@ -7042,7 +7298,7 @@ def policy_evidence_report(*, approval=None, case=None, sentinel_report=None, en
     proposal = monitor_proposal(readout, drift_monitors=drift_monitors,
                                 rollback_monitors=rollback_monitors, procedure=procedure)
     defect_window = defect_window_report(observation_window, defects)
-    return {
+    report = {
         "v": POLICY_EVIDENCE_VERSION,
         "lineage": lineage,
         "scope": scope,
@@ -7055,6 +7311,7 @@ def policy_evidence_report(*, approval=None, case=None, sentinel_report=None, en
         "labels": list(notes) + [MECHANICS_NOT_PERFORMANCE_LABEL, MONITORING_NOT_AUTHORITY_LABEL,
                                  LINEAGE_NAMING_NOTE],
     }
+    return assert_no_gain_claim(report, where="this policy evidence report")
 
 # END OF THE POLICY EVIDENCE REPORT SECTION (decision-improvement D24)
 
