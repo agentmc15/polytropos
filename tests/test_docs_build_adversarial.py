@@ -349,7 +349,8 @@ class LiveTreeInventoryTests(unittest.TestCase):
         counts = {"claude": 0, "copilot": 0, "codex": 0}
         for r in records:
             counts[r["harness"]] += 1
-        self.assertEqual(counts["claude"], 14)
+        # 15 since D25 added skills/assess-improvement (was 14).
+        self.assertEqual(counts["claude"], 15)
         self.assertEqual(counts["copilot"], 13)
         self.assertEqual(counts["codex"], 12)
         self.assertIn(("claude", "route"), pairs)
@@ -943,26 +944,30 @@ class DeepDiveGlobDerivationExtraFileTests(unittest.TestCase):
     """Brief: 'DERIVE the set from a docs/ glob, never a hardcoded list, so a
     future doc auto-joins'. Proves it on a temp COPY of the real repo's
     skills/copilot/codex/docs directories plus one extra docs/NEW-THING.md --
-    expected_pages() must grow by exactly one mirror page (32 -> 33 deep-dive
-    pages; 75 -> 76 total), never touching the real tracked docs/ dir.
-    2026-09-13: baseline 69 -> 70 (step 23, docs/CURSOR-HARNESS.md) -> 71 (step 24,
-    docs/KIT-SCHEDULER.md) -> 72 (step 25, docs/WORKFLOW-EVAL.md) -> 73 (step 26,
-    docs/RELEASE.md) -> 74 (D01, docs/DECISION-IMPROVEMENT-RECONCILIATION.md) -> 75 (D03,
-    docs/DECISION-IMPROVEMENT-AUTHORITY-INVENTORY.md)."""
+    expected_pages() must grow by exactly one mirror page and by nothing else,
+    never touching the real tracked docs/ dir.
 
-    def test_extra_doc_file_yields_a_33rd_mirror_page(self):
+    The baseline total used to be pinned as a literal (69 -> 70 -> ... -> 75 across steps 23-26
+    and D01/D03), which made this test fail for a reason it is not about: D25 added
+    skills/assess-improvement, a SKILL page, and the literal went stale. The claim here is a
+    DELTA, so it is now asserted as an exact set partition -- which also catches what a count
+    could not, a page silently dropping out while another appears. The absolute page-set size
+    stays pinned in tests/test_docs_build_cli.RealTreeIdempotenceTests."""
+
+    def test_extra_doc_file_yields_exactly_one_more_mirror_page(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = _copy_real_dirs(tmp, ("skills", "copilot", "codex", "docs"))
             baseline = db.expected_pages(root)
-            self.assertEqual(len(baseline), 75)
+            self.assertNotIn("docs-site/deep-dives/new-thing.md", baseline)
 
             (root / "docs" / "NEW-THING.md").write_text(
                 "# New Thing\n\nA brand-new doc.\n", encoding="utf-8"
             )
 
             grown = db.expected_pages(root)
-            self.assertEqual(len(grown), 76)
-            self.assertIn("docs-site/deep-dives/new-thing.md", grown)
+            self.assertEqual(set(grown) - set(baseline),
+                             {"docs-site/deep-dives/new-thing.md"})
+            self.assertEqual(set(baseline) - set(grown), set())
 
 
 # ---------------------------------------------------------------------------

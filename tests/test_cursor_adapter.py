@@ -356,7 +356,9 @@ class InstallTests(unittest.TestCase):
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
             hs.main(["install", "--harness", "cursor", "--project", str(self.proj)])
-        self.assertIn("wrote 3 file(s)", out.getvalue())
+        # Derived from BUNDLE, not a literal: the count rots every time the bundle grows,
+        # and what this line is actually about is that harness_select applied the whole plan.
+        self.assertIn(f"wrote {len(ca.BUNDLE)} file(s)", out.getvalue())
         self.assertTrue((self.proj / ca.MANIFEST_REL).is_file())
         (self.proj / ".cursor" / "agents" / "polytropos-implementer.md").write_text("mine\n")
         err = io.StringIO()

@@ -67,6 +67,7 @@ nav:
     - Claude Code:
       - skills/claude/index.md
       - architect: skills/claude/architect.md
+      - assess-improvement: skills/claude/assess-improvement.md
       - bench-routing: skills/claude/bench-routing.md
       - context-weight: skills/claude/context-weight.md
       - cost-report: skills/claude/cost-report.md

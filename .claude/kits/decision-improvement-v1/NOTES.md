@@ -2503,3 +2503,72 @@ RAISE where they previously returned. `quality_evidence` blocks gained `coverage
 the real checkout's git revision and fail in a `git archive` tree for reasons that are not the
 code's. Exclude that module rather than reading its failure as a finding.
 reviewer: P5 model=opus findings=10 confirmed=10 result=accepted
+
+## D25 — Harness assessment skill (opus) — Phase 6 task 1 of 3
+
+Stages `assess-improvement` from the prototype into `skills/` and the Cursor bundle. 23 tests;
+28 mutants killed, 0 survivors, plus a second battery of 7 against the existing test files it
+edited — all killed.
+
+**ARCHITECT-VISIBLE SCOPE DECISION: the card ships on Claude and Cursor ONLY, not Copilot or
+Codex.** Reasoning verified and sound: adding it to those two means editing FROZEN ROSTERS in test
+files D25 does not own — `ORIGINAL_SKILLS` in `test_copilot_bundle_adversarial.py` pins 13 names
+in exact order; `EXPECTED_SKILL_STEMS` in `test_codex_bundle.py` pins an exact set — and neither
+file is in D25's verify command, which says the task author did not expect them to move. The
+acceptance is satisfied literally: it says **"Codex plugin valid"**, not "Codex includes skill".
+**D27's assessment and D30's release matrix must describe this as a TWO-harness capability**, and
+`primitives/harness-capabilities.json` records a capability as relied-on only when verified.
+
+**`bin/harness_select.py` is BYTE-IDENTICAL — the installer needed no change.** `install --harness
+cursor` delegates wholly to `cursor_adapter.plan_install`/`apply_install`, so a `BUNDLE` addition
+flows through untouched; `install --harness claude-code` writes nothing because the plugin at the
+repo root IS the install. The brief named that file as in-scope; discovery said do not touch it.
+**That is the "only where actual discovery requires it" instruction working as intended**, and it
+also did not touch `.claude-plugin/plugin.json` (carries no skills roster — `skills/` IS the
+roster, pinned by a test asserting the manifest's key set) or `.codex-plugin/plugin.json`
+(`"skills": "./codex/skills/"` is a DIRECTORY, so discovery grows with the tree and a new card is
+never a manifest edit).
+
+**It found a brief-vs-reality conflict in the card itself and pinned the divergence rather than
+hiding it.** `test_skill_entrypoints.py` requires every Claude SKILL.md description to name a
+trigger ("use when" / "when the user" / ...). The prototype's said "Use for read-only improvement
+planning" — no trigger — so a verbatim copy fails a suite that is NOT in D25's verify command.
+It rewrote the description line only and pinned it:
+`test_the_claude_card_is_the_prototype_body_verbatim` asserts the BODY is byte-identical, `name`
+identical, description deliberately NOT, and the new description names a trigger. The prototype is
+left untouched as the record of what was staged.
+
+**Eight files outside the brief's named list were forced by live-tree guards**, each fixed at the
+CLAIM rather than by re-arming a literal:
+- `tests/test_docs_build_adversarial.py`: `len(baseline) == 75` → an exact set partition. **This
+  is a strengthening I verified in the diff** — it catches a page silently dropping while another
+  appears, which a count cannot — and the absolute page-set size stays pinned in
+  `test_docs_build_cli.RealTreeIdempotenceTests`, so no absolute pin was lost.
+- `tests/test_docs_audit.py`: `test_exactly_39_entries` derived from `skill_inventory()` instead,
+  **plus a guard that did not exist**: `_entries()` builds a dict, so two headers for one skill
+  silently collapsed and passed.
+- `tests/test_cursor_adapter.py`: `"wrote 3 file(s)"` → `f"wrote {len(ca.BUNDLE)} file(s)"`.
+- The rest are tripwire bumps, commented as tripwires rather than dressed up as derivations.
+
+**`.claude/kits/docs-site/AUDIT.md` — another kit's file, edited correctly.** The guard
+(`test_roster_is_exactly_the_live_skill_inventory`) is DESIGNED to fire when a skill lands. The
+entry is labeled honestly rather than backdated: *"unchanged, and unreviewed by this pass… no D1
+three-way reading was ever performed on it, so `keep` here means unchanged."* The summary moved
+33→34 because the consistency test recounts verdicts, with an added line stating the REVIEWED
+shape of that pass was 33/3/3, and readers are told to re-derive from `skill_inventory()` rather
+than trust the now-stale Method arithmetic. **It did not rewrite a record of what that pass
+measured.**
+
+**MY COUNT WAS WRONG AGAIN — ninth correction today.** I said the four pre-existing suites collect
+175; they collect 174. It measured properly rather than asserting: stashed its work under a unique
+tag, re-ran, restored by SHA, dropped the entry, verified the tree.
+
+**Stated limitations:** everything here is STRUCTURAL — no test asserts a model follows the card's
+prose, and D26 owns fixture-level behaviour. The no-fit vocabulary test proves the vocabulary is
+present and closed, never that a model emits `no-fit`. The Codex "roster" in its test is a
+directory listing, so that side CANNOT disagree with the tree — said out loud rather than dressed
+up as agreement. No site fragment was written (unreviewed public prose for no acceptance gain) so
+the card's page has no "In practice" section. The `.cursor/`-absent assertion is conditional on
+the pre-existing state, so it stays correct for a developer who has legitimately installed the
+bundle into this checkout.
+outcome: D25 model=opus attempts=1 result=pass review=pending run=2026-09-16-aa6e

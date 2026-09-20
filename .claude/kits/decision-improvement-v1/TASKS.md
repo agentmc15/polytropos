@@ -418,7 +418,7 @@ PYTHONPATH=tests python3 -m unittest test_decision_activation.PolicyEvidenceRepo
 ### D25 — Harness assessment skill
 - id: D25
 - title: Harness assessment skill
-- status: pending
+- status: done
 - model: opus
 - depends: D01
 **Brief.** Own staged prototype in `skills/`, `.claude-plugin/`, `copilot/aesop.toml`, `copilot/.github/skills/`, `codex/skills/`, `.codex-plugin/plugin.json`, `cursor/skills/`, `bin/cursor_adapter.py` BUNDLE/MANIFEST_REL, `bin/harness_select.py`, docs fragments/generators; never edit docs-site.

@@ -294,7 +294,11 @@ class CensusBumpTripwireTests(unittest.TestCase):
     sail through unfalsified. 2026-09-13: every pin moved by one when step 23
     added docs/CURSOR-HARNESS.md, again when step 24 added
     docs/KIT-SCHEDULER.md, again when step 25 added docs/WORKFLOW-EVAL.md, and again
-    when step 26 added docs/RELEASE.md (29 / 31 / 73)."""
+    when step 26 added docs/RELEASE.md (29 / 31 / 73). 2026-09-19: the doc pins (31
+    sources, 33 page_map entries) did NOT move when D25 added the
+    skills/assess-improvement card, but the TOTAL page count did -- it counts skill
+    pages too. So the total is bumped here and asserted as a delta in the temp-copy
+    test below, which is what that test is actually about."""
 
     def test_pinned_counts_match_the_real_tree(self):
         docs_build = _load("_t8_docs_build_real", BIN_DIR / "docs_build.py")
@@ -302,7 +306,9 @@ class CensusBumpTripwireTests(unittest.TestCase):
         self.assertEqual(len(md_sources), 31)
         page_map = docs_build.deep_dive_page_map(REPO_ROOT)
         self.assertEqual(len(page_map), 33)
-        self.assertEqual(len(docs_build.expected_pages(REPO_ROOT)), 75)
+        # 76 since D25's skill card (was 75). Unlike 31/33 above, this total is not a
+        # doc-only pin: every skill page counts toward it.
+        self.assertEqual(len(docs_build.expected_pages(REPO_ROOT)), 76)
 
     def test_one_more_doc_breaks_the_pinned_counts(self):
         docs_build = _load("_t8_docs_build_copy", BIN_DIR / "docs_build.py")
@@ -313,7 +319,7 @@ class CensusBumpTripwireTests(unittest.TestCase):
 
             md_before = sorted((tmp / "docs").glob("*.md"))
             self.assertEqual(len(md_before), 31)
-            self.assertEqual(len(docs_build.expected_pages(tmp)), 75)
+            pages_before = len(docs_build.expected_pages(tmp))
 
             (tmp / "docs" / "ZZZ-STUB.md").write_text("# Stub\n\nStub content.\n", encoding="utf-8")
 
@@ -321,7 +327,8 @@ class CensusBumpTripwireTests(unittest.TestCase):
             self.assertEqual(len(md_after), 32, "one more doc must move the pinned 31 -> 32")
             page_map_after = docs_build.deep_dive_page_map(tmp)
             self.assertEqual(len(page_map_after), 34, "one more doc must move the pinned 33 -> 34")
-            self.assertEqual(len(docs_build.expected_pages(tmp)), 76, "one more doc must move the pinned 75 -> 76")
+            self.assertEqual(len(docs_build.expected_pages(tmp)), pages_before + 1,
+                             "one more doc must add exactly one page to the set")
 
 
 class DocHygieneAcceptanceTests(unittest.TestCase):

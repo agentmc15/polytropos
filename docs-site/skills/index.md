@@ -5,6 +5,7 @@
 | Skill | Claude Code | GitHub Copilot CLI | OpenAI Codex CLI |
 | --- | --- | --- | --- |
 | architect | [architect](claude/architect.md) | [architect](copilot/architect.md) | [architect](codex/architect.md) |
+| assess-improvement | [assess-improvement](claude/assess-improvement.md) | — | — |
 | bench-routing | [bench-routing](claude/bench-routing.md) | [bench-routing](copilot/bench-routing.md) | [bench-routing](codex/bench-routing.md) |
 | budget | — | [budget](copilot/budget.md) | — |
 | context-weight | [context-weight](claude/context-weight.md) | [context-weight](copilot/context-weight.md) | [context-weight](codex/context-weight.md) |
