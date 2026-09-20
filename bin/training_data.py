@@ -3689,14 +3689,602 @@ def status(repo_root=None, env=None):
         "store_origin": resolved["origin"],
         "store_exists": Path(resolved["path"]).is_dir(),
         "eligible_to_persist": ELIGIBLE_TO_PERSIST,
-        "to_enable": [
-            "declare a CollectionScope: purpose, retention_days, owner approval_ref, "
-            "eligibility='approved'",
-            "pass enabled=True to capture_hook (or set training_data.COLLECTION_ENABLED)",
-            "wire capture_hook into a decision or attempt owner -- nothing does today",
-        ],
+        # D34 moved this list into `TO_ENABLE` so the readiness report and the runbook read the
+        # same three acts. Two copies of an enabling procedure is how one of them comes to be
+        # missing a step.
+        "to_enable": list(TO_ENABLE),
         "notes": [COLLECTION_OFF_LABEL, NOT_WIRED_LABEL, REDACTION_LIMIT_NOTE],
     }
+
+
+# ==================================================================================================
+#  D34 -- COLLECTION READINESS AND THE OPERATOR'S RUNBOOK
+# ==================================================================================================
+#
+# WHAT A READINESS REPORT IS, AND THE ONE THING IT IS NOT. It describes THIS store: how many
+# records are in it, whether their digests still verify, which labels a reader resolved, what the
+# taxonomy covers, what an export excluded and why, and which of eleven named gates are open. It
+# is not a statement that anything may be trained. D34's acceptance says so in as many words --
+# "synthetic tests are not training readiness" -- and this section carries that distinction as
+# CODES on the report rather than as prose a reader can skip, for the reason D18 refused to call
+# an availability check confinement and D22 refused to call four correct hashes authority: a name
+# that reads as more than its evidence supports is the failure this kit has spent seven phases
+# refusing.
+#
+# THE REPORT IS COMPUTED AND NEVER STORED. There is no writer here: nothing in this section
+# creates a directory, appends a line or takes a path of its own. `DOWNSTREAM_KINDS` lists
+# `readiness-report` because an operator may SAVE one, and a revocation then invalidates the copy
+# they hold -- this module neither wrote it nor can reach it.
+
+#: This report's own schema, registered in `release_gate.VERSION_SOURCES` beside D31's, D32's and
+#: D33's. It versions the READINESS REPORT -- not the snapshot it counts, not the dataset it
+#: reads. A new object gets a new version; none of the four already registered moves for it.
+READINESS_VERSION = "polytropos.training-readiness/1"
+
+#: The document this section is the machine-readable half of.
+READINESS_DOC = "docs/TRAINING-DATA-READINESS.md"
+
+#: The three acts that turn collection on, in the order an operator performs them. ONE list, read
+#: by `status` and by every readiness report, because two copies of an enabling procedure is how
+#: one of them comes to be missing a step.
+TO_ENABLE = (
+    "declare a CollectionScope: purpose, retention_days, owner approval_ref, "
+    "eligibility='approved'",
+    "pass enabled=True to capture_hook (or set training_data.COLLECTION_ENABLED)",
+    "wire capture_hook into a decision or attempt owner -- nothing does today",
+)
+
+#: What a readiness report does NOT establish, whatever its counts say. D34's own codes;
+#: `readiness_codes` unions them with D33's `DATASET_NOT_ESTABLISHED` -- read from that tuple
+#: rather than respelled -- and refuses a name declared on both sides. Every one is
+#: UNCONDITIONAL: no branch below can discharge one by passing some other check, the posture
+#: `REVOCATION_UNREACHED` and `DATASET_NOT_ESTABLISHED` already set.
+READINESS_NOT_ESTABLISHED = ("synthetic-fixtures-are-not-readiness",
+                             "label-agreement-counted-not-calibrated",
+                             "sampling-bias-not-estimable",
+                             "checkpoint-link-is-a-forward-declaration",
+                             "readiness-is-a-report-not-an-authorization")
+
+READINESS_NOT_ESTABLISHED_NOTES = {
+    "synthetic-fixtures-are-not-readiness":
+        "every test behind this section, and the walkthrough its demo prints, runs on invented "
+        "records in a temporary directory. A green suite says the mechanics work; it says nothing "
+        "about whether any real decision has been captured, whether a real reviewer has "
+        "adjudicated one, or whether what is here could train anything. Fixture counts are not a "
+        "readiness claim, and a gate reading `met` over fixtures is a gate the fixtures opened",
+    "label-agreement-counted-not-calibrated":
+        "agreement here is a COUNT of live adjudications reaching the same target, taken from the "
+        "label lifecycle. It is not an inter-rater statistic, it is not corrected for chance, and "
+        "`reviewer-not-authenticated` still holds: a reviewer is a name and a source this module "
+        "was handed, so two ids agreeing is two records agreeing",
+    "sampling-bias-not-estimable":
+        "the exporter samples nothing -- its policy is every eligible record in the trainable "
+        "partition -- so there is no draw whose bias could be estimated. What the counts describe "
+        "is the material an operator happened to offer, which is not a sample of any population "
+        "and cannot be corrected into one",
+    "checkpoint-link-is-a-forward-declaration":
+        "`CHECKPOINT_LINK_FIELDS` NAMES what a later run would have to bind. No checkpoint "
+        "exists, none is read, and there is no trainer here to make one. A revocation's reach "
+        "into one stays `identified-only`, so naming the fields does not make them reachable",
+    "readiness-is-a-report-not-an-authorization":
+        "reading this report permits nothing. Collection stays shut behind its own switches and "
+        "its missing call site, an export still has to pass `export_eligibility`, and no figure "
+        "here raises a budget, grants a use right or approves anything",
+}
+
+#: The eleven gates an operator's runbook opens, in the order it opens them. CLOSED:
+#: `GATE_REMEDIES` must be an exact partition of this tuple, so a gate nobody can act on and a
+#: remedy for a gate nobody declared both refuse.
+READINESS_GATES = ("collection-switched-on", "capture-wired-to-a-caller",
+                   "scope-eligibility-approved", "records-captured", "records-intact",
+                   "labels-adjudicated", "retention-enforceable", "grouped-partition-assigned",
+                   "exposure-recorded-in-the-eval-store", "dataset-exported-and-readable",
+                   "collection-target-chosen")
+
+#: What a gate may be. `unknown` is NOT `unmet`: it means this report could not SEE the thing --
+#: no dataset was offered, no exposure log was given, no scope was passed -- and keeping the two
+#: apart is the distinction `harness_adapter.requires` draws when it treats `unknown` as no while
+#: still saying which of the two it found.
+GATE_STATES = ("met", "unmet", "unknown")
+
+#: One gate -> what the operator does about it. Every remedy names an ACT, because a gate whose
+#: remedy is "it depends" is a finding nobody can close.
+#:
+#: THE `exposure-recorded-in-the-eval-store` ROW IS THE MOST CONSEQUENTIAL LINE IN THIS SECTION.
+#: D33 refused to write another engine's store, which was right -- the evals store has one writer
+#: and this is not it -- and the consequence is that an export leaves NO trace in
+#: `workflow_eval`'s exposure log. An operator who does not record it themselves leaves the next
+#: held-out draw free to overlap material a training export already spent.
+GATE_REMEDIES = {
+    "collection-switched-on":
+        "pass enabled=True at the call site, or set training_data.COLLECTION_ENABLED to True in "
+        "a visible edit. Flipping it alone collects nothing -- see the next gate",
+    "capture-wired-to-a-caller":
+        "wire capture_hook into a decision or attempt owner and set CAPTURE_WIRED in the same "
+        "edit. Nothing calls it today, so a switched-on checkout still collects nothing",
+    "scope-eligibility-approved":
+        "declare a scope with a permitted purpose, a retention period in days, the owner's "
+        "approval reference, and eligibility='approved'. The default is 'unknown', which cannot "
+        "persist a byte",
+    "records-captured":
+        "run an eligible authorized run with the hook wired, then read the capture date back "
+        "through read_snapshots. Zero records is zero records, never an empty success",
+    "records-intact":
+        "a record whose digests no longer verify is not the evidence it claims to be. Find what "
+        "rewrote the line; nothing here repairs one, and a repaired record would be authored "
+        "rather than captured",
+    "labels-adjudicated":
+        "have an independent reader adjudicate each cause with review evidence, through "
+        "adjudicate(); an unreviewed, unresolved or disputed label is not a supervised target",
+    "retention-enforceable":
+        "a record whose expires_on could not be computed fails closed as unknown. Re-declare the "
+        "scope's retention period and capture again; an expiry cannot be back-filled onto a "
+        "record that already exists",
+    "grouped-partition-assigned":
+        "build the source manifest through workflow_eval.build_manifest so every related defect "
+        "variant shares one group and one partition, and draw only from the trainable one",
+    "exposure-recorded-in-the-eval-store":
+        "call workflow_eval.record_exposure yourself for the items this export drew, under the "
+        "trainable partition's own purpose. The export READ that log and wrote nothing to it, "
+        "because the evals store has one writer and this module is not it -- so skipping this "
+        "step leaves the next held-out draw free to overlap what a training export already spent",
+    "dataset-exported-and-readable":
+        "build the dataset, write it with write_dataset, and read it back with read_dataset so "
+        "the three files' digests are re-derived from the bytes on disk rather than from memory",
+    "collection-target-chosen":
+        "run a pilot and learning curves on a SEPARATE development validation split and choose a "
+        "collection target from the variation you measure. No minimum sample count is asserted "
+        "anywhere here and none is invented: a number chosen to close this gate would be exactly "
+        "the arbitrary threshold this task refuses",
+}
+
+#: The operator's walk, in order, each step naming the gate it opens. `runbook` checks that the
+#: steps are an exact cover of `READINESS_GATES`: a gate with no step is a finding nobody was told
+#: how to close, and a step naming no gate is advice with no check behind it.
+RUNBOOK_STEPS = (
+    {"step": 1, "gate": "scope-eligibility-approved",
+     "do": "declare the collection scope -- a permitted purpose, a retention period, the owner's "
+           "approval reference, and eligibility='approved'",
+     "command": None},
+    {"step": 2, "gate": "collection-switched-on",
+     "do": "turn the switch on for this run, explicitly, at the call site, and check what the "
+           "two switches now say",
+     "command": "status"},
+    {"step": 3, "gate": "capture-wired-to-a-caller",
+     "do": "wire the hook into the decision or attempt owner that will call it, and record that "
+           "you did by setting CAPTURE_WIRED in the same edit",
+     "command": None},
+    {"step": 4, "gate": "records-captured",
+     "do": "run the eligible authorized run, then read that capture date back",
+     "command": None},
+    {"step": 5, "gate": "records-intact",
+     "do": "let the reader re-derive every stored record's digests; a line edited after capture "
+           "is refused rather than returned",
+     "command": None},
+    {"step": 6, "gate": "labels-adjudicated",
+     "do": "have an independent reader adjudicate the cause with review evidence, correct it on "
+           "the record when a later reader disagrees, and leave a live disagreement out of the "
+           "targets",
+     "command": None},
+    {"step": 7, "gate": "retention-enforceable",
+     "do": "check each record's use rights against an explicit instant -- there is no default "
+           "clock -- and treat an expiry nobody could compute as unknown",
+     "command": None},
+    {"step": 8, "gate": "grouped-partition-assigned",
+     "do": "build the evaluation manifest so every related defect variant shares one group and "
+           "one partition, and draw only from the trainable one",
+     "command": None},
+    {"step": 9, "gate": "dataset-exported-and-readable",
+     "do": "build the dataset, write it once, and read it back so the digests come off the bytes "
+           "on disk",
+     "command": None},
+    {"step": 10, "gate": "exposure-recorded-in-the-eval-store",
+     "do": "record the exposure YOURSELF, in workflow_eval's own log, for the items this export "
+           "drew. Nothing here did it for you: skip this step and the next held-out draw may "
+           "overlap material a training export already spent",
+     "command": None},
+    {"step": 11, "gate": "collection-target-chosen",
+     "do": "run a pilot and learning curves on a separate development validation split and "
+           "choose a collection target from what you measure. Nothing here asserts a minimum",
+     "command": None},
+)
+
+#: What a later run would have to bind, per `TRAINING-DATA.md`'s closing paragraph. NAMES ONLY:
+#: every field is None, nothing fills one, and no checkpoint exists for any of them to point at.
+CHECKPOINT_LINK_FIELDS = ("parent_checkpoint", "dataset_manifest", "recipe", "software", "seed",
+                          "compute_budget", "outcome", "generation_lineage")
+
+CHECKPOINT_LINK_NOTE = (
+    "these are the fields a later run would bind, and they are all None. No checkpoint exists, "
+    "this module cannot read one, and there is no trainer here to produce one. A revocation's "
+    "reach into one is read from REVOCATION_REACH rather than restated, and it is "
+    "`identified-only`: withdrawing an example NAMES the artifact and never unlearns it")
+
+RUNBOOK_NOTE = (
+    "the eleven steps are what an operator does; the eleven gates are what a report can check "
+    "afterwards. They are ONE authority -- `runbook` refuses unless the steps cover the gates "
+    "exactly -- so advice cannot drift away from the check behind it")
+
+SUFFICIENCY_NOTE = (
+    "there is a CEILING and there is no floor. MAX_DATASET_EXAMPLES bounds one export and refuses "
+    "past it rather than trimming; no minimum sample count is asserted anywhere in this module "
+    "and none is invented here. A collection target comes from a pilot and learning curves on a "
+    "separate development validation split, which nobody has run")
+
+
+def readiness_codes():
+    """Every code a readiness report may carry -> D33's dataset codes plus D34's own, sorted.
+
+    `DATASET_NOT_ESTABLISHED` is READ rather than copied, so every readiness report carries
+    `exposure-not-recorded-in-the-eval-store` and `training-sufficiency-not-established` in the
+    exporter's own words. A name declared on both sides refuses: one code, one meaning, the rule
+    `exclusion_codes` already applies to the exclusion vocabulary.
+    """
+    owner = tuple(DATASET_NOT_ESTABLISHED)
+    overlap = sorted(set(owner) & set(READINESS_NOT_ESTABLISHED))
+    if overlap:
+        raise _refuse(
+            "duplicate-entry",
+            f"{overlap} are declared both in DATASET_NOT_ESTABLISHED and in "
+            f"READINESS_NOT_ESTABLISHED. One code, one owner: reconcile them rather than letting "
+            f"one shadow the other")
+    return tuple(sorted(owner + READINESS_NOT_ESTABLISHED))
+
+
+def readiness_notes():
+    """Every code's note -> one mapping, refusing a code nobody explained."""
+    merged = dict(DATASET_NOT_ESTABLISHED_NOTES)
+    merged.update(READINESS_NOT_ESTABLISHED_NOTES)
+    _assert_partition(merged, readiness_codes(), tuple(merged.values()),
+                      "the readiness note table", "training_data.readiness_codes()")
+    return dict(sorted(merged.items()))
+
+
+def readiness_gates():
+    """The gate -> remedy table, checked as an exact partition of `READINESS_GATES`."""
+    _assert_partition(GATE_REMEDIES, READINESS_GATES, tuple(GATE_REMEDIES.values()),
+                      "the gate remedy table", "training_data.READINESS_GATES")
+    return dict(sorted(GATE_REMEDIES.items()))
+
+
+def runbook():
+    """The operator's ordered walk -> the steps, checked against the gates they open.
+
+    THREE THINGS REFUSE. Steps not numbered 1..N in order, two steps opening one gate, and any
+    disagreement between the gates the steps name and `READINESS_GATES`. The last is the one that
+    matters: a report can only tell an operator that a gate is shut, and a shut gate with no step
+    behind it is a finding nobody was told how to close.
+    """
+    steps = [_copy(step) for step in RUNBOOK_STEPS]
+    numbers = [step["step"] for step in steps]
+    if numbers != list(range(1, len(steps) + 1)):
+        raise _refuse("value-invalid",
+                      f"the runbook's steps are numbered {numbers}; a walk an operator follows is "
+                      f"1..{len(steps)} in order")
+    named = [step["gate"] for step in steps]
+    if len(set(named)) != len(named):
+        raise _refuse("duplicate-entry", f"two runbook steps open one gate: {sorted(named)}")
+    _assert_partition({step["gate"]: step["step"] for step in steps}, READINESS_GATES,
+                      tuple(numbers), "the runbook's gate coverage",
+                      "training_data.READINESS_GATES")
+    remedies = readiness_gates()
+    for step in steps:
+        step["remedy"] = remedies[step["gate"]]
+    return {
+        "v": READINESS_VERSION,
+        "doc": READINESS_DOC,
+        "steps": steps,
+        "gates": list(READINESS_GATES),
+        "to_enable": list(TO_ENABLE),
+        "notes": [RUNBOOK_NOTE, SYNTHETIC_NOTE, NOT_WIRED_LABEL],
+    }
+
+
+def checkpoint_links():
+    """The forward-declared interface a later run would bind -> names, all unfilled.
+
+    A DECLARATION, not a capability: every value is None, nothing reads a checkpoint, and the
+    reach of a revocation into one is read from `REVOCATION_REACH` rather than restated here --
+    so the day that table changes, this block changes with it.
+    """
+    _assert_partition(REVOCATION_REACH, DOWNSTREAM_KINDS, REACH_LEVELS,
+                      "the revocation reach table", "training_data.DOWNSTREAM_KINDS")
+    return {
+        "v": READINESS_VERSION,
+        "fields": {name: None for name in CHECKPOINT_LINK_FIELDS},
+        "exists": False,
+        "revocation_reach": REVOCATION_REACH["trained-checkpoint"],
+        "unreached": list(REVOCATION_UNREACHED),
+        "note": CHECKPOINT_LINK_NOTE,
+    }
+
+
+def _gate(name, state, detail, remedies):
+    """One gate row -> the gate, its state, what was seen, and what to do about it.
+
+    IT VALIDATES NOTHING, DELIBERATELY. It first carried `_one_of` on the name and on the state,
+    and both were deleted for being unreachable: `readiness_gates()` has already checked that
+    `GATE_REMEDIES` is an exact partition of `READINESS_GATES`, and every call site below passes
+    a literal from that tuple and a literal from `GATE_STATES`. Patching `READINESS_GATES` to
+    construct a bad name trips the partition check FIRST, which is the masking pattern this kit
+    keeps finding -- a check behind a check, passing for the wrong reason.
+
+    WHAT ENFORCES THE TWO THINGS INSTEAD is the closed table upstream and the assertions
+    downstream, not this function: `readiness_gates()` refuses a remedy for a gate nobody declared
+    and a gate with no remedy, and `tests/test_training_data.py` asserts over every row of every
+    report that the gate is a `READINESS_GATES` member, the state is a `GATE_STATES` member, and
+    the remedy is the one that table holds. `remedies[name]` below is ordinary indexing and is not
+    offered as a guard: no test can reach it with a name the partition check would have refused.
+    """
+    return {"gate": name, "state": state, "detail": detail, "remedy": remedies[name]}
+
+
+def _coverage(targets):
+    """Every cause class and how many resolved targets reached it -> a full row per class.
+
+    Every member of `CAUSE_CLASSES` appears, zero included: a class omitted because nothing
+    reached it is a gap a reader cannot see, and coverage is exactly the question of which
+    classes have nothing in them.
+    """
+    out = {name: 0 for name in CAUSE_CLASSES}
+    for cause in targets:
+        if cause in out:
+            out[cause] += 1
+    return dict(sorted(out.items()))
+
+
+def readiness_report(records, *, store_dir, now, dataset=None, eval_manifest=None,
+                     exposure_dir=None, scope=None, enabled=None):
+    """What this store holds and which gates are shut -> a report. Nothing is written.
+
+    `records` ARE PASSED IN, the way `build_dataset` takes them. This function enumerates no
+    store and composes no path; what it reads through the store seam is each example's OWN label
+    and revocation files, keyed by `example_id`, which is the check D32 calls an unmade one when a
+    caller skips it. `store_dir` is therefore required.
+
+    `now` HAS NO DEFAULT, for `eligibility_state`'s reason: a retention verdict taken against
+    whatever clock the reader happened to hold is not a verdict anybody can reproduce.
+
+    AN UNSEEN THING IS `unknown`, NEVER `unmet`. Without a dataset the grouping, export and
+    exposure gates cannot be observed and say so; without an exposure log the exposure gate is
+    `unknown` rather than clean, the distinction D33 draws with `exposure-not-checked`.
+
+    IT REFUSES A DOCUMENT THAT READS AS A PERFORMANCE CLAIM. The last thing it does is hand the
+    assembled report to `workflow_eval.assert_no_gain_claim` -- the product's own authority, never
+    a second token list here. Caller text reaches this report (a scope's permitted purpose, an
+    export's declared destination), so this is `policy_evidence_report`'s posture: the sweep is
+    CALLED rather than asserted about from outside. It refuses in the safe direction, so an honest
+    purpose whose wording happens to carry a token refuses loudly instead of passing as a claim,
+    and `workflow_eval.NO_GAIN_CLAIM` says what a token sweep cannot prove.
+
+    IT ESTABLISHES NO READINESS. `readiness_codes()` rides on every report, unconditionally.
+    """
+    if store_dir is None:
+        raise _refuse(
+            "missing-field",
+            "a readiness report reads each example's own label and revocation files, so the "
+            "training store is required. Passing none is not 'there were none' -- it is the "
+            "unmade check export_eligibility reports as label-not-checked")
+    checked_at = _instant(now, "now")
+    remedies = readiness_gates()
+    switch = COLLECTION_ENABLED if enabled is None else bool(enabled)
+    state = collection_state(scope=scope, enabled=enabled)
+
+    offered = list(records)
+    intact, broken, seen = [], [], {}
+    for record in offered:
+        if not isinstance(record, Mapping) or record.get("v") != SNAPSHOT_VERSION:
+            raise _refuse("not-a-reference",
+                          f"a readiness report counts {SNAPSHOT_VERSION} snapshots, got "
+                          f"{(record or {}).get('v')!r}")
+        eid = _example_id(record.get("example_id"))
+        identity = integrity(record)
+        if not all(value for name, value in identity.items() if name.endswith("_ok")):
+            # Nothing further is read, for `export_eligibility`'s reason: a record whose bytes are
+            # not the bytes that were digested has no fields worth counting.
+            broken.append(eid)
+            continue
+        if eid in seen:
+            if seen[eid].get("content_sha") != record.get("content_sha"):
+                raise _refuse(
+                    "duplicate-entry",
+                    f"{eid} was offered twice with different content. One id names one input, so "
+                    f"this is two records claiming one example rather than one offered twice")
+            continue
+        seen[eid] = record
+        intact.append(record)
+
+    targets, purposes, reviewers = [], set(), set()
+    statuses, eligibilities, unknown_fields, gaps, bases = {}, {}, {}, {}, {}
+    completeness = {name: 0 for name in RESOURCE_COMPLETENESS}
+    agreement = {"corroborated": 0, "disputed": 0}
+    corrections, unexpiring, revoked = 0, [], []
+    for record in intact:
+        eid = record["example_id"]
+        label = label_state(read_lifecycle(store_dir, eid, "adjudication"))
+        rights = eligibility_state(record, now=checked_at,
+                                   revocations=read_lifecycle(store_dir, eid, "revocation"))
+        statuses[label["status"]] = statuses.get(label["status"], 0) + 1
+        corrections += len(label["corrections"])
+        reviewers.update(label["reviewers"])
+        if label["disagreement"] is not None:
+            agreement["corroborated" if label["disagreement"]["resolved_by"]
+                      else "disputed"] += 1
+        if label["target"]["eligible"]:
+            targets.append(label["target"]["cause"])
+        eligibilities[rights["state"]] = eligibilities.get(rights["state"], 0) + 1
+        if rights["expires_on"] is None:
+            unexpiring.append(eid)
+        if rights["revoked"]:
+            revoked.append(eid)
+        purposes.add(record["eligibility"]["purpose"])
+        for path in record["unknown"]:
+            unknown_fields[path] = unknown_fields.get(path, 0) + 1
+        for name, missing in record["source_gaps"].items():
+            if missing:
+                gaps[name] = gaps.get(name, 0) + len(missing)
+        completeness[record["resources"]["completeness"]] += 1
+        for basis in (record["resources"]["usage"] or {}):
+            bases[basis] = bases.get(basis, 0) + 1
+
+    manifest = dataset
+    if manifest is not None and (not isinstance(manifest, Mapping)
+                                 or manifest.get("v") != DATASET_VERSION):
+        raise _refuse("not-a-reference",
+                      f"the dataset is a {DATASET_VERSION} manifest from build_dataset or "
+                      f"read_dataset, got {(manifest or {}).get('v')!r}")
+    identity = None if manifest is None else dataset_integrity(manifest)
+    content = None if manifest is None else manifest["content"]
+    ungrouped = [] if content is None else sorted(row["example_id"]
+                                                  for row in content["examples"]
+                                                  if not row["group"])
+    offsite = [] if content is None else sorted(
+        {row["partition"] for row in content["groups"].values()} - {content["partition"]})
+
+    drawn, unrecorded, exposure = [], [], None
+    if content is not None and eval_manifest is not None and exposure_dir is not None:
+        purpose = dataset_rules()["trainable_purpose"]
+        exposure = _wf().exposure_state(exposure_dir, eval_manifest)
+        drawn = sorted({row["item"] for row in content["examples"] if row["item"]})
+        unrecorded = sorted(item for item in drawn
+                            if purpose not in ((exposure["items"].get(item) or {})
+                                               .get("purposes") or []))
+
+    coverage = _coverage(targets)
+    gates = [
+        _gate("collection-switched-on", "met" if switch else "unmet",
+              {"collection_enabled": bool(COLLECTION_ENABLED), "effective": switch,
+               "reason": state["reason"]}, remedies),
+        _gate("capture-wired-to-a-caller", "met" if CAPTURE_WIRED else "unmet",
+              {"capture_wired": bool(CAPTURE_WIRED), "note": NOT_WIRED_LABEL}, remedies),
+        _gate("scope-eligibility-approved",
+              "unknown" if scope is None else
+              ("met" if scope.eligibility == ELIGIBLE_TO_PERSIST else "unmet"),
+              {"declared": None if scope is None else scope.eligibility,
+               "required": ELIGIBLE_TO_PERSIST,
+               "note": None if scope is not None else
+               "no scope was passed, so this report cannot see what an operator declared"},
+              remedies),
+        _gate("records-captured", "met" if intact else "unmet",
+              {"offered": len(offered), "unique": len(seen), "intact": len(intact)}, remedies),
+        _gate("records-intact",
+              "unknown" if not offered else ("unmet" if broken else "met"),
+              {"offered": len(offered), "not_intact": sorted(broken)}, remedies),
+        _gate("labels-adjudicated",
+              "unknown" if not intact else ("met" if len(targets) == len(intact) else "unmet"),
+              {"by_status": dict(sorted(statuses.items())), "supervised_targets": len(targets),
+               "examples": len(intact)}, remedies),
+        _gate("retention-enforceable",
+              "unknown" if not intact else ("unmet" if unexpiring else "met"),
+              {"by_state": dict(sorted(eligibilities.items())),
+               "expiry_not_computable": sorted(unexpiring)}, remedies),
+        _gate("grouped-partition-assigned",
+              "unknown" if content is None else
+              ("met" if not ungrouped and not offsite else "unmet"),
+              {"ungrouped": ungrouped, "partitions_outside_the_draw": offsite,
+               "groups": None if content is None else content["counts"]["groups"]}, remedies),
+        _gate("exposure-recorded-in-the-eval-store",
+              "unknown" if exposure is None else ("unmet" if unrecorded else "met"),
+              {"checked": exposure is not None, "drawn_items": drawn,
+               "items_with_no_exposure_entry": unrecorded, "recorded_by_this_module": False,
+               "note": DATASET_NOT_ESTABLISHED_NOTES["exposure-not-recorded-in-the-eval-store"]},
+              remedies),
+        _gate("dataset-exported-and-readable",
+              "unknown" if manifest is None else
+              ("met" if identity["sha_ok"] and identity["id_ok"]
+               and content["counts"]["included"] else "unmet"),
+              {"identity": identity,
+               "included": None if content is None else content["counts"]["included"]}, remedies),
+        # ALWAYS UNMET, and not because something is broken. Nobody has run a pilot, so nobody has
+        # a measured target; inventing one to close this gate is the arbitrary threshold D34's
+        # acceptance refuses, and leaving it `unknown` would read as "nothing to see".
+        _gate("collection-target-chosen", "unmet",
+              {"minimum_examples": None, "ceiling": MAX_DATASET_EXAMPLES, "basis": None,
+               "note": SUFFICIENCY_NOTE}, remedies),
+    ]
+
+    report = {
+        "v": READINESS_VERSION,
+        "doc": READINESS_DOC,
+        "checked_at": checked_at,
+        "store": STORE,
+        "schemas": {"snapshot": SNAPSHOT_VERSION, "taxonomy": TAXONOMY_VERSION,
+                    "lifecycle": LIFECYCLE_VERSION, "dataset": DATASET_VERSION,
+                    "readiness": READINESS_VERSION},
+        "collection": {
+            "collection_enabled": bool(COLLECTION_ENABLED),
+            "capture_wired": bool(CAPTURE_WIRED),
+            "effective_switch": switch,
+            "collecting": state["collecting"],
+            "reason": state["reason"],
+            "eligible_to_persist": ELIGIBLE_TO_PERSIST,
+            "to_enable": list(TO_ENABLE),
+            "note": state["note"],
+        },
+        "records": {"offered": len(offered), "unique": len(seen), "intact": len(intact),
+                    "not_intact": sorted(broken), "permitted_purposes": sorted(purposes)},
+        "label_agreement": {
+            "by_status": dict(sorted(statuses.items())),
+            "supervised_targets": len(targets),
+            "corroborated": agreement["corroborated"],
+            "disputed": agreement["disputed"],
+            "corrections": corrections,
+            "distinct_reviewers": len(reviewers),
+            "not_established": list(ADJUDICATION_NOT_ESTABLISHED),
+            "note": READINESS_NOT_ESTABLISHED_NOTES["label-agreement-counted-not-calibrated"],
+        },
+        "category_coverage": {
+            "taxonomy_v": TAXONOMY_VERSION,
+            "resolved_by_class": coverage,
+            "empty_classes": sorted(name for name, count in coverage.items() if not count),
+            "review_only": list(REVIEW_ONLY_CLASSES),
+        },
+        "unknown_fields": {"by_path": dict(sorted(unknown_fields.items())),
+                           "source_gaps": dict(sorted(gaps.items()))},
+        "resources": {"by_completeness": dict(sorted(completeness.items())),
+                      "records_by_basis": dict(sorted(bases.items())), "note": NEVER_SUM_NOTE},
+        "retention": {"by_state": dict(sorted(eligibilities.items())),
+                      "expiry_not_computable": sorted(unexpiring), "revoked": sorted(revoked),
+                      "terminal": list(ELIGIBILITY_TERMINAL)},
+        "dataset": None if content is None else {
+            "dataset_id": manifest["dataset_id"],
+            "identity": identity,
+            "partition": content["partition"],
+            "counts": _copy(content["counts"]),
+            "excluded_by_code": _copy(content["excluded_by_code"]),
+            "included_by_target": _copy(content["included_by_target"]),
+            "selection": _copy(content["selection"]),
+            "destination": content["eligibility"]["destination"],
+            "exclusion_vocabulary": list(exclusion_codes()),
+        },
+        "duplication": {
+            "duplicates_collapsed": None if content is None
+            else content["counts"]["duplicates_collapsed"],
+            "groups": None if content is None else content["counts"]["groups"],
+            "solo_groups": None if content is None
+            else sum(1 for row in content["groups"].values() if row["solo"]),
+            "note": GROUPING_UNCERTAINTY_NOTE,
+        },
+        "exposure": {"checked": exposure is not None,
+                     "entries": None if exposure is None else exposure["entries"],
+                     "unreadable": None if exposure is None else exposure["unreadable"],
+                     "drawn_items": drawn, "items_with_no_exposure_entry": unrecorded,
+                     "owner": "bin/workflow_eval.py:exposure_state",
+                     "recorded_by_this_module": False},
+        "sufficiency": {"minimum_examples": None, "ceiling": MAX_DATASET_EXAMPLES,
+                        "basis": None, "note": SUFFICIENCY_NOTE},
+        "checkpoint_links": checkpoint_links(),
+        "gates": gates,
+        "gate_states": {name: sum(1 for row in gates if row["state"] == name)
+                        for name in GATE_STATES},
+        "not_ready": [row["gate"] for row in gates if row["state"] != "met"],
+        "runbook": list(TO_ENABLE),
+        "not_established": list(readiness_codes()),
+        "not_established_notes": readiness_notes(),
+        "notes": [SYNTHETIC_NOTE, NOT_WIRED_LABEL, REDACTION_LIMIT_NOTE, LABEL_SEPARATE_NOTE,
+                  NEVER_SUM_NOTE, UNLEARNING_NOTE, RUNBOOK_NOTE],
+    }
+    return _wf().assert_no_gain_claim(report, where="this readiness report")
 
 
 # ---- CLI ------------------------------------------------------------------------------------------
@@ -3789,7 +4377,7 @@ def _demo_dataset(record, store, evals):
         steps.append({"step": f"{name} material refused",
                       "included": refused["manifest"]["content"]["counts"]["included"],
                       "refusals": refused["manifest"]["content"]["excluded_by_code"]})
-    return steps, common, exported["manifest"]["dataset_id"]
+    return steps, common, exported["manifest"]
 
 
 def _demo_lifecycle(record, store, evals):
@@ -3822,7 +4410,7 @@ def _demo_lifecycle(record, store, evals):
                                  destination="local-development-partition", store_dir=store)
     steps.append({"step": "export decided", "exportable": allowed["exportable"],
                   "refusals": allowed["refusals"]})
-    dataset_steps, common, first_id = _demo_dataset(record, store, evals)
+    dataset_steps, common, first = _demo_dataset(record, store, evals)
     steps.extend(dataset_steps)
     stale = export_eligibility(record, now="2027-09-20T09:00:00Z",
                                purpose=record["eligibility"]["purpose"],
@@ -3851,7 +4439,19 @@ def _demo_lifecycle(record, store, evals):
                   "included": withdrawn["manifest"]["content"]["counts"]["included"],
                   "refusals": withdrawn["manifest"]["content"]["excluded_by_code"],
                   "dataset_id_changed":
-                      withdrawn["manifest"]["dataset_id"] != first_id})
+                      withdrawn["manifest"]["dataset_id"] != first["dataset_id"]})
+    # D34's half: the standing report over the same temp store. The exposure gate is the
+    # one to watch -- the export READ workflow_eval's log and wrote nothing to it, so the
+    # draw is unrecorded until the OPERATOR records it.
+    report = readiness_report([record], store_dir=store, now="2026-09-22T09:00:00Z",
+                              dataset=first, eval_manifest=common["eval_manifest"],
+                              exposure_dir=common["exposure_dir"], scope=_demo_scope(),
+                              enabled=True)
+    steps.append({"step": "readiness reported", "not_ready": report["not_ready"],
+                  "gate_states": report["gate_states"],
+                  "minimum_examples": report["sufficiency"]["minimum_examples"],
+                  "exposure_recorded_here":
+                      report["exposure"]["recorded_by_this_module"]})
     return steps
 
 
@@ -3955,19 +4555,82 @@ def _demo(as_json=False):
     return 0
 
 
-def _cli(argv=None):
+def build_parser():
+    """This module's verbs, as a parser other tooling can ask.
+
+    Separated from `_cli` by D34 so `release_gate.command_findings` can CHECK the commands its
+    checklist names: `_subcommands` reads a module's `build_parser` and reports a verb the parser
+    does not know. Without it a checklist could name `training_data.py readiness` for ever after
+    the verb was renamed and nothing would say so.
+    """
     parser = argparse.ArgumentParser(
         prog="training_data.py",
         description="Decision-time snapshots for a future specialist. Collection is OFF.")
     sub = parser.add_subparsers(dest="cmd", required=True)
     for verb, help_text in (("status", "is collection on, where would it write, what is wired"),
                             ("taxonomy", "the cause taxonomy, reconciled against the ledger"),
+                            ("readiness", "the standing gates, their remedies, and what is NOT "
+                                          "established"),
                             ("demo", "the whole seam over synthetic data in a temp dir")):
         node = sub.add_parser(verb, help=help_text)
         node.add_argument("--json", action="store_true")
+    return parser
+
+
+def _readiness_standing():
+    """The gates as they stand with no data -> the payload the `readiness` verb prints.
+
+    IT READS NO STORE AND COUNTS NOTHING. The data-bearing form is `readiness_report`, which
+    takes the records and the instant to judge them at; this verb answers the question an
+    operator asks BEFORE any of that exists -- which gates are there, what opens each one, and
+    what a report will not establish however many records eventually sit behind it.
+
+    It is deliberately NOT swept by `assert_no_gain_claim`: `status()` carries the resolved store
+    PATH, and in a checkout whose directory happens to contain a token spelling the sweep would
+    refuse an honest payload. `readiness_report` carries the store's NAME instead, which is why
+    that one can be swept and this one is not.
+    """
+    return {
+        "v": READINESS_VERSION,
+        "doc": READINESS_DOC,
+        "status": status(),
+        "runbook": runbook(),
+        "gates": readiness_gates(),
+        "checkpoint_links": checkpoint_links(),
+        "sufficiency": {"minimum_examples": None, "ceiling": MAX_DATASET_EXAMPLES,
+                        "basis": None, "note": SUFFICIENCY_NOTE},
+        "not_established": list(readiness_codes()),
+        "not_established_notes": readiness_notes(),
+    }
+
+
+def _print_readiness(payload):
+    print(f"readiness {payload['v']} — the standing gates, no records counted")
+    print(f"collection enabled : {payload['status']['collection_enabled']}")
+    print(f"capture wired      : {payload['status']['capture_wired']}")
+    print(f"minimum examples   : {payload['sufficiency']['minimum_examples']} "
+          f"(ceiling {payload['sufficiency']['ceiling']})")
+    for step in payload["runbook"]["steps"]:
+        print(f"  {step['step']:2d}. {step['gate']}")
+        print(f"      {step['do']}")
+    print("  what a readiness report does NOT establish:")
+    for code in payload["not_established"]:
+        print(f"    — {code}")
+    print(f"  the runbook: {payload['doc']}")
+    return 0
+
+
+def _cli(argv=None):
+    parser = build_parser()
     args = parser.parse_args(list(sys.argv[1:] if argv is None else argv))
     if args.cmd == "demo":
         return _demo(as_json=args.json)
+    if args.cmd == "readiness":
+        payload = _readiness_standing()
+        if args.json:
+            print(json.dumps(payload, indent=2, sort_keys=True))
+            return 0
+        return _print_readiness(payload)
     payload = status() if args.cmd == "status" else reconcile_operational_classes()
     if args.json:
         print(json.dumps(payload, indent=2, sort_keys=True))

@@ -530,7 +530,7 @@ PYTHONPATH=tests python3 -m unittest test_training_data.DatasetExportTests
 ### D34 — Collection readiness and operator runbook
 - id: D34
 - title: Collection readiness and operator runbook
-- status: pending
+- status: done
 - model: opus
 - depends: D33
 

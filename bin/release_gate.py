@@ -167,6 +167,7 @@ VERSION_SOURCES = (
     ("training cause taxonomy", "training_data", "TAXONOMY_VERSION"),
     ("training label lifecycle", "training_data", "LIFECYCLE_VERSION"),
     ("training dataset export", "training_data", "DATASET_VERSION"),
+    ("training readiness report", "training_data", "READINESS_VERSION"),
 )
 
 #: Pricing files, one per harness, never merged. Read for `cached_date` and roster size only.
@@ -603,6 +604,16 @@ CONTRACTS = (
                 "test_copilot_usage.ReadOnlyProofTests.test_fixture_home_bytes_unchanged_and_no_new_files",
                 "test_codex_usage.ReadOnlyProofTests.test_temp_home_file_tree_byte_identical_after_run",
                 "test_kit_verify_hook.StaticSafetyTests.test_module_never_calls_path_home",
+                # Training-data collection (D31-D34). It ships OFF, so what these prove is the
+                # eligibility gate rather than a running collector: unknown use rights fail
+                # closed before a payload exists, free text is redacted and reported by kind and
+                # count, an export refuses on every code it names, provenance stays out of the
+                # model's input, and the readiness report says what it does not establish.
+                "test_training_data.SnapshotTests.test_every_non_approved_eligibility_refuses_before_a_payload_exists",
+                "test_training_data.SnapshotTests.test_a_credential_shape_is_labelled_and_never_reaches_the_record_or_the_disk",
+                "test_training_data.LabelEligibilityTests.test_every_export_refusal_code_is_reachable_by_its_own_case",
+                "test_training_data.DatasetExportTests.test_a_payload_line_carries_no_provenance_and_the_audit_line_carries_all_of_it",
+                "test_training_data.ReadinessTests",
             ),
         },
     },
@@ -728,6 +739,18 @@ CHECKLIST = (
         "limit": "no live evaluation has run, so no proposal has evidence behind it yet",
     },
     {
+        "guarantee": "Training-data collection ships off and no example has been gathered",
+        "evidence": "`python3 bin/training_data.py readiness` prints both switches off, the "
+                    "eleven gates with the act that opens each, and what a readiness report does "
+                    "not establish; `python3 bin/training_data.py demo` walks capture to refused "
+                    "re-export in a temporary directory and spends nothing; the runbook is "
+                    "docs/TRAINING-DATA-READINESS.md",
+        "limit": "the walk is synthetic fixture data. It demonstrates mechanics and establishes "
+                 "nothing about a dataset's sufficiency, a label's correctness or a model, no "
+                 "minimum sample count is asserted anywhere, and an export records no exposure "
+                 "in the evaluation store -- the operator does that themselves",
+    },
+    {
         "guarantee": "Nothing here ran a paid call, wrote a home directory, or pushed",
         "evidence": "the invariants in CLAUDE.md, the no-real-CLI tests named below, and this "
                     "gate's own process list (read-only git, in-process unittest)",
@@ -740,7 +763,7 @@ CHECKLIST = (
 MIGRATION_NOTES = (
     {
         "surface": "Runtime stores (memory, telemetry, journal, benchruns, prefs, trends, "
-                   "attempts, evals)",
+                   "attempts, evals, training)",
         "forward": "`python3 bin/runtime_data.py where`; an in-tree store keeps being used; "
                    "`python3 bin/runtime_data.py migrate --store NAME --apply` copies it out and "
                    "never deletes the original",
@@ -784,6 +807,17 @@ MIGRATION_NOTES = (
         "surface": "Routing policy (`workflow_eval.POLICY_FILE` under the `prefs` store)",
         "forward": "`python3 bin/workflow_eval.py propose` -> `review` -> `apply`; every version kept",
         "back": "`python3 bin/workflow_eval.py rollback --version N`; the replaced version is kept too",
+    },
+    {
+        "surface": "Training-data collection (off: `training_data.COLLECTION_ENABLED` and "
+                   "`CAPTURE_WIRED` are both False and nothing calls the hook)",
+        "forward": "docs/TRAINING-DATA-READINESS.md is the runbook, and `python3 "
+                   "bin/training_data.py readiness` prints its gates: declare an approved scope, "
+                   "turn the switch on at the call site, wire a caller, then record the export's "
+                   "exposure in the evaluation store yourself",
+        "back": "set both constants back to False and remove the call site; nothing is deleted "
+                "and no record is rewritten. `python3 bin/runtime_data.py forget --store "
+                "training` lists before it deletes and deletes only with `--apply`",
     },
     {
         "surface": "Kits written before the contract",

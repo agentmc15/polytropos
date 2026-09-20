@@ -748,7 +748,7 @@ class DeepDivePageMapRealTreeTests(unittest.TestCase):
     def test_every_real_docs_md_source_is_mapped_with_lowercased_slug(self):
         page_map = db.deep_dive_page_map(REPO_ROOT)
         md_sources = sorted((REPO_ROOT / "docs").glob("*.md"))
-        self.assertEqual(len(md_sources), 31)  # 2026-09-16: D03 added docs/DECISION-IMPROVEMENT-AUTHORITY-INVENTORY.md (30 -> 31 sources)
+        self.assertEqual(len(md_sources), 32)  # 2026-09-16: D03 added docs/DECISION-IMPROVEMENT-AUTHORITY-INVENTORY.md (30 -> 31 sources); 2026-09-20: D34 added docs/TRAINING-DATA-READINESS.md (31 -> 32)
         for path in md_sources:
             key = f"docs/{path.name}"
             expected_value = f"deep-dives/{path.stem.lower()}.md"
@@ -778,9 +778,10 @@ class DeepDivePageMapRealTreeTests(unittest.TestCase):
         28 -> 29 when step 24 added docs/KIT-SCHEDULER.md, 29 -> 30 when step 25
         added docs/WORKFLOW-EVAL.md, 30 -> 31 when step 26 added docs/RELEASE.md, 31 -> 32
     when D01 added docs/DECISION-IMPROVEMENT-RECONCILIATION.md, 32 -> 33 when D03 added
-    docs/DECISION-IMPROVEMENT-AUTHORITY-INVENTORY.md."""
+    docs/DECISION-IMPROVEMENT-AUTHORITY-INVENTORY.md, 33 -> 34 when D34 added
+    docs/TRAINING-DATA-READINESS.md (2026-09-20)."""
         page_map = db.deep_dive_page_map(REPO_ROOT)
-        self.assertEqual(len(page_map), 33)
+        self.assertEqual(len(page_map), 34)
 
 
 class DeepDivesNeverMirrorHtmlFilesLiveTreeTests(unittest.TestCase):

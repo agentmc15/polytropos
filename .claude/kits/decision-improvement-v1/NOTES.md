@@ -2950,3 +2950,82 @@ an operator exports without recording exposure.**
 suite is now 5454 tests and the machine is tight. Unlike the earlier kill this was not a collision;
 I checked `ps` first. Re-ran clean.
 outcome: D33 model=opus attempts=1 result=pass review=pending run=2026-09-16-aa6e
+
+## D34 — Collection readiness and operator runbook (opus) — Phase 7 task 4 of 4, phase COMPLETE
+
+38 tests (module 224). 32 mutants, 32 caught, 0 survivors. `workflow_eval.py` byte-identical; the
+four Phase 7 version constants unmoved; `READINESS_VERSION` new and registered.
+
+**THE REPORT SAYS NOTHING IS READY, and I verified it: 11 gates, 0 met, 4 unmet, 7 unknown.**
+
+    unmet   : collection-switched-on, capture-wired-to-a-caller, records-captured,
+              collection-target-chosen
+    unknown : the other seven
+
+**`unknown` is deliberately NOT `unmet`** — it means the report could not SEE the thing (no dataset
+offered, no exposure log given, no scope passed). That is the unknown-is-not-zero discipline applied
+to a report. **`collection-target-chosen` is ALWAYS unmet**, not because anything is broken but
+because nobody has run a pilot, and **a number chosen to close it would be the arbitrary threshold
+the acceptance forbids.**
+
+Ten codes ride on every report unconditionally, including D33's five **read from that tuple rather
+than respelled**: `synthetic-fixtures-are-not-readiness`,
+`readiness-is-a-report-not-an-authorization`, `exposure-not-recorded-in-the-eval-store`,
+`digest-identifies-content-not-provenance`, `training-sufficiency-not-established`,
+`label-agreement-counted-not-calibrated`, `sampling-bias-not-estimable`,
+`checkpoint-link-is-a-forward-declaration`, `no-transfer-and-no-training-performed`,
+`access-not-enforced`. **The acceptance term is machine-readable, not prose.**
+
+**D33's obligation IS carried.** `runbook()` names `workflow_eval.record_exposure` (verified), while
+**AST proves `training_data.py` never CALLS it** (`record_exposure` absent from the called set,
+`exposure_state` present). The operator's step is documented precisely because the module refuses to
+take it. **`runbook()` REFUSES unless its steps exactly cover `READINESS_GATES`** — a gate cannot
+exist without a step telling an operator how to close it. And the gate is DERIVED, not advice: the
+report reads `workflow_eval.exposure_state`, reports `unmet` naming the drawn items, and flips to
+`met` only after the test calls `we.record_exposure` itself — and **recording it does not discharge
+the unconditional code**, because this module still wrote nothing there.
+
+**THE GAIN-SWEEP SOLUTION IS THE BEST ANSWER TO THAT PROBLEM YET.** I warned it to expect a refusal
+(this checkout's path contains `improvement`) and not to widen the exemption. It did neither — it
+**separated the swept artifact from the unswept one**: the report carries the store's NAME
+(`"store": "training"`) and never its path, so it sweeps clean; the CLI payload embeds the resolved
+path and is **deliberately not swept**, with its docstring saying why. The document carries exactly
+ONE gain token in 279 lines, inside an inline-code span naming a repository path, and the test hands
+the PROSE (code spans, fences and listings removed) to the product's own authority — with a control
+injecting "a measured improvement" that confirms the sweep bites. `readiness_report` CALLS
+`assert_no_gain_claim` as its last act, so a scope whose declared purpose reads as a performance
+claim refuses.
+
+**One guard deleted for being unreachable** (D32 deleted 2, D33 4, D34 1) — `_one_of` on the gate
+name and state both survived, because `readiness_gates()` already checks `GATE_REMEDIES` is an exact
+partition of `READINESS_GATES`, so a bad name trips THAT first. Removed, with the docstring naming
+what actually enforces it and stating plainly that `remedies[name]` is ordinary indexing, not a
+guard.
+
+**A near-miss in its own fixtures, caught:** a disputed-label test **passed for the wrong reason** —
+as "one supported head plus one unsupported" rather than two competing supported causes — because it
+used `tests-oracle` evidence for a `REVIEW_ONLY_CLASS`, which cannot be supported that way. The
+corroboration test failed honestly; the disputed one passed dishonestly. Both rebuilt with a second
+independent human reader.
+
+**Two consequences my brief did not name, both reported rather than done quietly:**
+1. **`mkdocs.yml` needed a hand nav line** — `deep-dives/` is generator-owned but the nav is
+   hand-kept, and `test_docs_site` fails both directions without it.
+2. **Three hand-kept count tripwires in other tasks' test files moved** (`test_docs_build_adversarial`,
+   `test_docs_build_cli`, `test_primitives_doc_adversarial`), each with a dated comment in the
+   existing precedent format — D33's "edited another task's test and REPORTED it" convention.
+
+**CORRECTIONS TO MY BRIEF: NONE. Twelve factual claims checked, twelve held** — the red exit status,
+the 186, three md5 pins, the three locks plus the missing call site, decides-vs-prevents, the ceiling
+with no floor, the declared-not-derived action outcome, D33's zero action records, the retention
+rules, the revocation reach table, the `docs/*.md` non-recursive glob, and the `improvement` token in
+this worktree's path. **First fully-correct brief of the run.**
+
+**Limits:** everything is synthetic and that is now a CODE on every report, not only a sentence. No
+production path calls `readiness_report` either. The exposure gate establishes an entry exists under
+the trainable purpose for each drawn item, **never that the entry describes this export**. `records`
+are passed IN rather than enumerated — there is no "read every capture date" function, and adding one
+would add a path seam to a module whose `safe_paths` surface is pinned at exactly five names.
+Label "agreement" is a count of live heads reaching the same target, **not an inter-rater statistic
+and not corrected for chance**.
+outcome: D34 model=opus attempts=1 result=pass review=pending run=2026-09-16-aa6e

@@ -37,9 +37,11 @@ import ast
 import contextlib
 import hashlib
 import importlib.util
+import inspect
 import io
 import json
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -3280,5 +3282,852 @@ class DatasetExportTests(unittest.TestCase):
         self.assertEqual(steps["revoked example leaves the dataset"]["refusals"],
                          {"eligibility-revoked": 1})
         self.assertEqual(payload["exposure_log_files"], 0)
+        after = sorted(p.name for p in Path(tempfile.gettempdir()).glob("training-demo-*"))
+        self.assertEqual(before, after)
+
+
+# ==================================================================================================
+#  D34 -- COLLECTION READINESS AND THE OPERATOR'S RUNBOOK
+# ==================================================================================================
+
+READINESS_DOC_PATH = ROOT / "docs" / "TRAINING-DATA-READINESS.md"
+
+#: A purpose that carries a `workflow_eval.GAIN_TOKENS` spelling, used to prove the sweep is CALLED
+#: by `readiness_report` rather than asserted about from outside. Made up; no such scope exists.
+CLAIMING_PURPOSE = "collect evidence of a measured improvement in recovery"
+
+
+def _doc_text():
+    return READINESS_DOC_PATH.read_text(encoding="utf-8")
+
+
+def _doc_prose(text):
+    """The document with every inline-code span, fenced block and indented listing removed.
+
+    A repository path quoted out of this checkout carries the token `improvement`, because the
+    checkout's own directory is named for the body of work. That is a fact about the sweep's
+    matching rule and not a claim in the document, so the two are separated here and BOTH are
+    asserted: the prose must be clean, and every token in the whole file must be accounted for by
+    a path spelling.
+    """
+    without_fences = re.sub(r"(?ms)^```.*?^```", " ", text)
+    without_indented = re.sub(r"(?m)^ {4}.*$", " ", without_fences)
+    return re.sub(r"`[^`]*`", " ", without_indented)
+
+
+class ReadinessTests(unittest.TestCase):
+    """D34: the gates, the operator's runbook, and the report that says what it does not say.
+
+    THE ACCEPTANCE TERM THIS WHOLE CLASS TURNS ON is "synthetic tests are not training
+    readiness". Every fixture below is invented, every store is a temporary directory, no
+    decision in this repository has ever been captured and no label has ever been adjudicated by
+    a real reviewer. So the distinction is carried as CODES on every report -- read from
+    `readiness_codes()`, asserted unconditional over three differently-shaped reports -- rather
+    than as prose a reader can skip.
+
+    HOW EACH ACCEPTANCE TERM IS MADE STRUCTURAL RATHER THAN ASSERTED:
+
+      * A WORKING COLLECTION/EXPORT SETUP WITH AN EXPLICIT READINESS REPORT -- one integration
+        walk runs capture -> review -> export -> inspect -> revoke -> refused re-export in a temp
+        store, and a second test proves the chain has no seam that works only because a fixture
+        pre-set a field: every value the later stage needs is asserted EQUAL to the earlier
+        stage's own output, not to a constant in this file.
+      * NO ARBITRARY DATASET-SIZE THRESHOLD -- `sufficiency.minimum_examples` and its basis are
+        None; a one-example dataset opens the export gate; three examples leave
+        `collection-target-chosen` exactly as unmet as one does, because nothing here measures a
+        target; and the ceiling is shown to track its constant rather than a number typed twice.
+      * NEGATIVE CASES AND DISABLED MODE PASS -- with collection off the build callable is never
+        invoked and the store is never created, with the positive control that switching it on
+        DOES invoke it; and a tampered record, an unreviewed one, a disputed one, an
+        uncomputable expiry, a missing store, a foreign schema and two records claiming one id
+        each get their own case.
+      * SYNTHETIC TESTS ARE NOT TRAINING READINESS -- the codes above, plus the document's own
+        "what is not ready" section asserted present, plus the proof that the report is swept by
+        the product's own gain authority and refuses a purpose that reads as a performance claim.
+      * NO MODEL DOWNLOAD, TRAINING, PRIVATE BACKFILL OR UPLOAD -- sixteen stdlib primitives and
+        eight `workflow_eval` writers are armed with raisers for a whole readiness run, reusing
+        D33's trap and its control; and `record_exposure` is proven to have no call site in the
+        module at all, by AST rather than by a substring the runbook's own text would defeat.
+    """
+
+    maxDiff = None
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="training-d34-"))
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.store = self.tmp / "training"
+        self.evals = self.tmp / "evals"
+        self.manifest = _eval_manifest()
+        self.record = _dsnap("T-1", "AttributeError: no attribute 'emit'")
+
+    # ---- fixture helpers ----------------------------------------------------------------------
+
+    def resolve(self, record):
+        """Persist `record` and give it a RESOLVED adjudication -- the state an export needs."""
+        td.persist(record, self.store)
+        entry = _adjudicate(record)
+        td.persist_lifecycle(entry, self.store)
+        return entry
+
+    def export(self, records=None, **over):
+        kwargs = {
+            "eval_manifest": self.manifest, "store_dir": self.store, "exposure_dir": self.evals,
+            "now": NOW, "purpose": self.record["eligibility"]["purpose"],
+            "destination": "local-development-partition",
+            "built_at": BUILT_AT, "built_by": BUILT_BY,
+        }
+        kwargs.update(over)
+        return td.build_dataset([self.record] if records is None else records, **kwargs)
+
+    def report(self, records=None, **over):
+        kwargs = {"store_dir": self.store, "now": NOW, "eval_manifest": self.manifest,
+                  "exposure_dir": self.evals, "scope": _scope(), "enabled": True}
+        kwargs.update(over)
+        return td.readiness_report([self.record] if records is None else records, **kwargs)
+
+    def gates(self, report):
+        return {row["gate"]: row["state"] for row in report["gates"]}
+
+    def detail(self, report, gate):
+        return next(row["detail"] for row in report["gates"] if row["gate"] == gate)
+
+    def walked(self):
+        """The whole chain: capture -> review -> export -> write -> read back. Returns its parts."""
+        entry = self.resolve(self.record)
+        dataset = self.export()
+        td.write_dataset(dataset, self.store)
+        read_back = td.read_dataset(self.store, dataset["manifest"]["dataset_id"])
+        return entry, dataset, read_back
+
+    # ---- A. the integration walk, end to end, in a temp store ---------------------------------
+
+    def test_the_chain_runs_capture_to_review_to_export_to_revoked_re_export(self):
+        """THE POSITIVE CONTROL for everything below, and the one place the phase is exercised as
+        a CHAIN rather than per unit.
+
+        Capture through the opt-in hook (not `snapshot` directly, so the seam a host would call
+        is the one under test), read the stored line back, adjudicate it, let the gate decide,
+        export, write, read back, report -- then revoke and watch every downstream answer change.
+        """
+        calls = []
+
+        def gather():
+            calls.append(1)
+            return dict(_kwargs(sources={"attempt_ref": al.make_ref("a1b2c3d4",
+                                                                    version=al.LEDGER_VERSION),
+                                         "task_ref": al.make_ref("T-1")},
+                                input={"observed_error": [_entry("AttributeError: no attribute "
+                                                                 "'emit'",
+                                                                 source=AUDIT_ONLY_SOURCE)]}))
+
+        receipt = td.capture_hook(gather, store_dir=self.store, scope=_scope(), enabled=True)
+        self.assertEqual(calls, [1])
+        self.assertEqual(receipt["collected"], True)
+        stored = td.read_snapshots(self.store, CAPTURED)
+        self.assertEqual(len(stored), 1)
+        record = stored[0]
+        self.assertEqual(record["example_id"], receipt["receipt"]["example_id"])
+
+        entry = _adjudicate(record)
+        td.persist_lifecycle(entry, self.store)
+        decision = td.export_eligibility(record, now=NOW,
+                                         purpose=record["eligibility"]["purpose"],
+                                         destination="local-development-partition",
+                                         store_dir=self.store)
+        self.assertEqual(decision["refusals"], [])
+
+        dataset = self.export([record])
+        self.assertEqual(dataset["manifest"]["content"]["counts"]["included"], 1)
+        self.assertEqual(td.write_dataset(dataset, self.store)["written"], True)
+        read_back = td.read_dataset(self.store, dataset["manifest"]["dataset_id"])
+        self.assertEqual(read_back["manifest"]["sha"], dataset["manifest"]["sha"])
+
+        report = self.report([record], dataset=read_back["manifest"])
+        self.assertEqual(self.gates(report)["dataset-exported-and-readable"], "met")
+        self.assertEqual(report["records"]["intact"], 1)
+        self.assertEqual(report["label_agreement"]["supervised_targets"], 1)
+
+        tombstone = td.revoke(record, revoked_at="2026-09-21T08:00:00Z",
+                              reason="the owner withdrew this example",
+                              by=al.make_ref("synthetic-owner"),
+                              dependents=[{"kind": "trained-checkpoint",
+                                           "ref": al.make_ref("checkpoint-1")}])
+        td.persist_lifecycle(tombstone, self.store)
+        self.assertEqual(tombstone["identified"], ["checkpoint-1"])
+        self.assertEqual(tombstone["unreached"], list(td.REVOCATION_UNREACHED))
+
+        refused = td.export_eligibility(record, now="2026-09-22T09:00:00Z",
+                                        purpose=record["eligibility"]["purpose"],
+                                        destination="local-development-partition",
+                                        store_dir=self.store)
+        self.assertEqual(refused["refusals"], ["eligibility-revoked"])
+        after = self.export([record], now="2026-09-22T09:00:00Z")
+        self.assertEqual(after["manifest"]["content"]["counts"]["included"], 0)
+        self.assertEqual(after["manifest"]["content"]["excluded_by_code"],
+                         {"eligibility-revoked": 1})
+        final = self.report([record], now="2026-09-22T09:00:00Z",
+                            dataset=after["manifest"])
+        self.assertEqual(final["retention"]["revoked"], [record["example_id"]])
+        self.assertEqual(self.gates(final)["dataset-exported-and-readable"], "unmet")
+
+    def test_the_chain_carries_each_stages_own_output_and_not_a_fixture_constant(self):
+        """A chain with a seam only a fixture holds together passes every per-unit test and fails
+        the first time a real value differs. So every hand-off is asserted against the EARLIER
+        STAGE'S OWN OUTPUT: the capture receipt's id, the adjudication's digest, the manifest's
+        item id, and the source reference the snapshot was built with."""
+        entry, dataset, read_back = self.walked()
+        content = read_back["manifest"]["content"]
+        row = content["examples"][0]
+
+        self.assertEqual(row["example_id"], self.record["example_id"])
+        self.assertEqual(row["input_sha"], self.record["input_sha"])
+        self.assertEqual(row["content_sha"], self.record["content_sha"])
+        self.assertEqual(row["label_head"], entry["content_sha"])
+        self.assertEqual(row["cause"], entry["cause"])
+        self.assertEqual(row["item"], next(
+            iid for iid, item in self.manifest["content"]["items"].items()
+            if item["task_id"] == self.record["sources"]["task_ref"]["id"]))
+        self.assertEqual(read_back["payload"][0]["target"]["cause"], entry["cause"])
+
+        report = self.report(dataset=read_back["manifest"])
+        self.assertEqual(report["dataset"]["dataset_id"], dataset["manifest"]["dataset_id"])
+        self.assertEqual(report["exposure"]["drawn_items"], [row["item"]])
+        self.assertEqual(report["category_coverage"]["resolved_by_class"][entry["cause"]], 1)
+
+    def test_a_readiness_run_writes_nothing_and_leaves_the_store_byte_identical(self):
+        """The report is COMPUTED, never stored. Proven over the bytes, not over an intention."""
+        self.walked()
+
+        def tree():
+            return {str(p.relative_to(self.tmp)): p.read_bytes()
+                    for p in sorted(self.tmp.rglob("*")) if p.is_file()}
+
+        before = tree()
+        self.report(dataset=self.export()["manifest"])
+        self.assertEqual(tree(), before)
+
+    # ---- B. the exposure gate: D33's obligation, carried ---------------------------------------
+
+    def test_the_export_records_no_exposure_and_the_operators_own_call_is_what_closes_the_gate(
+            self):
+        """THE SINGLE MOST CONSEQUENTIAL THING THIS TASK HAS TO SAY.
+
+        D33 refused to write another engine's store, so an export leaves NO trace in
+        `workflow_eval`'s exposure log. The gate is therefore `unmet` after a clean export, names
+        the items with no entry, and flips to `met` only when the OPERATOR calls
+        `workflow_eval.record_exposure` themselves -- which is what step 10 of the runbook says
+        to do.
+        """
+        self.walked()
+        dataset = self.export()
+        report = self.report(dataset=dataset["manifest"])
+        item = dataset["manifest"]["content"]["examples"][0]["item"]
+
+        self.assertFalse(self.evals.exists(), "the export must not create the evaluation store")
+        self.assertEqual(self.gates(report)["exposure-recorded-in-the-eval-store"], "unmet")
+        detail = self.detail(report, "exposure-recorded-in-the-eval-store")
+        self.assertEqual(detail["items_with_no_exposure_entry"], [item])
+        self.assertEqual(detail["recorded_by_this_module"], False)
+        self.assertIn("record_exposure", detail["note"])
+        self.assertIn("exposure-not-recorded-in-the-eval-store", report["not_established"])
+
+        we.record_exposure(self.evals, self.manifest, partition=td.TRAINABLE_PARTITION,
+                           items=[item], by="synthetic-operator",
+                           note="the operator's own step 10")
+        closed = self.report(dataset=dataset["manifest"])
+        self.assertEqual(self.gates(closed)["exposure-recorded-in-the-eval-store"], "met")
+        self.assertEqual(self.detail(closed, "exposure-recorded-in-the-eval-store")
+                         ["items_with_no_exposure_entry"], [])
+        # Recording it does NOT discharge the unconditional code: this module still wrote nothing
+        # there, which is a different statement from "the log is now current".
+        self.assertIn("exposure-not-recorded-in-the-eval-store", closed["not_established"])
+        self.assertEqual(closed["exposure"]["recorded_by_this_module"], False)
+
+    def test_an_unread_exposure_log_is_unknown_rather_than_a_clean_one(self):
+        self.walked()
+        dataset = self.export()
+        blind = self.report(dataset=dataset["manifest"], exposure_dir=None)
+        self.assertEqual(self.gates(blind)["exposure-recorded-in-the-eval-store"], "unknown")
+        self.assertEqual(blind["exposure"]["checked"], False)
+        self.assertEqual(blind["exposure"]["entries"], None)
+
+    def test_the_runbook_names_the_call_the_operator_must_make_and_nothing_here_makes_it(self):
+        """The remedy names the function; the module never calls it. The second half is by AST --
+        a substring check would be satisfied by the runbook's own text, which is exactly the
+        thing under suspicion."""
+        walk = td.runbook()
+        step = next(row for row in walk["steps"]
+                    if row["gate"] == "exposure-recorded-in-the-eval-store")
+        self.assertEqual(step["step"], 10)
+        self.assertIn("workflow_eval.record_exposure", step["remedy"])
+        self.assertIn("YOURSELF", step["do"])
+        export_step = next(row for row in walk["steps"]
+                           if row["gate"] == "dataset-exported-and-readable")
+        self.assertLess(export_step["step"], step["step"],
+                        "the exposure is recorded after the draw it records")
+
+        tree = ast.parse((BIN_DIR / "training_data.py").read_text(encoding="utf-8"))
+        called = {node.func.attr for node in ast.walk(tree)
+                  if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)}
+        self.assertGreater(len(called), 20)                     # the sweep walked something
+        self.assertNotIn("record_exposure", called)
+        self.assertIn("exposure_state", called)                 # it READS the log
+        self.assertIn("record_exposure", _doc_text())
+
+    # ---- C. disabled mode -----------------------------------------------------------------------
+
+    def test_with_collection_off_nothing_is_gathered_and_no_store_is_created(self):
+        """Disabled mode, through the readiness surface. The build callable RAISES if it is ever
+        invoked, and the control below proves the same fixture does invoke it when the switch is
+        on -- without which this could be passing on a hook that never calls anything."""
+        never = _Raises()
+        off = td.capture_hook(never, store_dir=self.store, scope=_scope(), enabled=None)
+        self.assertEqual(never.calls, 0)
+        self.assertEqual(off["collected"], False)
+        self.assertEqual(off["reason"], "collection-disabled")
+        self.assertFalse(self.store.exists())
+
+        report = td.readiness_report([], store_dir=self.store, now=NOW)
+        self.assertEqual(self.gates(report)["collection-switched-on"], "unmet")
+        self.assertEqual(self.gates(report)["capture-wired-to-a-caller"], "unmet")
+        self.assertEqual(self.gates(report)["scope-eligibility-approved"], "unknown")
+        self.assertEqual(self.gates(report)["records-captured"], "unmet")
+        self.assertEqual(self.gates(report)["records-intact"], "unknown")
+        self.assertEqual(report["collection"]["collecting"], False)
+        self.assertEqual(report["collection"]["to_enable"], list(td.TO_ENABLE))
+        self.assertEqual(set(report["not_ready"]) & {"collection-switched-on",
+                                                     "capture-wired-to-a-caller",
+                                                     "records-captured"},
+                         {"collection-switched-on", "capture-wired-to-a-caller",
+                          "records-captured"})
+        self.assertFalse(self.store.exists())
+
+        # THE CONTROL. The same fixture, the same store, the switch on: it is invoked.
+        counted = []
+        td.capture_hook(lambda: counted.append(1) or dict(_kwargs()),
+                        store_dir=self.store, scope=_scope(), enabled=True)
+        self.assertEqual(counted, [1])
+
+    def test_no_gate_reads_met_for_a_scope_whose_rights_nobody_approved(self):
+        for status in td.ELIGIBILITY_STATUSES:
+            if status == td.ELIGIBLE_TO_PERSIST:
+                continue
+            with self.subTest(status=status):
+                report = td.readiness_report([], store_dir=self.store, now=NOW,
+                                             scope=_scope(eligibility=status), enabled=True)
+                self.assertEqual(self.gates(report)["scope-eligibility-approved"], "unmet")
+                self.assertEqual(self.detail(report, "scope-eligibility-approved")["declared"],
+                                 status)
+        approved = td.readiness_report([], store_dir=self.store, now=NOW, scope=_scope(),
+                                       enabled=True)
+        self.assertEqual(self.gates(approved)["scope-eligibility-approved"], "met")
+
+    # ---- D. the negative cases -------------------------------------------------------------------
+
+    def test_a_record_edited_after_capture_fails_the_intact_gate_and_is_counted_out(self):
+        self.resolve(self.record)
+        tampered = td._copy(dict(self.record))
+        tampered["input"]["observed_error"][0]["text"] = "a different error entirely"
+        report = self.report([tampered])
+        self.assertEqual(self.gates(report)["records-intact"], "unmet")
+        self.assertEqual(report["records"]["not_intact"], [self.record["example_id"]])
+        self.assertEqual(report["records"]["intact"], 0)
+        self.assertEqual(report["label_agreement"]["supervised_targets"], 0)
+        self.assertEqual(self.gates(report)["labels-adjudicated"], "unknown")
+
+    def test_an_unreviewed_or_disputed_label_leaves_the_label_gate_unmet(self):
+        td.persist(self.record, self.store)
+        unreviewed = self.report()
+        self.assertEqual(self.gates(unreviewed)["labels-adjudicated"], "unmet")
+        self.assertEqual(unreviewed["label_agreement"]["by_status"], {td.UNADJUDICATED: 1})
+
+        td.persist_lifecycle(_adjudicate(self.record), self.store)
+        # A SECOND SUPPORTED cause, not an unsupported one: two live heads that each reached a
+        # target and disagree, which is the disagreement the lifecycle refuses to settle.
+        td.persist_lifecycle(_adjudicate(self.record, cause="environment-infrastructure",
+                                         reviewer=_reviewer("reviewer-b", "human-adjudication"),
+                                         decided_at=REVIEWED_LATER,
+                                         evidence=[_ev(ref_id="review-2",
+                                                       observed_at=REVIEWED_LATER)]), self.store)
+        disputed = self.report()
+        self.assertEqual(self.gates(disputed)["labels-adjudicated"], "unmet")
+        self.assertEqual(disputed["label_agreement"]["by_status"], {"disputed": 1})
+        self.assertEqual(disputed["label_agreement"]["disputed"], 1)
+        self.assertEqual(disputed["label_agreement"]["corroborated"], 0)
+        self.assertEqual(disputed["label_agreement"]["distinct_reviewers"], 2)
+
+    def test_two_readers_reaching_one_target_are_counted_as_corroboration(self):
+        """The control for the disagreement case above: the same two-head shape, agreeing."""
+        td.persist(self.record, self.store)
+        td.persist_lifecycle(_adjudicate(self.record), self.store)
+        td.persist_lifecycle(_adjudicate(self.record,
+                                         reviewer=_reviewer("reviewer-b", "human-adjudication"),
+                                         decided_at=REVIEWED_LATER,
+                                         evidence=[_ev(ref_id="review-2",
+                                                       observed_at=REVIEWED_LATER)]), self.store)
+        report = self.report()
+        self.assertEqual(report["label_agreement"]["corroborated"], 1)
+        self.assertEqual(report["label_agreement"]["disputed"], 0)
+        self.assertEqual(self.gates(report)["labels-adjudicated"], "met")
+
+    def test_an_expiry_nobody_could_compute_leaves_the_retention_gate_unmet(self):
+        broken = _reseal(self.record, expires_on=None)
+        self.resolve(self.record)
+        report = self.report([broken])
+        self.assertEqual(self.gates(report)["retention-enforceable"], "unmet")
+        self.assertEqual(report["retention"]["expiry_not_computable"], [broken["example_id"]])
+        self.assertEqual(report["retention"]["by_state"], {"unknown": 1})
+
+    def test_a_report_without_a_store_refuses_because_an_unmade_check_is_not_a_passed_one(self):
+        with self.assertRaises(dc.ContractError) as raised:
+            td.readiness_report([self.record], store_dir=None, now=NOW)
+        self.assertEqual(raised.exception.code, "missing-field")
+        self.assertIn("label-not-checked", str(raised.exception))
+
+    def test_a_foreign_schema_or_two_records_claiming_one_id_refuse_rather_than_counting(self):
+        for record, code in ((dict(self.record, v="something.else/1"), "not-a-reference"),
+                             ({"v": td.DATASET_VERSION}, "not-a-reference")):
+            with self.subTest(code=code):
+                with self.assertRaises(dc.ContractError) as raised:
+                    self.report([record])
+                self.assertEqual(raised.exception.code, code)
+        # `_forge` recomputes all three digests, so this twin is INTACT and shares the example
+        # id (the capture instant is not input-time evidence and sits outside `input_sha`).
+        twin = _forge(self.record, lambda r: r.update(captured_at="2026-09-19T10:00:06Z"))
+        self.assertEqual(twin["example_id"], self.record["example_id"])
+        self.assertNotEqual(twin["content_sha"], self.record["content_sha"])
+        with self.assertRaises(dc.ContractError) as raised:
+            self.report([self.record, twin])
+        self.assertEqual(raised.exception.code, "duplicate-entry")
+        # The control: the SAME record offered twice is one example, not a refusal.
+        self.resolve(self.record)
+        self.assertEqual(self.report([self.record, self.record])["records"],
+                         dict(self.report()["records"], offered=2))
+
+    def test_the_instant_a_retention_verdict_is_taken_at_has_no_default(self):
+        self.resolve(self.record)
+        with self.assertRaises(TypeError):
+            td.readiness_report([self.record], store_dir=self.store)
+        for bad in ("not-an-instant", "2026-09-20", None):
+            with self.subTest(now=bad):
+                with self.assertRaises(dc.ContractError):
+                    self.report(now=bad)
+
+    # ---- E. the gain sweep, called rather than asserted about -----------------------------------
+
+    def test_a_report_whose_declared_purpose_reads_as_a_performance_claim_refuses(self):
+        """D24's lesson, applied here: caller text reaches this report, so the sweep is CALLED at
+        the end of `readiness_report` rather than asserted about from outside. Deleting that call
+        makes this test go green in the wrong direction, which is what makes it a guard."""
+        claiming = td.collection_scope(
+            purpose=CLAIMING_PURPOSE, retention_days=30,
+            eligibility=td.ELIGIBLE_TO_PERSIST,
+            approval_ref=al.make_ref("approval-synthetic", version="fixture/1"))
+        record = td.snapshot(scope=claiming, **_kwargs())
+        td.persist(record, self.store)
+        td.persist_lifecycle(_adjudicate(record), self.store)
+        with self.assertRaises(we.EvalError) as raised:
+            self.report([record])
+        self.assertIn("gain-claim token", str(raised.exception))
+        # THE CONTROL: the ordinary fixture's purpose carries no token and reports normally.
+        self.resolve(self.record)
+        self.assertEqual(self.report()["records"]["permitted_purposes"],
+                         [self.record["eligibility"]["purpose"]])
+
+    def test_the_gain_vocabulary_is_the_products_and_is_not_copied_into_this_module(self):
+        """D26's method: the checker delegates the vocabulary and holds none of its own. The
+        readiness section carries no token at all, and the TWO occurrences anywhere in the module
+        are classified rather than waved through -- both are identifiers D31 already carried, one
+        a sibling module's name and one the specification's own path."""
+        source = inspect.getsource(td.readiness_report)
+        self.assertIn("assert_no_gain_claim", source)
+        for name in ("readiness_report", "runbook", "checkpoint_links", "readiness_codes",
+                     "readiness_notes", "readiness_gates"):
+            with self.subTest(fn=name):
+                text = inspect.getsource(getattr(td, name))
+                self.assertEqual([t for t in we.GAIN_TOKENS if t in text], [])
+        for table in (td.GATE_REMEDIES, td.READINESS_NOT_ESTABLISHED_NOTES):
+            for value in table.values():
+                self.assertEqual(we._gain_hits(value), [])
+
+        module = (BIN_DIR / "training_data.py").read_text(encoding="utf-8").lower()
+        found = [(token, index)
+                 for token in we.GAIN_TOKENS
+                 for index in range(len(module))
+                 if module.startswith(token, index)]
+        self.assertEqual({token for token, _ in found}, {"improvement"})
+        for token, index in found:
+            with self.subTest(index=index):
+                self.assertTrue(
+                    module.startswith("improvement_loop", index)
+                    or module[index - len("decision-"):].startswith("decision-improvement"),
+                    f"an unclassified gain token at {index}")
+
+        with mock.patch.object(we, "assert_no_gain_claim",
+                               side_effect=we.EvalError("stubbed")):
+            self.resolve(self.record)
+            with self.assertRaises(we.EvalError):
+                self.report()
+
+    # ---- F. no arbitrary dataset-size threshold ---------------------------------------------------
+
+    def test_no_minimum_sample_count_is_asserted_and_more_records_do_not_close_the_gate(self):
+        """"No arbitrary dataset-size threshold." A dataset of ONE exports and opens its gate; a
+        dataset of THREE leaves `collection-target-chosen` exactly as unmet, because nothing here
+        measures a target and a number chosen to close it would be the invented threshold."""
+        records = [self.record,
+                   _dsnap("T-2", "TypeError: the adapter shape is wrong"),
+                   _dsnap("T-3", "KeyError: the adapter lost a field")]
+        for record in records:
+            self.resolve(record)
+        one = self.report([records[0]], dataset=self.export([records[0]])["manifest"])
+        many = self.report(records, dataset=self.export(records)["manifest"])
+
+        self.assertEqual(one["dataset"]["counts"]["included"], 1)
+        self.assertEqual(many["dataset"]["counts"]["included"], 3)
+        for report in (one, many):
+            self.assertEqual(self.gates(report)["dataset-exported-and-readable"], "met")
+            self.assertEqual(self.gates(report)["collection-target-chosen"], "unmet")
+            self.assertEqual(report["sufficiency"]["minimum_examples"], None)
+            self.assertEqual(report["sufficiency"]["basis"], None)
+            self.assertEqual(report["sufficiency"]["ceiling"], td.MAX_DATASET_EXAMPLES)
+        self.assertEqual(self.detail(many, "collection-target-chosen")["minimum_examples"], None)
+
+    def test_the_only_size_bound_is_a_ceiling_that_refuses_rather_than_trimming(self):
+        self.resolve(self.record)
+        with mock.patch.object(td, "MAX_DATASET_EXAMPLES", 7):
+            self.assertEqual(self.report()["sufficiency"]["ceiling"], 7)
+        second = _dsnap("T-2", "TypeError: the adapter shape is wrong")
+        self.resolve(second)
+        with mock.patch.object(td, "MAX_DATASET_EXAMPLES", 1):
+            with self.assertRaises(dc.ContractError) as raised:
+                self.export([self.record, second])
+        self.assertEqual(raised.exception.code, "bounds-exceeded")
+        self.assertIn("refused rather than trimmed", str(raised.exception))
+
+    # ---- G. synthetic tests are not training readiness --------------------------------------------
+
+    def test_every_report_carries_the_codes_that_deny_readiness_unconditionally(self):
+        """Three differently-shaped reports -- empty, partial, complete -- carry the SAME codes.
+        A code a branch could drop is not a disclaimer, it is a hope."""
+        self.walked()
+        shapes = {
+            "empty": td.readiness_report([], store_dir=self.store, now=NOW),
+            "no dataset": self.report(),
+            "complete": self.report(dataset=self.export()["manifest"]),
+        }
+        for name, report in shapes.items():
+            with self.subTest(shape=name):
+                self.assertEqual(report["not_established"], list(td.readiness_codes()))
+                self.assertEqual(set(report["not_established_notes"]),
+                                 set(td.readiness_codes()))
+                self.assertIn("synthetic-fixtures-are-not-readiness", report["not_established"])
+                self.assertIn("training-sufficiency-not-established", report["not_established"])
+                self.assertIn("readiness-is-a-report-not-an-authorization",
+                              report["not_established"])
+                self.assertEqual(report["v"], td.READINESS_VERSION)
+                self.assertIn(td.SYNTHETIC_NOTE, report["notes"])
+
+    def test_the_readiness_vocabulary_is_the_union_of_two_owners_and_a_collision_refuses(self):
+        codes = td.readiness_codes()
+        self.assertEqual(set(codes),
+                         set(td.DATASET_NOT_ESTABLISHED) | set(td.READINESS_NOT_ESTABLISHED))
+        self.assertEqual(list(codes), sorted(codes))
+        self.assertEqual(set(td.DATASET_NOT_ESTABLISHED) & set(td.READINESS_NOT_ESTABLISHED),
+                         set())
+        with mock.patch.object(td, "READINESS_NOT_ESTABLISHED",
+                               tuple(td.READINESS_NOT_ESTABLISHED) + ("access-not-enforced",)):
+            with self.assertRaises(dc.ContractError) as raised:
+                td.readiness_codes()
+            self.assertEqual(raised.exception.code, "duplicate-entry")
+        with mock.patch.object(td, "READINESS_NOT_ESTABLISHED_NOTES",
+                               dict(td.READINESS_NOT_ESTABLISHED_NOTES, extra="x")):
+            with self.assertRaises(dc.ContractError) as raised:
+                td.readiness_notes()
+            self.assertEqual(raised.exception.code, "unknown-value")
+
+    def test_the_checkpoint_link_is_names_only_and_a_revocation_can_only_identify_one(self):
+        links = td.checkpoint_links()
+        self.assertEqual(set(links["fields"]), set(td.CHECKPOINT_LINK_FIELDS))
+        self.assertEqual(sorted(set(links["fields"].values())), [None])
+        self.assertEqual(links["exists"], False)
+        self.assertEqual(links["revocation_reach"], td.REVOCATION_REACH["trained-checkpoint"])
+        self.assertEqual(links["revocation_reach"], "identified-only")
+        self.assertEqual(links["unreached"], list(td.REVOCATION_UNREACHED))
+        self.assertIn("never unlearns it", links["note"])
+        with mock.patch.object(td, "REVOCATION_REACH",
+                               {k: v for k, v in td.REVOCATION_REACH.items()
+                                if k != "trained-checkpoint"}):
+            with self.assertRaises(dc.ContractError) as raised:
+                td.checkpoint_links()
+            self.assertEqual(raised.exception.code, "unknown-value")
+
+    # ---- H. the runbook and the gates are one authority --------------------------------------------
+
+    def test_the_runbook_covers_every_gate_exactly_and_refuses_a_gap(self):
+        walk = td.runbook()
+        self.assertEqual(len(walk["steps"]), len(td.READINESS_GATES))
+        self.assertEqual(set(step["gate"] for step in walk["steps"]), set(td.READINESS_GATES))
+        self.assertEqual([step["step"] for step in walk["steps"]],
+                         list(range(1, len(td.READINESS_GATES) + 1)))
+        for step in walk["steps"]:
+            self.assertEqual(step["remedy"], td.GATE_REMEDIES[step["gate"]])
+
+        for name, steps, code in (
+            ("a dropped step", td.RUNBOOK_STEPS[:-1], "unknown-value"),
+            ("a gate nobody declared",
+             td.RUNBOOK_STEPS[:-1] + ({"step": len(td.RUNBOOK_STEPS), "gate": "invented-gate",
+                                       "do": "x", "command": None},), "unknown-value"),
+            ("two steps on one gate",
+             td.RUNBOOK_STEPS[:-1] + (dict(td.RUNBOOK_STEPS[0], step=len(td.RUNBOOK_STEPS)),),
+             "duplicate-entry"),
+            ("misnumbered",
+             tuple(dict(step, step=step["step"] + 1) for step in td.RUNBOOK_STEPS),
+             "value-invalid"),
+        ):
+            with self.subTest(case=name):
+                with mock.patch.object(td, "RUNBOOK_STEPS", steps):
+                    with self.assertRaises(dc.ContractError) as raised:
+                        td.runbook()
+                    self.assertEqual(raised.exception.code, code)
+
+    def test_a_remedy_for_a_gate_nobody_declared_and_a_gate_with_no_remedy_both_refuse(self):
+        self.assertEqual(set(td.readiness_gates()), set(td.READINESS_GATES))
+        for name, table in (
+            ("an extra remedy", dict(td.GATE_REMEDIES, invented="x")),
+            ("a missing remedy", {k: v for k, v in td.GATE_REMEDIES.items()
+                                  if k != "records-intact"}),
+        ):
+            with self.subTest(case=name):
+                with mock.patch.object(td, "GATE_REMEDIES", table):
+                    with self.assertRaises(dc.ContractError) as raised:
+                        td.readiness_gates()
+                    self.assertEqual(raised.exception.code, "unknown-value")
+
+    def test_every_gate_state_is_reached_and_no_report_invents_a_gate_or_a_state(self):
+        """All three states occur across the cases below, and every row of every report names a
+        declared gate with a declared state and the remedy its own table holds."""
+        self.walked()
+        seen = set()
+        for report in (td.readiness_report([], store_dir=self.store, now=NOW),
+                       self.report(),
+                       self.report(dataset=self.export()["manifest"])):
+            self.assertEqual([row["gate"] for row in report["gates"]],
+                             list(td.READINESS_GATES))
+            for row in report["gates"]:
+                self.assertIn(row["state"], td.GATE_STATES)
+                self.assertEqual(row["remedy"], td.GATE_REMEDIES[row["gate"]])
+                seen.add(row["state"])
+            self.assertEqual(sum(report["gate_states"].values()), len(td.READINESS_GATES))
+            self.assertEqual(report["not_ready"],
+                             [row["gate"] for row in report["gates"] if row["state"] != "met"])
+        self.assertEqual(seen, set(td.GATE_STATES))
+
+    def test_the_enabling_steps_are_one_list_read_by_both_the_status_card_and_the_report(self):
+        card = td.status(repo_root=ROOT, env={"POLYTROPOS_DATA_HOME": str(self.tmp / "h")})
+        self.assertEqual(card["to_enable"], list(td.TO_ENABLE))
+        self.assertEqual(td.runbook()["to_enable"], list(td.TO_ENABLE))
+        self.assertEqual(td.readiness_report([], store_dir=self.store, now=NOW)
+                         ["collection"]["to_enable"], list(td.TO_ENABLE))
+        self.assertEqual(len(td.TO_ENABLE), 3)
+
+    # ---- I. nothing downloads, trains, uploads or writes another engine's store --------------------
+
+    def test_a_whole_readiness_run_reaches_no_network_process_or_evaluation_store_writer(self):
+        self.walked()
+        dataset = self.export()
+        with _ArmedSeams(self):
+            report = td.readiness_report([self.record], store_dir=self.store, now=NOW,
+                                         dataset=dataset["manifest"],
+                                         eval_manifest=self.manifest, exposure_dir=self.evals,
+                                         scope=_scope(), enabled=True)
+            walk = td.runbook()
+            links = td.checkpoint_links()
+        self.assertEqual(report["records"]["intact"], 1)
+        self.assertEqual(len(walk["steps"]), len(td.READINESS_GATES))
+        self.assertEqual(links["exists"], False)
+
+    def test_the_armed_trap_still_bites_which_is_the_control_for_the_run_above(self):
+        with _ArmedSeams(self):
+            with self.assertRaises(AssertionError):
+                shutil.which("python3")
+            with self.assertRaises(AssertionError):
+                we.record_exposure(self.evals, self.manifest,
+                                   partition=td.TRAINABLE_PARTITION, items=[], by="x")
+
+    def test_this_section_adds_no_trainer_no_transfer_verb_and_no_new_path_seam(self):
+        source = (BIN_DIR / "training_data.py").read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        names = {node.name for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)}
+        self.assertIn("readiness_report", names)
+        self.assertIn("runbook", names)
+        for verb in ("train", "fine_tune", "finetune", "upload", "download", "post", "send",
+                     "transfer", "publish", "push", "fetch", "checkpoint_write"):
+            self.assertEqual([name for name in names if verb in name], [], verb)
+        imported = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                imported.update(alias.name.split(".")[0] for alias in node.names)
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                imported.add(node.module.split(".")[0])
+        self.assertEqual(imported & {"subprocess", "socket", "urllib", "http", "ftplib",
+                                     "sqlite3", "requests"}, set())
+        self.assertIs(td.COLLECTION_ENABLED, False)
+        self.assertIs(td.CAPTURE_WIRED, False)
+
+    # ---- J. the release gate's own mappings --------------------------------------------------------
+
+    def test_the_readiness_version_is_registered_and_none_of_the_four_already_there_moved(self):
+        rg = _load("release_gate")
+        rows = {(module, attr) for _, module, attr in rg.VERSION_SOURCES}
+        self.assertIn(("training_data", "READINESS_VERSION"), rows)
+        self.assertEqual(len({td.SNAPSHOT_VERSION, td.TAXONOMY_VERSION, td.LIFECYCLE_VERSION,
+                              td.DATASET_VERSION, td.READINESS_VERSION}), 5)
+        self.assertEqual(td.SNAPSHOT_VERSION, "polytropos.training-snapshot/1")
+        self.assertEqual(td.TAXONOMY_VERSION, "polytropos.training-cause-taxonomy/1")
+        self.assertEqual(td.LIFECYCLE_VERSION, "polytropos.training-label-lifecycle/1")
+        self.assertEqual(td.DATASET_VERSION, "polytropos.training-dataset/1")
+        self.assertEqual(td.READINESS_VERSION, "polytropos.training-readiness/1")
+
+    def test_the_release_gate_maps_this_phase_and_every_mapped_id_names_a_real_test(self):
+        rg = _load("release_gate")
+        row = next(c for c in rg.CONTRACTS if c["id"] == "privacy-eligibility")
+        mapped = [tid for tid in row["tests"]["shared"] if tid.startswith("test_training_data.")]
+        self.assertEqual(len(mapped), 5)
+        self.assertIn("test_training_data.ReadinessTests", mapped)
+        resolved = rg.resolve_test_ids(mapped)
+        self.assertEqual(sorted(resolved), sorted(mapped))
+        for tid, count in resolved.items():
+            with self.subTest(tid=tid):
+                self.assertGreater(count, 0, f"{tid} resolves to no test")
+        self.assertGreater(resolved["test_training_data.ReadinessTests"], 10)
+
+    def test_the_gate_can_check_the_commands_the_checklist_names_because_the_parser_is_askable(
+            self):
+        rg = _load("release_gate")
+        self.assertEqual(rg.command_findings(ROOT), [])
+        cited = dict(rg.checklist_commands())
+        self.assertIn("bin/training_data.py", cited)
+        verbs = rg._subcommands(td)
+        self.assertEqual(verbs, {"status", "taxonomy", "readiness", "demo"})
+        for _script, sub in rg.checklist_commands():
+            if _script == "bin/training_data.py" and sub:
+                with self.subTest(sub=sub):
+                    self.assertIn(sub, verbs)
+        for step in td.runbook()["steps"]:
+            if step["command"]:
+                with self.subTest(step=step["step"]):
+                    self.assertIn(step["command"], verbs)
+
+    # ---- K. the document -----------------------------------------------------------------------------
+
+    def test_the_document_exists_names_every_gate_and_states_what_is_not_ready(self):
+        text = _doc_text()
+        self.assertEqual(len(re.findall(r"(?m)^# ", text)), 1)
+        self.assertIn("## What is not ready", text)
+        for gate in td.READINESS_GATES:
+            with self.subTest(gate=gate):
+                self.assertIn(gate, text)
+        for phrase in ("No real decision has ever been captured",
+                       "No real label has been adjudicated",
+                       "No dataset has been built from anything but a fixture",
+                       "No collection target exists",
+                       "No checkpoint exists",
+                       "A green suite is not readiness"):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, text)
+        self.assertIn("COLLECTION_ENABLED", text)
+        self.assertIn("CAPTURE_WIRED", text)
+        self.assertIn("MAX_DATASET_EXAMPLES", text)
+        self.assertIn("export_eligibility", text)
+        self.assertIn("build_dataset", text)
+
+    def test_the_document_makes_no_performance_claim_and_its_one_token_is_a_repository_path(self):
+        """D27's finding, made a test. The checkout's own directory carries a gain-token
+        spelling, so ANY path quoted out of this tree trips the sweep. The document is therefore
+        split: the PROSE is handed to the product's own authority and must pass, and every token
+        in the whole file must sit inside an inline-code span. The control at the end proves the
+        prose sweep bites."""
+        text = _doc_text()
+        prose = _doc_prose(text)
+        we.assert_no_gain_claim(prose, where="the readiness runbook's prose")
+
+        spans = [(m.start(), m.end()) for m in re.finditer(r"`[^`]*`", text)]
+        lowered = text.lower()
+        carriers = set()
+        for token in we.GAIN_TOKENS:
+            for match in re.finditer(re.escape(token), lowered):
+                inside = next((text[a:b] for a, b in spans
+                               if a <= match.start() and match.end() <= b), None)
+                self.assertIsNotNone(
+                    inside, f"{token!r} at {match.start()} is outside every inline-code span")
+                self.assertIn("decision-improvement", inside)
+                carriers.add(token)
+        self.assertEqual(carriers, {"improvement"})
+
+        # THE CONTROL. Without it the split above could be passing because the sweep is inert.
+        with self.assertRaises(we.EvalError):
+            we.assert_no_gain_claim(prose + "\n\nThis shipped a measured improvement.\n",
+                                    where="a doctored copy")
+
+    def test_the_document_and_the_module_do_not_drift_about_the_operators_own_step(self):
+        text = _doc_text()
+        self.assertIn("workflow_eval.record_exposure", text)
+        self.assertIn("exposure-not-recorded-in-the-eval-store", text)
+        self.assertIn("identified-only", text)
+        for code in td.READINESS_NOT_ESTABLISHED:
+            with self.subTest(code=code):
+                self.assertIn(code, text)
+        self.assertEqual(td.READINESS_DOC, "docs/TRAINING-DATA-READINESS.md")
+        self.assertTrue((ROOT / td.READINESS_DOC).is_file())
+        self.assertEqual(td.readiness_report([], store_dir=self.store, now=NOW)["doc"],
+                         td.READINESS_DOC)
+
+    def test_the_document_has_a_deep_dive_mirror_and_the_generators_are_current(self):
+        """Writing into `docs/` is visible to `docs_build`, which globs `docs/*.md`
+        NON-recursively -- unlike D27's file under `docs/ASSESSMENTS/`, which was invisible to
+        it. So the mirror has to exist and the nav has to carry it."""
+        db = _load("docs_build")
+        slug = db.deep_dive_slug(READINESS_DOC_PATH.name)
+        self.assertEqual(slug, "training-data-readiness")
+        mirror = ROOT / "docs-site" / "deep-dives" / f"{slug}.md"
+        self.assertTrue(mirror.is_file(), f"{mirror} is missing; run docs_build.py build")
+        self.assertIn(f"deep-dives/{slug}.md",
+                      (ROOT / "mkdocs.yml").read_text(encoding="utf-8"))
+        self.assertIn("# Training-data collection readiness",
+                      mirror.read_text(encoding="utf-8"))
+
+    # ---- L. the CLI, offline --------------------------------------------------------------------------
+
+    def test_the_readiness_verb_prints_the_gates_and_reads_no_store(self):
+        buffer = io.StringIO()
+        with contextlib.redirect_stdout(buffer):
+            code = td._cli(["readiness", "--json"])
+        self.assertEqual(code, 0)
+        payload = json.loads(buffer.getvalue())
+        self.assertEqual(payload["v"], td.READINESS_VERSION)
+        self.assertEqual(payload["status"]["collection_enabled"], False)
+        self.assertEqual(payload["status"]["capture_wired"], False)
+        self.assertEqual(payload["sufficiency"]["minimum_examples"], None)
+        self.assertEqual(len(payload["runbook"]["steps"]), len(td.READINESS_GATES))
+        self.assertEqual(payload["not_established"], list(td.readiness_codes()))
+        plain = io.StringIO()
+        with contextlib.redirect_stdout(plain):
+            self.assertEqual(td._cli(["readiness"]), 0)
+        self.assertIn("minimum examples   : None", plain.getvalue())
+
+    def test_the_demo_walks_the_readiness_step_and_shows_the_exposure_gate_still_shut(self):
+        before = sorted(p.name for p in Path(tempfile.gettempdir()).glob("training-demo-*"))
+        buffer = io.StringIO()
+        with contextlib.redirect_stdout(buffer):
+            self.assertEqual(td._cli(["demo", "--json"]), 0)
+        steps = {step["step"]: step for step in json.loads(buffer.getvalue())["steps"]}
+        reported = steps["readiness reported"]
+        self.assertIn("exposure-recorded-in-the-eval-store", reported["not_ready"])
+        self.assertIn("capture-wired-to-a-caller", reported["not_ready"])
+        self.assertIn("collection-target-chosen", reported["not_ready"])
+        self.assertEqual(reported["minimum_examples"], None)
+        self.assertEqual(reported["exposure_recorded_here"], False)
+        self.assertEqual(sum(reported["gate_states"].values()), len(td.READINESS_GATES))
         after = sorted(p.name for p in Path(tempfile.gettempdir()).glob("training-demo-*"))
         self.assertEqual(before, after)
