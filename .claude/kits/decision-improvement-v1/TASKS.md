@@ -482,7 +482,7 @@ Read `tasks/kits/decision-improvement/TRAINING-DATA.md`. Collection/export setup
 ### D31 — Decision-time snapshots and training example contracts
 - id: D31
 - title: Decision-time snapshots and training example contracts
-- status: pending
+- status: done
 - model: opus
 - depends: D06, D09, D14
 

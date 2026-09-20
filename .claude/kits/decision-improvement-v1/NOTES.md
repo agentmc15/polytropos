@@ -2715,3 +2715,88 @@ hosts discover what the bundles install (those rows are `unknown` and stay `unkn
 the 3-of-70 fraction is stable, since it was measured on one command path and a verb behind absent
 state may reach further once that state exists.
 outcome: D27 model=opus attempts=1 result=pass review=pending run=2026-09-16-aa6e
+
+## D31 — Decision-time snapshots (opus) — Phase 7 task 1 of 4
+
+`bin/training_data.py` (1430 lines) + 66 tests. 38 mutants, 38 caught, 0 survivors.
+
+**COLLECTION SHIPS OFF, AND I VERIFIED NOTHING WAS COLLECTED.** Three independent locks, all shut:
+`COLLECTION_ENABLED = False`, `CAPTURE_WIRED = False` (different facts, both re-derived at call
+time — `enabled=None` reads the constant INSIDE the body, never as a default-argument value), and
+`collection_scope`'s `eligibility` **defaults to `"unknown"`**, which cannot persist anything. An
+operator must do all three, and flipping the constant alone still collects nothing because there is
+**no call site**. My own check, via `runtime_data.store_path("training", repo_root)`:
+
+    training store path: .../polytropos-decision-improvement-plan-9f697583/training
+    EXISTS: False
+    stores actually present in the per-checkout root: ['journal']   <- pre-existing, not this run
+
+`/training/` is root-anchored at `.gitignore:29` and `git log --all --diff-filter=A -- training/`
+is empty: never tracked.
+
+**THE STORE DECISION IS BETTER REASONED THAN MY BRIEF.** I offered "add a `STORES` row" or "reuse
+an existing store". It rejected reuse **on the invariant's own words — "written by its own engine
+ONLY"** — because `evals` belongs to `workflow_eval` and `prefs` to `copilot_prefs`/`workflow_eval`,
+so a new engine writing into either breaks the one-writer rule D22/D23 respected by staying inside
+the module that already owned their directory. **Registering it properly bought four things I had
+not considered:** `release_gate packaging` now checks its ignore rule (`| training/ | present |` in
+`docs/RELEASE.md`); `tests/test_privacy_layout.py` covers it automatically because that test's list
+IS `STORES`; `runtime_data where/migrate/export/forget` see it; and **materially,
+`decision_context.store_prefixes()` now automatically excludes training snapshots from ever being
+offered as repair context.** An unregistered training store could have been read back into a
+model's context by D16's candidate proposer. **That consequence only appears if you register
+through the authority instead of resolving a path yourself.**
+
+**TWO MUTANTS SURVIVED ITS FIRST BATTERY AND BOTH FOUND REAL GAPS** — it looked for the route
+first, as instructed, and both times there was one:
+1. A zoneless instant was accepted; the entry-level test passed because `_entry`'s placement check
+   catches an unreadable stamp a SECOND time. The uncovered route was **`captured_at`, which has no
+   second line of defence** — it feeds the file name and the expiry date. The new test also asserts
+   the message NAMES the field, so one route cannot be satisfied by the other's refusal.
+2. **A genuinely vacuous test**: `assertRaises(Exception)` on a path that raised earlier for an
+   unrelated reason. It hid that `read_snapshots(store, captured_at)` takes the date RAW, and
+   `safe_parts` refuses `..` and absolute paths but accepts `a/b/c` (creating nested dirs) and a
+   leading dot (a hidden file). Fixed by asserting `SafePathError` specifically and moving the
+   validation ABOVE the `is_dir()` short-circuit, so the argument is wrong whether or not the store
+   exists yet.
+
+**One branch is deliberately unreachable and NAMED rather than shipped as a guard no test reaches**:
+`persist`'s `duplicate-entry` refusal needs a 64-bit digest collision, since `assert_intact` proves
+the id is derived. The test reaches it by patching `_sha` into a colliding hash, and the docstring
+says which of the two refusals actually bites on a tampered store.
+
+**MY BRIEF WAS WRONG AN ELEVENTH TIME.** I said `classify_dispatch` returns six of the seven
+classes. It returns **FIVE** — `infrastructure`, `auth`, `config`, `permission`, `unknown` — plus
+`None` for a zero exit, which is not a class. I had counted `None`. My load-bearing claim (it never
+returns `verification` or `model`) was correct. `NOT_PRODUCED_BY_DISPATCH = ("model",
+"verification")` records it and a test re-derives it TWO ways: by CALLING the function over a
+7-case matrix (observed set == `set(CLASSES) - NOT_PRODUCED_BY_DISPATCH`) and by READING its source
+for those returns — because calling alone would only prove the fixture missed them, and reading
+alone would not prove the other five are reachable.
+
+- **"Not general transcript logging" enforced as ceilings, not prose**: 16 KiB per record, 2000
+  chars per field, at most 8 entries per field. A decision needing more evidence is REFUSED rather
+  than logged.
+- Redaction goes through `bin/redact.py`, reports KIND and COUNT never value, and
+  `REDACTION_LIMIT_NOTE` rides on every record saying shape-matching cannot prove absence. **No
+  sentence anywhere claims no secret can get through.**
+- The taxonomy is pinned by **exact partition** against `attempt_ledger.CLASSES` read at call time,
+  patched BOTH ways in the test; an AST sweep asserts no owner vocabulary is copied in as a
+  constant, with a `> 50` non-vacuity floor.
+- `docs/PRIVACY.md`'s two hand-kept store lists updated in the same edit, both mirrors rebuilt
+  through their generators. It ran `git check-ignore -v` and `git log --diff-filter=A` BEFORE
+  writing the sentence claiming the store never existed, rather than inheriting the older
+  "verified for all eight" wording.
+
+**Production callers: NONE**, and pinned as an exact set — `test_no_production_path_calls_the_
+capture_hook` asserts the modules naming `training_data` are exactly `{release_gate.py}`, which
+reads only two version constants and is asserted to contain no `capture_hook`/`collection_scope`/
+`persist(`/`snapshot(` call. Mutating the `VERSION_SOURCES` rows away trips that exact-set
+assertion, so a second importer cannot appear silently.
+
+**Deliberately D32–D34's, not D31's:** label lifecycle (`attach_label` returns
+`status: "unadjudicated"` and nothing can advance it; `expires_on` is computed and recorded but
+nothing acts on it), export/manifests/grouping/splits, the readiness report, and
+`REVIEW_ONLY_CLASSES` (`missing-context`, `implementation-error`, `multiple-causes`) which are
+asserted unreachable from any operational signal by design.
+outcome: D31 model=opus attempts=1 result=pass review=pending run=2026-09-16-aa6e

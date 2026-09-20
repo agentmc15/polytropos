@@ -131,6 +131,8 @@ Contract versions are read from the module that owns each one; package versions 
 | decision calibration report | `bin/decision_eval.py` | `polytropos.decision-calibration/1` |
 | decision recovery report | `bin/decision_eval.py` | `polytropos.decision-recovery-report/1` |
 | context candidate manifest | `bin/decision_context.py` | `polytropos.context-candidates/1` |
+| training snapshot | `bin/training_data.py` | `polytropos.training-snapshot/1` |
+| training cause taxonomy | `bin/training_data.py` | `polytropos.training-cause-taxonomy/1` |
 | release gate | `bin/release_gate.py` | `polytropos.release-gate/1` |
 
 | Package | Version |
@@ -503,6 +505,7 @@ Every top-level tracked path and its role. `packaging` fails on a path with no r
 | `memory/` | present |
 | `prefs/` | present |
 | `telemetry/` | present |
+| `training/` | present |
 | `trends/` | present |
 
 ### Release checklist

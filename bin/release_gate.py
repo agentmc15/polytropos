@@ -163,6 +163,8 @@ VERSION_SOURCES = (
     ("decision calibration report", "decision_eval", "CALIBRATION_VERSION"),
     ("decision recovery report", "decision_eval", "RECOVERY_REPORT_VERSION"),
     ("context candidate manifest", "decision_context", "CONTEXT_VERSION"),
+    ("training snapshot", "training_data", "SNAPSHOT_VERSION"),
+    ("training cause taxonomy", "training_data", "TAXONOMY_VERSION"),
 )
 
 #: Pricing files, one per harness, never merged. Read for `cached_date` and roster size only.

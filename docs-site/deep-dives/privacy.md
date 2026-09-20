@@ -27,11 +27,16 @@ therefore every kit task's verify command — if any of them ever becomes tracke
 | `benchruns/` | repo-bench runs: sandboxes, verdicts, dollar data |
 | `attempts/` | attempt ledgers (a legacy in-tree location; the default home is outside the tree) |
 | `evals/` | workflow-evaluation runs: trial records, ledgers, sandboxes, dollar data |
+| `training/` | decision-time training snapshots: bounded redacted evidence, source ids, eligibility |
 | `value-report*.html` | generated value reports (dollars, session ids, machine paths) |
 
 Zero files under any of these have ever been committed, verified across the full git
-history (`git log --all --diff-filter=A`) on 2026-07-25 for the first five and again on
-2026-09-13 for all eight. `python3 bin/release_gate.py packaging` re-checks the ignore rules
+history (`git log --all --diff-filter=A`) on 2026-07-25 for the first five, on
+2026-09-13 for the next three, and on 2026-09-19 for `training/` — which returned nothing
+because that store has never existed here: collection is off
+(`bin/training_data.py` ships `COLLECTION_ENABLED = False` and nothing calls its capture
+hook), so a checkout never creates the directory. The rule and the test are in place for the
+day somebody turns it on. `python3 bin/release_gate.py packaging` re-checks the ignore rules
 and the tracked tree on demand.
 
 ## Where runtime data actually lives (since step 13)
@@ -147,7 +152,7 @@ Standing rules this creates:
 
 - **After every version bump / plugin refresh**: delete the personal store directories
   (every name in `runtime_data.STORES` — `journal/`, `prefs/`, `telemetry/`, `memory/`,
-  `trends/`, `benchruns/`, `attempts/`, `evals/` — plus `value-report*.html`) from the fresh
+  `trends/`, `benchruns/`, `attempts/`, `evals/`, `training/` — plus `value-report*.html`) from the fresh
   cache copy, and remove stale version directories. Manual by design — repo code never
   touches `~/.claude`.
 - **Never sync, back up, or share `~/.claude`** without the same scrub; the cache holds
