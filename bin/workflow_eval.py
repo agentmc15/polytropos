@@ -231,6 +231,29 @@ def _dc():
     return _sibling("decision_contract")
 
 
+def _de():
+    """`bin/decision_eval.py`, loaded by the D23 activation gate for its PREDECLARATION
+    VOCABULARY and its own `operator_plan` validator.
+
+    That module owns six of the stop fields a live evaluation must pin and says in its own
+    comment that the other three are "workflow_eval.live_requirements's responsibility, not this
+    module's". Neither half is the whole, and until D23 nothing composed them. The gate reads
+    both owners rather than keeping a seventh list here.
+    """
+    return _sibling("decision_eval")
+
+
+def _dp():
+    """`bin/decision_policy.py`, loaded by the D23 activation reader for its MODE VOCABULARY.
+
+    Which modes a selection can actually run in is that module's to declare -- `SELECTION_MODES`
+    are the two it implements and `DEFERRED_MODES` the two it refuses by name. The pointer
+    reader reads both at call time so a mode this repository cannot act on can never be the
+    mode a pointer resolves a run to.
+    """
+    return _sibling("decision_policy")
+
+
 def _store_default(name):
     rt = _sibling("runtime_data")
     return rt.store_path(name, REPO_ROOT)
@@ -4020,7 +4043,10 @@ def _prefs_paths(prefs_dir):
             # D22's approval records, in the same store under the same caller-named directory.
             # Naming a path creates nothing: a prefs directory that has never had an approval
             # written into it still holds exactly the four files it held before.
-            "approvals": prefs_dir / POLICY_APPROVALS}
+            "approvals": prefs_dir / POLICY_APPROVALS,
+            # D23's activation pointer generations, same store, same writer, same rule: naming
+            # the directory creates nothing, and `runtime_data.STORES` gains no entry.
+            "activation": prefs_dir / POLICY_ACTIVATION}
 
 
 def _journal(paths, kind, **fields):
@@ -5410,6 +5436,1092 @@ def load_approval_case(document, store_dir):
 # END OF THE EXACT APPROVAL SECTION (decision-improvement D22)
 
 
+# =================================================================================================
+# PROTECTED ACTIVATION: THE POINTER, AND WHAT STILL REFUSES TO MINT ONE (decision-improvement D23)
+# =================================================================================================
+#
+# D22 ends at `approved` and says so: "an approval is not an activation. Nothing here writes a
+# runtime pointer, selects a bundle, starts a run or makes anything runnable". This section is
+# that pointer -- the transition a runtime WOULD take from legacy to canary or active -- and the
+# first thing to say about it is that today it refuses, by machine, on evidence, every time.
+#
+# WHY IT REFUSES, AND WHERE THAT IS DECIDED. `CONFINED_DISPATCH_WIRED` is False. This repository
+# has no dispatch path that both confines and is recorded in `bin/attempt_ledger.py` before and
+# after the call, and until one exists there is nothing a protected activation could protect.
+# `promotion_eligibility` already carries that fact as one of its rows; this gate RELAYS that
+# function's rows whole and adds two more, so activation is a superset of promotion eligibility
+# and can never be laxer than it. Nothing here flips the flag, and nothing here can: the gate
+# reads it through D22's own row, and `_unwired_dispatch` re-reads it at call time in the pointer
+# WRITER and again in the pointer READER, so a canary entry is refused when it is written and
+# ignored if it somehow got written anyway.
+#
+# THE FOUR GATES THE TASK NAMES, AND WHERE EACH ONE IS DECIDED.
+#
+#   D07 profile            `exec_policy.certify_profile` over a sentinel report, through D18's
+#                          `_certification_evidence`, relayed from `promotion_eligibility`
+#   current manifest       `verify_manifest` for the document and `require_held_out` for the
+#                          STORE -- `manifest_currency`. `require_held_out` is the controller
+#                          and already consults both; what this adds is D18's two-codes rule,
+#                          asking the document question first so a forged manifest is reported
+#                          as a forgery rather than as one entry in a list of blockers
+#   D19 endpoint/margins/  `OPERATOR_DECLARATIONS` (seven, D18's) UNION
+#   caps/stops             `decision_eval.RECOVERY_REPORT_DECLARATIONS` (six, D19's), plus
+#                          `decision_eval.operator_plan`'s own validation of its six --
+#                          `trial_plan_completeness`. Neither owner covers the other: D19's own
+#                          comment names `primary_endpoint`, `sample_size` and
+#                          `independent_evaluation` as "workflow_eval.live_requirements's
+#                          responsibility, not this module's". That is the F4 shape D19's own
+#                          comment names -- two halves, each correct about itself, each phrased
+#                          as though it were the whole -- and this is where the two are composed
+#   D22 approval           `promotion_eligibility`'s own exact-approval row, which re-derives
+#                          all four bindings through `approval_holds` when a case is supplied
+#
+# EACH OF THOSE IS REACHABLE ON ITS OWN. A gate that could only ever fire while another was
+# already firing has never been shown to do anything, so `activation_decision` evaluates every
+# row EAGERLY and reports the blocker SET. The eager choice is deliberate and is D22's, not
+# D21's: D21 needed lazy guards because one of them raised about a value another had already
+# refused, and every gate here is TOTAL over what it is handed -- `manifest_currency` answers
+# for a missing store and a missing manifest rather than raising about them,
+# `trial_plan_completeness` catches the contract's refusal and reports it, and the relay works
+# over a verdict that has already been computed. A caller who is told only the first thing wrong
+# fixes it and comes back for the next one.
+#
+# THE FIFTH ROW IS UNCONDITIONAL AND IS THE POINT. With all four gates satisfied over synthetic
+# fixtures, `permitted` is still False and `blockers` is exactly `['confining-dispatch-unwired']`.
+# That is this section's positive control: it proves the four gates are individually satisfiable
+# -- so each single-gate refusal below is a real refusal and not an artefact of everything being
+# broken -- and it proves the transition still refuses. A fixture that makes a gate pass proves
+# the gate READS what it claims to read. It certifies no host, no isolation and no model.
+#
+# THE POINTER, AND WHY IT IS COMPARE-AND-SWAP. A lost update here is a silent wrong-policy
+# activation, so there is no read-modify-write anywhere in this section. Each generation is its
+# own immutable file, `gen-000001.json` upward, created with `safe_paths.confined_create_bytes`
+# -- `O_EXCL`, where "is this name free" and "write these bytes" are one kernel operation.
+# `swap_activation(expected=N)` writes `gen-(N+1)` and does NOT re-read the directory first:
+# the only check is the create, so a stale expectation fails on the kernel's answer rather than
+# on a comparison with its own window. Two writers that both read generation 4 both try
+# `gen-000005`; exactly one gets it and the other raises `ActivationConflict`. Nothing is ever
+# rewritten and nothing is ever deleted, which is also why a rollback destroys no evidence.
+#
+# WHAT A POINTER IS NOT. It is not authority. A process that can write the prefs directory can
+# write a file in it, and no hash, digest or gate block stored inside that file changes that --
+# the same thing D22 said about binding four digests, one layer out. What the writer and the
+# reader BOTH do is re-derive the one row that can be re-derived here and now, so the state this
+# repository is actually in beats whatever a stored block claims about it. The residual is
+# carried as unconditional machine-readable codes in `ACTIVATION_UNPROVEN`, never as prose a
+# reader has to notice.
+#
+# WHAT RUNS TODAY, AND WHAT THE ABSENCE OF A POINTER MEANS. No pointer -> legacy. Not an error,
+# not a default activation, not a degraded mode: the behaviour that was there before any of this
+# existed, which is the default everywhere. An unreadable pointer, a retired one, a rolled-back
+# one, one whose eligibility a run falls outside of, and one whose gate block claims the unwired
+# row: all legacy too. Every path out of `runtime_activation` that is not a live running state
+# is legacy, and `RUNTIME_REASONS` says which one it was.
+#
+# OLD PREFERENCES STILL DO NOTHING. `routing-policy.json` is untouched by this section and stays
+# pull-only. Nothing here opens it: `read_policy` and `policy_report` in the D20 section above
+# are what read one, and `decision_policy.describe_legacy_preferences` is what reads one for
+# what it IS. No function anywhere turns a preference file into a policy bundle, and a pointer
+# store existing beside it changes none of that.
+
+#: The version of a pointer entry. Registered in `release_gate.VERSION_SOURCES`. On the
+#: REFERENCED OBJECT, like `POLICY_REFS_VERSION` and `APPROVAL_VERSION` before it: no existing
+#: version is bumped, because raising one would make every stored record unreadable rather than
+#: migrating it.
+ACTIVATION_VERSION = "polytropos.policy-activation/1"
+
+#: Where pointer generations live under the prefs directory the caller names. Beside the
+#: proposals and the approvals, in the same store, written by the same module. `runtime_data`
+#: gains nothing and `.gitignore` gains nothing -- a new store would be an architect's decision
+#: and this is not one.
+POLICY_ACTIVATION = "routing-policy.activation"
+
+#: The four runtime states D22's lifecycle deliberately stops short of. `canary` and `active`
+#: change what a run does; `retired` and `rolled-back` are how a scope leaves them, and both
+#: read as legacy for every run that starts afterwards.
+ACTIVATION_STATES = ("canary", "active", "retired", "rolled-back")
+
+#: The states that change what a run does. Only these need a gate, and only these may carry a
+#: bundle a run pins. The other two move a runtime AWAY from a bundle, which never needs
+#: permission -- refusing a rollback because some evidence went stale is how a bad activation
+#: gets stuck in place.
+RUNNING_STATES = ("canary", "active")
+
+#: The requirements this section decides for itself. Everything else on an activation verdict is
+#: `promotion_eligibility`'s, relayed whole and never renamed; a relayed row that arrived
+#: carrying one of these names would mean two owners for one requirement and is refused.
+ACTIVATION_OWN_REQUIREMENTS = ("current-evaluation-manifest", "predeclared-trial-plan")
+
+#: The blocker codes those two rows emit. The relayed rows keep the codes their own owner gave
+#: them -- `protected-profile-uncertified`, `confining-dispatch-unwired` and
+#: `exact-approval-missing` are `PROTOCOL_BLOCKERS`' and `promotion_eligibility`'s, not copies
+#: here -- so there is nothing in this tuple to drift away from another owner's vocabulary.
+ACTIVATION_BLOCKERS = ("evaluation-manifest-not-current", "trial-plan-incomplete")
+
+#: The keys this section reads off every relayed requirement row. A row missing one of them is
+#: REFUSED rather than relayed with a hole in it: `read_ref` drops an unknown key and D20's
+#: relay refuses one, for the reason that applies here too -- a verdict that claims to carry
+#: what it dropped is worse than no verdict.
+RELAYED_ROW_KEYS = ("requirement", "satisfied", "reason", "blocker", "re_derived_by")
+
+#: What no pointer written or read here establishes, however many gates passed. Machine-readable,
+#: closed and UNCONDITIONAL: nothing in this section can discharge any of them, so none is ever
+#: left off a record on the strength of some other check passing.
+ACTIVATION_UNPROVEN = ("pointer-store-not-authenticated", "gate-block-not-re-derived-in-full",
+                       "fixture-proves-mechanics-not-safety")
+
+ACTIVATION_UNPROVEN_NOTES = {
+    "pointer-store-not-authenticated":
+        "a process that can write the prefs directory can write a file in it. The generation "
+        "files are create-once and 0600, which stops a lost update and a careless overwrite; "
+        "neither is authentication, and nothing here asks who wrote a byte",
+    "gate-block-not-re-derived-in-full":
+        "a stored entry carries the gate verdict it was minted with. The writer and the reader "
+        "both re-derive the ONE row that can be answered here and now -- whether this "
+        "repository has a confining, ledgered dispatch path -- and refuse an entry that "
+        "disagrees with it. The other rows are read, not re-run: re-deriving them would need "
+        "the manifest, the store, the sentinel report and the approval case the decision was "
+        "taken over, none of which a pointer holds",
+    "fixture-proves-mechanics-not-safety":
+        "every gate in this section can be made to pass by a synthetic fixture, and the tests "
+        "do exactly that to prove each gate is individually reachable. A passing fixture shows "
+        "that a gate READS what it claims to read. It certifies no host's isolation, no live "
+        "deployment and no model's quality, and a fixture that made every gate pass would still "
+        "leave this transition refused",
+}
+
+#: What a canary must be watched for while it is in force. Inputs a monitor observes, declared
+#: on the entry so a reader can see what was promised; nothing in this section monitors
+#: anything, samples anything or triggers anything. The list is the shared plan's own sentence
+#: about canaries, in codes rather than prose.
+ACTIVATION_MONITORS = ("accepted-completion", "delayed-defects", "censoring",
+                       "operator-interventions", "resource-basis", "invalid-rate",
+                       "abstain-rate", "provider-version-drift")
+
+#: The bounds a running entry must declare. `cohort` may be empty, which means "the whole of the
+#: eligible task classes"; `task_classes` may not, and `max_runs` must be a positive count --
+#: an unbounded canary is not a canary.
+ELIGIBILITY_KEYS = ("task_classes", "cohort", "max_runs")
+
+#: What a run STARTING NOW must be able to say about itself before an eligibility limit can be
+#: checked against it. `None` refuses, for `COORDINATOR_CHECKS`' reason: an unmade check is not
+#: a passed one.
+RUNTIME_FACT_KEYS = ("task_class", "item", "runs_so_far")
+
+#: Every reason `runtime_activation` gives for the mode it resolved. Closed, so a report counts
+#: them and a caller branches on them. All but `pinned` end at legacy.
+RUNTIME_REASONS = ("no-pointer", "pointer-unreadable", "pointer-retired", "pointer-rolled-back",
+                   "confining-dispatch-unwired", "eligibility-unestablished",
+                   "outside-eligible-cohort", "eligibility-limit-reached", "pinned")
+
+#: The keys a stored entry carries. Closed in both directions, like every other stored shape
+#: here: an unknown key is refused rather than ignored, and a missing one refused rather than
+#: filled in.
+ACTIVATION_ENTRY_KEYS = ("v", "id", "state", "scope", "scope_key", "bundle_ref", "approval",
+                         "candidate", "manifest", "partition", "eligibility", "monitors",
+                         "gate", "fallback", "previous", "by", "at", "reason", "unproven",
+                         "labels")
+
+POINTER_NOT_AUTHORITY_LABEL = (
+    "a runtime pointer is INTEGRITY and not AUTHORITY. Create-once generation files stop a lost "
+    "update, a silent overwrite and a rewritten history; they establish nothing about who wrote "
+    "one. Anyone who can write the prefs directory can write a pointer, exactly as anyone who "
+    "can type a second name can defeat the self-approval check one layer up -- authority would "
+    "have to be protected at the execution boundary, which this module does not provide and "
+    "does not claim")
+
+ACTIVATION_REFUSED_TODAY_LABEL = (
+    "this transition refuses today and the refusal is machine-derived, not a policy somebody "
+    "remembered: workflow_eval.CONFINED_DISPATCH_WIRED is False, so promotion_eligibility's own "
+    "dispatch row is unsatisfied, so the activation gate -- which relays that row whole and adds "
+    "two of its own -- can never be permitted. Making it permitted would take an edit to that "
+    "constant, in the same change that wires a dispatch path which both confines and is "
+    "ledgered, which is exactly where such an edit should have to be visible")
+
+ABSENT_POINTER_IS_LEGACY_LABEL = (
+    "no pointer means LEGACY: the behaviour that was there before any of this existed. It is "
+    "not an error, not a default activation and not a degraded mode. An unreadable pointer, a "
+    "retired one, a rolled-back one and one whose eligibility this run falls outside of all "
+    "read the same way, and the reason code says which")
+
+ROLLBACK_SCOPE_LABEL = (
+    "a rollback moves FUTURE runs off a bundle. It contacts no provider, resets no user "
+    "workspace, deletes no generation, erases no evidence, reverses no external effect and "
+    "refunds no call -- every generation ever written stays on disk and stays readable. Runs "
+    "already in flight keep the pin they started with; there is no path by which one picks this "
+    "up mid-run")
+
+ROLLBACK_TARGET_NOT_ACTIVATED_LABEL = (
+    "the fallback a rollback names is the one decision_policy.resolve_bundle chose over the "
+    "runtime's own facts, and recording it is not activating it: a rolled-back pointer resolves "
+    "every future run to legacy, and promoting that fallback into a running state would need "
+    "its own pass through this gate. Naming a target is not taking it")
+
+OLD_PREFERENCES_UNCHANGED_LABEL = (
+    "routing-policy.json remains pull-only and this section never opens it. There is no "
+    "function here that reads an applied preference file, and none that turns one into a policy "
+    "bundle; an existing preference file does not become executable policy because an "
+    "activation pointer now exists beside it")
+
+
+class ActivationConflict(EvalError):
+    """A compare-and-swap that lost: the generation this caller expected to extend already has a
+    successor. The loser is told which generation took the name and writes nothing."""
+
+
+# ---- the two gates this section decides for itself ---------------------------------------------
+
+def manifest_currency(store_dir, manifest, partition, *, tasks=None, acceptance=None):
+    """Is the grouped/exposure manifest still the one an approval could be acted on? -> a row.
+
+    TWO OWNERS, BOTH CONSULTED, NEITHER RE-IMPLEMENTED.
+
+      * `verify_manifest` answers for the DOCUMENT: the digest it is filed under, membership,
+        orphans, leaking items sitting in a real partition, and grouping -- a defect's variants
+        split across partitions means a held-out result over any of them was already seen
+        through the others.
+      * `require_held_out` answers for the STORE: exposure, retirement, single-use and
+        calibration fits. `MANIFEST_VERIFICATION_NOTE` has said since D18 that "verifying a
+        manifest is not the same as a partition still being unspent".
+
+    WHY `verify_manifest` IS CALLED HERE WHEN `require_held_out` ALREADY CALLS IT. It does --
+    that function is the controller and it consults both -- but it MERGES what it found into one
+    blocker sentence. D18's own rule is that `manifest-unverified` and `no-held-out-evidence`
+    are "deliberately TWO codes and never one": a document that does not match its own digest is
+    a forgery finding and nothing may be read out of it, while a partition that has simply been
+    looked at is an honest document that is spent. This asks the document question FIRST so the
+    reason a reader gets says which of the two it was, and returns before the store is consulted
+    at all when the answer is the first one. Neither check is re-implemented here.
+
+    TOTAL, by construction. A missing manifest, a missing store directory and a partition name
+    that is not one all come back as an unsatisfied row rather than an exception, which is what
+    lets `activation_decision` evaluate every gate eagerly and hand the caller the whole reason.
+    A store directory of None does NOT skip the second half: it fails it, because an unmade
+    check is not a passed one and half of this gate passing is the exact shape this kit keeps
+    finding.
+    """
+    evidence = {"manifest": None, "partition": partition, "findings": [], "held_out": None,
+                "store": None if store_dir is None else str(store_dir)}
+    if not isinstance(manifest, dict):
+        return _activation_row(
+            "current-evaluation-manifest", False,
+            f"no evaluation manifest was supplied (got {type(manifest).__name__}), so neither "
+            f"its structure nor the store's record of it could be consulted",
+            evidence)
+    evidence["manifest"] = manifest.get("id")
+    findings = verify_manifest(manifest, tasks=tasks, acceptance=acceptance)
+    evidence["findings"] = [{"kind": f.get("kind"), "detail": f.get("detail")} for f in findings]
+    if findings:
+        kinds = ", ".join(sorted({str(f.get("kind")) for f in findings}))
+        return _activation_row(
+            "current-evaluation-manifest", False,
+            f"workflow_eval.verify_manifest returned {len(findings)} finding(s) over this "
+            f"manifest ({kinds}), so nothing may be read out of it as a cohort: the document is "
+            f"not the one it claims to be",
+            evidence)
+    if store_dir is None:
+        return _activation_row(
+            "current-evaluation-manifest", False,
+            "the manifest verifies as a document and NO store was supplied, so exposure, "
+            "retirement, single-use and calibration fits were never consulted. Verifying a "
+            "manifest is not the same as its partition still being unspent, and an unmade check "
+            "is not a passed one",
+            evidence)
+    try:
+        usable = require_held_out(store_dir, manifest, partition, tasks=tasks,
+                                  acceptance=acceptance)
+    except EvalError as exc:
+        return _activation_row(
+            "current-evaluation-manifest", False,
+            f"workflow_eval.require_held_out refused the {partition!r} partition against the "
+            f"store: {exc}", evidence)
+    evidence["held_out"] = len(usable)
+    if not usable:
+        return _activation_row(
+            "current-evaluation-manifest", False,
+            f"the {partition!r} partition has no usable held-out item left in the store; an "
+            f"empty cohort is not evidence", evidence)
+    return _activation_row("current-evaluation-manifest", True, None, evidence)
+
+
+def trial_plan_completeness(declarations):
+    """Every predeclared endpoint, margin, cap and stop a live transition needs -> a row.
+
+    THE UNION OF TWO OWNERS, READ FROM BOTH AT CALL TIME. `OPERATOR_DECLARATIONS` is D18's seven
+    per-arm predeclarations; `decision_eval.RECOVERY_REPORT_DECLARATIONS` is D19's six
+    per-evaluation ones. They share four names by design, and D19's own comment names the other
+    three -- `primary_endpoint`, `sample_size`, `independent_evaluation` -- as
+    "workflow_eval.live_requirements's responsibility, not this module's". Two halves, each
+    correct about itself, each phrased as though it were the whole, and nothing composing them
+    -- the F4 shape D19's own comment names and leaves open. The required set here is the
+    UNION, and there is no list of field names in this function to drift from either owner.
+
+    `decision_eval.operator_plan` is then run over the declarations, because the owner of a
+    field owns what a valid value for it is: an `independent_label_source` outside its own
+    `LABEL_SOURCES`, or an `observation_window` that names no instant, are refusals this
+    function would not otherwise catch and does not re-implement.
+
+    TOTAL: the contract's refusal is caught and reported as an unsatisfied row, never raised.
+    """
+    de = _de()
+    required = tuple(sorted(set(OPERATOR_DECLARATIONS) | set(de.RECOVERY_REPORT_DECLARATIONS)))
+    evidence = {"required": list(required),
+                "from_trial_protocol": list(OPERATOR_DECLARATIONS),
+                "from_recovery_report": list(de.RECOVERY_REPORT_DECLARATIONS),
+                "missing": [], "plan": None}
+    if not isinstance(declarations, dict):
+        evidence["missing"] = list(required)
+        return _activation_row(
+            "predeclared-trial-plan", False,
+            f"no operator declarations were supplied (got {type(declarations).__name__}); all "
+            f"{len(required)} predeclared field(s) are undeclared", evidence)
+    missing = [name for name in required if declarations.get(name) in (None, "", [], {})]
+    evidence["missing"] = missing
+    if missing:
+        return _activation_row(
+            "predeclared-trial-plan", False,
+            f"undeclared: {', '.join(missing)}. {NO_INVENTED_NUMBER_LABEL}", evidence)
+    try:
+        plan = de.operator_plan(declarations)
+    except (ValueError, TypeError, KeyError, AttributeError) as exc:
+        # `ContractError` is a `ValueError`, and naming its class here by identity would not
+        # work anyway: `bin/` is not a package, so decision_eval's contract instance is a
+        # different class object from this module's -- the loader defect this kit has already
+        # been bitten by. Caught by BASE class rather than re-raised, because a gate that
+        # raised here would abandon the other rows the caller is owed.
+        return _activation_row(
+            "predeclared-trial-plan", False,
+            f"decision_eval.operator_plan refused these declarations: {exc}", evidence)
+    evidence["plan"] = {"status": plan.get("status"),
+                        "own_declarations_complete": plan.get("own_declarations_complete"),
+                        "not_covered": list((plan.get("not_covered") or {}).get("fields") or ())}
+    if not plan.get("own_declarations_complete"):
+        return _activation_row(
+            "predeclared-trial-plan", False,
+            f"decision_eval.operator_plan reports {plan.get('status')!r} over its own six "
+            f"fields: {', '.join(plan.get('missing') or ())}", evidence)
+    return _activation_row("predeclared-trial-plan", True, None, evidence)
+
+
+def _activation_row(requirement, satisfied, reason, evidence):
+    """One row this section decided, in the same shape `promotion_eligibility` produces so a
+    caller cannot tell a relayed row from a local one by its shape -- only by `owner`."""
+    blocker = None
+    if not satisfied:
+        blocker = ("evaluation-manifest-not-current"
+                   if requirement == "current-evaluation-manifest" else "trial-plan-incomplete")
+    if blocker is not None and blocker not in ACTIVATION_BLOCKERS:  # pragma: no cover
+        raise EvalError(f"blocker {blocker!r} is outside ACTIVATION_BLOCKERS")
+    owners = {
+        "current-evaluation-manifest":
+            ("workflow_eval.verify_manifest for the document; workflow_eval.require_held_out "
+             "against the store (D06)"),
+        "predeclared-trial-plan":
+            ("the operator, never this module -- checked against workflow_eval."
+             "OPERATOR_DECLARATIONS and decision_eval.RECOVERY_REPORT_DECLARATIONS together, "
+             "and validated by decision_eval.operator_plan (D18/D19)"),
+    }
+    derived = {
+        "current-evaluation-manifest": "workflow_eval.manifest_currency",
+        "predeclared-trial-plan": "workflow_eval.trial_plan_completeness",
+    }
+    return {"requirement": requirement, "owner": owners[requirement], "satisfied": bool(satisfied),
+            "reason": reason, "evidence": evidence, "blocker": blocker,
+            "re_derived_by": derived[requirement], "relayed_from": None,
+            "note": (MANIFEST_VERIFICATION_NOTE if requirement == "current-evaluation-manifest"
+                     else ACTIVATION_UNPROVEN_NOTES["fixture-proves-mechanics-not-safety"])}
+
+
+# ---- the relay: promotion eligibility's rows, whole, or not at all ------------------------------
+
+def _relayed_rows(verdict, where):
+    """`promotion_eligibility`'s requirement rows, relayed whole -> a list. Refuses.
+
+    CLOSURE IN BOTH DIRECTIONS, which is the whole reason this is a function.
+
+      * A row missing any of `RELAYED_ROW_KEYS` is refused, not padded: a verdict that claimed
+        to carry a requirement whose `satisfied` it never read would be strictly worse than no
+        verdict at all.
+      * A row whose `requirement` is one of `ACTIVATION_OWN_REQUIREMENTS` is refused: two
+        owners for one requirement name is a collision a reader cannot untangle.
+      * An empty row list is refused. A gate assembled out of nothing is not a gate, and an
+        upstream function that stopped returning rows must fail loudly here rather than make
+        this one vacuously permissive.
+
+    And -- the direction that matters for a gate -- a requirement ADDED upstream arrives here
+    automatically and is conjoined automatically. That fails closed, which is the same reason
+    `decision_policy.denial_reasons` derives its hard filters by subtraction.
+    """
+    rows = (verdict or {}).get("requirements")
+    if not isinstance(rows, list) or not rows:
+        raise EvalError(
+            f"{where} produced no requirement rows; an activation gate assembled out of nothing "
+            f"would be permitted by default, which is the opposite of what it is for")
+    out = []
+    for index, row in enumerate(rows):
+        if not isinstance(row, dict):
+            raise EvalError(f"{where} row {index} is a {type(row).__name__}, not a requirement")
+        missing = sorted(set(RELAYED_ROW_KEYS) - set(row))
+        if missing:
+            raise EvalError(
+                f"{where} row {index} ({row.get('requirement')!r}) is missing "
+                f"{', '.join(repr(m) for m in missing)}; a requirement row is relayed whole or "
+                f"not at all, and one relayed without its verdict would claim to carry what it "
+                f"dropped")
+        name = row["requirement"]
+        if name in ACTIVATION_OWN_REQUIREMENTS:
+            raise EvalError(
+                f"{where} carries a {name!r} row, which is also a requirement this section "
+                f"decides; one requirement has one owner, and two rows under one name is a "
+                f"collision a reader cannot untangle")
+        relayed = dict(row)
+        relayed["relayed_from"] = where
+        out.append(relayed)
+    return out
+
+
+def _unwired_dispatch(gate, where):
+    """The one row of a STORED gate block that is re-derivable here and now -> reason or None.
+
+    `CONFINED_DISPATCH_WIRED` is read at call time, never copied into a literal, and this is
+    called by the pointer WRITER before anything is created and by the pointer READER before a
+    stored entry resolves a run to anything. So a gate block claiming a satisfied dispatch row
+    while this repository has no confining, ledgered dispatch path is refused at the write and
+    ignored at the read -- the state the repository is actually in beats what a stored document
+    says about it.
+
+    The other rows are NOT re-derived: doing that would need the manifest, the store, the
+    sentinel report and the approval case the decision was taken over, none of which a pointer
+    holds. `gate-block-not-re-derived-in-full` is that limit, carried on every record.
+    """
+    if CONFINED_DISPATCH_WIRED:
+        return None
+    if not isinstance(gate, dict):
+        return (f"{where} carries no gate verdict at all, and a running state needs one that "
+                f"was permitted")
+    if gate.get("permitted") is not True:
+        return (f"{where} carries a gate verdict with permitted={gate.get('permitted')!r}; only "
+                f"a permitted gate mints a running pointer")
+    return (f"{where} claims a permitted gate while workflow_eval.CONFINED_DISPATCH_WIRED is "
+            f"False: this repository has no dispatch path that both confines and is recorded in "
+            f"bin/attempt_ledger.py before and after the call, so no verdict stored in a file "
+            f"can make this transition permitted. {ACTIVATION_REFUSED_TODAY_LABEL}")
+
+
+def activation_decision(approval, *, case=None, target_state="canary", sentinel_report=None,
+                        store_dir=None, manifest=None, partition=None, declarations=None,
+                        tasks=None, acceptance=None):
+    """Would this runtime be permitted to move to `target_state`? -> rows, blockers, a verdict.
+
+    It READS -- `require_held_out` opens the evals store's exposure log, which is the whole
+    point of the manifest gate -- and it writes nothing, creates nothing, starts nothing,
+    dispatches nothing and mints nothing. `activation_entry` is the only function that turns a
+    permitted verdict into a pointer entry, and it refuses an unpermitted one.
+
+    EVERY ROW IS EVALUATED. See the section note: the four gates the task names must each be
+    reachable with the other three satisfied, so the caller gets the blocker SET rather than the
+    first thing that happened to be wrong. Every gate here is total over what it is handed.
+
+    `permitted` is the conjunction of every row, relayed and local alike. While
+    `CONFINED_DISPATCH_WIRED` is False, `promotion_eligibility`'s own dispatch row is
+    unsatisfied, so this is False by construction -- and that is the correct answer, not a gap.
+    """
+    if target_state not in RUNNING_STATES:
+        raise EvalError(
+            f"{target_state!r} is not a state a runtime is ACTIVATED into; the two are "
+            f"{', '.join(RUNNING_STATES)}. Retiring or rolling back is a different transition "
+            f"with a different function, and it needs no gate: moving away from a bundle is "
+            f"never the thing permission protects")
+    verdict = promotion_eligibility(approval, case=case, sentinel_report=sentinel_report)
+    rows = _relayed_rows(verdict, "workflow_eval.promotion_eligibility")
+    rows.append(manifest_currency(store_dir, manifest, partition, tasks=tasks,
+                                 acceptance=acceptance))
+    rows.append(trial_plan_completeness(declarations))
+    blockers = sorted({row["blocker"] for row in rows
+                       if not row["satisfied"] and row["blocker"]})
+    permitted = all(row["satisfied"] for row in rows)
+    at = _now()
+    decision = {
+        "v": ACTIVATION_VERSION,
+        "target_state": target_state,
+        "permitted": permitted,
+        "requirements": rows,
+        "blockers": blockers,
+        "approval": (approval or {}).get("id"),
+        "candidate": (approval or {}).get("candidate"),
+        "manifest": manifest.get("id") if isinstance(manifest, dict) else None,
+        "partition": partition,
+        "at": at,
+        "promotion_eligible": bool(verdict.get("eligible")),
+        "unproven": list(ACTIVATION_UNPROVEN),
+        "labels": [ACTIVATION_REFUSED_TODAY_LABEL, POINTER_NOT_AUTHORITY_LABEL,
+                   APPROVAL_NOT_ACTIVATION_LABEL, NOT_ENFORCEMENT_LABEL,
+                   OLD_PREFERENCES_UNCHANGED_LABEL],
+    }
+    # The gate's own content identity, so a stored entry names the verdict it was minted with
+    # and a reader can tell two verdicts apart. Provenance (`at`) stays outside it, D06's rule.
+    decision["sha"] = _sha(_canonical({
+        "target_state": target_state, "permitted": permitted, "blockers": blockers,
+        "rows": [{k: row.get(k) for k in ("requirement", "satisfied", "blocker")}
+                 for row in rows]}))
+    return decision
+
+
+# ---- the entries a pointer generation may hold --------------------------------------------------
+
+def scope_key(scope):
+    """One activation scope -> the safe filename component its generations live under.
+
+    A DIGEST of the canonical scope rather than a rendering of it. A project path and a task
+    class are user text, and text that becomes a filename is text that can name a path;
+    `safe_paths.validate_id` then checks the result anyway, which is the belt this braces.
+    """
+    if not isinstance(scope, dict) or not scope:
+        raise EvalError("an activation scope is a non-empty object -- the candidate's own "
+                        "scope, as decision_contract parsed it")
+    return _sp().validate_id(f"scope-{_sha(_canonical(scope))[:16]}", "activation scope")
+
+
+def _eligibility(value):
+    """The bounds a running entry declares, or `EvalError`. A canary is a BOUNDED cohort, so an
+    absent bound is refused rather than read as `no limit`."""
+    if not isinstance(value, dict):
+        raise EvalError(f"eligibility is an object with {', '.join(ELIGIBILITY_KEYS)}, not a "
+                        f"{type(value).__name__}")
+    unknown = sorted(set(value) - set(ELIGIBILITY_KEYS))
+    missing = sorted(set(ELIGIBILITY_KEYS) - set(value))
+    if unknown or missing:
+        raise EvalError(
+            "eligibility carries " + "; ".join(part for part in (
+                f"unknown key(s) {', '.join(repr(k) for k in unknown)}" if unknown else "",
+                f"no {', '.join(repr(k) for k in missing)}" if missing else "") if part)
+            + f"; the keys are {', '.join(ELIGIBILITY_KEYS)}")
+    classes = value["task_classes"]
+    if not isinstance(classes, (list, tuple)) or not classes or \
+            not all(isinstance(c, str) and c for c in classes):
+        raise EvalError("eligibility.task_classes is a non-empty list of task class names; a "
+                        "canary with no declared cohort is not a bounded one")
+    cohort = value["cohort"]
+    if not isinstance(cohort, (list, tuple)) or not all(isinstance(c, str) and c for c in cohort):
+        raise EvalError("eligibility.cohort is a list of item ids, empty for `every item of the "
+                        "declared task classes`")
+    runs = value["max_runs"]
+    if not isinstance(runs, int) or isinstance(runs, bool) or runs < 1:
+        raise EvalError("eligibility.max_runs is a positive count; an unbounded canary is not a "
+                        "canary")
+    return {"task_classes": sorted(set(classes)), "cohort": sorted(set(cohort)),
+            "max_runs": runs}
+
+
+def _monitors(value):
+    """The monitoring inputs a running entry declares, checked against `ACTIVATION_MONITORS`."""
+    if not isinstance(value, (list, tuple)) or not value:
+        raise EvalError(f"monitors is a non-empty list drawn from "
+                        f"{', '.join(ACTIVATION_MONITORS)}; a canary nobody watches is not one")
+    unknown = sorted(set(value) - set(ACTIVATION_MONITORS))
+    if unknown:
+        raise EvalError(f"monitor input(s) {', '.join(repr(u) for u in unknown)} are outside "
+                        f"ACTIVATION_MONITORS ({', '.join(ACTIVATION_MONITORS)})")
+    return sorted(set(value))
+
+
+def _entry(state, *, scope, by, reason, bundle_ref=None, gate=None, fallback=None,
+           eligibility=None, monitors=None, approval=None, candidate=None, manifest=None,
+           partition=None, now=None):
+    at = now or _now()
+    key = scope_key(scope)
+    entry = {
+        "v": ACTIVATION_VERSION, "id": "", "state": state, "scope": _frozen(scope),
+        "scope_key": key, "bundle_ref": bundle_ref, "approval": approval,
+        "candidate": candidate, "manifest": manifest, "partition": partition,
+        "eligibility": eligibility, "monitors": monitors, "gate": gate, "fallback": fallback,
+        "previous": None, "by": by, "at": at,
+        "reason": _rd().redact(reason or "")["text"],
+        "unproven": list(ACTIVATION_UNPROVEN),
+        "labels": [POINTER_NOT_AUTHORITY_LABEL, ABSENT_POINTER_IS_LEGACY_LABEL,
+                   OLD_PREFERENCES_UNCHANGED_LABEL],
+    }
+    entry["id"] = f"act-{str(at)[:10]}-{_sha(_canonical(dict(entry, id='')))[:6]}"
+    return entry
+
+
+def activation_entry(decision, *, scope, bundle_ref, eligibility, monitors, by, now=None):
+    """Mint the pointer entry a permitted gate would produce -> an entry. RAISES otherwise.
+
+    THE ONE PLACE A RUNNING POINTER IS MADE, and it refuses an unpermitted verdict before it
+    looks at anything else. There is no keyword here through which a caller could assert
+    permission: `decision` is `activation_decision`'s own output, and `_unwired_dispatch` then
+    re-derives the one row that can be re-derived, so a hand-built verdict with
+    `permitted: True` is refused too while `CONFINED_DISPATCH_WIRED` is False.
+
+    Today this function cannot return. That is the task's whole point, and it is enforced here
+    rather than merely documented: there is no argument anybody can pass that gets past it.
+    """
+    if not isinstance(decision, dict) or decision.get("v") != ACTIVATION_VERSION:
+        raise EvalError(f"an activation entry is minted from an {ACTIVATION_VERSION} gate "
+                        f"verdict (workflow_eval.activation_decision), not a "
+                        f"{type(decision).__name__}")
+    state = decision.get("target_state")
+    if state not in RUNNING_STATES:
+        raise EvalError(f"the gate verdict names target_state {state!r}; the states a runtime "
+                        f"is activated into are {', '.join(RUNNING_STATES)}")
+    if decision.get("permitted") is not True:
+        raise EvalError(
+            f"the activation gate refused this transition, so there is no pointer to mint. "
+            f"Blocker(s): {', '.join(decision.get('blockers') or ()) or 'unreported'}. "
+            f"{ACTIVATION_REFUSED_TODAY_LABEL}")
+    unwired = _unwired_dispatch(decision, "this gate verdict")
+    if unwired:
+        raise EvalError(unwired)
+    if not by:
+        raise EvalError("--by is required: an activation names who took it")
+    return _entry(state, scope=scope, by=by,
+                  reason=f"gate {decision.get('sha')} permitted {state}",
+                  bundle_ref=_policy_ref(bundle_ref, "bundle"),
+                  gate=_frozen({k: decision[k] for k in
+                                ("v", "target_state", "permitted", "blockers", "requirements",
+                                 "sha", "unproven")}),
+                  eligibility=_eligibility(eligibility), monitors=_monitors(monitors),
+                  approval=decision.get("approval"), candidate=decision.get("candidate"),
+                  manifest=decision.get("manifest"), partition=decision.get("partition"),
+                  now=now)
+
+
+def rollback_entry(*, scope, resolution, by, reason, current=None, now=None):
+    """Move FUTURE runs off whatever is in force -> a `rolled-back` entry. No gate, no provider.
+
+    NO GATE, DELIBERATELY. Moving a runtime away from a bundle is not the thing permission
+    protects; refusing a rollback because some evidence went stale is how a bad activation gets
+    stuck in place. What this needs instead is a fallback somebody else chose:
+    `decision_policy.resolve_bundle`, whose `_unmet` refuses any bundle with no approval
+    reference and whose chain always terminates at legacy. This function takes that RESOLUTION
+    as a value and relays which bundle it named -- it resolves nothing itself, opens no catalog
+    and contacts nothing. `rollback selects an approved compatible fallback` is therefore that
+    function's rule, enforced where it is defined.
+
+    AND RECORDING A TARGET IS NOT TAKING IT. A `rolled-back` pointer resolves every future run
+    to legacy, whatever the fallback named; promoting that fallback into a running state would
+    need its own pass through `activation_decision`, which is why `bundle_ref` stays null here
+    and the target lives under `fallback`.
+
+    NOTHING IS DESTROYED. Every generation ever written stays on disk: this appends a new one.
+    No workspace, no evidence, no external effect and no call is touched -- see
+    `ROLLBACK_SCOPE_LABEL`, which travels on the entry.
+    """
+    if not by:
+        raise EvalError("--by is required: a rollback names who took it")
+    source = getattr(resolution, "source", None)
+    if source not in _dp().RESOLUTION_SOURCES:
+        raise EvalError(
+            f"a rollback names the fallback decision_policy.resolve_bundle chose; this is a "
+            f"{type(resolution).__name__} whose source is {source!r}, not one of "
+            f"{', '.join(_dp().RESOLUTION_SOURCES)}")
+    bundle = getattr(resolution, "bundle", None)
+    target = None if bundle is None else _dp().bundle_ref(bundle)
+    fallback = {
+        "source": source,
+        "bundle_ref": None if target is None else _policy_ref(dict(target), "bundle"),
+        "reasons": sorted(getattr(resolution, "reasons", ()) or ()),
+        "chain": list(getattr(resolution, "chain", ()) or ()),
+        "in_force_for_future_runs": "legacy",
+        "requires": "its own pass through workflow_eval.activation_decision",
+        "note": ROLLBACK_TARGET_NOT_ACTIVATED_LABEL,
+    }
+    entry = _entry("rolled-back", scope=scope, by=by, reason=reason, fallback=fallback,
+                   approval=(current or {}).get("approval"),
+                   candidate=(current or {}).get("candidate"),
+                   manifest=(current or {}).get("manifest"),
+                   partition=(current or {}).get("partition"), now=now)
+    entry["labels"] = entry["labels"] + [ROLLBACK_SCOPE_LABEL, ROLLBACK_TARGET_NOT_ACTIVATED_LABEL]
+    return entry
+
+
+def retirement_entry(*, scope, by, reason, current=None, now=None):
+    """End a scope's activation without naming a successor -> a `retired` entry. No gate.
+
+    The difference from a rollback is what it says, not what it does: a rollback names the
+    fallback a resolution chose, a retirement names none. Both resolve every future run to
+    legacy and both destroy nothing.
+    """
+    if not by:
+        raise EvalError("--by is required: a retirement names who took it")
+    entry = _entry("retired", scope=scope, by=by, reason=reason,
+                   approval=(current or {}).get("approval"),
+                   candidate=(current or {}).get("candidate"),
+                   manifest=(current or {}).get("manifest"),
+                   partition=(current or {}).get("partition"), now=now)
+    entry["labels"] = entry["labels"] + [ROLLBACK_SCOPE_LABEL]
+    return entry
+
+
+def validate_entry(entry, *, where="this pointer entry", key=None, re_derive=True):
+    """Everything a stored generation must be, or `EvalError`. The WRITER's half; refuses.
+
+    Closed in both directions on its keys, versioned, state-checked, and -- the half that is not
+    shape -- `_unwired_dispatch` over a running state's gate block, read from
+    `CONFINED_DISPATCH_WIRED` at call time. A `retired` or `rolled-back` entry carries no gate
+    and needs none; a `canary` or `active` one needs a permitted gate AND a bundle reference
+    that is a complete pointer at a policy bundle, through D20's own `_policy_ref`.
+
+    `re_derive=False` is the READER's half and checks SHAPE only. The two are deliberately
+    separable: "these bytes are not a pointer entry" and "this entry claims a permitted gate
+    while this repository has no confining, ledgered dispatch path" are different facts about a
+    store, and folding the second into the first would leave `runtime_activation` reporting
+    `pointer-unreadable` for an entry it read perfectly well. The reader still refuses to
+    RESOLVE such an entry -- `runtime_activation` runs the same `_unwired_dispatch` and answers
+    legacy with `confining-dispatch-unwired`, which is the code that says why.
+    """
+    if not isinstance(entry, dict):
+        raise EvalError(f"{where} is a {type(entry).__name__}, not a pointer entry")
+    if entry.get("v") != ACTIVATION_VERSION:
+        raise EvalError(f"{where} is a {entry.get('v')!r} document; this store holds "
+                        f"{ACTIVATION_VERSION} entries and will not guess at another shape")
+    unknown = sorted(set(entry) - set(ACTIVATION_ENTRY_KEYS))
+    missing = sorted(set(ACTIVATION_ENTRY_KEYS) - set(entry))
+    if unknown or missing:
+        raise EvalError(
+            f"{where} carries " + "; ".join(part for part in (
+                f"unknown key(s) {', '.join(repr(k) for k in unknown)}" if unknown else "",
+                f"no {', '.join(repr(k) for k in missing)}" if missing else "") if part)
+            + f"; the keys are {', '.join(ACTIVATION_ENTRY_KEYS)}")
+    state = entry["state"]
+    if state not in ACTIVATION_STATES:
+        raise EvalError(f"{where} is in state {state!r}; the states are "
+                        f"{', '.join(ACTIVATION_STATES)}")
+    if not entry.get("by"):
+        raise EvalError(f"{where} names nobody who took it")
+    derived = scope_key(entry["scope"])
+    if entry["scope_key"] != derived:
+        raise EvalError(f"{where} is filed under scope key {entry['scope_key']!r} and its own "
+                        f"scope digests to {derived!r}; an entry cannot be filed under a scope "
+                        f"it does not name")
+    if key is not None and key != derived:
+        raise EvalError(f"{where} names scope {derived!r} and is being written under {key!r}")
+    if state in RUNNING_STATES:
+        if re_derive:
+            unwired = _unwired_dispatch(entry.get("gate"), where)
+            if unwired:
+                raise EvalError(unwired)
+        elif not isinstance(entry.get("gate"), dict):
+            raise EvalError(f"{where} is {state!r} and carries no gate verdict at all")
+        _policy_ref(entry.get("bundle_ref"), "bundle")
+        _eligibility(entry.get("eligibility"))
+        _monitors(entry.get("monitors"))
+    else:
+        for field in ("gate", "bundle_ref", "eligibility", "monitors"):
+            if entry.get(field) is not None:
+                raise EvalError(
+                    f"{where} is {state!r} and carries a {field}; a state that resolves every "
+                    f"future run to legacy names no bundle, no gate and no cohort -- recording "
+                    f"a fallback is what the `fallback` block is for")
+    return entry
+
+
+# ---- the pointer store: one generation per file, created once, never rewritten ------------------
+
+_GENERATION_RE = re.compile(r"\Agen-(\d{6})\.json\Z")
+
+
+def _generation_name(number):
+    if not isinstance(number, int) or isinstance(number, bool) or number < 1 or number > 999999:
+        raise EvalError(f"a pointer generation is a counting number below 1000000, not "
+                        f"{number!r}")
+    return f"gen-{number:06d}.json"
+
+
+def _activation_rel(key, number):
+    return f"{POLICY_ACTIVATION}/{key}/{_generation_name(number)}"
+
+
+def activation_generations(prefs_dir, scope):
+    """Every generation on disk for this scope -> `(sorted numbers, stray filenames)`.
+
+    A name that is not a generation is REPORTED rather than ignored: a `.tmp` or a hand-made
+    file in this directory is a fact about the store somebody should see, and a reader that
+    silently skipped it would make the store look tidier than it is.
+    """
+    key = scope if isinstance(scope, str) else scope_key(scope)
+    root = Path(prefs_dir) / POLICY_ACTIVATION / key
+    if not root.is_dir():
+        return [], []
+    numbers, strays = [], []
+    for path in sorted(root.iterdir()):
+        match = _GENERATION_RE.match(path.name)
+        if match and path.is_file():
+            numbers.append(int(match.group(1)))
+        else:
+            strays.append(path.name)
+    return sorted(numbers), strays
+
+
+def read_activation(prefs_dir, scope):
+    """The pointer in force for this scope -> a reading. A READER, and it fails CLOSED.
+
+    Absent directory, absent file, unparseable bytes, a shape `validate_entry` refuses and a
+    running state whose gate block `_unwired_dispatch` contradicts all come back with `entry`
+    None and the reason named. None of them raises and none of them is an activation: whatever
+    could not be read is legacy, which is the safe direction and also the true one.
+    """
+    key = scope if isinstance(scope, str) else scope_key(scope)
+    numbers, strays = activation_generations(prefs_dir, key)
+    out = {"scope_key": key, "generation": None, "entry": None, "unreadable": None,
+           "generations": numbers, "strays": strays,
+           "path": str(Path(prefs_dir) / POLICY_ACTIVATION / key)}
+    if not numbers:
+        return out
+    latest = numbers[-1]
+    out["generation"] = latest
+    try:
+        raw = _sp().confined_read_bytes(Path(prefs_dir), _activation_rel(key, latest),
+                                        what="activation read")
+        entry = json.loads(raw.decode("utf-8"))
+    except (OSError, ValueError, EvalError) as exc:
+        out["unreadable"] = f"generation {latest} could not be read: {exc}"
+        return out
+    try:
+        out["entry"] = validate_entry(entry, where=f"generation {latest}", key=key,
+                                      re_derive=False)
+    except EvalError as exc:
+        out["unreadable"] = str(exc)
+    return out
+
+
+def swap_activation(prefs_dir, scope, *, entry, expected):
+    """Compare-and-swap one pointer generation into place -> the written entry.
+
+    THE ONLY WRITER, and it is unlosable. `expected` is the generation the caller READ; this
+    writes `expected + 1` (or generation 1 when `expected` is None, meaning "there was nothing"),
+    with `safe_paths.confined_create_bytes`, whose `O_EXCL` makes "is this name free" and "write
+    these bytes" one kernel operation. There is deliberately NO re-read of the directory before
+    the create: a check followed by a write has a window, and this has none. A stale expectation
+    therefore fails on the kernel's own answer -- the name it would write is already taken --
+    and the loser writes nothing at all.
+
+    It DECIDES nothing. `validate_entry` is what refuses a running entry the gate never
+    permitted, and it re-derives `CONFINED_DISPATCH_WIRED` to do it.
+    """
+    key = scope if isinstance(scope, str) else scope_key(scope)
+    if expected is not None and (not isinstance(expected, int) or isinstance(expected, bool)
+                                 or expected < 1):
+        raise EvalError(f"expected is the generation you read, or None when there was none; "
+                        f"{expected!r} is neither")
+    number = 1 if expected is None else expected + 1
+    record = dict(entry, previous=expected)
+    validate_entry(record, where=f"the entry offered for generation {number}", key=key)
+    body = json.dumps(record, indent=2, sort_keys=True) + "\n"
+    paths = _prefs_paths(prefs_dir)
+    paths["dir"].mkdir(parents=True, exist_ok=True)
+    sp = _sp()
+    try:
+        sp.confined_create_bytes(paths["dir"], _activation_rel(key, number), body.encode("utf-8"),
+                                 what="activation swap")
+    except sp.SafePathExists:
+        raise ActivationConflict(
+            f"generation {number} of activation scope {key} already exists: this swap expected "
+            f"{expected!r} to still be the latest and it is not. Nothing was written. Re-read "
+            f"the pointer and decide again over what is actually in force -- a lost update here "
+            f"is a silent wrong-policy activation, which is why the create is O_EXCL and why "
+            f"this refuses instead of retrying for you") from None
+    except sp.SafePathError as exc:
+        raise EvalError(f"the activation pointer could not be written: {exc}") from None
+    _journal(paths, "policy.activation", scope=key, generation=number, previous=expected,
+             state=record["state"], entry=record["id"], by=record["by"],
+             bundle=(record.get("bundle_ref") or {}).get("id"))
+    return record
+
+
+def activation_history(prefs_dir, scope):
+    """Every generation ever written for this scope, oldest first -> rows. A READER.
+
+    The whole of it, whatever each one decided and whatever this reader can make of it: a
+    generation that no longer parses is listed as unreadable rather than dropped, because a
+    history with a hole in it is how a rollback comes to look like it never happened.
+    """
+    key = scope if isinstance(scope, str) else scope_key(scope)
+    numbers, strays = activation_generations(prefs_dir, key)
+    rows = []
+    for number in numbers:
+        try:
+            raw = _sp().confined_read_bytes(Path(prefs_dir), _activation_rel(key, number),
+                                            what="activation read")
+            entry = json.loads(raw.decode("utf-8"))
+        except (OSError, ValueError, EvalError) as exc:
+            rows.append({"generation": number, "state": "unreadable", "detail": str(exc)})
+            continue
+        rows.append({"generation": number, "state": entry.get("state"), "id": entry.get("id"),
+                     "by": entry.get("by"), "at": entry.get("at"),
+                     "previous": entry.get("previous"),
+                     "bundle": (entry.get("bundle_ref") or {}).get("id"),
+                     "approval": entry.get("approval"),
+                     "fallback": ((entry.get("fallback") or {}).get("bundle_ref") or {}).get("id"),
+                     "reason": entry.get("reason")})
+    return {"scope_key": key, "generations": rows, "strays": strays,
+            "labels": [ROLLBACK_SCOPE_LABEL, POINTER_NOT_AUTHORITY_LABEL]}
+
+
+# ---- the read seam a run uses, once, at its start ------------------------------------------------
+
+def _facts(value):
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise EvalError(f"runtime facts are an object with {', '.join(RUNTIME_FACT_KEYS)}, not a "
+                        f"{type(value).__name__}")
+    missing = sorted(set(RUNTIME_FACT_KEYS) - set(value))
+    unknown = sorted(set(value) - set(RUNTIME_FACT_KEYS))
+    if missing or unknown:
+        raise EvalError(f"runtime facts are exactly {', '.join(RUNTIME_FACT_KEYS)}; this carries "
+                        + "; ".join(part for part in (
+                            f"unknown {', '.join(repr(u) for u in unknown)}" if unknown else "",
+                            f"no {', '.join(repr(m) for m in missing)}" if missing else "")
+                            if part))
+    runs = value["runs_so_far"]
+    if not isinstance(runs, int) or isinstance(runs, bool) or runs < 0:
+        raise EvalError(f"runs_so_far is a count of runs already started under this pointer, not "
+                        f"{runs!r}")
+    return dict(value)
+
+
+def runtime_activation(prefs_dir, scope, *, facts=None):
+    """What mode a run STARTING NOW takes for this scope, and the complete reason.
+
+    ABSENT POINTER IS LEGACY. No directory, no generation, no store at all: legacy, with
+    `no-pointer`, and it is not an error. So is an unreadable pointer, a retired one, a
+    rolled-back one, one whose gate block contradicts `CONFINED_DISPATCH_WIRED`, and one whose
+    declared eligibility this run falls outside. Every exit that is not a live running state is
+    legacy and `reasons` says which.
+
+    READ ONCE, BY THE RUN THAT IS STARTING. The value this returns is what a run carries for its
+    whole life -- see `pin_for_run` and `bin/kit_contract.py`'s `start_task_lifecycle`. Nothing
+    in this repository re-reads a pointer during a run, which is what "a run pins" means: a run
+    that began under generation 4 keeps generation 4's bundle after generation 5 lands.
+
+    `implemented_by_selection` is read from `decision_policy.SELECTION_MODES` at call time, and
+    is False for every running state today: that module implements `legacy` and `shadow` and
+    refuses `canary` and `active` by name. A pointer saying `canary` and a selection acting on
+    one are two different facts and this keeps them apart.
+    """
+    reading = read_activation(prefs_dir, scope)
+    dp = _dp()
+    out = {"v": ACTIVATION_VERSION, "scope_key": reading["scope_key"], "mode": "legacy",
+           "pin": None, "generation": reading["generation"], "entry": None, "reasons": [],
+           "eligibility": None, "implemented_by_selection": True,
+           "selection_modes": list(dp.SELECTION_MODES),
+           "deferred_modes": list(dp.DEFERRED_MODES),
+           "labels": [ABSENT_POINTER_IS_LEGACY_LABEL, POINTER_NOT_AUTHORITY_LABEL,
+                      OLD_PREFERENCES_UNCHANGED_LABEL]}
+
+    def legacy(reason):
+        if reason not in RUNTIME_REASONS:  # pragma: no cover -- a closed vocabulary that is not
+            raise EvalError(f"runtime reason {reason!r} is outside RUNTIME_REASONS")
+        out["reasons"].append(reason)
+        return out
+
+    if reading["unreadable"]:
+        out["detail"] = reading["unreadable"]
+        return legacy("pointer-unreadable")
+    entry = reading["entry"]
+    if entry is None:
+        return legacy("no-pointer")
+    out["entry"] = entry
+    if entry["state"] == "retired":
+        return legacy("pointer-retired")
+    if entry["state"] == "rolled-back":
+        out["fallback"] = entry.get("fallback")
+        return legacy("pointer-rolled-back")
+    unwired = _unwired_dispatch(entry.get("gate"), f"generation {reading['generation']}")
+    if unwired:
+        out["detail"] = unwired
+        return legacy("confining-dispatch-unwired")
+    bounds = entry["eligibility"]
+    out["eligibility"] = bounds
+    checked = _facts(facts)
+    if checked is None:
+        return legacy("eligibility-unestablished")
+    if checked["task_class"] not in bounds["task_classes"] or (
+            bounds["cohort"] and checked["item"] not in bounds["cohort"]):
+        return legacy("outside-eligible-cohort")
+    if checked["runs_so_far"] >= bounds["max_runs"]:
+        return legacy("eligibility-limit-reached")
+    out["mode"] = entry["state"]
+    out["pin"] = entry["bundle_ref"]
+    out["implemented_by_selection"] = entry["state"] in dp.SELECTION_MODES
+    out["reasons"].append("pinned")
+    return out
+
+
+def pin_for_run(activation):
+    """The bundle reference a run carries for its whole life -> a reference or None.
+
+    Taken ONCE, at the start, from `runtime_activation`'s answer, and then handed to
+    `kit_contract.start_task_lifecycle(policy_ref=...)`, which gives it to `TaskRun`, which
+    records it on every attempt through `attempt_ledger`'s existing provenance fields. There is
+    no seam anywhere by which a run re-reads the pointer afterwards: `runtime_activation` is the
+    only reader in this module and a run calls it once.
+
+    None is the answer today and every day until something mints a pointer, and None is exactly
+    what `TaskRun` already expects: a run that pins nothing records the field as unknown, which
+    is what it is.
+    """
+    return None if activation is None else activation.get("pin")
+
+
+def run_pin(activation):
+    """The same pin in the shape `decision_policy.pinned_bundle` reads -> a pin or None.
+
+    Two shapes because two consumers want different things and neither should have to reshape
+    the other's: the ledger wants a REFERENCE, because that is what an attempt's provenance
+    field holds; bundle resolution wants the reference plus which pointer generation and mode it
+    came out of, because a resolution that could not say which generation it resolved would
+    leave a later reader unable to tell a run that predates a swap from one that ignored it.
+
+    None when nothing is in force, which resolves exactly as an unpinned run always has.
+    """
+    if activation is None or activation.get("pin") is None:
+        return None
+    return {"mode": activation["mode"], "generation": activation["generation"],
+            "activation": (activation.get("entry") or {}).get("id"),
+            "bundle_ref": activation["pin"]}
+
+
+def activation_report(prefs_dir):
+    """Every activation scope this prefs directory holds -> a report. A READER.
+
+    Listed whatever each one says, unreadable generations included, for the reason
+    `approval_report` lists a refusal beside a grant: the history that gets lost first is the
+    part a later reviewer most needs.
+    """
+    root = Path(prefs_dir) / POLICY_ACTIVATION
+    scopes = []
+    if root.is_dir():
+        for child in sorted(root.iterdir()):
+            if not child.is_dir():
+                continue
+            reading = read_activation(prefs_dir, child.name)
+            entry = reading["entry"] or {}
+            contradiction = (_unwired_dispatch(entry.get("gate"), f"generation "
+                                               f"{reading['generation']}")
+                             if entry.get("state") in RUNNING_STATES else None)
+            scopes.append({"scope_key": child.name, "generation": reading["generation"],
+                           "state": entry.get("state") or None,
+                           "unreadable": reading["unreadable"],
+                           "dispatch_contradiction": contradiction,
+                           "strays": reading["strays"],
+                           "generations": reading["generations"]})
+    return {"v": ACTIVATION_VERSION, "path": str(root), "scopes": scopes,
+            "states": list(ACTIVATION_STATES), "running_states": list(RUNNING_STATES),
+            "blocker_vocabulary": list(ACTIVATION_BLOCKERS),
+            "runtime_reasons": list(RUNTIME_REASONS),
+            "confined_dispatch_wired": bool(CONFINED_DISPATCH_WIRED),
+            "unproven": list(ACTIVATION_UNPROVEN),
+            "labels": [ACTIVATION_REFUSED_TODAY_LABEL, ABSENT_POINTER_IS_LEGACY_LABEL,
+                       POINTER_NOT_AUTHORITY_LABEL, ROLLBACK_SCOPE_LABEL,
+                       OLD_PREFERENCES_UNCHANGED_LABEL]}
+
+# END OF THE PROTECTED ACTIVATION SECTION (decision-improvement D23)
+
+
+
 
 # ---- CLI --------------------------------------------------------------------------------------------------------
 
@@ -5623,6 +6735,35 @@ def cmd_approvals(args):
               f"candidate={row.get('candidate')} by={row.get('by')} "
               f"refused={','.join(row.get('refusals') or ()) or '-'}")
     print(f"  {report['authority']}")
+    for label in report["labels"]:
+        print(f"  -- {label}")
+    return 0
+
+
+def cmd_activation(args):
+    """READ-ONLY. There is deliberately no command that activates anything.
+
+    `activation_decision` refuses today whatever it is handed, so a command that offered to take
+    the transition would offer something that cannot happen; and if one day it can happen, the
+    edit that wires it should have to add the command in the same change. What this prints is
+    what a run starting now would resolve to, and the history of how a scope got there.
+    """
+    prefs_dir = Path(args.prefs_dir) if args.prefs_dir else DEFAULT_PREFS_DIR
+    report = activation_report(prefs_dir)
+    if args.json:
+        print(json.dumps(report, indent=2, sort_keys=True))
+        return 0
+    print(f"activation pointers: {report['path']}")
+    print(f"  confining, ledgered dispatch wired: {report['confined_dispatch_wired']}")
+    if not report["scopes"]:
+        print("  (no pointer for any scope -- every run resolves to legacy)")
+    for row in report["scopes"]:
+        print(f"  {row['scope_key']}: generation={row['generation']} state={row['state']}"
+              f"{' UNREADABLE: ' + row['unreadable'] if row['unreadable'] else ''}")
+        if row["strays"]:
+            print(f"    strays: {', '.join(row['strays'])}")
+    for code in report["unproven"]:
+        print(f"  unproven -- {code}: {ACTIVATION_UNPROVEN_NOTES[code]}")
     for label in report["labels"]:
         print(f"  -- {label}")
     return 0
@@ -5877,6 +7018,12 @@ def build_parser():
     p.add_argument("--prefs-dir", default=None)
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_approvals)
+
+    p = sub.add_parser("activation",
+                       help="read-only: what mode a run starting now resolves to, per scope")
+    p.add_argument("--prefs-dir", default=None)
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_activation)
 
     p = sub.add_parser("policy", help="the policy in force, its history, and proposals")
     p.add_argument("--prefs-dir", default=None)

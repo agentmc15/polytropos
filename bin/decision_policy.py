@@ -449,6 +449,85 @@ def resolve_bundle(pin, bundles, runtime):
                             reasons=tuple(reasons))
 
 
+# ---- resolving what a RUN WAS PINNED TO, which is not the same as reading a pointer ----------
+#
+# D23 gives the workbench a runtime activation pointer. This is the read side of it that belongs
+# here, and the shape of it is the whole safety property:
+#
+# THE SIGNATURE IS THE GUARANTEE, the same way `_admissible`'s is. `pinned_bundle` takes a PIN --
+# a value a run was handed when it started -- and there is no parameter through which a prefs
+# directory, a store, a scope or a pointer could arrive. So there is no expression in this
+# function that could consult a pointer, and a run cannot pick up a newer one halfway through by
+# calling it again: calling it again with the same pin gives the same answer. "A run pins" is
+# not a rule somebody has to remember here; it is a thing this function is unable to violate.
+#
+# AND IT STILL DOES NOT ACT. `acts` is read from `SELECTION_MODES` at call time, so a pin
+# carrying `canary` or `active` resolves its bundle and reports that this module implements no
+# such mode -- `select_action` refuses both by name and continues to. Resolving which parameters
+# a pinned bundle holds and acting on them are two different questions, and conflating them is
+# how a pointer would quietly become a dispatcher.
+
+#: What a run's pin says. `mode` is the state the pointer was in when the run started,
+#: `generation` which pointer generation that was, and `bundle_ref` the bundle to resolve.
+#: Closed, like every other shape here.
+ACTIVATION_PIN_KEYS = ("mode", "generation", "activation", "bundle_ref")
+
+PIN_NOT_CONSUMPTION_REASON = (
+    "this module implements {implemented} and no other mode. A pin naming {mode!r} resolves "
+    "which bundle's parameters that run is entitled to READ; select_action still refuses to act "
+    "in that mode, by name, because acting on one is a runtime transition whose evidence lives "
+    "in the workbench and not in a pin")
+
+
+def pinned_bundle(pin, bundles, runtime):
+    """Which bundle a run that was PINNED at start is entitled to read -> a reading.
+
+    `pin` is `workflow_eval.pin_for_run`'s answer wrapped with the mode and generation it came
+    from, or None for a run that pinned nothing -- which is every run today, and which resolves
+    to legacy exactly as an unpinned run always has.
+
+    Raises on a malformed pin, and does not degrade one to legacy: a run that was pinned to
+    something this cannot read is a caller defect, and answering it with the safe-looking
+    default would hide which run is mis-pinned. A pin that is WELL FORMED and names a bundle
+    that is missing, invalid, rewritten or unmet degrades exactly as `resolve_bundle` already
+    degrades it, because that is content and not a caller defect.
+    """
+    if pin is None:
+        return {"resolution": resolve_bundle(None, bundles, runtime), "mode": "legacy",
+                "generation": None, "activation": None, "acts": True, "reason": None,
+                "pinned": False}
+    if not isinstance(pin, dict):
+        raise _refuse("wrong-type",
+                      f"a run's pin is an object with {', '.join(ACTIVATION_PIN_KEYS)}, not a "
+                      f"{type(pin).__name__}")
+    unknown = sorted(set(pin) - set(ACTIVATION_PIN_KEYS))
+    missing = sorted(set(ACTIVATION_PIN_KEYS) - set(pin))
+    if unknown or missing:
+        raise _refuse("value-invalid",
+                      "a run's pin carries " + "; ".join(part for part in (
+                          f"unknown key(s) {', '.join(repr(k) for k in unknown)}"
+                          if unknown else "",
+                          f"no {', '.join(repr(k) for k in missing)}" if missing else "")
+                          if part)
+                      + f"; the keys are {', '.join(ACTIVATION_PIN_KEYS)}")
+    mode = pin["mode"]
+    if mode not in SELECTION_MODES + DEFERRED_MODES:
+        raise _refuse("unknown-value",
+                      f"a run's pin names mode {mode!r}; the declared modes are "
+                      f"{', '.join(SELECTION_MODES + DEFERRED_MODES)}")
+    acts = mode in SELECTION_MODES
+    return {
+        "resolution": resolve_bundle(pin["bundle_ref"], bundles, runtime),
+        "mode": mode,
+        "generation": pin["generation"],
+        "activation": pin["activation"],
+        "acts": acts,
+        "reason": None if acts else PIN_NOT_CONSUMPTION_REASON.format(
+            implemented=" and ".join(SELECTION_MODES), mode=mode),
+        "pinned": True,
+    }
+
+
 # ---- the historical preference shape ---------------------------------------------------------
 
 @dataclasses.dataclass(frozen=True)

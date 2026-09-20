@@ -2250,3 +2250,84 @@ The no-bundle-store gap is now load-bearing in a THIRD place.
 approvals live under the prefs directory D20 already owns. `approval_holds` and
 `promotion_eligibility` have NO production caller; they are library seams for D23.
 outcome: D22 model=opus attempts=1 result=pass review=pending run=2026-09-16-aa6e
+
+## D23 — Protected activation (opus) — Phase 5 task 4 of 5
+
+The transition that WOULD be taken, and it machine-refuses. 51 tests; 38 mutants, 38 killed,
+0 survivors, 0 inert. `CONFINED_DISPATCH_WIRED` still `False` and untouched.
+
+**The refusal is re-derived at THREE points, so a stored document never beats the state the repo
+is actually in:** `activation_entry` (after the `permitted` check, so a hand-built verdict with
+`permitted: True` is refused too), `validate_entry`'s writer path (a hand-written canary entry
+refused before a file exists), and `runtime_activation` (a canary pointer that somehow exists
+resolves every run to LEGACY). `activation_decision` relays `promotion_eligibility`'s rows WHOLE
+and adds two of its own, so activation is a superset of promotion eligibility and cannot be laxer.
+
+**The load-bearing test, and its shape is the whole lesson.** I read it rather than trusting the
+summary. `test_every_named_gate_is_satisfiable_and_the_transition_still_refuses` asserts all four
+named gates ARE individually satisfiable, and that the transition refuses anyway with
+`blockers == ["confining-dispatch-unwired"]`, the row naming
+`workflow_eval.CONFINED_DISPATCH_WIRED` as what re-derived it. **Without it, every refusal test in
+the file could be satisfied by a gate that refuses everything.** Its docstring says so. That is
+the positive-control discipline at its most valuable — the point where a suite full of green
+refusals would otherwise prove nothing at all.
+
+**Mechanics, not safety — carried as a CODE, not prose.** Every decision, entry and report carries
+`fixture-proves-mechanics-not-safety` unconditionally, alongside `pointer-store-not-authenticated`
+and `gate-block-not-re-derived-in-full`. A fixture that makes a gate pass proves the gate READS
+what it claims to read; it certifies no host, no isolation, no model. The read-only CLI prints
+this to the operator in plain language — the honesty standard applied outward, not only in tests.
+
+- **CAS with no window at all**: `swap_activation(expected=N)` writes `gen-(N+1)` via
+  `safe_paths.confined_create_bytes` (`O_EXCL`) and deliberately does NOT re-read the directory
+  first, so a stale expectation fails on the kernel's answer rather than on a comparison with its
+  own race window. Proven with a real `ThreadPoolExecutor`: eight concurrent swaps, one winner.
+- **`pinned_bundle`'s SIGNATURE is the guarantee** — `(pin, bundles, runtime)`, no prefs dir,
+  store, scope or pointer parameter, so there is no expression through which a run could re-read a
+  pointer mid-flight. Pinned by `inspect.signature` and a source sweep.
+- **`select_action` still refuses `canary`/`active` by name** — D13 was not weakened.
+- No new store: generations live beside D20's proposals and D22's approvals under the prefs
+  directory. `ACTIVATION_VERSION` new; **seven existing constants verified unmoved**.
+- **`bin/kit_contract.py` change is pass-through ONLY**: `start_task_lifecycle` gains
+  `policy_ref`/`decision_ref` and hands them to `TaskRun`, which has accepted both since step 16
+  with no caller able to reach them. No contract logic added, moved or duplicated.
+- **The driver seam is wired but UNFED.** All four `*_execute.py` call `start_task_lifecycle`, but
+  `grep -n policy_ref` across them returns nothing, so the pin is `None` on every real run today
+  and every attempt records it as unknown — the honest state, not a placeholder, and pinned by a
+  test.
+- **There is deliberately NO CLI command that activates anything**, asserted by a test that no
+  subcommand named `activate`/`canary`/`promote`/`rollback-activation` exists. I confirmed the
+  surface myself.
+
+**MY BRIEF WAS WRONG AGAIN — eighth correction today.** I wrote "six version constants live in
+`workflow_eval`"; there are seven. I omitted `TRIAL_PROTOCOL_VERSION`.
+
+**Three self-corrections worth the standard they set:**
+1. It found a FALSE CLAIM IN ITS OWN DRAFT and fixed it: it had written `manifest_currency` is
+   "the first function in this module to ask both the document and the store". It is not —
+   `require_held_out` already calls `verify_manifest`. The separate call is still load-bearing for
+   a narrower reason the code now states: `require_held_out` merges everything into ONE blocker
+   sentence, and D18's rule is that `manifest-unverified` and `no-held-out-evidence` are
+   deliberately TWO codes and never one. Asking the document question first is what makes a forged
+   manifest report AS a forgery.
+2. It removed a rotting count from its own text ("for the fourth time in this kit").
+3. **It DECLINED to confirm my claim about D22's harness**, because that harness is not in the
+   tree — and followed the instruction anyway. Refusing to nod along to an unverifiable premise is
+   rarer than agreement and is exactly the behaviour these briefs ask for.
+
+**A survivor that exposed a fixture blind spot:** `rollback_entry` setting `bundle_ref` to the
+fallback SURVIVED, because every rollback fixture resolved to legacy (`bundle_ref` None), so the
+mutation was a no-op. Fixed by a fixture that genuinely selects an approved bundle.
+
+**OPEN ARCHITECT QUESTION, raised by the implementer and NOT invented by it:** the whole-task
+study is not a gate. `live_requirements` demands one before general rollout; the brief named
+exactly four gates and it correctly declined to add a fifth. **This belongs in D24 and the D30
+handoff before anything could ever move to `active`.**
+
+Shape not origin: the gate is handed documents. `require_held_out` genuinely opens the evals
+store, but the approval record, candidate, sentinel report and declarations are all caller-
+supplied — D22's `origin-not-dereferenced` applies one layer up. Several tests patch the flag to
+`True` inside a `wired()` context manager, because otherwise the pointer mechanics are unreachable
+and would be code nobody has shown to work; every such test restores it and then asserts the same
+pointer reads as legacy in the world as it is.
+outcome: D23 model=opus attempts=1 result=pass review=pending run=2026-09-16-aa6e

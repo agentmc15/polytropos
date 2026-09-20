@@ -2080,16 +2080,28 @@ class TaskRun:
 
 
 def start_task_lifecycle(kit_dir, task, run_id, actor, store=None, break_claim=False,
-                         workspace=None, role=None, parent=None):
+                         workspace=None, role=None, parent=None, policy_ref=None,
+                         decision_ref=None):
     """Open the ledger, claim the task, close what a dead run left -> `(lifecycle, info)`.
 
     Exits 2 on a claim another live run holds, naming it: two drivers on one task is the one
     situation where refusing is always right. A stale claim (its process gone) is taken over
     and said so on stderr.
+
+    `policy_ref` and `decision_ref` are run-scoped provenance pins `TaskRun` has accepted since
+    step 16 and that no caller could reach through this function until now. The pin is taken
+    ONCE, here, at the moment the run starts -- `workflow_eval.pin_for_run` over
+    `workflow_eval.runtime_activation` is what produces one -- and `TaskRun` then records it on
+    every attempt. That is the whole of what "a run pins its bundle" means: the value cannot
+    change during the run because nothing re-reads anything to change it, so a run that started
+    under one activation generation keeps it after a later generation lands. Both default to
+    None, which is what every existing caller passes and what every attempt then records as
+    unknown -- and None is still the only value any caller in this repository can supply, since
+    nothing mints an activation pointer while the protected-activation gate refuses.
     """
     ledger = open_ledger(kit_dir, store=store)
     lifecycle = TaskRun(ledger, run_id, task, workspace=workspace, actor=actor, role=role,
-                        parent=parent)
+                        parent=parent, policy_ref=policy_ref, decision_ref=decision_ref)
     try:
         info = lifecycle.begin(break_claim=break_claim)
     except _al().ClaimHeld as exc:

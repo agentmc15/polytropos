@@ -384,7 +384,7 @@ PYTHONPATH=tests python3 -m unittest test_decision_approval.ExactApprovalTests
 ### D23 — Protected activation
 - id: D23
 - title: Protected activation
-- status: pending
+- status: done
 - model: opus
 - depends: D07, D13, D19, D22
 **Brief.** Own workflow_eval pointer/read seam and `tests/test_decision_activation.py:ProtectedActivationGateTests`. Canary/active machine-refuses unless named D07 profile, current grouped/exposure manifest, D19 endpoint/margins/caps/stops, and D22 exact approval all pass. Otherwise runtime stays legacy or shadow; manual proposal drafting remains available.
