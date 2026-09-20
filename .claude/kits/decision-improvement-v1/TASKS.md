@@ -514,7 +514,7 @@ PYTHONPATH=tests python3 -m unittest test_training_data.LabelEligibilityTests
 ### D33 — Grouped dataset splits and reproducible local exports
 - id: D33
 - title: Grouped dataset splits and reproducible local exports
-- status: pending
+- status: done
 - model: opus
 - depends: D32
 

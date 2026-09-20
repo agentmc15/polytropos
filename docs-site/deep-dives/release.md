@@ -134,6 +134,7 @@ Contract versions are read from the module that owns each one; package versions 
 | training snapshot | `bin/training_data.py` | `polytropos.training-snapshot/1` |
 | training cause taxonomy | `bin/training_data.py` | `polytropos.training-cause-taxonomy/1` |
 | training label lifecycle | `bin/training_data.py` | `polytropos.training-label-lifecycle/1` |
+| training dataset export | `bin/training_data.py` | `polytropos.training-dataset/1` |
 | release gate | `bin/release_gate.py` | `polytropos.release-gate/1` |
 
 | Package | Version |

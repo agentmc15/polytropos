@@ -2878,3 +2878,75 @@ Locks verified still shut and **no training store created even after `training_d
 `release_gate` remains the only `bin/` module naming `training_data`, reading version constants
 only, still pinned as an exact set by D31's test.
 outcome: D32 model=opus attempts=1 result=pass review=pending run=2026-09-16-aa6e
+
+## D33 — Grouped dataset splits and reproducible exports (opus) — Phase 7 task 3 of 4
+
+52 tests (module 186). **44 mutants, 44 caught, 0 survivors.** Three pins byte-identical.
+
+**PREVENTS, not decides — the question I asked, answered in the signature.** `store_dir` is
+REQUIRED on `build_dataset`, so D32's `label-not-checked` / `revocation-not-checked` cannot arise
+through this path at all (asserted: those two codes never appear in a D33 exclusion). A record with
+a non-empty refusal list never reaches a payload line. What it still does not prevent is a process
+reading the store directly — that stays the store's `0700`/`0600` and `exec_policy`, carried
+machine-readably on every manifest as `access-not-enforced`.
+
+**IT DELETED FOUR OF ITS OWN GUARDS — the bar keeps rising** (D32 deleted two, itself a first):
+a `label["current"] is None` branch the `head is None` lookup already covered; a line-count check
+made unreachable by the file digest; a second `sorted()` duplicating an ordering decision made
+elsewhere; and **it found an existing assertion PASSING FOR THE WRONG REASON** — `dataset_integrity`
+fired before the content compare it was meant to test. That is the masking pattern inside its own
+tests, found by mutation rather than reading.
+
+**Reuse of D06 is total: `development` is the ONLY partition name spelled as a literal in the
+module** (I verified — `constants & set(we.PARTITIONS) == {TRAINABLE_PARTITION}`). Everything else
+is read at call time from `PARTITION_ROLES`/`PARTITIONS`, and the two non-obvious inadmissible
+placements are derived by **asking `decision_eval.placement`** rather than spelling
+`"after-prediction"`, which would have tripped D31's own owner-vocabulary sweep.
+`require_held_out` is deliberately NOT called — it refuses `development` by design — and the
+substitute rule compares against `PARTITION_ROLES[TRAINABLE_PARTITION]["purpose"]`, stated in the
+module rather than left implicit.
+
+**Two ways it declined to overstep, both worth keeping as precedent:**
+1. **It edited another task's test and REPORTED it.** D32 pins an exact COUNT of
+   `confined_read_bytes` call sites; D33 legitimately adds four, so it bumped `2 → 6` with a comment
+   naming each — then added the **count-free form** in its own class, pinning the `safe_paths`
+   surface as an exact five names rather than a number that rots.
+2. **When its work collided with D06's test, it fixed ITS OWN side.**
+   `test_the_evals_store_has_exactly_one_engine_naming_it` allows only two files to contain the
+   literal `"evals"`; its demo had named a temp dir that. It renamed the demo dir rather than
+   widening a store-ownership guard. The easier choice would have quietly weakened D06.
+
+**It declined the scope expansion I offered.** I said `outcome_basis` was in scope if needed for
+honest export. It answered that **D33 exports no action records at all** — only the adjudicated
+cause — so the field would have no reader, and then **PINNED THE ABSENCE**:
+`test_no_action_record_reaches_either_file` asserts the action's text, digest and outcome appear in
+neither file and that no `action`/`outcome`/`taken` name exists in either schema. **A later outcome
+field fails there rather than shipping as a measurement.** If the outcome is ever wanted,
+`attach_action` needs the basis first — named unfinished, not done.
+
+**SCOPE DECISION SURFACED RATHER THAN TAKEN, and D34 must carry it:** the draw is **NOT** recorded
+in `workflow_eval`'s exposure log, because that would mean writing another engine's store. Every
+manifest carries `exposure-not-recorded-in-the-eval-store` and names the remedy
+(`workflow_eval.record_exposure`, called by the operator). **The runbook has to include that step or
+an operator exports without recording exposure.**
+
+- Determinism proven with enough shape to matter (D26's trap avoided): 3 groups, 4 included, 4
+  distinct exclusion codes, exported in REVERSED order, compared byte for byte — plus two child
+  interpreters under two different `PYTHONHASHSEED`s.
+- Future-answer leakage: the forged record's **three digests are all correct** (D18's lesson), so
+  only export-time re-derived placement can refuse it.
+- Audit/payload separation is proven LOSSLESS with intersection == `{"example_id"}`, and
+  `audit-identity-in-payload` searches only content-derived identifiers — **the reviewer id and the
+  partition name are deliberately NOT searched**, because a decision really can have been shown the
+  word "development", so the schema and not a search is what keeps those out.
+- 16 stdlib seams + 8 `workflow_eval` writers armed, probe list asserted equal to the forbidden
+  list by name, with a control that fires each.
+- Honest limits: `_dataset_id`'s `validate_id` CANNOT fire (the `ds-[0-9a-f]{16}` regex is narrower
+  than `SAFE_ID_RE`) and says so; the manifest digest establishes nothing was altered after export,
+  **never that the inputs were real**; `MAX_DATASET_EXAMPLES = 2_000` refuses rather than trims;
+  no minimum sample count is asserted anywhere (`training-sufficiency-not-established`).
+
+**Process note: the full suite was KILLED for memory once here, with ZERO competing runs** — the
+suite is now 5454 tests and the machine is tight. Unlike the earlier kill this was not a collision;
+I checked `ps` first. Re-ran clean.
+outcome: D33 model=opus attempts=1 result=pass review=pending run=2026-09-16-aa6e

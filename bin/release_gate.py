@@ -166,6 +166,7 @@ VERSION_SOURCES = (
     ("training snapshot", "training_data", "SNAPSHOT_VERSION"),
     ("training cause taxonomy", "training_data", "TAXONOMY_VERSION"),
     ("training label lifecycle", "training_data", "LIFECYCLE_VERSION"),
+    ("training dataset export", "training_data", "DATASET_VERSION"),
 )
 
 #: Pricing files, one per harness, never merged. Read for `cached_date` and roster size only.

@@ -72,10 +72,12 @@ second serializer: canonical bytes and duplicate-key-safe parsing are that contr
 and `loads`. It is not a second path layer: every write goes through `bin/safe_paths.py` into a
 root `bin/runtime_data.py` resolved. It is not a second label-source or attempt-result
 vocabulary: `bin/decision_eval.py` owns both and `reconcile_label_sources` /
-`reconcile_action_outcomes` read them at call time. It is not an exporter and it is not a
-trainer: `export_eligibility` DECIDES and writes nothing, local JSONL datasets and manifests are
-D33's, readiness is D34's, and no code path here reaches a network, a provider, a model or a
-real harness home.
+`reconcile_action_outcomes` read them at call time. It is not a second partition, grouping or
+exposure authority: `bin/workflow_eval.py` owns all three and `dataset_rules` /
+`verify_manifest` / `exposure_state` are read at call time. It IS the local exporter -- D33's
+`build_dataset` / `write_dataset` / `read_dataset` produce deterministic JSONL plus an immutable
+manifest under the same store seam -- and it is NOT a trainer: readiness is D34's, and no code
+path here reaches a network, a provider, a model or a real harness home.
 """
 
 import argparse
@@ -295,6 +297,10 @@ def _rt():
 
 def _sp():
     return _sibling("safe_paths")
+
+
+def _wf():
+    return _sibling("workflow_eval")
 
 
 def _refuse(code, message):
@@ -1212,7 +1218,10 @@ def persist(record, store_dir):
 # codes rather than a paragraph, so a reader can check that no record ever claims more.
 #
 # WHAT THIS SECTION DOES NOT DO. It is not an exporter: `export_eligibility` DECIDES and writes
-# nothing, and the local JSONL dataset and its manifest are D33's. It is not a trainer, and it does
+# nothing, and the local JSONL dataset and its manifest are D33's, in the section below -- which is
+# the CALLER that acts on this decision, and therefore the thing that prevents rather than reports.
+# `enforcement-not-provided` stays on every decision here regardless, because a process that reads
+# the store without asking is not stopped by an answer. It is not a trainer, and it does
 # not turn collection on -- `COLLECTION_ENABLED` and `CAPTURE_WIRED` are still False and nothing
 # here reads either as anything else. It is not a second label vocabulary for the decision join:
 # `decision_eval.LABEL_STATUSES` describes a joined row's label and is left alone, because a
@@ -2667,6 +2676,952 @@ def persist_lifecycle(entry, store_dir):
             "reason": None}
 
 
+# ==================================================================================================
+#  D33 -- GROUPED DATASET SPLITS AND REPRODUCIBLE LOCAL EXPORTS
+# ==================================================================================================
+#
+# ONE PARTITION AUTHORITY, READ AT CALL TIME. `bin/workflow_eval.py` owns the partitions, their
+# roles, defect grouping, leak screening and the exposure log. This section owns NONE of that: it
+# names exactly one partition (`TRAINABLE_PARTITION`) and then asks that module, at call time,
+# whether the partition still exists, still declares itself neither held-out nor single-use, and
+# which of the others are. `dataset_rules` DERIVES every list it reports from `PARTITION_ROLES`
+# rather than listing one here, so marking `development` held-out upstream refuses this exporter
+# instead of quietly re-labelling final-audit material as training material.
+#
+# WHY `require_held_out` IS NOT THE CALL. That function is the controller for citing a partition as
+# HELD-OUT evidence, and it refuses `development` by design -- development's role is fitting. An
+# export draws from the one partition a fit may legitimately happen in, so the question it has to
+# ask is the mirror image: has this item been seen for something that is NOT development's own
+# purpose, or retired? Both answers come from `exposure_state`, the owner's own reader, and the
+# purpose compared against is `PARTITION_ROLES[TRAINABLE_PARTITION]["purpose"]` read at call time --
+# never a string written down here.
+#
+# RELATED ATTEMPTS CANNOT CROSS A SPLIT, AND THE REFUSAL IS THE OWNER'S OWN FINDING. One defect,
+# one group, one partition is `workflow_eval`'s invariant, and `verify_manifest` is what detects a
+# group split across partitions. `build_dataset` calls it and refuses the WHOLE export on any
+# finding: a manifest whose groups are split cannot place anything safely, and picking an
+# "exportable subset" out of a corrupt manifest is exactly how a held-out result comes to have been
+# solved already, in full view, in development.
+#
+# THIS IS THE TASK THAT PREVENTS. `export_eligibility` DECIDES: it returns refusal codes and carries
+# `enforcement-not-provided` unconditionally, because a process that ignores its answer is not
+# stopped by it. `build_dataset` is the caller that ACTS on that decision -- a record whose refusal
+# list is non-empty never reaches a payload line -- so for the one route this module owns, a local
+# JSONL export, the gate is enforced rather than merely reported. It still prevents nothing about a
+# process that reads the store directly; that remains the store's own permissions and
+# `bin/exec_policy.py`'s question.
+#
+# TWO FILES, AND THE SEPARATION IS THE SCHEMA. `payload.jsonl` is the model input and its target;
+# `audit.jsonl` is provenance, eligibility, label rationale, reviewer, resources and redaction
+# counts. `PAYLOAD_FIELDS` and `AUDIT_FIELDS` are closed and share exactly ONE name -- the join key
+# -- and an input entry loses its `provenance`, its redaction counts and its lengths on the way into
+# a payload line. A record's bookkeeping must not become a feature: if the provenance is in the
+# input, a model can read the answer off the bookkeeping.
+#
+# NO ACTION OUTCOME IS EXPORTED, ON PURPOSE. D32's `attach_action` accepts an `ACTION_OUTCOMES`
+# member directly, so an action record does not say whether its outcome was DERIVED through
+# `action_outcome()` or DECLARED by its caller. Rather than present a declared field as a measured
+# one, this exporter does not read action records at all: the only target it writes is the
+# adjudicated cause. Learning action choice is a different question needing its own validated
+# labels (`TRAINING-DATA.md`), and giving it one would need an `outcome_basis` on the action record
+# first. `PAYLOAD_FIELDS` and `AUDIT_FIELDS` are pinned in `tests/test_training_data.py` so a later
+# outcome field fails there rather than shipping as a measurement.
+#
+# NOTHING HERE TRAINS, TRANSFERS, OR WRITES SOMEBODY ELSE'S STORE. `build_dataset` writes nothing at
+# all; `write_dataset` creates three create-once files under the training store through
+# `bin/safe_paths.py`. The evals store is NOT written: recording the draw in `workflow_eval`'s own
+# exposure log is that module's writer's business, and `exposure-not-recorded-in-the-eval-store`
+# rides on every manifest saying so rather than this module growing a second writer.
+
+#: The exported dataset's own schema, registered in `release_gate.VERSION_SOURCES`. ONE constant for
+#: the manifest, the payload line and the audit line -- the precedent is `LIFECYCLE_VERSION`, which
+#: stamps three artifacts revised together. The exporter and the record shape move together too, so
+#: the manifest reports this same string as its exporter version rather than carrying a second
+#: number that could drift from the shape it describes.
+DATASET_VERSION = "polytropos.training-dataset/1"
+
+#: Where exports land inside the training store, one directory per content-addressed dataset id.
+DATASET_DIR = "datasets"
+
+#: The three files one export writes. Closed: a reader looks for these names, and a fourth file
+#: would need its own digest row in `content_identities`.
+DATASET_FILES = {"payload": "payload.jsonl", "audit_metadata": "audit_metadata.jsonl",
+                 "manifest": "manifest.json"}
+
+#: The ONE partition this exporter may draw from. Named here and verified against
+#: `workflow_eval.PARTITION_ROLES` at call time by `dataset_rules`; every other partition is refused
+#: by inequality with this name, and WHY it is refused -- held-out, single-use, quarantined -- is
+#: read off the owner's table rather than listed here.
+TRAINABLE_PARTITION = "development"
+
+#: How many examples one export may carry. Past it the export is refused rather than trimmed: an
+#: export silently capped is a dataset whose manifest describes material it does not contain, and
+#: the caller decides which bounded slice to export.
+MAX_DATASET_EXAMPLES = 2_000
+
+#: What a model input line carries. CLOSED, and it shares exactly one name with `AUDIT_FIELDS`.
+PAYLOAD_FIELDS = ("example_id", "question", "input", "target")
+
+#: What survives of one input entry into a payload line: the text the decision was shown and when
+#: it was observed. `provenance`, `redactions`, `truncated` and `original_length` are the record's
+#: bookkeeping and stay in the audit file.
+PAYLOAD_ENTRY_KEYS = ("text", "observed_at")
+
+#: What an audit line carries. CLOSED. `example_id` is the join key and the ONLY name it shares with
+#: `PAYLOAD_FIELDS`; everything else here is provenance a model never sees.
+AUDIT_FIELDS = ("example_id", "input_sha", "content_sha", "captured_at", "prediction_at",
+                "boundary", "sources", "source_gaps", "placement", "eligibility", "label",
+                "operational_observation", "input_provenance", "reproducibility",
+                "resources", "redaction", "unknown", "versions")
+
+#: Why a record was left out, over and above every code `EXPORT_REFUSALS` already names. Closed, and
+#: `tests/test_training_data.py` constructs a case for every member: a code nothing can emit reads
+#: as a guard and is not one. `exclusion_codes` is the union, and a name declared on both sides
+#: refuses rather than one shadowing the other.
+DATASET_EXCLUSIONS = ("source-reference-missing", "source-not-in-manifest", "source-ambiguous",
+                      "partition-not-trainable", "partition-held-out", "partition-single-use",
+                      "partition-quarantined", "leak-screened-positive", "item-retired",
+                      "item-exposed-elsewhere", "exposure-not-checked",
+                      "input-after-the-decision", "input-placement-unknown", "input-truncated",
+                      "audit-identity-in-payload", "target-not-single-headed")
+
+#: What an export does NOT establish, carried unconditionally on every manifest, for the reason
+#: `EXPORT_NOT_ESTABLISHED` is unconditional: a reader must be able to check that no dataset ever
+#: claimed more, and no branch below can discharge one of these by passing some other check.
+DATASET_NOT_ESTABLISHED = ("digest-identifies-content-not-provenance", "access-not-enforced",
+                           "exposure-not-recorded-in-the-eval-store",
+                           "training-sufficiency-not-established",
+                           "no-transfer-and-no-training-performed")
+
+DATASET_NOT_ESTABLISHED_NOTES = {
+    "digest-identifies-content-not-provenance":
+        "the manifest's digest identifies these bytes and detects a change to them. It says "
+        "nothing about whether the inputs were real: a correct digest is computable over a forged "
+        "record, so a matching digest establishes that nothing was altered after the export and "
+        "never that what was exported was observed",
+    "access-not-enforced":
+        "the manifest identifies content. It does not restrict who may read these files and it is "
+        "not an isolation boundary: the store's 0700/0600 modes and bin/exec_policy.py's answer "
+        "are what confine a reader, and either may be absent on this host",
+    "exposure-not-recorded-in-the-eval-store":
+        "this export READ workflow_eval's exposure log and wrote nothing to it. The draw is "
+        "recorded here -- source manifest, item ids, partition -- and an operator who wants it in "
+        "that module's own log calls workflow_eval.record_exposure themselves. The evals store has "
+        "one writer and this is not it",
+    "training-sufficiency-not-established":
+        "the counts below describe what was exported. They are not evidence that the dataset is "
+        "large enough, balanced enough or representative enough to train anything: no minimum "
+        "sample count is asserted anywhere, and a fixture's counts are not a readiness claim",
+    "no-transfer-and-no-training-performed":
+        "no destination was contacted, no byte left this machine, and no model was trained, "
+        "fine-tuned or evaluated. `destination` is a declared string compared against the scope's "
+        "permitted purpose, and D34 owns the readiness report that says what is still missing",
+}
+
+AUDIT_SEPARATION_NOTE = (
+    "the model input and the audit metadata are two files, and the schemas that build them share "
+    "exactly one key -- the example id they join on. Provenance, reviewer identity, label "
+    "rationale, eligibility, resource bases and redaction counts are audit metadata: in a model's "
+    "input they would be features, and a model that can read the bookkeeping can read the answer "
+    "off it")
+
+DETERMINISM_NOTE = (
+    "the same records, the same source manifest and the same declared provenance produce "
+    "byte-identical files. Nothing here reads a clock, a home directory, a path or a set's "
+    "iteration order: `built_at` and `built_by` are passed in and sit OUTSIDE the digest, every "
+    "collection is sorted before it is serialised, and the canonical form is the decision "
+    "contract's own")
+
+GROUPING_UNCERTAINTY_NOTE = (
+    "the defect key and the group id are workflow_eval's, copied verbatim. That module does not "
+    "report WHICH of its fallbacks produced a key -- an issue, a fix commit, the patched paths, or "
+    "the task's own id for a group of one -- so this manifest records the key rather than "
+    "classifying the detection method, and a group of one is recorded as a group of one rather "
+    "than as a confident grouping")
+
+
+# ---- the partition rules, derived from their owner rather than restated -------------------------
+
+def dataset_rules():
+    """Which partitions this exporter may draw from -> derived from `PARTITION_ROLES` at call time.
+
+    Every list here is COMPUTED from `workflow_eval.PARTITION_ROLES`, so nothing in this module
+    remembers which partitions are held out or single-use. Three things refuse rather than degrade:
+    a `PARTITIONS` tuple that is no longer an exact partition of that table, the disappearance of
+    `TRAINABLE_PARTITION` from it, and that partition declaring itself held-out or single-use. The
+    last is the one that matters -- the day somebody marks `development` held out, an exporter that
+    trusted a string here would spend the held-out material instead of refusing.
+    """
+    wf = _wf()
+    roles = dict(wf.PARTITION_ROLES)
+    names = tuple(wf.PARTITIONS)
+    missing = sorted(set(names) - set(roles))
+    extra = sorted(set(roles) - set(names))
+    if missing or extra:
+        raise _refuse("unknown-value",
+                      f"workflow_eval.PARTITIONS and PARTITION_ROLES disagree: unmapped "
+                      f"{missing or 'none'}, unknown {extra or 'none'}. That module owns both, and "
+                      f"an exporter cannot place material against a table with a hole in it")
+    if TRAINABLE_PARTITION not in roles:
+        raise _refuse(
+            "unknown-value",
+            f"workflow_eval.PARTITION_ROLES no longer declares {TRAINABLE_PARTITION!r}, which is "
+            f"the one partition this exporter draws from. That module owns the partitions; this "
+            f"one owns which single partition is trainable, and a rename is reconciled here")
+    role = dict(roles[TRAINABLE_PARTITION])
+    if role.get("held_out") or role.get("single_use"):
+        raise _refuse(
+            "value-invalid",
+            f"{TRAINABLE_PARTITION!r} now declares held_out={role.get('held_out')!r} "
+            f"single_use={role.get('single_use')!r}. Training from held-out or single-use material "
+            f"spends the evidence a promotion or audit decision rests on, so this exporter refuses "
+            f"rather than draws from it")
+    return {
+        "owner": "bin/workflow_eval.py:PARTITION_ROLES",
+        "partitions": list(names),
+        "trainable": TRAINABLE_PARTITION,
+        "trainable_purpose": _label_text(role.get("purpose"),
+                                         f"{TRAINABLE_PARTITION}'s exposure purpose"),
+        "refused": sorted(set(names) - {TRAINABLE_PARTITION}),
+        "held_out": sorted(name for name in names if (roles[name] or {}).get("held_out")),
+        "single_use": sorted(name for name in names if (roles[name] or {}).get("single_use")),
+        "fitting": sorted(name for name in names if (roles[name] or {}).get("fitting")),
+        "quarantine_bucket": wf.QUARANTINE,
+        "exposure_purposes": list(wf.EXPOSURE_PURPOSES),
+        "grouping": wf.GROUPING_RULE,
+        "assignment": wf.ASSIGNMENT_RULE,
+        "enforcement": wf.NOT_ENFORCEMENT_LABEL,
+        "roles": _copy(roles),
+        "note": GROUPING_UNCERTAINTY_NOTE,
+    }
+
+
+def exclusion_codes():
+    """Every code a dataset exclusion may carry -> D32's export refusals plus D33's own, sorted.
+
+    `EXPORT_REFUSALS` is read here rather than copied, because the eligibility decision is D32's and
+    this module records its answer verbatim. A name declared on both sides refuses: one code, one
+    meaning, and a collision would leave a reader unable to tell which check emitted it.
+    """
+    owner = tuple(EXPORT_REFUSALS)
+    overlap = sorted(set(owner) & set(DATASET_EXCLUSIONS))
+    if overlap:
+        raise _refuse(
+            "duplicate-entry",
+            f"{overlap} are declared both in EXPORT_REFUSALS and in DATASET_EXCLUSIONS. One code, "
+            f"one owner: reconcile them rather than letting one shadow the other")
+    return tuple(sorted(owner + DATASET_EXCLUSIONS))
+
+
+def _dataset_id(value):
+    """A dataset id, checked as an identity AND as a single filename component.
+
+    HONEST ABOUT WHICH CHECK BITES. The regex is strictly narrower than `safe_paths.SAFE_ID_RE`, so
+    `validate_id` cannot be the thing that refuses `../escape` -- the shape check already did. It is
+    called anyway because the repository's rule is that a filename component DERIVED FROM DATA goes
+    through `safe_paths`, and it is what would still hold if this id format ever widened. The same
+    pairing is `_example_id`'s.
+    """
+    text = _label_text(value, "a dataset id", limit=64)
+    if not re.fullmatch(r"ds-[0-9a-f]{16}", text):
+        raise _refuse("value-invalid",
+                      f"a dataset id is 'ds-' and 16 hex characters derived from the manifest "
+                      f"digest, got {text!r}")
+    return _sp().validate_id(text, "a dataset id")
+
+
+# ---- the two lines one example produces ---------------------------------------------------------
+
+def _payload_line(record, target):
+    """One model input and its target. The audit metadata is NOT in it (`AUDIT_SEPARATION_NOTE`).
+
+    The input is rebuilt entry by entry against `PAYLOAD_ENTRY_KEYS` rather than copied, so the drop
+    is structural: a stored entry carries `provenance`, `redactions`, `truncated` and
+    `original_length`, and none of those has a key to land in here. An absent field stays `None`
+    rather than becoming `[]`, because "nobody recorded what it was shown" and "it was shown none"
+    are different facts and a training input must not blur them.
+    """
+    block = {}
+    for field in INPUT_FIELDS:
+        offered = record["input"][field]
+        if offered is None:
+            block[field] = None
+            continue
+        block[field] = [{key: entry.get(key) for key in PAYLOAD_ENTRY_KEYS} for entry in offered]
+    line = {
+        "example_id": record["example_id"],
+        "question": {
+            "qualified_id": record["question"]["qualified_id"],
+            "spec": _copy(record["question"]["spec"]),
+        },
+        "input": block,
+        "target": target,
+    }
+    return _closed(line, PAYLOAD_FIELDS, "the payload line")
+
+
+def _input_provenance(record):
+    """Everything an input entry carries that a model input must not -> the audit file's copy.
+
+    THE SEPARATION LOSES NOTHING. `_payload_line` drops each entry's source, artifact digest,
+    placement, redaction counts and lengths; they land here, in the same order, so an auditor can
+    still say which artifact every retained line came from and what was redacted out of it.
+    `TRAINING-DATA.md` requires field provenance and evidence artifact hashes -- it just requires
+    them somewhere a model's input is not.
+    """
+    block = {}
+    for field in INPUT_FIELDS:
+        offered = record["input"][field]
+        if offered is None:
+            block[field] = None
+            continue
+        block[field] = [{
+            "source": (entry.get("provenance") or {}).get("source"),
+            "artifact_sha": (entry.get("provenance") or {}).get("artifact_sha"),
+            "placement": entry.get("placement"),
+            "redactions": _copy(entry.get("redactions") or {}),
+            "truncated": bool(entry.get("truncated")),
+            "original_length": entry.get("original_length"),
+        } for entry in offered]
+    return block
+
+
+def _target_of(head):
+    """The supervised target this example carries -> shape, cause, competing causes.
+
+    Only what review ESTABLISHED. `adjudicate` writes `cause` from the supported target and from
+    nowhere else, and the rationale behind it -- the evidence, the reviewer, the claim somebody
+    proposed, the unresolved reason -- stays in the audit file where a model never sees it.
+    """
+    return {
+        "shape": head["shape"],
+        "cause": head["cause"],
+        "contributing": [row["cause"] for row in head["contributing"]],
+        "taxonomy_v": head["taxonomy_v"],
+    }
+
+
+def _label_audit(head, state):
+    """The label's provenance: who, when, on what evidence, and what it does not establish."""
+    return {
+        "head": head["content_sha"],
+        "status": state["status"],
+        "shape": head["shape"],
+        "cause": head["cause"],
+        "contributing": [{"cause": row["cause"], "supported": row["supported"]}
+                         for row in head["contributing"]],
+        "unresolved_reason": head["unresolved_reason"],
+        "reviewer": _copy(head["reviewer"]),
+        "decided_at": head["decided_at"],
+        "evidence": [{"source": item["source"], "weight": item["weight"],
+                      "ref": _copy(item["ref"]), "ref_gaps": list(item["ref_gaps"])}
+                     for item in head["evidence"]],
+        "support": _copy(head["support"]),
+        "supersedes": head["supersedes"],
+        "corrections": len(state["corrections"]),
+        "reviewers": list(state["reviewers"]),
+        "taxonomy_v": head["taxonomy_v"],
+        "not_established": list(head["not_established"]),
+        "note": LABEL_VOCABULARY_NOTE,
+    }
+
+
+def _audit_line(record, *, decision, placement, label):
+    """Everything about one example that is provenance rather than the evidence itself."""
+    line = {
+        "example_id": record["example_id"],
+        "input_sha": record["input_sha"],
+        "content_sha": record["content_sha"],
+        "captured_at": record["captured_at"],
+        "prediction_at": record["prediction_at"],
+        "boundary": _copy(record["boundary"]),
+        "sources": _copy(record["sources"]),
+        "source_gaps": _copy(record["source_gaps"]),
+        "placement": placement,
+        "eligibility": _copy(decision["eligibility"]),
+        "label": label,
+        "operational_observation": _copy(record["candidate_cause"]),
+        "input_provenance": _input_provenance(record),
+        "reproducibility": _copy(record["reproducibility"]),
+        "resources": _copy(record["resources"]),
+        "redaction": _copy(record["redaction"]),
+        "unknown": list(record["unknown"]),
+        "versions": {
+            "snapshot": SNAPSHOT_VERSION,
+            "taxonomy": TAXONOMY_VERSION,
+            "lifecycle": LIFECYCLE_VERSION,
+            "dataset": DATASET_VERSION,
+            "contract": _contract().CONTRACT_VERSION,
+            "eval_manifest": _wf().MANIFEST_VERSION,
+            "question": record["question"]["qualified_id"],
+            "question_digest": record["question"]["digest"],
+        },
+    }
+    return _closed(line, AUDIT_FIELDS, "the audit line")
+
+
+def _placement_codes():
+    """The two inadmissible placements -> their exclusion codes, derived from the owner.
+
+    `decision_eval.FACT_PLACEMENTS` has three members and this module admits exactly one of them.
+    The other two are the two refusals -- and which string is which is re-derived by ASKING that
+    module (a fact from later, and a fact nobody can place) rather than by spelling either one
+    here. A literal would be a second copy of its vocabulary; deriving it means the day that
+    module grows a fourth placement, this refuses instead of quietly reading the new one as
+    "unknown".
+    """
+    de = _de()
+    later = de.placement("2000-01-02T00:00:00Z", "2000-01-01T00:00:00Z")
+    unplaceable = de.placement(None, None)
+    answers = {ADMISSIBLE_PLACEMENT, later, unplaceable}
+    if len(answers) != 3 or answers != set(de.FACT_PLACEMENTS):
+        raise _refuse(
+            "unknown-value",
+            f"decision_eval.FACT_PLACEMENTS is {sorted(de.FACT_PLACEMENTS)} and the three answers "
+            f"this module can derive are {sorted(answers)}. That module owns placement; this one "
+            f"owns which answer is admissible in a training input, and a placement nobody mapped "
+            f"would be read as one of the two it is not")
+    return {later: "input-after-the-decision", unplaceable: "input-placement-unknown"}
+
+
+def _input_refusals(record):
+    """Every reason this record's retained input is not admissible evidence -> codes.
+
+    THE ROUTE IS REAL, AND IT IS THE ONE D18 NAMES. `snapshot()` refuses a late entry at capture,
+    but `assert_intact` only checks that the bytes are the bytes that were digested -- and a caller
+    can compute a correct digest over a forged record. So placement is re-derived HERE, through
+    `decision_eval.placement`, over the record that is actually about to be exported. An entry from
+    after the decision is the future answer leaking into the problem statement, and an entry whose
+    instant nobody can place is not evidence that it was available either.
+
+    A truncated entry is refused for D31's own reason: an example cut in half is a corrupt example,
+    and `redact` can shorten a field even inside the length bound when a placeholder is longer than
+    what it replaced.
+    """
+    inadmissible = _placement_codes()
+    codes = []
+    for field in INPUT_FIELDS:
+        offered = record["input"][field]
+        if offered is None:
+            continue
+        if not isinstance(offered, list):
+            raise _refuse("wrong-type",
+                          f"input.{field} of {record['example_id']} is "
+                          f"{type(offered).__name__}, not a list of entries")
+        for entry in offered:
+            if not isinstance(entry, Mapping):
+                raise _refuse("wrong-type",
+                              f"an entry of input.{field} is {type(entry).__name__}, not an object")
+            where = _de().placement(entry.get("observed_at"), record["prediction_at"])
+            if where != ADMISSIBLE_PLACEMENT:
+                codes.append(inadmissible[where])
+            if entry.get("truncated"):
+                codes.append("input-truncated")
+    return codes
+
+
+def _audit_identity_hits(payload, record, head, item_id, group_id):
+    """Audit identifiers that reached the model input verbatim -> the ones found, sorted.
+
+    THE ROUTE IS REAL AND IT IS NOT THIS MODULE'S OWN CONSTRUCTION. `_payload_line` builds from a
+    closed allowlist, so no audit FIELD can arrive -- that part is the schema's job. What a schema
+    cannot stop is a VALUE: the question's wording and rubric are the caller's text, copied verbatim
+    out of the record, and so is every retained entry. A question that quotes the group id, the
+    manifest item id or the adjudication's digest has put the bookkeeping into the input, and a
+    model that can read the bookkeeping can read the answer off it.
+
+    Only content-derived identifiers are checked. The reviewer's id and the partition's name are
+    caller-chosen words with innocent readings -- a decision really can have been shown the word
+    "development" -- so searching for those would refuse honest examples, and what keeps them out
+    is the schema rather than a search.
+    """
+    blob = canonical(payload)
+    identities = {item_id, group_id, head["content_sha"], record["content_sha"]}
+    return sorted(str(value) for value in identities
+                  if value and len(str(value)) >= 8 and str(value) in blob)
+
+
+# ---- the export itself, which writes nothing -----------------------------------------------------
+
+def build_dataset(records, *, eval_manifest, store_dir, exposure_dir, now, purpose, destination,
+                  built_at, built_by, partition=TRAINABLE_PARTITION, parent=None):
+    """Eligible development records -> one immutable, content-addressed local dataset. No write.
+
+    NOTHING IS WRITTEN AND NOTHING IS CONTACTED. This reads the training store (each example's own
+    label and revocation files, keyed by example id) and the evals store's exposure log, and
+    produces the bytes of three files. `write_dataset` is the writer; no path is created here, no
+    destination is reached, and there is no trainer in this module to reach.
+
+    `store_dir` IS REQUIRED, which is what makes this the task that PREVENTS. `export_eligibility`
+    without it answers `label-not-checked` and `revocation-not-checked` rather than an all-clear;
+    demanding it means those two codes cannot arise through this path at all, because the gate
+    always reads the example's own label and revocation files. A record whose refusal list is
+    non-empty never reaches a payload line.
+
+    `built_at` and `built_by` have no defaults. A clock read here would make the same material
+    export to different bytes on two runs, so provenance is declared by the caller and sits OUTSIDE
+    the digest -- the dataset id is a pure function of the material, and re-exporting the same
+    material a year later gets the same id.
+
+    WHAT REFUSES OUTRIGHT, rather than excluding one record: a partition that is not the trainable
+    one, a source manifest that is not a `workflow_eval` manifest, ANY finding from
+    `verify_manifest` (a split group above all), a record whose `example_id` is not an example id,
+    and two records claiming one example id with different content. Everything else is a per-record
+    exclusion with its own code, counted and named in the manifest.
+    """
+    rules = dataset_rules()
+    if partition != rules["trainable"]:
+        raise _refuse(
+            "value-invalid",
+            f"{partition!r} is not the partition this exporter draws from. Only "
+            f"{rules['trainable']!r} may be trained from: {rules['held_out']} are held-out "
+            f"evidence, {rules['single_use']} is single-use, and a training export that touches "
+            f"either spends what a promotion or audit decision rests on")
+    wf = _wf()
+    if not isinstance(eval_manifest, Mapping) or eval_manifest.get("v") != wf.MANIFEST_VERSION:
+        raise _refuse(
+            "not-a-reference",
+            f"the source manifest must be a {wf.MANIFEST_VERSION} manifest from "
+            f"workflow_eval.build_manifest: that module owns grouping and partition assignment, "
+            f"and this exporter places nothing on its own")
+    findings = wf.verify_manifest(eval_manifest)
+    if findings:
+        kinds = sorted({str(finding.get("kind")) for finding in findings})
+        raise _refuse(
+            "value-invalid",
+            f"the source manifest carries {len(findings)} finding(s) from "
+            f"workflow_eval.verify_manifest ({', '.join(kinds)}), so nothing is exported from it. "
+            f"A group split across partitions is the one that matters: related variants of one "
+            f"defect on opposite sides of a split mean a held-out result was already solved, in "
+            f"full view, in development -- and choosing an exportable subset of a corrupt manifest "
+            f"is how that goes unnoticed")
+    if store_dir is None:
+        raise _refuse(
+            "missing-field",
+            "an export reads each example's own label and revocation files, so the training store "
+            "is required. Passing none is not 'there were none' -- it is the unmade check "
+            "export_eligibility reports as label-not-checked, and an unmade check is not a passed "
+            "one")
+    built = _instant(built_at, "built_at")
+    author = _label_text(built_by, "built_by")
+    checked_at = _instant(now, "now")
+    lineage = None if parent is None else _dataset_id(parent)
+    source = eval_manifest["content"]
+    by_task = {}
+    for iid in sorted(source["items"]):
+        by_task.setdefault(str(source["items"][iid].get("task_id")), []).append(iid)
+    exposure = None if exposure_dir is None else wf.exposure_state(exposure_dir, eval_manifest)
+
+    offered = 0
+    duplicates = 0
+    unique = {}
+    for record in records:
+        offered += 1
+        if not isinstance(record, Mapping) or record.get("v") != SNAPSHOT_VERSION:
+            raise _refuse("not-a-reference",
+                          f"an exported record is a {SNAPSHOT_VERSION} snapshot, got "
+                          f"{(record or {}).get('v')!r}")
+        eid = _example_id(record.get("example_id"))
+        if eid not in unique:
+            unique[eid] = record
+            continue
+        if unique[eid].get("content_sha") != record.get("content_sha"):
+            raise _refuse(
+                "duplicate-entry",
+                f"{eid} was offered twice with different content. One id names one input, so this "
+                f"is two records claiming one example rather than one record offered twice, and "
+                f"collapsing them would silently pick one")
+        duplicates += 1
+    if len(unique) > MAX_DATASET_EXAMPLES:
+        raise _refuse("bounds-exceeded",
+                      f"{len(unique)} examples were offered, past the {MAX_DATASET_EXAMPLES} one "
+                      f"export carries. It is refused rather than trimmed: a manifest describing "
+                      f"material its files do not contain is worse than a second export")
+
+    vocabulary = set(exclusion_codes())
+    payload_lines, audit_lines, examples, excluded = [], [], [], []
+    groups, drawn_items = {}, set()
+    for eid in sorted(unique):
+        record = unique[eid]
+        decision = export_eligibility(record, now=now, purpose=purpose, destination=destination,
+                                      store_dir=store_dir)
+        codes = list(decision["refusals"])
+        if "record-not-intact" in codes:
+            # Nothing further is read, for `export_eligibility`'s own reason: a record whose bytes
+            # are not the bytes that were digested has no fields worth weighing.
+            excluded.append({"example_id": eid, "refusals": sorted(set(codes)),
+                             "label_status": None, "group": None, "item": None})
+            continue
+        item_id = group_id = group_key = home = None
+        ref = (record["sources"] or {}).get("task_ref")
+        if not isinstance(ref, Mapping) or not ref.get("id"):
+            codes.append("source-reference-missing")
+        else:
+            matches = by_task.get(str(ref["id"]), [])
+            if not matches:
+                codes.append("source-not-in-manifest")
+            elif len(matches) > 1:
+                codes.append("source-ambiguous")
+            else:
+                item_id = matches[0]
+                item = source["items"][item_id]
+                group_id = item.get("group")
+                group_key = (source["groups"].get(group_id) or {}).get("key")
+                home = item.get("partition")
+                if home != partition:
+                    codes.append("partition-not-trainable")
+                    if home == rules["quarantine_bucket"]:
+                        codes.append("partition-quarantined")
+                    if home in rules["held_out"]:
+                        codes.append("partition-held-out")
+                    if home in rules["single_use"]:
+                        codes.append("partition-single-use")
+                if item.get("leaks"):
+                    codes.append("leak-screened-positive")
+        if exposure is None:
+            codes.append("exposure-not-checked")
+        elif item_id is not None:
+            seen = exposure["items"].get(item_id) or {}
+            if seen.get("retired"):
+                codes.append("item-retired")
+            if any(purpose_seen != rules["trainable_purpose"]
+                   for purpose_seen in seen.get("purposes") or []):
+                codes.append("item-exposed-elsewhere")
+        codes.extend(_input_refusals(record))
+        label = decision["label"]
+        head = None
+        if label["target"]["eligible"]:
+            # ONE lookup rather than two checks. A label D32 calls eligible has a target -- but a
+            # DISPUTED one that models ambiguity has no single head (`label_state` leaves `current`
+            # None), and there is then no adjudication to take a shape and a cause from. The lookup
+            # finds none and says so. A separate `current is None` branch was removed for being a
+            # second spelling of the same fact: deleting it changed nothing any test could see.
+            history = read_lifecycle(store_dir, eid, "adjudication")
+            head = next((entry for entry in history
+                         if entry["content_sha"] == label["current"]), None)
+            if head is None:
+                codes.append("target-not-single-headed")
+        # else: one of D32's own label-* codes already named why there is no target
+        if not codes:
+            payload = _payload_line(record, _target_of(head))
+            if _audit_identity_hits(payload, record, head, item_id, group_id):
+                codes.append("audit-identity-in-payload")
+        unknown = sorted(set(codes) - vocabulary)
+        if unknown:
+            raise _refuse("unknown-value",
+                          f"this export produced {unknown}, which neither EXPORT_REFUSALS nor "
+                          f"DATASET_EXCLUSIONS names")
+        if codes:
+            excluded.append({"example_id": eid, "refusals": sorted(set(codes)),
+                             "label_status": label["status"], "group": group_id, "item": item_id})
+            continue
+        audit = _audit_line(record, decision=decision, label=_label_audit(head, label),
+                            placement={
+                                "item": item_id,
+                                "group": group_id,
+                                "group_key": group_key,
+                                "partition": home,
+                                "source_manifest": wf.manifest_ref(eval_manifest),
+                                "grouping_owner": rules["owner"],
+                                "grouping": rules["grouping"],
+                                "assignment": rules["assignment"],
+                                "note": GROUPING_UNCERTAINTY_NOTE,
+                            })
+        for what, line in (("payload", payload), ("audit_metadata", audit)):
+            size = len((canonical(line) + "\n").encode("utf-8"))
+            if size > MAX_RECORD_BYTES:
+                raise _refuse("bounds-exceeded",
+                              f"refusing a {size}-byte {what} line for {eid}")
+        payload_lines.append(payload)
+        audit_lines.append(audit)
+        drawn_items.add(item_id)
+        examples.append({
+            "example_id": eid,
+            "input_sha": record["input_sha"],
+            "content_sha": record["content_sha"],
+            "item": item_id,
+            "group": group_id,
+            "group_key": group_key,
+            "label_head": head["content_sha"],
+            "label_taxonomy_v": head["taxonomy_v"],
+            "shape": head["shape"],
+            "cause": head["cause"],
+            "payload_sha": _sha(payload),
+            "audit_metadata_sha": _sha(audit),
+        })
+        row = groups.setdefault(group_id, {
+            "group": group_id, "key": group_key, "partition": home,
+            "items": sorted((source["groups"].get(group_id) or {}).get("items") or []),
+            "drawn": [], "examples": []})
+        if item_id not in row["drawn"]:
+            row["drawn"].append(item_id)
+        row["examples"].append(eid)
+
+    for row in groups.values():
+        row["drawn"] = sorted(row["drawn"])
+        row["examples"] = sorted(row["examples"])
+        row["size"] = len(row["items"])
+        row["solo"] = len(row["items"]) == 1
+    payload_blob = "".join(canonical(line) + "\n" for line in payload_lines).encode("utf-8")
+    audit_blob = "".join(canonical(line) + "\n" for line in audit_lines).encode("utf-8")
+    by_code, by_status, by_target = {}, {}, {}
+    for row in excluded:
+        by_status[str(row["label_status"])] = by_status.get(str(row["label_status"]), 0) + 1
+        for code in row["refusals"]:
+            by_code[code] = by_code.get(code, 0) + 1
+    for row in examples:
+        key = f"{row['shape']}/{row['cause']}"
+        by_target[key] = by_target.get(key, 0) + 1
+
+    content = {
+        "v": DATASET_VERSION,
+        "exporter": {
+            "module": "bin/training_data.py",
+            "version": DATASET_VERSION,
+            "note": "the exporter and this record shape are ONE version, revised together, so a "
+                    "reader holding a line knows which exporter wrote it",
+        },
+        "partition": partition,
+        "parent": lineage,
+        "files": dict(sorted(DATASET_FILES.items())),
+        "selection": {
+            "policy": "all-eligible",
+            "partition": partition,
+            "sampled": False,
+            "note": "every eligible record in the trainable partition is exported and nothing is "
+                    "sampled, so the counts below are the whole eligible set rather than a draw "
+                    "from it. A sampling policy would have to be declared and recorded here",
+        },
+        "rules": {
+            "trainable": rules["trainable"],
+            "trainable_purpose": rules["trainable_purpose"],
+            "refused": rules["refused"],
+            "held_out": rules["held_out"],
+            "single_use": rules["single_use"],
+            "fitting": rules["fitting"],
+            "quarantine_bucket": rules["quarantine_bucket"],
+            "partitions": rules["roles"],
+            "grouping": rules["grouping"],
+            "assignment": rules["assignment"],
+            "owner": rules["owner"],
+            "enforcement": rules["enforcement"],
+            "exclusion_codes": list(exclusion_codes()),
+        },
+        "source_manifest": wf.manifest_ref(eval_manifest),
+        # The owner's OWN digest of the exact item set this export drew from, taken over the
+        # partition name and its members and deliberately not over the manifest id -- so a later
+        # reader can say which of the two moved. Recording it here is reuse, not a second identity:
+        # `workflow_eval.partition_digest` is the one function that computes it.
+        "source_partition_digest": wf.partition_digest(eval_manifest, partition),
+        "schemas": {
+            "snapshot": SNAPSHOT_VERSION,
+            "taxonomy": TAXONOMY_VERSION,
+            "lifecycle": LIFECYCLE_VERSION,
+            "dataset": DATASET_VERSION,
+            "contract": _contract().CONTRACT_VERSION,
+            "eval_manifest": wf.MANIFEST_VERSION,
+            "payload_fields": list(PAYLOAD_FIELDS),
+            "payload_entry_keys": list(PAYLOAD_ENTRY_KEYS),
+            "audit_fields": list(AUDIT_FIELDS),
+            "shared_fields": sorted(set(PAYLOAD_FIELDS) & set(AUDIT_FIELDS)),
+        },
+        "eligibility": {
+            "declared_purpose": purpose,
+            "destination": destination,
+            "checked_at": checked_at,
+            "gate": "training_data.export_eligibility",
+            "note": "the gate DECIDES and this export ACTS on its decision: a record with a "
+                    "non-empty refusal list never reaches a payload line",
+        },
+        "exposure": {
+            "checked": exposure is not None,
+            "store": "caller-supplied" if exposure_dir is not None else None,
+            "entries": None if exposure is None else exposure["entries"],
+            "unreadable": None if exposure is None else exposure["unreadable"],
+            "owner": "bin/workflow_eval.py:exposure_state",
+            "recorded_here": False,
+        },
+        "examples": examples,
+        "groups": {gid: groups[gid] for gid in sorted(groups)},
+        "counts": {
+            "offered": offered,
+            "unique": len(unique),
+            "duplicates_collapsed": duplicates,
+            "included": len(examples),
+            "excluded": len(excluded),
+            "groups": len(groups),
+            "items": len(drawn_items),
+        },
+        # Already in example-id order: the loop above iterates `sorted(unique)`, which is the
+        # ONE place ordering is decided. A second sort here would be a copy of that decision,
+        # and a copy that cannot be shown to be load-bearing is not a guard.
+        "excluded": excluded,
+        "excluded_by_code": dict(sorted(by_code.items())),
+        "excluded_by_label_status": dict(sorted(by_status.items())),
+        "included_by_target": dict(sorted(by_target.items())),
+        "content_identities": {
+            "payload_sha": hashlib.sha256(payload_blob).hexdigest(),
+            "audit_metadata_sha": hashlib.sha256(audit_blob).hexdigest(),
+            "payload_lines": len(payload_lines),
+            "audit_metadata_lines": len(audit_lines),
+            "payload_bytes": len(payload_blob),
+            "audit_metadata_bytes": len(audit_blob),
+        },
+        "not_established": list(DATASET_NOT_ESTABLISHED),
+        "not_established_notes": dict(sorted(DATASET_NOT_ESTABLISHED_NOTES.items())),
+        "notes": [AUDIT_SEPARATION_NOTE, DETERMINISM_NOTE, GROUPING_UNCERTAINTY_NOTE,
+                  REDACTION_LIMIT_NOTE, LABEL_SEPARATE_NOTE, NOT_WIRED_LABEL],
+    }
+    sha = _sha(content)
+    manifest = {
+        "v": DATASET_VERSION,
+        "dataset_id": _dataset_id(f"ds-{sha[:16]}"),
+        "sha": sha,
+        "digest": {
+            "algorithm": "sha256",
+            "canonical": "bin/decision_contract.py:dumps",
+            "over": "content",
+            "excludes": ["built_at", "built_by", "dataset_id", "sha", "digest"],
+            "note": DATASET_NOT_ESTABLISHED_NOTES["digest-identifies-content-not-provenance"],
+        },
+        "built_at": built,
+        "built_by": author,
+        "content": content,
+    }
+    return {
+        "manifest": manifest,
+        "payload": payload_lines,
+        "audit_metadata": audit_lines,
+        "bytes": {
+            "payload": payload_blob,
+            "audit_metadata": audit_blob,
+            "manifest": (canonical(manifest) + "\n").encode("utf-8"),
+        },
+    }
+
+
+def dataset_integrity(manifest):
+    """Recompute an export's identity -> `{"sha_ok", "id_ok", "recomputed"}`.
+
+    A digest IDENTIFIES content; it is not protection against a worker that can rewrite the file.
+    See `DATASET_NOT_ESTABLISHED_NOTES['digest-identifies-content-not-provenance']`.
+    """
+    if not isinstance(manifest, Mapping) or manifest.get("v") != DATASET_VERSION:
+        raise _refuse("not-a-reference", f"this is not a {DATASET_VERSION} export")
+    sha = _sha(manifest.get("content"))
+    return {"sha_ok": sha == manifest.get("sha"),
+            "id_ok": manifest.get("dataset_id") == f"ds-{sha[:16]}",
+            "recomputed": sha}
+
+
+# ---- dataset persistence, through the same store seam -------------------------------------------
+
+def write_dataset(dataset, store_dir):
+    """Write one export -> `{"written", "path", "dataset_id", "reason"}`. Create-once.
+
+    IMMUTABLE BY CONSTRUCTION. All three files go through `safe_paths.confined_create_bytes`, whose
+    `O_EXCL` makes "is this name free" and the write one kernel operation and treats a symlink at
+    the leaf as taken rather than followed. Nothing here overwrites an export.
+
+    RE-EXPORTING THE SAME MATERIAL IS A NO-OP THAT KEEPS THE FIRST, so the `built_at` on disk stays
+    the real one. The comparison is over `content`, which excludes provenance: the same records
+    exported again tomorrow are the same dataset. Different content under the same id is refused
+    loudly -- with a content-addressed id that means a rewrite or a sha256 collision, not a re-run.
+
+    The manifest is written LAST, so its presence implies the two files whose digests it carries.
+    """
+    manifest = dataset["manifest"]
+    report = dataset_integrity(manifest)
+    broken = sorted(name for name, ok in report.items() if name.endswith("_ok") and not ok)
+    if broken:
+        raise _refuse("value-invalid",
+                      f"the export fails {', '.join(broken)}: its content has moved since it was "
+                      f"built, so it is not the dataset it claims to be")
+    did = _dataset_id(manifest["dataset_id"])
+    sp = _sp()
+    root = Path(store_dir)
+    rel = {name: f"{DATASET_DIR}/{did}/{DATASET_FILES[name]}" for name in DATASET_FILES}
+    held = (sp.confined_read_bytes(root, rel["manifest"], what="training dataset manifest",
+                                   missing_ok=True) if root.is_dir() else None)
+    if held:
+        stored = _contract().loads(held.decode("utf-8"))
+        if not isinstance(stored, Mapping) or stored.get("v") != DATASET_VERSION:
+            raise _refuse("unknown-value",
+                          f"{rel['manifest']} is stamped {(stored or {}).get('v')!r}; this writer "
+                          f"writes {DATASET_VERSION!r}")
+        if canonical(stored.get("content")) != canonical(manifest["content"]):
+            raise _refuse(
+                "duplicate-entry",
+                f"{did} already exists with DIFFERENT content: a dataset id is the digest of the "
+                f"content it names, so this is a rewrite (or a sha256 collision), not a re-export. "
+                f"Nothing was overwritten")
+        return {"written": False, "path": str(root / rel["manifest"]), "dataset_id": did,
+                "reason": "already-exported"}
+    _rt().ensure_private(root)
+    for name in ("payload", "audit_metadata", "manifest"):
+        data = dataset["bytes"][name]
+        try:
+            sp.confined_create_bytes(root, rel[name], data, what=f"training dataset {name}")
+        except sp.SafePathExists:
+            on_disk = sp.confined_read_bytes(root, rel[name], what=f"training dataset {name}")
+            if on_disk != data:
+                raise _refuse(
+                    "duplicate-entry",
+                    f"{rel[name]} already holds different bytes under a content-addressed id. An "
+                    f"export is immutable, so nothing was overwritten") from None
+    return {"written": True, "path": str(root / rel["manifest"]), "dataset_id": did,
+            "reason": None}
+
+
+def read_dataset(store_dir, dataset_id):
+    """Load one export and re-derive every identity it claims -> `{manifest, payload, audit}`.
+
+    Four checks, and together they are the chain of custody such as it is: the manifest's `content`
+    must still digest to its `sha`; that sha's prefix must still be the id it is FILED under; and
+    each data file must still digest to the `content_identities` row the manifest carries. A
+    tamperer who recomputes the manifest digest changes the id and therefore the directory name, and
+    every reference to it stops resolving. That is DETECTION, never prevention.
+
+    A store that does not exist holds nothing, and reading never creates it -- only a write does.
+    """
+    sp = _sp()
+    root = Path(store_dir)
+    did = _dataset_id(dataset_id)
+    rel = {name: f"{DATASET_DIR}/{did}/{DATASET_FILES[name]}" for name in DATASET_FILES}
+    raw = (sp.confined_read_bytes(root, rel["manifest"], what="training dataset manifest",
+                                  missing_ok=True) if root.is_dir() else None)
+    if not raw:
+        raise _refuse("not-a-reference", f"no dataset {did!r} under {store_dir}")
+    manifest = _contract().loads(raw.decode("utf-8"))
+    if not isinstance(manifest, Mapping) or manifest.get("v") != DATASET_VERSION:
+        raise _refuse("unknown-value",
+                      f"{rel['manifest']} is stamped {(manifest or {}).get('v')!r}; this reader "
+                      f"reads {DATASET_VERSION!r}")
+    report = dataset_integrity(manifest)
+    broken = sorted(name for name, ok in report.items() if name.endswith("_ok") and not ok)
+    if broken:
+        raise _refuse("value-invalid",
+                      f"{did} fails {', '.join(broken)}: its content has been rewritten since it "
+                      f"was exported, so it is not the dataset it claims to be")
+    identities = manifest["content"]["content_identities"]
+    out = {"manifest": manifest}
+    for name, count in (("payload", "payload_lines"),
+                        ("audit_metadata", "audit_metadata_lines")):
+        blob = sp.confined_read_bytes(root, rel[name], what=f"training dataset {name}",
+                                      missing_ok=True) or b""
+        if hashlib.sha256(blob).hexdigest() != identities[f"{name}_sha"]:
+            raise _refuse("value-invalid",
+                          f"{rel[name]} does not match the digest the manifest carries for it: the "
+                          f"file has moved since it was exported")
+        # No line-count check: the digest above already establishes that these are exactly the
+        # bytes that were exported, and the manifest's count was computed from those same lines. A
+        # count that could not disagree is not a guard, so `{count}` is read as metadata only.
+        out[name] = [_contract().loads(line) for line in blob.decode("utf-8").splitlines()
+                     if line.strip()]
+        out[f"{name}_lines_declared"] = identities[count]
+    return out
+
+
 # ---- the opt-in hook ----------------------------------------------------------------------------
 
 def capture_hook(build, *, store_dir=None, scope=None, enabled=None):
@@ -2765,7 +3720,79 @@ def _demo_question():
     })
 
 
-def _demo_lifecycle(record, store):
+def _demo_pool():
+    """Three synthetic mined-task records: two variants of one defect, plus a second defect.
+
+    Shaped for `workflow_eval.build_manifest` and invented from nothing -- no repository was read,
+    no commit is real, and the two `issue: 1` variants are what make a GROUP rather than two rows.
+    """
+    def diff(path):
+        return (f"diff --git a/{path} b/{path}\n--- a/{path}\n+++ b/{path}\n"
+                f"@@ -1,1 +1,1 @@\n-    old_call()\n+    new_call()\n")
+
+    return [{"task_id": task_id, "mode": "issue-replay", "issue": issue,
+             "base_commit": "0" * 40, "fix_commit": None, "subject": "",
+             "statement": f"the adapter drops a record in {task_id}",
+             "statement_source": "issue", "reference_patch": diff(f"src/{task_id}.py"),
+             "setup_patch": None, "test_blobs": {}, "oracle_tests_available": True,
+             "size_profile": "S", "labels": [], "notes": []}
+            for task_id, issue in (("D31", 1), ("D31-variant", 1), ("D32", 2))]
+
+
+def _demo_dataset(record, store, evals):
+    """D33's half: place the example in a grouped partition, export, inspect, re-export. Offline.
+
+    The evals directory is a temp sibling of the training store and is only READ: the exposure log
+    belongs to `workflow_eval` and this walkthrough writes nothing into it.
+    """
+    wf = _wf()
+    steps = []
+    manifest = wf.build_manifest("synthetic://fixture-repo", "0" * 40, _demo_pool(),
+                                 allocation={TRAINABLE_PARTITION: 1},
+                                 acceptance="python3 run_tests.py",
+                                 created_at="2026-09-19T00:00:00+00:00", created_by="demo")
+    rules_held_out = dataset_rules()["held_out"]
+    group = next(row for row in manifest["content"]["groups"].values() if len(row["items"]) > 1)
+    steps.append({"step": "grouped by defect", "groups": len(manifest["content"]["groups"]),
+                  "largest_group": group["key"], "variants": len(group["items"]),
+                  "partition": group["partition"]})
+    common = {"eval_manifest": manifest, "store_dir": store, "exposure_dir": evals,
+              "purpose": record["eligibility"]["purpose"],
+              "destination": "local-development-partition",
+              "built_at": "2026-09-20T10:00:00Z", "built_by": "synthetic-operator"}
+    exported = build_dataset([record], now="2026-09-20T09:00:00Z", **common)
+    rerun = build_dataset([record], now="2026-09-20T09:00:00Z", **common)
+    twice = build_dataset([record, record], now="2026-09-20T09:00:00Z", **common)
+    steps.append({"step": "dataset built", "dataset_id": exported["manifest"]["dataset_id"],
+                  "included": exported["manifest"]["content"]["counts"]["included"],
+                  "deterministic": rerun["bytes"] == exported["bytes"],
+                  # The same record offered twice collapses to one payload line. The MANIFEST still
+                  # differs, and must: it records that a duplicate was offered and collapsed, which
+                  # is a different accounting of the same material.
+                  "duplicate_collapsed_to_one_line":
+                      twice["bytes"]["payload"] == exported["bytes"]["payload"],
+                  "duplicates_collapsed":
+                      twice["manifest"]["content"]["counts"]["duplicates_collapsed"]})
+    receipt = write_dataset(exported, store)
+    rewrite = write_dataset(exported, store)
+    inspected = read_dataset(store, exported["manifest"]["dataset_id"])
+    steps.append({"step": "dataset written and inspected", "written": receipt["written"],
+                  "second_write": rewrite["reason"],
+                  "payload_keys": sorted(inspected["payload"][0]),
+                  "audit_only": sorted(set(AUDIT_FIELDS) - set(PAYLOAD_FIELDS))[:3]})
+    for name in rules_held_out:
+        held = wf.build_manifest("synthetic://fixture-repo", "0" * 40, _demo_pool(),
+                                 allocation={name: 1}, acceptance="python3 run_tests.py",
+                                 created_at="2026-09-19T00:00:00+00:00", created_by="demo")
+        refused = build_dataset([record], now="2026-09-20T09:00:00Z",
+                                **dict(common, eval_manifest=held))
+        steps.append({"step": f"{name} material refused",
+                      "included": refused["manifest"]["content"]["counts"]["included"],
+                      "refusals": refused["manifest"]["content"]["excluded_by_code"]})
+    return steps, common, exported["manifest"]["dataset_id"]
+
+
+def _demo_lifecycle(record, store, evals):
     """D32's half of the walkthrough: review, correct, export, revoke, refuse. Offline."""
     steps = []
     later = "2026-09-19T12:00:00Z"
@@ -2795,6 +3822,8 @@ def _demo_lifecycle(record, store):
                                  destination="local-development-partition", store_dir=store)
     steps.append({"step": "export decided", "exportable": allowed["exportable"],
                   "refusals": allowed["refusals"]})
+    dataset_steps, common, first_id = _demo_dataset(record, store, evals)
+    steps.extend(dataset_steps)
     stale = export_eligibility(record, now="2027-09-20T09:00:00Z",
                                purpose=record["eligibility"]["purpose"],
                                destination="local-development-partition", store_dir=store)
@@ -2817,12 +3846,19 @@ def _demo_lifecycle(record, store):
     steps.append({"step": "re-export refused", "exportable": refused["exportable"],
                   "refusals": refused["refusals"],
                   "unreached": refused["unreached"]})
+    withdrawn = build_dataset([record], now="2026-09-22T09:00:00Z", **common)
+    steps.append({"step": "revoked example leaves the dataset",
+                  "included": withdrawn["manifest"]["content"]["counts"]["included"],
+                  "refusals": withdrawn["manifest"]["content"]["excluded_by_code"],
+                  "dataset_id_changed":
+                      withdrawn["manifest"]["dataset_id"] != first_id})
     return steps
 
 
 def _demo(as_json=False):
     """The whole seam over synthetic data in a temp dir. Offline; spends nothing."""
-    out = {"synthetic": True, "note": SYNTHETIC_NOTE, "steps": []}
+    out = {"synthetic": True, "note": SYNTHETIC_NOTE, "steps": [],
+           "exposure_log_files": 0}
     predicted = "2026-09-19T10:00:00Z"
     build_kwargs = {
         "question": _demo_question(),
@@ -2847,7 +3883,12 @@ def _demo(as_json=False):
     disabled = capture_hook(lambda: dict(build_kwargs), store_dir=None, scope=None, enabled=None)
     out["steps"].append({"step": "collection off", "collected": disabled["collected"],
                          "reason": disabled["reason"]})
-    temp = Path(tempfile.mkdtemp(prefix="training-demo-"))
+    base = Path(tempfile.mkdtemp(prefix="training-demo-"))
+    temp = base / "training"      # the training store this module owns and writes
+    # Named for what it holds rather than for the store, because `bin/workflow_eval.py` is the
+    # ONE engine that may resolve the evals store by name and this module must not look like
+    # a second one (tests/test_decision_evaluation_manifest.py enforces that).
+    exposure = base / "eval-exposure"   # workflow_eval's log, READ here and never written
     try:
         scope = _demo_scope()
         first = capture_hook(lambda: dict(build_kwargs), store_dir=temp, scope=scope,
@@ -2895,9 +3936,11 @@ def _demo(as_json=False):
                 "example_bytes_unchanged": canonical(pair["example"]) == canonical(stored[0]),
                 "label_points_at": pair["label"]["input_sha"][:12],
                 "label_status": pair["label"]["status"]})
-            out["steps"].extend(_demo_lifecycle(stored[0], temp))
+            out["steps"].extend(_demo_lifecycle(stored[0], temp, exposure))
+        out["exposure_log_files"] = (len(list(exposure.rglob("*")))
+                                     if exposure.exists() else 0)
     finally:
-        shutil.rmtree(temp, ignore_errors=True)
+        shutil.rmtree(base, ignore_errors=True)
     if as_json:
         print(json.dumps(out, indent=2, sort_keys=True))
         return 0
@@ -2907,6 +3950,8 @@ def _demo(as_json=False):
         print(f"  {step['step']:32s} {detail}")
     print(f"  stored records: {out['stored']}")
     print(f"  unknown on the first record: {', '.join(out['unknown'])}")
+    print(f"  the evaluation exposure log was read and never written: "
+          f"{out['exposure_log_files']} file(s) under it")
     return 0
 
 

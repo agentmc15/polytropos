@@ -39,7 +39,11 @@ import hashlib
 import importlib.util
 import io
 import json
+import os
 import shutil
+import socket
+import subprocess
+import sys
 import tempfile
 import unittest
 from collections.abc import Mapping
@@ -1978,7 +1982,12 @@ class LabelEligibilityTests(unittest.TestCase):
     def test_the_lifecycle_writes_through_the_confined_helper_and_nothing_else(self):
         source = (BIN_DIR / "training_data.py").read_text(encoding="utf-8")
         self.assertEqual(source.count("sp.confined_append_bytes("), 2)
-        self.assertEqual(source.count("sp.confined_read_bytes("), 2)
+        # Two reads were D31's and D32's (`read_snapshots`, `read_lifecycle`); the other four are
+        # D33's dataset files -- two in `write_dataset` (the already-exported check and the
+        # differing-bytes compare) and two in `read_dataset` (the manifest and the data files).
+        # `DatasetExportTests` pins the safe_paths SURFACE as an exact set, which is the form of
+        # this claim that does not have to be re-counted every time the file grows.
+        self.assertEqual(source.count("sp.confined_read_bytes("), 6)
         self.assertNotIn("open(", source.replace("os.open(", ""))
         self.assertNotIn("Path.home", source)
         self.assertNotIn("datetime.date.today", source)
@@ -2010,3 +2019,1266 @@ class LabelEligibilityTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# ==================================================================================================
+#  D33 -- GROUPED DATASET SPLITS AND REPRODUCIBLE LOCAL EXPORTS
+# ==================================================================================================
+
+we = td._wf()
+
+#: The one repository and commit every fixture manifest is built over. Synthetic by its own
+#: spelling: no real repository was read and no real commit is named anywhere below.
+FIXTURE_REPO = "synthetic://fixture-repo"
+FIXTURE_BASE = "0" * 40
+FIXTURE_ACCEPTANCE = "python3 run_tests.py"
+
+NOW = "2026-09-20T09:00:00Z"
+BUILT_AT = "2026-09-20T10:00:00Z"
+BUILT_BY = "synthetic-operator"
+
+#: Strings that exist ONLY so their presence can be searched for. A payload line must not contain
+#: any of them; an audit line must contain all of them. Distinctive on purpose: a short id could
+#: appear in ordinary text by coincidence and prove nothing either way.
+AUDIT_ONLY_SOURCE = "verify-tail-provenance-marker"
+AUDIT_ONLY_REVIEWER = "reviewer-provenance-marker"
+AUDIT_ONLY_EVIDENCE = "review-ref-provenance-marker"
+
+#: Every stdlib primitive that could reach a network, a shell or another process. Armed with a
+#: raiser for the whole of an export, with a control below that CALLS two of them so the trap is
+#: proven armed rather than inert. The probe list IS this list -- `_ArmedSeams` asserts it.
+STDLIB_SEAMS = (("socket", "socket"), ("socket", "create_connection"), ("socket", "getaddrinfo"),
+                ("urllib.request", "urlopen"), ("http.client", "HTTPConnection"),
+                ("http.client", "HTTPSConnection"), ("subprocess", "run"), ("subprocess", "Popen"),
+                ("subprocess", "call"), ("subprocess", "check_call"),
+                ("subprocess", "check_output"), ("os", "system"), ("os", "popen"),
+                ("os", "execv"), ("os", "fork"), ("shutil", "which"))
+
+#: Every `workflow_eval` entry point that WRITES (its manifests, its exposure log, its policy
+#: files) or dispatches. D33 reads that module and must reach none of these: the evals store has one
+#: writer and this is not it.
+WF_SEAMS = ("write_manifest", "record_exposure", "record_results", "retire", "declare_cohort",
+            "select_cohort", "default_runner", "apply_proposal")
+
+
+def _diff(path):
+    """A synthetic unified diff. Nothing here came out of a real repository."""
+    return (f"diff --git a/{path} b/{path}\n--- a/{path}\n+++ b/{path}\n"
+            f"@@ -1,1 +1,1 @@\n-    old_call()\n+    new_call()\n")
+
+
+def _task(task_id, *, issue=None, statement=None, reference_patch=None):
+    """A mined-task record shaped like `repo_bench`'s pinned schema, invented from nothing."""
+    return {"task_id": task_id, "mode": "issue-replay", "issue": issue,
+            "base_commit": FIXTURE_BASE, "fix_commit": None, "subject": "",
+            "statement": statement or f"the adapter drops a record in {task_id}",
+            "statement_source": "issue",
+            "reference_patch": reference_patch or _diff(f"src/{task_id}.py"),
+            "setup_patch": None, "test_blobs": {}, "oracle_tests_available": True,
+            "size_profile": "S", "labels": [], "notes": []}
+
+
+def _pool():
+    """Two variants of defect 1 and one of defect 2 -> two groups, one of them of size two.
+
+    The group of two is what a split-refusal test needs, and the uneven sizes are what makes the
+    determinism assertions non-vacuous: with one group of one item, `sorted()` pins nothing.
+    """
+    return [_task("T-1", issue=1), _task("T-2", issue=1), _task("T-3", issue=2)]
+
+
+def _eval_manifest(tasks=None, *, allocation=None, on_leak="reject"):
+    return we.build_manifest(FIXTURE_REPO, FIXTURE_BASE, _pool() if tasks is None else tasks,
+                             allocation=allocation or {"development": 1}, on_leak=on_leak,
+                             acceptance=FIXTURE_ACCEPTANCE, created_by="fixture",
+                             created_at="2026-09-19T00:00:00+00:00")
+
+
+def _dsnap(task_id, text, *, question=None, source=AUDIT_ONLY_SOURCE, sources=None):
+    """One snapshot that joins to a mined task by `sources.task_ref`."""
+    refs = {"attempt_ref": al.make_ref("a1b2c3d4", version=al.LEDGER_VERSION)}
+    if task_id is not None:
+        refs["task_ref"] = al.make_ref(task_id)
+    return _snapshot(question=question or _question(),
+                     sources=refs if sources is None else sources,
+                     input={"observed_error": [_entry(text, source=source)]})
+
+
+def _forge(record, mutate):
+    """A record whose content was altered and whose THREE digests were correctly recomputed.
+
+    D18's lesson made concrete: `build_trial_protocol` computes a correct digest over forged
+    inputs, so a matching digest proves alteration was absent and never that the input was real.
+    `assert_intact` therefore passes on everything this produces, which is exactly why the export
+    re-derives placement itself instead of trusting the capture that is supposed to have happened.
+    """
+    forged = json.loads(json.dumps(record))
+    mutate(forged)
+    immutable = {"input": forged["input"], "question": forged["question"],
+                 "boundary": forged["boundary"], "sources": forged["sources"],
+                 "prediction_at": forged["prediction_at"]}
+    forged["input_sha"] = td._sha(immutable)
+    forged["example_id"] = f"ex-{forged['input_sha'][:16]}"
+    forged.pop("content_sha", None)
+    forged["content_sha"] = td._sha(forged)
+    return forged
+
+
+class _RaisingSeam:
+    """A seam that fails loudly when reached.
+
+    Not a mock returning a canned value: a canned return is indistinguishable from a real result
+    that happened to be ignored, and it would let a leaked call pass silently.
+    """
+
+    def __init__(self, name):
+        self.name = name
+        self.calls = []
+
+    def __call__(self, *args, **kwargs):
+        self.calls.append((args, kwargs))
+        raise AssertionError(f"seam {self.name!r} was reached: args={args!r} kwargs={kwargs!r}")
+
+
+class _ArmedSeams:
+    """Arms every `STDLIB_SEAMS` and `WF_SEAMS` name with a raiser, and restores them after."""
+
+    def __init__(self, test):
+        self.test = test
+        self.patches = []
+        self.armed = []
+
+    def __enter__(self):
+        for module, attr in STDLIB_SEAMS:
+            patch = mock.patch(f"{module}.{attr}", _RaisingSeam(f"{module}.{attr}"))
+            patch.start()
+            self.patches.append(patch)
+            self.armed.append(f"{module}.{attr}")
+        for attr in WF_SEAMS:
+            self.test.assertTrue(hasattr(we, attr), f"workflow_eval has no {attr!r} to arm")
+            patch = mock.patch.object(we, attr, _RaisingSeam(f"workflow_eval.{attr}"))
+            patch.start()
+            self.patches.append(patch)
+            self.armed.append(f"workflow_eval.{attr}")
+        # The probe list IS the forbidden list, by name. A shorter one would let a leak through a
+        # seam nobody replaced while every "nothing was called" assertion still passed.
+        self.test.assertEqual(
+            self.armed,
+            [f"{module}.{attr}" for module, attr in STDLIB_SEAMS]
+            + [f"workflow_eval.{attr}" for attr in WF_SEAMS])
+        return self
+
+    def __exit__(self, *exc):
+        for patch in reversed(self.patches):
+            patch.stop()
+        return False
+
+
+class DatasetExportTests(unittest.TestCase):
+    """D33: grouped splits, deterministic local exports, immutable manifests. All offline.
+
+    WHICH TASK PREVENTS AND WHICH ONLY DECIDES. D32's `export_eligibility` DECIDES -- it returns
+    refusal codes and carries `enforcement-not-provided` unconditionally. D33 is the CALLER that
+    acts on that decision: `build_dataset` puts no record with a non-empty refusal list into a
+    payload line, so for the one route this module owns -- a local JSONL export -- the gate is
+    enforced. `test_the_export_follows_the_gates_verdict_and_has_no_second_eligibility_check`
+    proves the reuse by patching the authority and watching the export obey it.
+
+    HOW EACH ACCEPTANCE TERM IS MADE STRUCTURAL RATHER THAN ASSERTED:
+
+      * RELATED ATTEMPTS CANNOT CROSS PROTECTED SPLITS -- a manifest is FORGED so one variant of a
+        two-variant defect sits in `promotion` and its digest is recomputed, so the only finding
+        `workflow_eval.verify_manifest` reports is `group-split`; the whole export then refuses and
+        writes nothing. The partition roles are derived from `PARTITION_ROLES` at call time and
+        patched BOTH ways: marking `development` held-out refuses, removing it refuses, and a fifth
+        partition appears in the derived held-out list without being named here.
+      * EXPOSED OR REVOKED EXAMPLES REFUSE -- a revoked example, an expired one, an item retired in
+        `workflow_eval`'s own log and an item exposed for a purpose that is not development's own
+        each drop out with their code, with the controls that an exposure for development's OWN
+        purpose does not refuse and that a fully eligible record does export. An unread exposure log
+        is `exposure-not-checked`, not a clean one.
+      * FUTURE-ANSWER LEAKAGE AND MISSING SOURCE REFERENCES FAIL -- placement is re-derived at
+        export over a record whose digests were correctly recomputed around a late entry, so the
+        one route `assert_intact` cannot see is covered; a quarantined group carries D06's own
+        `future-fix-message` screening; and a record naming no task reference, an unknown one, or an
+        ambiguous one fails rather than exporting with a gap.
+      * REPEATED EXPORT IS DETERMINISTIC -- a fixture with three groups, four included examples and
+        four different exclusion codes is exported twice in REVERSED input order and compared BYTE
+        for byte, in this process and in two child processes under different `PYTHONHASHSEED`s. The
+        dataset id is shown not to move when the declared provenance does.
+      * NO NETWORK OR TRAINING ACTION OCCURS -- sixteen stdlib primitives and eight `workflow_eval`
+        writers are armed with raisers for a whole build/write/read cycle, with the control test
+        that calls two of them and asserts each one bites.
+      * AUDIT METADATA IS SEPARATE FROM MODEL INPUTS -- the two closed schemas are asserted to share
+        exactly the join key, an input entry's provenance is shown to be absent from the payload
+        bytes and present in the audit bytes, and no action record reaches either file.
+    """
+
+    maxDiff = None
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="training-d33-"))
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.store = self.tmp / "training"
+        self.evals = self.tmp / "evals"
+        self.manifest = _eval_manifest()
+        self.record = _dsnap("T-1", "AttributeError: no attribute 'emit'")
+
+    # ---- fixture helpers ----------------------------------------------------------------------
+
+    def resolve(self, record, *, reviewer=AUDIT_ONLY_REVIEWER, ref=AUDIT_ONLY_EVIDENCE):
+        """Persist `record` and give it a RESOLVED adjudication, the state an export needs."""
+        td.persist(record, self.store)
+        entry = _adjudicate(record, reviewer=_reviewer(reviewer), evidence=[_ev(ref_id=ref)])
+        td.persist_lifecycle(entry, self.store)
+        return entry
+
+    def export(self, records=None, **over):
+        kwargs = {
+            "eval_manifest": self.manifest, "store_dir": self.store, "exposure_dir": self.evals,
+            "now": NOW, "purpose": self.record["eligibility"]["purpose"],
+            "destination": "local-development-partition",
+            "built_at": BUILT_AT, "built_by": BUILT_BY,
+        }
+        kwargs.update(over)
+        return td.build_dataset(self.record if records is None else records, **kwargs)
+
+    def codes(self, dataset, example_id=None):
+        rows = dataset["manifest"]["content"]["excluded"]
+        if example_id is not None:
+            rows = [row for row in rows if row["example_id"] == example_id]
+        return sorted({code for row in rows for code in row["refusals"]})
+
+    def eligible_case(self):
+        """The positive control: one persisted, adjudicated, exportable record."""
+        self.resolve(self.record)
+        return self.export([self.record])
+
+    # ---- the positive control, which provably bites -------------------------------------------
+
+    def test_a_fully_eligible_development_record_exports_with_nothing_excluded(self):
+        """THE CONTROL for every refusal below. Without it they could all be passing because the
+        fixture never exports anything at all."""
+        dataset = self.eligible_case()
+        content = dataset["manifest"]["content"]
+        self.assertEqual(content["counts"], {"offered": 1, "unique": 1,
+                                             "duplicates_collapsed": 0, "included": 1,
+                                             "excluded": 0, "groups": 1, "items": 1})
+        self.assertEqual(content["excluded"], [])
+        self.assertEqual(len(dataset["payload"]), 1)
+        self.assertEqual(len(dataset["audit_metadata"]), 1)
+        self.assertEqual(content["examples"][0]["example_id"], self.record["example_id"])
+        self.assertEqual(dataset["payload"][0]["target"],
+                         {"shape": "failure-cause", "cause": "missing-context",
+                          "contributing": [], "taxonomy_v": td.TAXONOMY_VERSION})
+        self.assertEqual(content["included_by_target"], {"failure-cause/missing-context": 1})
+        self.assertEqual(content["partition"], td.TRAINABLE_PARTITION)
+
+    # ---- A. related attempts cannot cross protected splits ------------------------------------
+
+    def test_two_variants_of_one_defect_are_one_group_and_land_in_one_partition(self):
+        """D06's invariant, read rather than restated: the group the export records is the
+        manifest's own, with BOTH variants in it and one partition."""
+        first = _dsnap("T-1", "AttributeError: no attribute 'emit'")
+        second = _dsnap("T-2", "TypeError: the adapter shape is wrong")
+        for record in (first, second):
+            self.resolve(record)
+        content = self.export([first, second])["manifest"]["content"]
+        self.assertEqual(content["counts"]["included"], 2)
+        self.assertEqual(content["counts"]["groups"], 1)
+        row = list(content["groups"].values())[0]
+        self.assertEqual(row["key"], "issue:1")
+        self.assertEqual(row["size"], 2)
+        self.assertIs(row["solo"], False)
+        self.assertEqual(sorted(row["drawn"]), sorted(row["items"]))
+        self.assertEqual(row["partition"], td.TRAINABLE_PARTITION)
+        self.assertEqual(sorted(row["examples"]),
+                         sorted([first["example_id"], second["example_id"]]))
+
+    def test_a_group_split_across_partitions_refuses_the_whole_export(self):
+        """THE HEADLINE REFUSAL, and it is refused rather than merely absent from the fixture.
+
+        The manifest is forged so one of defect 1's two variants sits in `promotion`, and its digest
+        is recomputed so the ONLY finding `verify_manifest` reports is `group-split` -- otherwise a
+        `digest` finding would be doing the refusing and this would prove nothing about grouping.
+        """
+        first = _dsnap("T-1", "AttributeError: no attribute 'emit'")
+        self.resolve(first)
+        forged = json.loads(json.dumps(self.manifest))
+        content = forged["content"]
+        group = next(row for row in content["groups"].values() if len(row["items"]) > 1)
+        moved = sorted(group["items"])[0]
+        content["items"][moved]["partition"] = "promotion"
+        content["partitions"]["development"] = sorted(
+            i for i in content["partitions"]["development"] if i != moved)
+        content["partitions"]["promotion"] = [moved]
+        forged["sha"] = we.manifest_digest(content)
+        forged["id"] = forged["sha"][:16]
+        findings = we.verify_manifest(forged)
+        self.assertEqual(sorted({finding["kind"] for finding in findings}), ["group-split"])
+        with self.assertRaises(dc.ContractError) as raised:
+            self.export([first], eval_manifest=forged)
+        self.assertEqual(raised.exception.code, "value-invalid")
+        self.assertIn("group-split", str(raised.exception))
+        self.assertFalse((self.store / td.DATASET_DIR).exists())
+
+    def test_the_partition_roles_are_the_owners_and_a_held_out_development_refuses(self):
+        """Derived from `PARTITION_ROLES` at call time, and patched BOTH ways."""
+        rules = td.dataset_rules()
+        self.assertEqual(rules["trainable"], td.TRAINABLE_PARTITION)
+        self.assertEqual(rules["partitions"], list(we.PARTITIONS))
+        self.assertEqual(set(rules["held_out"]),
+                         {n for n in we.PARTITIONS if we.PARTITION_ROLES[n]["held_out"]})
+        self.assertEqual(set(rules["single_use"]),
+                         {n for n in we.PARTITIONS if we.PARTITION_ROLES[n]["single_use"]})
+        self.assertEqual(set(rules["fitting"]),
+                         {n for n in we.PARTITIONS if we.PARTITION_ROLES[n]["fitting"]})
+        self.assertEqual(set(rules["refused"]), set(we.PARTITIONS) - {td.TRAINABLE_PARTITION})
+        self.assertEqual(rules["trainable_purpose"],
+                         we.PARTITION_ROLES[td.TRAINABLE_PARTITION]["purpose"])
+        self.assertEqual(rules["quarantine_bucket"], we.QUARANTINE)
+
+        held = dict(we.PARTITION_ROLES)
+        held[td.TRAINABLE_PARTITION] = dict(held[td.TRAINABLE_PARTITION], held_out=True)
+        with mock.patch.object(we, "PARTITION_ROLES", held), \
+                mock.patch.object(we, "PARTITIONS", tuple(held)):
+            with self.assertRaises(dc.ContractError) as raised:
+                td.dataset_rules()
+            self.assertEqual(raised.exception.code, "value-invalid")
+
+        renamed = {k: v for k, v in we.PARTITION_ROLES.items() if k != td.TRAINABLE_PARTITION}
+        with mock.patch.object(we, "PARTITION_ROLES", renamed), \
+                mock.patch.object(we, "PARTITIONS", tuple(renamed)):
+            with self.assertRaises(dc.ContractError) as raised:
+                td.dataset_rules()
+            self.assertEqual(raised.exception.code, "unknown-value")
+            self.assertIn(td.TRAINABLE_PARTITION, str(raised.exception))
+
+        widened = dict(we.PARTITION_ROLES)
+        widened["shadow"] = {"purpose": "audit-evidence", "fitting": False, "held_out": True,
+                             "single_use": True, "note": "a fifth partition nobody here names"}
+        with mock.patch.object(we, "PARTITION_ROLES", widened), \
+                mock.patch.object(we, "PARTITIONS", tuple(widened)):
+            grown = td.dataset_rules()
+            self.assertIn("shadow", grown["held_out"])
+            self.assertIn("shadow", grown["single_use"])
+            self.assertIn("shadow", grown["refused"])
+
+        stale = dict(we.PARTITION_ROLES)
+        stale.pop("calibration")
+        with mock.patch.object(we, "PARTITION_ROLES", stale):
+            with self.assertRaises(dc.ContractError) as raised:
+                td.dataset_rules()
+            self.assertEqual(raised.exception.code, "unknown-value")
+            self.assertIn("calibration", str(raised.exception))
+
+    def test_held_out_and_single_use_material_refuses_and_names_the_role_that_refused_it(self):
+        """`promotion` is held out; `audit` is held out AND single-use. The codes say which."""
+        self.resolve(self.record)
+        for name, expected in (
+                ("promotion", ["partition-held-out", "partition-not-trainable"]),
+                ("audit", ["partition-held-out", "partition-not-trainable",
+                           "partition-single-use"]),
+                ("calibration", ["partition-not-trainable"])):
+            with self.subTest(partition=name):
+                dataset = self.export([self.record],
+                                      eval_manifest=_eval_manifest(allocation={name: 1}))
+                self.assertEqual(dataset["manifest"]["content"]["counts"]["included"], 0)
+                self.assertEqual(self.codes(dataset), expected)
+                self.assertEqual(dataset["bytes"]["payload"], b"")
+
+    def test_only_the_trainable_partition_may_be_asked_for(self):
+        self.resolve(self.record)
+        for name in set(we.PARTITIONS) - {td.TRAINABLE_PARTITION}:
+            with self.subTest(partition=name):
+                with self.assertRaises(dc.ContractError) as raised:
+                    self.export([self.record], partition=name)
+                self.assertEqual(raised.exception.code, "value-invalid")
+
+    def test_a_quarantined_group_refuses_and_carries_the_owners_leak_screening(self):
+        """D06's lesson exactly: a statement mining the fix leaks the answer into the problem, so
+        its WHOLE group is quarantined -- and quarantine is not a partition."""
+        leaky = _pool()
+        leaky[0] = _task("T-1", issue=1,
+                         statement="the adapter drops a record\n" + _diff("src/x.py"))
+        manifest = _eval_manifest(leaky, on_leak="quarantine")
+        self.assertIn(we.QUARANTINE, {row["partition"]
+                                      for row in manifest["content"]["groups"].values()})
+        first = _dsnap("T-1", "AttributeError: no attribute 'emit'")
+        second = _dsnap("T-2", "TypeError: the adapter shape is wrong")
+        for record in (first, second):
+            self.resolve(record)
+        dataset = self.export([first, second], eval_manifest=manifest)
+        self.assertEqual(dataset["manifest"]["content"]["counts"]["included"], 0)
+        self.assertEqual(self.codes(dataset, first["example_id"]),
+                         ["leak-screened-positive", "partition-not-trainable",
+                          "partition-quarantined"])
+        # The other variant's OWN statement screens clean. What keeps it out is the
+        # contagion D06 states: a leak in one variant quarantines the whole group, because
+        # knowing the answer to one is knowing the answer to the other.
+        self.assertEqual(self.codes(dataset, second["example_id"]),
+                         ["partition-not-trainable", "partition-quarantined"])
+
+    # ---- B. exposed or revoked examples refuse ------------------------------------------------
+
+    def test_the_export_follows_the_gates_verdict_and_has_no_second_eligibility_check(self):
+        """REUSE, PROVEN. The authority is patched to refuse, and the export obeys it -- so there
+        is no second copy of the eligibility decision deciding otherwise."""
+        dataset = self.eligible_case()
+        self.assertEqual(dataset["manifest"]["content"]["counts"]["included"], 1)
+        real = td.export_eligibility
+
+        def refusing(record, **kwargs):
+            answer = real(record, **kwargs)
+            answer["exportable"] = False
+            answer["refusals"] = ["eligibility-revoked"]
+            return answer
+
+        with mock.patch.object(td, "export_eligibility", refusing):
+            refused = self.export([self.record])
+        self.assertEqual(refused["manifest"]["content"]["counts"]["included"], 0)
+        self.assertEqual(self.codes(refused), ["eligibility-revoked"])
+        self.assertEqual(refused["bytes"]["payload"], b"")
+
+    def test_a_revoked_or_expired_example_never_reaches_a_payload_line(self):
+        self.resolve(self.record)
+        tombstone = td.revoke(self.record, revoked_at=LATER, reason="the owner withdrew it",
+                              by=al.make_ref("synthetic-owner"))
+        td.persist_lifecycle(tombstone, self.store)
+        revoked = self.export([self.record])
+        self.assertEqual(self.codes(revoked), ["eligibility-revoked"])
+        self.assertEqual(revoked["bytes"]["payload"], b"")
+        self.assertEqual(revoked["manifest"]["content"]["excluded_by_code"],
+                         {"eligibility-revoked": 1})
+
+    def test_an_expired_retention_period_refuses_the_export(self):
+        self.resolve(self.record)
+        self.assertEqual(self.export([self.record], now=IN_RETENTION)
+                         ["manifest"]["content"]["counts"]["included"], 1)
+        stale = self.export([self.record], now=PAST_RETENTION)
+        self.assertEqual(self.codes(stale), ["eligibility-expired"])
+
+    def test_an_item_exposed_for_another_purpose_or_retired_refuses(self):
+        """The mirror of `_held_out_blockers`, for the one partition a fit may happen in. The
+        purpose compared against is read from `PARTITION_ROLES` -- and the control is an exposure
+        for development's OWN purpose, which does not refuse."""
+        self.resolve(self.record)
+        item = self.manifest["content"]["partitions"][td.TRAINABLE_PARTITION]
+        target = next(iid for iid in item
+                      if self.manifest["content"]["items"][iid]["task_id"] == "T-1")
+        own = we.PARTITION_ROLES[td.TRAINABLE_PARTITION]["purpose"]
+        we.record_exposure(self.evals, self.manifest, partition=td.TRAINABLE_PARTITION,
+                           purpose=own, items=[target], by="fixture")
+        self.assertEqual(self.export([self.record])["manifest"]["content"]["counts"]["included"],
+                         1, "development's own purpose is not an exposure elsewhere")
+        we.record_exposure(self.evals, self.manifest, partition=td.TRAINABLE_PARTITION,
+                           purpose="inspection", items=[target], by="fixture")
+        elsewhere = self.export([self.record])
+        self.assertEqual(self.codes(elsewhere), ["item-exposed-elsewhere"])
+        we.retire(self.evals, self.manifest, items=[target], reason="contaminated", by="fixture")
+        retired = self.export([self.record])
+        self.assertEqual(self.codes(retired), ["item-exposed-elsewhere", "item-retired"])
+
+    def test_an_unread_exposure_log_is_not_a_clean_one(self):
+        self.resolve(self.record)
+        unchecked = self.export([self.record], exposure_dir=None)
+        self.assertEqual(self.codes(unchecked), ["exposure-not-checked"])
+        exposure = unchecked["manifest"]["content"]["exposure"]
+        self.assertEqual(exposure, {"checked": False, "store": None, "entries": None,
+                                    "unreadable": None,
+                                    "owner": "bin/workflow_eval.py:exposure_state",
+                                    "recorded_here": False})
+
+    def test_the_training_store_is_required_so_the_unmade_check_codes_cannot_arise(self):
+        """D32's disclosure closed: without `store_dir`, `export_eligibility` answers
+        `label-not-checked` + `revocation-not-checked` rather than an all-clear. This export
+        demands the store, so neither code can reach a dataset at all."""
+        self.resolve(self.record)
+        with self.assertRaises(dc.ContractError) as raised:
+            self.export([self.record], store_dir=None)
+        self.assertEqual(raised.exception.code, "missing-field")
+        self.assertIn("label-not-checked", str(raised.exception))
+        every = set()
+        for records, over in (([self.record], {}),
+                              ([self.record], {"exposure_dir": None}),
+                              ([_dsnap(None, "no task ref")], {})):
+            every.update(self.codes(self.export(records, **over)))
+        self.assertEqual(every & {"label-not-checked", "revocation-not-checked"}, set())
+
+    def test_an_unadjudicated_or_disputed_label_refuses_through_the_owners_codes(self):
+        td.persist(self.record, self.store)
+        self.assertEqual(self.codes(self.export([self.record])), ["label-unadjudicated"])
+        thin = _adjudicate(self.record, evidence=[])
+        td.persist_lifecycle(thin, self.store)
+        self.assertEqual(self.codes(self.export([self.record])), ["label-unresolved"])
+        first = _adjudicate(self.record, cause="missing-context",
+                            reviewer=_reviewer("reviewer-first"))
+        second = _adjudicate(self.record, cause="configuration-permission",
+                             reviewer=_reviewer("reviewer-second", source="review-verdict"),
+                             evidence=[_ev(source="review-verdict")])
+        for entry in (first, second):
+            td.persist_lifecycle(entry, self.store)
+        self.assertEqual(self.codes(self.export([self.record])), ["label-disputed"])
+
+    def test_a_disagreement_that_is_a_target_still_needs_one_head_to_export(self):
+        """Two ambiguity heads naming different competing causes ARE an eligible target for D32 --
+        and there is no single adjudication to take one from, so the export refuses rather than
+        picking. `target-not-single-headed` is the only code that says so."""
+        td.persist(self.record, self.store)
+        pairs = (("missing-context", "implementation-error"),
+                 ("missing-context", "configuration-permission"))
+        for index, (left, right) in enumerate(pairs):
+            entry = _adjudicate(
+                self.record, shape="ambiguity", cause=None,
+                reviewer=_reviewer(f"reviewer-{index}"),
+                contributing=[{"cause": left, "evidence": [_ev(ref_id=f"r{index}a")]},
+                              {"cause": right, "evidence": [_ev(ref_id=f"r{index}b")]}])
+            td.persist_lifecycle(entry, self.store)
+        state = td.label_state(td.read_lifecycle(self.store, self.record["example_id"],
+                                                 "adjudication"))
+        self.assertEqual(state["status"], "disputed")
+        self.assertIs(state["target"]["eligible"], True)
+        self.assertIsNone(state["current"])
+        self.assertEqual(self.codes(self.export([self.record])), ["target-not-single-headed"])
+
+    # ---- C. future-answer leakage and missing source references fail --------------------------
+
+    def test_evidence_from_after_the_decision_fails_at_export_although_its_digests_match(self):
+        """The one route `assert_intact` cannot see. The forged record's three digests are all
+        correct, so the ONLY thing that can refuse it is placement re-derived here."""
+        forged = _forge(self.record, lambda r: r["input"]["observed_error"][0].update(
+            {"observed_at": LATER}))
+        self.assertEqual(sorted(k for k, v in td.integrity(forged).items()
+                                if k.endswith("_ok") and not v), [])
+        self.resolve(forged)
+        self.assertEqual(self.codes(self.export([forged])), ["input-after-the-decision"])
+        control = _forge(self.record, lambda r: r["input"]["observed_error"][0].update(
+            {"observed_at": EARLIER}))
+        self.resolve(control)
+        self.assertEqual(self.export([control])["manifest"]["content"]["counts"]["included"], 1)
+
+    def test_an_entry_nobody_can_place_in_time_refuses_and_the_placements_are_the_owners(self):
+        forged = _forge(self.record, lambda r: r["input"]["observed_error"][0].update(
+            {"observed_at": "whenever"}))
+        self.resolve(forged)
+        self.assertEqual(self.codes(self.export([forged])), ["input-placement-unknown"])
+        de = _load("decision_eval")
+        with mock.patch.object(td._de(), "FACT_PLACEMENTS",
+                               tuple(de.FACT_PLACEMENTS) + ("some-fourth-answer",)):
+            with self.assertRaises(dc.ContractError) as raised:
+                td._placement_codes()
+            self.assertEqual(raised.exception.code, "unknown-value")
+
+    def test_a_truncated_entry_refuses_rather_than_exporting_half_an_example(self):
+        forged = _forge(self.record,
+                        lambda r: r["input"]["observed_error"][0].update({"truncated": True}))
+        self.resolve(forged)
+        self.assertEqual(self.codes(self.export([forged])), ["input-truncated"])
+
+    def test_an_input_the_export_cannot_walk_refuses_rather_than_being_skipped(self):
+        """Two refusals, and the messages are what tell them apart: the outer one names the FIELD
+        and its type, the inner one names the entry. Pinned, because otherwise the outer guard
+        could be deleted and the inner one would answer for both with a worse diagnostic."""
+        field = _forge(self.record, lambda r: r["input"].update({"observed_error": "a string"}))
+        self.resolve(field)
+        with self.assertRaises(dc.ContractError) as raised:
+            self.export([field])
+        self.assertEqual(raised.exception.code, "wrong-type")
+        self.assertIn("not a list of entries", str(raised.exception))
+        self.assertIn("input.observed_error", str(raised.exception))
+        entry = _forge(self.record, lambda r: r["input"].update({"observed_error": ["a string"]}))
+        self.resolve(entry)
+        with self.assertRaises(dc.ContractError) as raised:
+            self.export([entry])
+        self.assertEqual(raised.exception.code, "wrong-type")
+        self.assertIn("not an object", str(raised.exception))
+
+    def test_a_missing_unknown_or_ambiguous_source_reference_fails(self):
+        """A record nobody can place in a group cannot be shown not to cross a split."""
+        none = _dsnap(None, "no task reference at all")
+        self.resolve(none)
+        self.assertEqual(self.codes(self.export([none])), ["source-reference-missing"])
+        stray = _dsnap("T-NOT-MINED", "a task the manifest never saw")
+        self.resolve(stray)
+        self.assertEqual(self.codes(self.export([stray])), ["source-not-in-manifest"])
+        twins = _pool() + [_task("T-1", issue=99)]
+        doubled = _eval_manifest(twins)
+        self.resolve(self.record)
+        self.assertEqual(self.codes(self.export([self.record], eval_manifest=doubled)),
+                         ["source-ambiguous"])
+
+    def test_the_question_wording_cannot_smuggle_the_bookkeeping_into_the_input(self):
+        """The route a closed schema cannot close: the question's own text is the caller's, copied
+        verbatim out of the record. A question quoting the group id has put the audit metadata
+        where a model would read it."""
+        group = next(row for row in self.manifest["content"]["groups"].values()
+                     if "T-1" in {self.manifest["content"]["items"][i]["task_id"]
+                                  for i in row["items"]})
+        quoting = dc.parse_question({
+            "id": "q-leaky", "version": "1", "kind": "boolean",
+            "question": f"Was the attempt in defect group {group['group']} missing a contract?",
+            "rubric": {}, "outcomes": ["false", "true"], "abstention": "permitted",
+            "dependencies": [], "sensitivity": "project-internal"})
+        leaky = _dsnap("T-1", "AttributeError: no attribute 'emit'", question=quoting)
+        self.resolve(leaky)
+        self.assertEqual(self.codes(self.export([leaky])), ["audit-identity-in-payload"])
+        clean = dc.parse_question({
+            "id": "q-leaky", "version": "1", "kind": "boolean",
+            "question": "Was the attempt in that defect group missing a contract it needed?",
+            "rubric": {}, "outcomes": ["false", "true"], "abstention": "permitted",
+            "dependencies": [], "sensitivity": "project-internal"})
+        control = _dsnap("T-1", "AttributeError: no attribute 'emit'", question=clean)
+        self.resolve(control)
+        self.assertEqual(self.export([control])["manifest"]["content"]["counts"]["included"], 1)
+
+    # ---- D. repeated export is deterministic --------------------------------------------------
+
+    def mixed_case(self):
+        """A fixture with enough SHAPE to order: three groups, four included examples, four
+        exclusion codes. D26's trap was a determinism assertion over data too simple to exercise
+        it -- with one finding per case, `sorted()` pins nothing and its mutant survives."""
+        manifest = _eval_manifest(_pool() + [_task("T-4", issue=3), _task("T-5", issue=4)])
+        included, excluded = [], []
+        for task_id, text in (("T-1", "AttributeError: no attribute 'emit'"),
+                              ("T-2", "TypeError: the adapter shape is wrong"),
+                              ("T-3", "KeyError: the route is missing"),
+                              ("T-4", "ValueError: the record is malformed")):
+            record = _dsnap(task_id, text)
+            self.resolve(record)
+            included.append(record)
+        stray = _dsnap("T-NOT-MINED", "a task the manifest never saw")
+        self.resolve(stray)
+        excluded.append(stray)
+        unlabelled = _dsnap("T-5", "IndexError: the batch is empty")
+        td.persist(unlabelled, self.store)
+        excluded.append(unlabelled)
+        revoked = _dsnap("T-5", "OSError: the adapter refused to close")
+        self.resolve(revoked)
+        td.persist_lifecycle(td.revoke(revoked, revoked_at=LATER, reason="withdrawn",
+                                       by=al.make_ref("owner")), self.store)
+        excluded.append(revoked)
+        late = _forge(_dsnap("T-5", "TimeoutError: the retry never returned"),
+                      lambda r: r["input"]["observed_error"][0].update({"observed_at": LATER}))
+        self.resolve(late)
+        excluded.append(late)
+        return manifest, included + excluded
+
+    def test_the_same_material_exports_to_identical_bytes_whatever_order_it_arrives_in(self):
+        manifest, records = self.mixed_case()
+        first = self.export(list(records), eval_manifest=manifest)
+        second = self.export(list(reversed(records)), eval_manifest=manifest)
+        content = first["manifest"]["content"]
+        self.assertEqual(content["counts"]["included"], 4)
+        self.assertEqual(content["counts"]["excluded"], 4)
+        self.assertEqual(content["counts"]["groups"], 3)
+        self.assertEqual(sorted(content["excluded_by_code"]),
+                         ["eligibility-revoked", "input-after-the-decision",
+                          "label-unadjudicated", "source-not-in-manifest"])
+        self.assertEqual(first["bytes"], second["bytes"])
+        self.assertEqual(first["manifest"]["dataset_id"], second["manifest"]["dataset_id"])
+
+    def test_the_dataset_id_does_not_move_when_the_declared_provenance_does(self):
+        manifest, records = self.mixed_case()
+        first = self.export(records, eval_manifest=manifest)
+        later = self.export(records, eval_manifest=manifest, built_at="2027-01-01T00:00:00Z",
+                            built_by="somebody-else")
+        self.assertEqual(first["manifest"]["sha"], later["manifest"]["sha"])
+        self.assertEqual(first["manifest"]["dataset_id"], later["manifest"]["dataset_id"])
+        self.assertEqual(first["bytes"]["payload"], later["bytes"]["payload"])
+        self.assertEqual(first["bytes"]["audit_metadata"], later["bytes"]["audit_metadata"])
+        self.assertNotEqual(first["bytes"]["manifest"], later["bytes"]["manifest"])
+        self.assertEqual(sorted(first["manifest"]["digest"]["excludes"]),
+                         ["built_at", "built_by", "dataset_id", "digest", "sha"])
+        for excluded in first["manifest"]["digest"]["excludes"]:
+            self.assertNotIn(excluded, first["manifest"]["content"])
+
+    def test_the_same_record_offered_twice_is_one_payload_line_and_a_counted_duplicate(self):
+        self.resolve(self.record)
+        once = self.export([self.record])
+        twice = self.export([self.record, self.record, self.record])
+        self.assertEqual(twice["bytes"]["payload"], once["bytes"]["payload"])
+        self.assertEqual(twice["manifest"]["content"]["counts"],
+                         dict(once["manifest"]["content"]["counts"], offered=3,
+                              duplicates_collapsed=2))
+        other = _forge(self.record, lambda r: r.update({"captured_at": "2026-09-19T10:00:06Z"}))
+        other["example_id"] = self.record["example_id"]
+        other.pop("content_sha")
+        other["content_sha"] = td._sha(other)
+        with self.assertRaises(dc.ContractError) as raised:
+            self.export([self.record, other])
+        self.assertEqual(raised.exception.code, "duplicate-entry")
+
+    def test_the_digest_is_stable_across_processes_and_hash_seeds(self):
+        """The failure a same-process assertion cannot see: a set's iteration order, or a dict keyed
+        by something str-hashed, reaching the canonical bytes. Two interpreters, two
+        PYTHONHASHSEEDs, one id -- or this dataset is not content-addressed at all."""
+        manifest, records = self.mixed_case()
+        dataset = self.export(records, eval_manifest=manifest)
+        script = self.tmp / "reexport.py"
+        script.write_text(
+            "import importlib.util, json, sys\n"
+            "from pathlib import Path\n"
+            "def load(p, n):\n"
+            "    s = importlib.util.spec_from_file_location(n, p)\n"
+            "    m = importlib.util.module_from_spec(s); s.loader.exec_module(m); return m\n"
+            "td = load(sys.argv[1], 'td_child')\n"
+            "payload = json.loads(Path(sys.argv[2]).read_text())\n"
+            "out = td.build_dataset(payload['records'], eval_manifest=payload['manifest'],\n"
+            "                       store_dir=payload['store'], exposure_dir=payload['evals'],\n"
+            "                       now=payload['now'], purpose=payload['purpose'],\n"
+            "                       destination=payload['destination'],\n"
+            "                       built_at=payload['built_at'], built_by=payload['built_by'])\n"
+            "print(out['manifest']['dataset_id'], out['manifest']['sha'])\n",
+            encoding="utf-8")
+        handoff = self.tmp / "handoff.json"
+        handoff.write_text(json.dumps({
+            "records": records, "manifest": manifest, "store": str(self.store),
+            "evals": str(self.evals), "now": NOW,
+            "purpose": self.record["eligibility"]["purpose"],
+            "destination": "local-development-partition",
+            "built_at": BUILT_AT, "built_by": BUILT_BY}), encoding="utf-8")
+        seen = set()
+        for seed in ("0", "424242"):
+            env = dict(os.environ, PYTHONHASHSEED=seed,
+                       POLYTROPOS_DATA_HOME=str(self.tmp / "child-home"))
+            proc = subprocess.run(
+                [sys.executable, "-B", str(script), str(BIN_DIR / "training_data.py"),
+                 str(handoff)], capture_output=True, text=True, env=env)
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            seen.add(proc.stdout.strip())
+        self.assertEqual(
+            seen, {f"{dataset['manifest']['dataset_id']} {dataset['manifest']['sha']}"})
+
+    # ---- the immutable artifact on disk -------------------------------------------------------
+
+    def test_writing_twice_keeps_the_first_and_differing_content_under_one_id_refuses(self):
+        dataset = self.eligible_case()
+        first = td.write_dataset(dataset, self.store)
+        self.assertEqual((first["written"], first["reason"]), (True, None))
+        root = self.store / td.DATASET_DIR / dataset["manifest"]["dataset_id"]
+        before = {name: (root / name).read_bytes() for name in sorted(td.DATASET_FILES.values())}
+        second = td.write_dataset(dataset, self.store)
+        self.assertEqual((second["written"], second["reason"]), (False, "already-exported"))
+        self.assertEqual({name: (root / name).read_bytes()
+                          for name in sorted(td.DATASET_FILES.values())}, before)
+        forged = json.loads(json.dumps(dataset["manifest"]))
+        forged["content"]["counts"]["included"] = 99
+        forged["sha"] = td._sha(forged["content"])
+        forged["dataset_id"] = dataset["manifest"]["dataset_id"]
+        with self.assertRaises(dc.ContractError) as raised:
+            td.write_dataset(dict(dataset, manifest=forged), self.store)
+        self.assertEqual(raised.exception.code, "value-invalid")
+        forged["dataset_id"] = f"ds-{forged['sha'][:16]}"
+        renamed = dict(dataset, manifest=forged)
+        self.assertNotEqual(renamed["manifest"]["dataset_id"],
+                            dataset["manifest"]["dataset_id"],
+                            "different content is a different dataset, not a collision")
+        self.assertEqual(td.write_dataset(renamed, self.store)["written"], True)
+
+    def test_a_rewritten_export_is_detected_on_read(self):
+        dataset = self.eligible_case()
+        td.write_dataset(dataset, self.store)
+        did = dataset["manifest"]["dataset_id"]
+        loaded = td.read_dataset(self.store, did)
+        self.assertEqual(loaded["payload"], dataset["payload"])
+        self.assertEqual(loaded["audit_metadata"], dataset["audit_metadata"])
+        self.assertEqual(loaded["manifest"]["sha"], dataset["manifest"]["sha"])
+        root = self.store / td.DATASET_DIR / did
+        original = (root / "payload.jsonl").read_bytes()
+        (root / "payload.jsonl").write_bytes(original.replace(b"missing-context",
+                                                             b"implementation-error"))
+        with self.assertRaises(dc.ContractError) as raised:
+            td.read_dataset(self.store, did)
+        self.assertEqual(raised.exception.code, "value-invalid")
+        (root / "payload.jsonl").write_bytes(original)
+        body = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
+        body["content"]["counts"]["included"] = 42
+        (root / "manifest.json").write_text(td.canonical(body) + "\n", encoding="utf-8")
+        with self.assertRaises(dc.ContractError) as raised:
+            td.read_dataset(self.store, did)
+        self.assertEqual(raised.exception.code, "value-invalid")
+
+    def test_a_reader_does_not_create_the_store_and_a_bad_id_is_refused_first(self):
+        with self.assertRaises(dc.ContractError):
+            td.read_dataset(self.store, "ds-0123456789abcdef")
+        self.assertFalse(self.store.exists())
+        for bad in ("a/b/c", "../escape", "/etc/passwd", ".hidden", "ds-not-hex-at-all"):
+            with self.subTest(dataset_id=bad):
+                with self.assertRaises(dc.ContractError) as raised:
+                    td.read_dataset(self.store, bad)
+                self.assertEqual(raised.exception.code, "value-invalid")
+                self.assertFalse(self.store.exists())
+
+    def test_the_export_writes_only_the_three_files_under_the_training_store(self):
+        dataset = self.eligible_case()
+        self.assertFalse((self.store / td.DATASET_DIR).exists(),
+                         "build_dataset wrote something")
+        td.write_dataset(dataset, self.store)
+        did = dataset["manifest"]["dataset_id"]
+        under = sorted(str(path.relative_to(self.store))
+                       for path in self.store.rglob("*") if path.is_file())
+        self.assertEqual([name for name in under if name.startswith(td.DATASET_DIR)],
+                         sorted(f"{td.DATASET_DIR}/{did}/{name}"
+                                for name in td.DATASET_FILES.values()))
+        self.assertFalse(self.evals.exists(), "the evals store was created by an export")
+
+    def test_the_safe_paths_surface_this_module_reaches_is_exactly_five_names(self):
+        """The count-free form of `test_the_lifecycle_writes_through_the_confined_helper...`: what
+        matters is that every path operation is one of `safe_paths`' own verbs, not how many call
+        sites there are."""
+        tree = ast.parse((BIN_DIR / "training_data.py").read_text(encoding="utf-8"))
+        reached = set()
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Attribute):
+                continue
+            value = node.value
+            if isinstance(value, ast.Name) and value.id == "sp":
+                reached.add(node.attr)
+            elif isinstance(value, ast.Call) and isinstance(value.func, ast.Name) \
+                    and value.func.id == "_sp":
+                reached.add(node.attr)
+        self.assertEqual(sorted(reached), ["SafePathExists", "confined_append_bytes",
+                                          "confined_create_bytes", "confined_read_bytes",
+                                          "validate_id"])
+
+    # ---- E. audit metadata is separate from model inputs --------------------------------------
+
+    def test_the_payload_and_audit_schemas_share_exactly_the_join_key(self):
+        self.assertEqual(set(td.PAYLOAD_FIELDS) & set(td.AUDIT_FIELDS), {"example_id"})
+        self.assertEqual(td.PAYLOAD_FIELDS, ("example_id", "question", "input", "target"))
+        self.assertEqual(set(td.PAYLOAD_ENTRY_KEYS), {"text", "observed_at"})
+        self.assertLess(set(td.PAYLOAD_ENTRY_KEYS), set(td.ENTRY_KEYS))
+        dataset = self.eligible_case()
+        self.assertEqual(set(dataset["payload"][0]), set(td.PAYLOAD_FIELDS))
+        self.assertEqual(set(dataset["audit_metadata"][0]), set(td.AUDIT_FIELDS))
+        entry = dataset["payload"][0]["input"]["observed_error"][0]
+        self.assertEqual(set(entry), set(td.PAYLOAD_ENTRY_KEYS))
+        for banned in ("outcome", "action", "taken", "reviewer", "evidence", "provenance",
+                       "eligibility", "redaction"):
+            self.assertEqual([name for name in td.PAYLOAD_FIELDS if banned in name], [],
+                             f"{banned!r} is audit metadata and has no place in a model input")
+        # THE SEPARATION IS LOSSLESS. Everything a stored entry carries is in one of the two
+        # files: the text and its instant in the payload, the rest in the audit's
+        # `input_provenance`. `provenance` is the only stored key with no counterpart, because it
+        # is flattened there into `source` and `artifact_sha`.
+        stored = set(self.record["input"]["observed_error"][0])
+        kept = set(td.PAYLOAD_ENTRY_KEYS) | set(
+            dataset["audit_metadata"][0]["input_provenance"]["observed_error"][0])
+        self.assertEqual(stored - kept, {"provenance"})
+        self.assertEqual(kept - stored, {"source", "artifact_sha"})
+
+    def test_a_payload_line_carries_no_provenance_and_the_audit_line_carries_all_of_it(self):
+        dataset = self.eligible_case()
+        payload = dataset["bytes"]["payload"].decode("utf-8")
+        audit = dataset["bytes"]["audit_metadata"].decode("utf-8")
+        for marker in (AUDIT_ONLY_SOURCE, AUDIT_ONLY_REVIEWER, AUDIT_ONLY_EVIDENCE,
+                       dataset["manifest"]["content"]["examples"][0]["item"],
+                       dataset["manifest"]["content"]["examples"][0]["group"],
+                       dataset["manifest"]["content"]["examples"][0]["label_head"],
+                       self.record["content_sha"], td.TRAINABLE_PARTITION):
+            with self.subTest(marker=marker):
+                self.assertNotIn(marker, payload)
+                self.assertIn(marker, audit)
+        self.assertIn(self.record["example_id"], payload)
+        self.assertIn(self.record["example_id"], audit)
+        self.assertIn("AttributeError", payload)
+
+    def test_no_action_record_reaches_either_file(self):
+        """D32's own disclosure: `attach_action` accepts an `ACTION_OUTCOMES` member DIRECTLY, so a
+        stored action does not say whether its outcome was derived or declared. This export reads no
+        action record at all rather than presenting a declared field as a measured one."""
+        self.resolve(self.record)
+        action = td.attach_action(self.record, taken="re-ran the verify command after a retry",
+                                  outcome=td.action_outcome("retry-pass"), observed_at=LATER)
+        td.persist_lifecycle(action, self.store)
+        dataset = self.export([self.record])
+        both = (dataset["bytes"]["payload"] + dataset["bytes"]["audit_metadata"]).decode("utf-8")
+        self.assertNotIn("re-ran the verify command", both)
+        self.assertNotIn(action["content_sha"], both)
+        self.assertNotIn("retry-pass", both)
+        names = set(td.PAYLOAD_FIELDS) | set(td.AUDIT_FIELDS)
+        self.assertEqual(names & {"action", "outcome", "actions", "outcomes", "taken"}, set())
+        self.assertEqual(dataset["manifest"]["content"]["counts"]["included"], 1)
+
+    def test_the_manifest_carries_the_label_version_and_the_grouping_owner(self):
+        dataset = self.eligible_case()
+        content = dataset["manifest"]["content"]
+        head = td.read_lifecycle(self.store, self.record["example_id"], "adjudication")[0]
+        row = content["examples"][0]
+        self.assertEqual(row["label_head"], head["content_sha"])
+        self.assertEqual(row["label_taxonomy_v"], td.TAXONOMY_VERSION)
+        self.assertEqual(row["payload_sha"], td._sha(dataset["payload"][0]))
+        self.assertEqual(row["audit_metadata_sha"], td._sha(dataset["audit_metadata"][0]))
+        self.assertEqual(content["source_manifest"], we.manifest_ref(self.manifest))
+        self.assertEqual(content["source_partition_digest"],
+                         we.partition_digest(self.manifest, td.TRAINABLE_PARTITION))
+        self.assertNotEqual(content["source_partition_digest"], self.manifest["sha"])
+        # It moves when the drawn item set moves, and it is the OWNER's function that says so.
+        smaller = _eval_manifest([_task("T-1", issue=1)])
+        self.assertNotEqual(we.partition_digest(smaller, td.TRAINABLE_PARTITION),
+                            content["source_partition_digest"])
+        self.assertEqual(content["rules"]["grouping"], we.GROUPING_RULE)
+        self.assertEqual(content["rules"]["assignment"], we.ASSIGNMENT_RULE)
+        self.assertEqual(content["rules"]["enforcement"], we.NOT_ENFORCEMENT_LABEL)
+        self.assertEqual(content["rules"]["partitions"], json.loads(json.dumps(
+            dict(we.PARTITION_ROLES))))
+        self.assertEqual(content["content_identities"]["payload_sha"],
+                         hashlib.sha256(dataset["bytes"]["payload"]).hexdigest())
+        self.assertEqual(content["content_identities"]["audit_metadata_sha"],
+                         hashlib.sha256(dataset["bytes"]["audit_metadata"]).hexdigest())
+        self.assertEqual(content["schemas"]["shared_fields"], ["example_id"])
+
+    def test_every_not_established_code_rides_on_every_manifest_unconditionally(self):
+        empty = self.export([])
+        full = self.eligible_case()
+        for dataset in (empty, full):
+            content = dataset["manifest"]["content"]
+            self.assertEqual(content["not_established"], list(td.DATASET_NOT_ESTABLISHED))
+            self.assertEqual(set(content["not_established_notes"]),
+                             set(td.DATASET_NOT_ESTABLISHED))
+            self.assertIs(content["exposure"]["recorded_here"], False)
+            self.assertIn(td.AUDIT_SEPARATION_NOTE, content["notes"])
+            self.assertIn(td.NOT_WIRED_LABEL, content["notes"])
+        self.assertIn("no model was trained",
+                      td.DATASET_NOT_ESTABLISHED_NOTES["no-transfer-and-no-training-performed"])
+        self.assertIn("forged",
+                      td.DATASET_NOT_ESTABLISHED_NOTES[
+                          "digest-identifies-content-not-provenance"])
+
+    # ---- F. no network or training action -----------------------------------------------------
+
+    def test_the_seam_trap_is_armed_and_bites(self):
+        """CONTROL. Without this, every "nothing was reached" assertion below could be passing
+        because the seams were never replaced rather than because nothing reached them."""
+        with _ArmedSeams(self) as armed:
+            self.assertEqual(len(armed.armed), len(STDLIB_SEAMS) + len(WF_SEAMS))
+            with self.assertRaises(AssertionError):
+                socket.socket()
+            with self.assertRaises(AssertionError):
+                subprocess.run(["this-never-runs"])
+            with self.assertRaises(AssertionError):
+                we.record_exposure(self.evals, self.manifest, partition=td.TRAINABLE_PARTITION)
+
+    def test_a_whole_build_write_and_read_cycle_reaches_no_forbidden_seam(self):
+        self.resolve(self.record)
+        item = next(iid for iid in self.manifest["content"]["partitions"][td.TRAINABLE_PARTITION]
+                    if self.manifest["content"]["items"][iid]["task_id"] == "T-1")
+        we.record_exposure(self.evals, self.manifest, partition=td.TRAINABLE_PARTITION,
+                           purpose=we.PARTITION_ROLES[td.TRAINABLE_PARTITION]["purpose"],
+                           items=[item], by="fixture")
+        with _ArmedSeams(self):
+            dataset = self.export([self.record])
+            td.write_dataset(dataset, self.store)
+            td.read_dataset(self.store, dataset["manifest"]["dataset_id"])
+            td.dataset_rules()
+            td.exclusion_codes()
+            td.dataset_integrity(dataset["manifest"])
+        self.assertEqual(dataset["manifest"]["content"]["counts"]["included"], 1)
+        self.assertEqual(dataset["manifest"]["content"]["exposure"]["entries"], 1)
+
+    def test_the_module_declares_no_trainer_and_no_transfer_verb(self):
+        tree = ast.parse((BIN_DIR / "training_data.py").read_text(encoding="utf-8"))
+        names = {node.name for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)}
+        self.assertIn("build_dataset", names)
+        for verb in ("train", "fine_tune", "finetune", "upload", "download", "post", "send",
+                     "transfer", "publish", "push"):
+            self.assertEqual([name for name in names if verb in name], [],
+                             f"a function named for {verb!r} would be a capability this task has "
+                             f"no authority to add")
+        self.assertIs(td.COLLECTION_ENABLED, False)
+        self.assertIs(td.CAPTURE_WIRED, False)
+        self.assertEqual(td.collection_state()["reason"], "collection-disabled")
+        self.assertEqual(
+            td.collection_scope(purpose="export with rights nobody confirmed", retention_days=7,
+                                approval_ref=al.make_ref("approval-synthetic")).eligibility,
+            "unknown")
+
+    # ---- G. one vocabulary, one owner, one version --------------------------------------------
+
+    def test_no_partition_or_exposure_vocabulary_is_copied_into_this_module(self):
+        """Only ONE of `workflow_eval`'s partition names may appear as a literal here, and it is
+        the trainable one. The Phase 4 review found three hand-copied vocabularies that agreed
+        only by coincidence of that commit."""
+        tree = ast.parse((BIN_DIR / "training_data.py").read_text(encoding="utf-8"))
+        constants = {node.value for node in ast.walk(tree)
+                     if isinstance(node, ast.Constant) and isinstance(node.value, str)}
+        self.assertGreater(len(constants), 50)  # the sweep walked something
+        self.assertEqual(constants & set(we.PARTITIONS), {td.TRAINABLE_PARTITION})
+        self.assertEqual(constants & set(we.BUCKETS), {td.TRAINABLE_PARTITION})
+        self.assertEqual(constants & set(we.EXPOSURE_PURPOSES) - {td.TRAINABLE_PARTITION}, set())
+        self.assertEqual(constants & set(we.LEAK_KINDS), set())
+        self.assertNotIn(we.GROUPING_RULE, constants)
+        self.assertNotIn(we.MANIFEST_VERSION, constants)
+
+    def test_the_exclusion_vocabulary_is_the_union_and_a_collision_refuses(self):
+        codes = td.exclusion_codes()
+        self.assertEqual(set(codes), set(td.EXPORT_REFUSALS) | set(td.DATASET_EXCLUSIONS))
+        self.assertEqual(list(codes), sorted(codes))
+        self.assertEqual(set(td.EXPORT_REFUSALS) & set(td.DATASET_EXCLUSIONS), set())
+        with mock.patch.object(td, "EXPORT_REFUSALS",
+                               tuple(td.EXPORT_REFUSALS) + ("item-retired",)):
+            with self.assertRaises(dc.ContractError) as raised:
+                td.exclusion_codes()
+            self.assertEqual(raised.exception.code, "duplicate-entry")
+
+    def test_every_dataset_exclusion_code_is_reached_by_its_own_case(self):
+        """A code nothing can emit reads as a guard and is not one. Every member of
+        `DATASET_EXCLUSIONS` is reached below, and the union is asserted to be the whole tuple."""
+        seen = set()
+
+        def add(dataset):
+            seen.update(self.codes(dataset))
+
+        self.resolve(self.record)
+        add(self.export([self.record], exposure_dir=None))
+        add(self.export([_dsnap(None, "nothing points at a task")]))
+        stray = _dsnap("T-NOT-MINED", "a task the manifest never saw")
+        self.resolve(stray)
+        add(self.export([stray]))
+        for name in ("promotion", "audit", "calibration"):
+            add(self.export([self.record], eval_manifest=_eval_manifest(allocation={name: 1})))
+        leaky = _pool()
+        leaky[0] = _task("T-1", issue=1,
+                         statement="the adapter drops a record\n" + _diff("src/x.py"))
+        add(self.export([self.record], eval_manifest=_eval_manifest(leaky, on_leak="quarantine")))
+        twins = _pool() + [_task("T-1", issue=99)]
+        add(self.export([self.record], eval_manifest=_eval_manifest(twins)))
+        item = next(iid for iid in self.manifest["content"]["partitions"][td.TRAINABLE_PARTITION]
+                    if self.manifest["content"]["items"][iid]["task_id"] == "T-1")
+        we.record_exposure(self.evals, self.manifest, partition=td.TRAINABLE_PARTITION,
+                           purpose="inspection", items=[item], by="fixture")
+        we.retire(self.evals, self.manifest, items=[item], reason="contaminated", by="fixture")
+        add(self.export([self.record]))
+        for mutate in (lambda r: r["input"]["observed_error"][0].update({"observed_at": LATER}),
+                       lambda r: r["input"]["observed_error"][0].update(
+                           {"observed_at": "whenever"}),
+                       lambda r: r["input"]["observed_error"][0].update({"truncated": True})):
+            forged = _forge(self.record, mutate)
+            self.resolve(forged)
+            add(self.export([forged], exposure_dir=self.tmp / "clean-evals"))
+        group = next(row for row in self.manifest["content"]["groups"].values()
+                     if "T-1" in {self.manifest["content"]["items"][i]["task_id"]
+                                  for i in row["items"]})
+        quoting = dc.parse_question({
+            "id": "q-leaky", "version": "1", "kind": "boolean",
+            "question": f"Was the attempt in defect group {group['group']} missing a contract?",
+            "rubric": {}, "outcomes": ["false", "true"], "abstention": "permitted",
+            "dependencies": [], "sensitivity": "project-internal"})
+        leak = _dsnap("T-1", "AttributeError: no attribute 'emit'", question=quoting)
+        self.resolve(leak)
+        add(self.export([leak], exposure_dir=self.tmp / "clean-evals"))
+        ambiguous = _dsnap("T-3", "KeyError: the route is missing")
+        td.persist(ambiguous, self.store)
+        for index, (left, right) in enumerate((("missing-context", "implementation-error"),
+                                               ("missing-context", "configuration-permission"))):
+            td.persist_lifecycle(_adjudicate(
+                ambiguous, shape="ambiguity", cause=None, reviewer=_reviewer(f"amb-{index}"),
+                contributing=[{"cause": left, "evidence": [_ev(ref_id=f"a{index}")]},
+                              {"cause": right, "evidence": [_ev(ref_id=f"b{index}")]}]),
+                self.store)
+        add(self.export([ambiguous], exposure_dir=self.tmp / "clean-evals"))
+        self.assertEqual(sorted(set(td.DATASET_EXCLUSIONS) - seen), [],
+                         "these codes are declared and nothing emits them")
+
+    def test_the_dataset_version_is_registered_and_is_its_own_object(self):
+        rg = _load("release_gate")
+        rows = {(module, attr) for _, module, attr in rg.VERSION_SOURCES}
+        self.assertIn(("training_data", "DATASET_VERSION"), rows)
+        self.assertEqual(len({td.SNAPSHOT_VERSION, td.TAXONOMY_VERSION, td.LIFECYCLE_VERSION,
+                              td.DATASET_VERSION}), 4)
+        # D33 adds a version; it never bumps one D31 or D32 registered.
+        self.assertEqual(td.SNAPSHOT_VERSION, "polytropos.training-snapshot/1")
+        self.assertEqual(td.TAXONOMY_VERSION, "polytropos.training-cause-taxonomy/1")
+        self.assertEqual(td.LIFECYCLE_VERSION, "polytropos.training-label-lifecycle/1")
+        self.assertEqual(we.MANIFEST_VERSION, "polytropos.eval-manifest/1")
+        dataset = self.eligible_case()
+        self.assertEqual(dataset["manifest"]["v"], td.DATASET_VERSION)
+        self.assertEqual(dataset["manifest"]["content"]["exporter"]["version"],
+                         td.DATASET_VERSION)
+        self.assertEqual(td.status(repo_root=ROOT,
+                                   env={"POLYTROPOS_DATA_HOME": str(self.tmp / "h")})
+                         ["store_exists"], False)
+
+    def test_an_export_past_its_ceiling_refuses_rather_than_trimming(self):
+        first = _dsnap("T-1", "AttributeError: no attribute 'emit'")
+        second = _dsnap("T-2", "TypeError: the adapter shape is wrong")
+        for record in (first, second):
+            self.resolve(record)
+        with mock.patch.object(td, "MAX_DATASET_EXAMPLES", 1):
+            with self.assertRaises(dc.ContractError) as raised:
+                self.export([first, second])
+            self.assertEqual(raised.exception.code, "bounds-exceeded")
+        self.assertEqual(self.export([first, second])
+                         ["manifest"]["content"]["counts"]["included"], 2)
+
+    def test_a_source_manifest_from_another_schema_is_refused(self):
+        self.resolve(self.record)
+        for bad in (None, {}, {"v": "something.else/1", "content": {}}):
+            with self.subTest(manifest=bad):
+                with self.assertRaises(dc.ContractError) as raised:
+                    self.export([self.record], eval_manifest=bad)
+                self.assertEqual(raised.exception.code, "not-a-reference")
+        with self.assertRaises(dc.ContractError) as raised:
+            self.export([{"v": "something.else/1"}])
+        self.assertEqual(raised.exception.code, "not-a-reference")
+
+    def test_provenance_and_the_evaluation_clock_have_no_defaults(self):
+        """A clock read inside the exporter would make the same material export to different bytes
+        on two runs, which is the whole of `DETERMINISM_NOTE`."""
+        source = (BIN_DIR / "training_data.py").read_text(encoding="utf-8")
+        self.assertNotIn("datetime.date.today", source)
+        self.assertNotIn("datetime.datetime.now", source)
+        self.assertNotIn("utcnow", source)
+        self.resolve(self.record)
+        for missing in ("built_at", "built_by", "now"):
+            with self.subTest(missing=missing):
+                with self.assertRaises(dc.ContractError):
+                    self.export([self.record], **{missing: None})
+        with self.assertRaises(TypeError):
+            td.build_dataset([self.record], eval_manifest=self.manifest, store_dir=self.store,
+                             exposure_dir=self.evals, now=NOW,
+                             purpose=self.record["eligibility"]["purpose"],
+                             destination="local-development-partition", built_by=BUILT_BY)
+
+    def test_a_parent_dataset_is_a_dataset_id_or_nothing(self):
+        dataset = self.eligible_case()
+        did = dataset["manifest"]["dataset_id"]
+        child = self.export([self.record], parent=did)
+        self.assertEqual(child["manifest"]["content"]["parent"], did)
+        self.assertNotEqual(child["manifest"]["dataset_id"], did)
+        self.assertIsNone(dataset["manifest"]["content"]["parent"])
+        for bad in ("not-an-id", "ds-nothex", f"{did}/../escape"):
+            with self.subTest(parent=bad):
+                with self.assertRaises(dc.ContractError):
+                    self.export([self.record], parent=bad)
+
+    def test_a_refusal_the_vocabulary_does_not_name_is_refused_rather_than_returned(self):
+        """`exclusion_codes` is the union of D32's codes and D33's, and a code outside it is a
+        refusal this export cannot honestly report."""
+        self.resolve(self.record)
+        thinned = tuple(code for code in td.DATASET_EXCLUSIONS
+                        if code != "exposure-not-checked")
+        with mock.patch.object(td, "DATASET_EXCLUSIONS", thinned):
+            with self.assertRaises(dc.ContractError) as raised:
+                self.export([self.record], exposure_dir=None)
+            self.assertEqual(raised.exception.code, "unknown-value")
+            self.assertIn("exposure-not-checked", str(raised.exception))
+
+    def test_a_rewritten_manifest_under_one_id_refuses_a_re_export(self):
+        """The branch `dataset_integrity` cannot reach: the export in hand is sound and the FILE on
+        disk is not. That is a rewrite, not a re-run, and nothing is overwritten."""
+        dataset = self.eligible_case()
+        td.write_dataset(dataset, self.store)
+        path = (self.store / td.DATASET_DIR / dataset["manifest"]["dataset_id"]
+                / td.DATASET_FILES["manifest"])
+        stored = json.loads(path.read_text(encoding="utf-8"))
+        stored["content"]["counts"]["included"] = 99
+        path.write_text(td.canonical(stored) + "\n", encoding="utf-8")
+        with self.assertRaises(dc.ContractError) as raised:
+            td.write_dataset(dataset, self.store)
+        self.assertEqual(raised.exception.code, "duplicate-entry")
+        self.assertIn("rewrite", str(raised.exception))
+        self.assertEqual(json.loads(path.read_text(encoding="utf-8"))
+                         ["content"]["counts"]["included"], 99, "the file was overwritten")
+        path.write_text(json.dumps({"v": "something.else/1"}) + "\n", encoding="utf-8")
+        with self.assertRaises(dc.ContractError) as raised:
+            td.write_dataset(dataset, self.store)
+        self.assertEqual(raised.exception.code, "unknown-value")
+
+    def test_an_interrupted_export_leaves_no_manifest_and_the_retry_completes(self):
+        """THE MANIFEST IS WRITTEN LAST, and that is what the order buys: after a failure partway
+        through, the directory holds data files and no manifest, so a reader refuses rather than
+        trusting a manifest whose files were never written."""
+        dataset = self.eligible_case()
+        did = dataset["manifest"]["dataset_id"]
+        root = self.store / td.DATASET_DIR / did
+        sp = td._sp()
+        real = sp.confined_create_bytes
+
+        def fail_on_manifest(store_root, rel, data, **kwargs):
+            if rel.endswith(td.DATASET_FILES["manifest"]):
+                raise OSError("the export was interrupted")
+            return real(store_root, rel, data, **kwargs)
+
+        with mock.patch.object(sp, "confined_create_bytes", fail_on_manifest):
+            with self.assertRaises(OSError):
+                td.write_dataset(dataset, self.store)
+        self.assertTrue((root / td.DATASET_FILES["payload"]).exists())
+        self.assertTrue((root / td.DATASET_FILES["audit_metadata"]).exists())
+        self.assertFalse((root / td.DATASET_FILES["manifest"]).exists())
+        with self.assertRaises(dc.ContractError) as raised:
+            td.read_dataset(self.store, did)
+        self.assertEqual(raised.exception.code, "not-a-reference")
+        receipt = td.write_dataset(dataset, self.store)
+        self.assertEqual((receipt["written"], receipt["reason"]), (True, None))
+        self.assertEqual(td.read_dataset(self.store, did)["payload"], dataset["payload"])
+
+    def test_a_data_file_already_holding_different_bytes_under_one_id_refuses(self):
+        """The other half of an interrupted export: the name is taken and the bytes are not ours.
+        With a content-addressed id that cannot be a re-run, so nothing is overwritten."""
+        dataset = self.eligible_case()
+        did = dataset["manifest"]["dataset_id"]
+        rel = f"{td.DATASET_DIR}/{did}/{td.DATASET_FILES['payload']}"
+        td._rt().ensure_private(self.store)
+        td._sp().confined_create_bytes(self.store, rel, b"{}\n", what="fixture")
+        with self.assertRaises(dc.ContractError) as raised:
+            td.write_dataset(dataset, self.store)
+        self.assertEqual(raised.exception.code, "duplicate-entry")
+        self.assertEqual((self.store / rel).read_bytes(), b"{}\n")
+
+    def test_the_source_manifests_own_ordering_never_reaches_these_bytes(self):
+        """A manifest is caller-supplied data. Its group membership arriving in another order is a
+        different input to the same material, and it must not move a single byte."""
+        first = _dsnap("T-1", "AttributeError: no attribute 'emit'")
+        second = _dsnap("T-2", "TypeError: the adapter shape is wrong")
+        for record in (first, second):
+            self.resolve(record)
+        shuffled = json.loads(json.dumps(self.manifest))
+        group = next(row for row in shuffled["content"]["groups"].values()
+                     if len(row["items"]) > 1)
+        group["items"] = list(reversed(group["items"]))
+        shuffled["sha"] = we.manifest_digest(shuffled["content"])
+        shuffled["id"] = shuffled["sha"][:16]
+        self.assertEqual(we.verify_manifest(shuffled), [])
+        self.assertNotEqual(group["items"],
+                            next(row for row in self.manifest["content"]["groups"].values()
+                                 if len(row["items"]) > 1)["items"])
+        plain = self.export([first, second])
+        reordered = self.export([first, second], eval_manifest=shuffled)
+        self.assertEqual(reordered["bytes"]["payload"], plain["bytes"]["payload"])
+        self.assertEqual(
+            list(reordered["manifest"]["content"]["groups"].values())[0]["items"],
+            list(plain["manifest"]["content"]["groups"].values())[0]["items"])
+        # The audit bytes DO differ, and must: they name the source manifest by its content digest,
+        # and a manifest whose bytes moved is a different manifest. What may not differ is the
+        # material -- the payload -- or this exporter's own view of who is in which group.
+        self.assertNotEqual(reordered["manifest"]["content"]["source_manifest"],
+                            plain["manifest"]["content"]["source_manifest"])
+
+    # ---- the demo, offline ---------------------------------------------------------------------
+
+    def test_the_demo_walks_grouping_to_export_and_writes_nothing_into_the_evals_store(self):
+        before = sorted(p.name for p in Path(tempfile.gettempdir()).glob("training-demo-*"))
+        buffer = io.StringIO()
+        with contextlib.redirect_stdout(buffer):
+            code = td._cli(["demo", "--json"])
+        self.assertEqual(code, 0)
+        payload = json.loads(buffer.getvalue())
+        steps = {step["step"]: step for step in payload["steps"]}
+        self.assertEqual(steps["grouped by defect"]["variants"], 2)
+        self.assertEqual(steps["grouped by defect"]["partition"], td.TRAINABLE_PARTITION)
+        self.assertIs(steps["dataset built"]["deterministic"], True)
+        self.assertIs(steps["dataset built"]["duplicate_collapsed_to_one_line"], True)
+        self.assertEqual(steps["dataset built"]["duplicates_collapsed"], 1)
+        self.assertEqual(steps["dataset written and inspected"]["payload_keys"],
+                         sorted(td.PAYLOAD_FIELDS))
+        self.assertEqual(steps["dataset written and inspected"]["second_write"],
+                         "already-exported")
+        self.assertEqual(steps["promotion material refused"]["included"], 0)
+        self.assertIn("partition-held-out", steps["audit material refused"]["refusals"])
+        self.assertIn("partition-single-use", steps["audit material refused"]["refusals"])
+        self.assertEqual(steps["revoked example leaves the dataset"]["refusals"],
+                         {"eligibility-revoked": 1})
+        self.assertEqual(payload["exposure_log_files"], 0)
+        after = sorted(p.name for p in Path(tempfile.gettempdir()).glob("training-demo-*"))
+        self.assertEqual(before, after)
