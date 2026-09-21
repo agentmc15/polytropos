@@ -463,6 +463,48 @@ class CheckStalenessShaStaleTests(unittest.TestCase):
             self.assertIn("MISMATCH", md)  # the git HEAD line still flags the differing SHA
             self.assertIn("identical", md)
 
+    def test_the_sha_stale_note_claims_only_the_files_the_check_compared(self):
+        """The note used to say the install was "byte-identical to this repo's tracked files" and
+        that a squash-merge "is exactly what happened here". The check reads COMPARE_GLOBS and
+        nothing else, so it could know neither -- and on 2026-09-21 a docs-only commit produced
+        SHA STALE while two tracked docs really did differ from the installed copy.
+
+        THE FIXTURE MAKES THE OLD SENTENCE FALSE, which is the point: an uncompared file differs
+        between the two trees, the status is still (correctly) SHA STALE, and the note must not
+        vouch for that file."""
+        with tempfile.TemporaryDirectory() as td:
+            repo, manifest = self._sha_stale_fixture(td)
+            install = Path(td) / "install" / "1.0.0"
+            for root, text in ((repo, "# handoff, edited after install\n"),
+                               (install, "# handoff, as installed\n")):
+                doc = Path(root) / "docs" / "HANDOFF.md"
+                doc.parent.mkdir(parents=True, exist_ok=True)
+                doc.write_text(text)
+            # The control: the two trees genuinely differ, outside the compared set.
+            self.assertNotEqual((Path(repo) / "docs" / "HANDOFF.md").read_bytes(),
+                                (install / "docs" / "HANDOFF.md").read_bytes())
+            self.assertFalse(any(row["path"].startswith("docs/")
+                                 for row in ps.compare_files(repo, install)))
+
+            result = ps.check_staleness(repo, manifest)
+            self.assertEqual(result["status"], "SHA STALE")
+            self.assertEqual(result["files_diff_count"], 0)
+            note = result["note"]
+
+            # It names exactly the set it compared, read from the constant rather than retyped.
+            for glob in ps.COMPARE_GLOBS:
+                self.assertIn(glob, note)
+            self.assertIn("Files outside that set are not compared and may differ", note)
+            # It does not claim to know WHY the recorded commit differs.
+            self.assertIn("this check cannot tell which happened", note)
+            # The two overclaims are refused, not merely absent by accident.
+            self.assertNotIn("tracked files", note)
+            self.assertNotIn("exactly what happened", note)
+            self.assertNotIn("the tree matches", note)
+            # And it is still the non-actionable status it always was.
+            self.assertIn("no action is required", note.lower())
+            self.assertNotIn("remedy", result)
+
     def test_real_drift_wins_over_matching_sha(self):
         # One file differs; the recorded git HEAD matches. File difference must dominate.
         with tempfile.TemporaryDirectory() as td:
