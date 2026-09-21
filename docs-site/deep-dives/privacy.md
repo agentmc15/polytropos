@@ -170,7 +170,11 @@ recreates the exposure. Run these in order:
 #    .claude-plugin/plugin.json  ->  "version": "<new>"
 
 # 2. reinstall. `install` is a no-op when already installed at user scope —
-#    `update` is what actually re-copies the tree.
+#    `update` is what actually re-copies the tree, and ONLY when the version differs:
+#    verified 2026-09-16, with the repository and the cache both reading 0.6.0 and six
+#    commits of content between them, `update` answered "already at the latest version
+#    (0.6.0)" and copied nothing. Step 1 is not bookkeeping; it is the lever. There is no
+#    content-addressed refresh, so a cache can be arbitrarily stale at a current version.
 claude plugin update polytropos@polytropos-local
 
 # 3. LOOK at what the copy pulled in, before deleting (this is the exposure)
