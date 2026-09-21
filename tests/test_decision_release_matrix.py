@@ -1957,13 +1957,30 @@ class V1HandoffTests(unittest.TestCase):
     def test_the_handoff_reports_the_capture_hook_as_uncalled_and_the_tree_agrees(self):
         """`CAPTURE_WIRED` is a LABEL, not the lock -- the handoff says so, and what actually
         keeps the hook uncalled is the structural test it cites. Asserted here by resolving that
-        test id, so the sentence cannot outlive the check it leans on."""
-        self.assertIn("there is no call site anywhere in the tree", self.flat)
+        test id, so the sentence cannot outlive the check it leans on.
+
+        THE WORDING IS THE ASSERTION, and an earlier version of this test pinned a FALSE one.
+        "no call site anywhere in the tree" is not true and never was: `_demo` calls
+        `capture_hook` six times, once with `enabled=True` into a `tempfile.mkdtemp` store, and
+        the tests call it too. What the structural guard proves is narrower and is the real
+        claim -- it skips `training_data.py` itself and pins the set of OTHER `bin/` modules
+        naming it -- so the document must say "no PRODUCTION call site" and name the demo and
+        the tests as the call sites that do exist. The false phrasing is refused explicitly
+        below, because a test that enforces a falsehood makes it load-bearing.
+        """
+        self.assertIn("there is no production call site; the only call sites are its own "
+                      "offline `demo` and its tests", self.flat)
+        self.assertIn("`python3 bin/training_data.py demo` does call the hook", self.flat)
+        self.assertNotIn("no call site anywhere in the tree", self.flat)
         self.assertIn("not \"three locks\"", self.flat)
         structural = ("test_training_data.SnapshotTests"
                       ".test_no_production_path_calls_the_capture_hook")
         self.assertIn(structural, self.doc)
         self.assertGreater(rg.resolve_test_ids([structural])[structural], 0)
+        # The same correction in the generated release block's own label, so the two surfaces
+        # cannot drift back apart: the gate renders this string into `docs/RELEASE.md`.
+        self.assertIn("there is no production call site", rg.TRAINING_NOT_AVAILABLE_LABEL)
+        self.assertNotIn("anywhere in the tree", rg.TRAINING_NOT_AVAILABLE_LABEL)
 
     # ----------------------------------------------------------------------------------------
     #  AGREEMENT WITH THE CONFORMANCE DOCUMENT
@@ -2138,6 +2155,66 @@ class V1HandoffTests(unittest.TestCase):
         self.assertIn("812a76e0f6caa712c15124a8a0ba4bd3872a4ca3", self.doc)
         self.assertIn("**not merged and not pushed**", self.doc)
         self.assertIn("None of it is a property of `main`", self.flat)
+
+    def test_the_scope_sentence_admits_what_is_not_a_property_of_the_reported_commit(self):
+        """The document, the checklist row that cites it, the class that enforces it and the D21
+        hardening all land in the commit that CARRIES the document, which is later than the one
+        it reports. "Everything this document describes is a property of that commit" was
+        therefore false for those four, and a reader at HEAD was misled by it. No sha is asserted
+        here beyond the reported one: a digit written into the document goes stale on the next
+        commit, so what is pinned is the FORMULATION that stays true plus the measurement."""
+        self.assertIn("A document cannot be wholly a property of a commit that precedes it.",
+                      self.flat)
+        self.assertIn("are properties of the commit that CARRIES this file, which is later than "
+                      "the commit above and one further ahead of `main`", self.flat)
+        self.assertIn("`git log main..HEAD --oneline | wc -l` is the measurement", self.flat)
+        self.assertNotIn("Everything this document describes is a property of that commit",
+                         self.flat)
+
+    def test_the_register_names_the_three_limits_the_last_phase_review_found(self):
+        """The reader-facing register, not the kit's notes. Each of the three was proven by
+        mutation or by running the two gates, and each was recorded only where readers do not
+        look. Asserted phrase by phrase so a failure says WHICH limit went missing rather than
+        that some sweep no longer matched."""
+        for phrase in (
+                # The module-level write the function sweep cannot see.
+                "would execute at import, and no guard here would see it",
+                "**bounded, not unbounded**",
+                "The shipped `bin/improvement_loop.py` is itself clean.",
+                # What a green release gate does and does not establish.
+                "**A green release gate does not establish that any decision module works.**",
+                "**one version string each, and calls no function in any of them.**",
+                # The two gates that disagree, with the staleness attributed away from this kit.
+                "**Two gates disagree on this checkout, and the release gate does not consult "
+                "installed harness freshness.**",
+                "**pre-existing and is not this release's**",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, self.flat)
+        # The sweep the first limit is about has to be the one that exists.
+        sweep = "test_decision_workbench.BoundedProposalTests"
+        self.assertIn(sweep, self.doc)
+        self.assertGreater(rg.resolve_test_ids([sweep])[sweep], 0)
+        # And the second limit's subject is still coupled the way it says -- through version
+        # constants in `VERSION_SOURCES`, one row per named object, and nothing else.
+        coupled = {module for _, module, _ in rg.VERSION_SOURCES}
+        for module in ("decision_contract", "decision_provider", "decision_eval",
+                       "decision_context"):
+            with self.subTest(module=module):
+                self.assertIn(module, coupled)
+
+    def test_the_conformance_documents_closed_gap_carries_a_dated_correction(self):
+        """D30 registered the checklist row that this gap says is missing, and the conformance
+        document carries no revision pin -- so the sentence read as present-tense fact. It is
+        annotated forward rather than rewritten, because rewriting a dated artifact to match a
+        later tree is backdating. Both halves are asserted: the stale present-tense claim is gone
+        and the correction is dated."""
+        conformance = " ".join(self.conformance.split())
+        self.assertNotIn("This document is not cited by `release_gate.CHECKLIST`", conformance)
+        self.assertIn("**Correction recorded 2026-09-21: closed.**", conformance)
+        self.assertIn("when this gap was written on 2026-09-20", conformance)
+        evidence = " ".join(row["evidence"] for row in rg.CHECKLIST)
+        self.assertIn(CONFORMANCE_DOC, evidence)
 
     def test_the_declared_task_check_passes_and_is_named_as_a_floor(self):
         """The task's own check, run here so it cannot be the only place it was run -- beside the

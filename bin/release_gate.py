@@ -800,8 +800,9 @@ CURSOR_ADAPTIVE_SCOPE_LABEL = (
 
 TRAINING_NOT_AVAILABLE_LABEL = (
     "training-data collection is NOT a capability of any harness and has no registry row. "
-    "`training_data.COLLECTION_ENABLED` and `CAPTURE_WIRED` are both False, no call site exists "
-    "anywhere in the tree, and `build_dataset` requires an explicit `store_dir`. What ships is "
+    "`training_data.COLLECTION_ENABLED` and `CAPTURE_WIRED` are both False, there is no "
+    "production call site -- the only call sites are the module's own offline `demo` and its "
+    "tests -- and `build_dataset` requires an explicit `store_dir`. What ships is "
     "code that is present and unwired; `training/` in the packaging table means the store's "
     "ignore rule is present, never that a record, a dataset or an export manifest exists")
 

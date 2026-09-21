@@ -29,12 +29,20 @@ reconstructed from prose.
 | Subject | feat(release): report conformance in three outcomes, and refuse a report that establishes nothing |
 | Date | 2026-09-20 |
 | Branch | `codex/decision-improvement-plan` |
-| Position | 47 commits ahead of `main` (`8d1b7be`), **not merged and not pushed** |
+| Position | 47 commits ahead of `main` (`8d1b7be`) as of that commit, **not merged and not pushed** |
 
-Everything this document describes is a property of that commit on that branch. None of it is a
-property of `main`, and no statement here describes a released or installed artifact. The kit's own
-execution ledger is `.claude/kits/decision-improvement-v1/TASKS.md`; its working notes, including
-every phase review this document relays, are `.claude/kits/decision-improvement-v1/NOTES.md`.
+That commit is the release this document reports, and almost everything below is a property of it
+on that branch. Not all of it, and the difference matters: **this file, the
+`release_gate.CHECKLIST` row that cites it, the `V1HandoffTests` class that enforces it, and the
+D21 guard hardening that landed beside them are properties of the commit that CARRIES this file,
+which is later than the commit above and one further ahead of `main`.** A document cannot be
+wholly a property of a commit that precedes it. So read every claim as scoped to this branch at
+the commit containing this file, and re-derive the position rather than reading a digit here — the
+row above is dated to the commit it names and goes stale on the next one, and
+`git log main..HEAD --oneline | wc -l` is the measurement. None of it is a property of `main`, and
+no statement here describes a released or installed artifact. The kit's own execution ledger is
+`.claude/kits/decision-improvement-v1/TASKS.md`; its working notes, including every phase review
+this document relays, are `.claude/kits/decision-improvement-v1/NOTES.md`.
 
 ## How to read a claim here
 
@@ -202,6 +210,16 @@ assessment is a dated artifact and is deliberately NOT being edited to match a l
 qualitative finding (cursor carries proportionally more unknown rows than Claude) still holds.
 Read its numbers against the revision it names, not against this one.
 
+Four of that assessment's findings were re-checked rather than inherited, and the reason is worth
+recording. Its verifier disclosed that it had read `bin/release_gate.py` while that file was
+mid-edit, and excluded what it saw from its verdict instead of certifying on a moving target —
+which left F14, F16, F17 and F18 unverified. A second pass with no file restriction re-ran exactly
+those four against the settled tree, after `bin/release_gate.py` had grown by several hundred
+lines. **All four hold, and none of them carries a stale count**; the five-row drift described
+above is confined to the census figures, and F17's tally was independently reproduced rather than
+taken on trust. Two of the four are limits a reader of this handoff needs, so they are stated in
+the register below rather than left in the kit's notes.
+
 ## Training data: shipped setup, no authorized collection, no training
 
 These are three different things and the distinction is the one most easily blurred.
@@ -231,13 +249,21 @@ uploads, fine-tunes or evaluates a model, and no checkpoint exists.
 Two of those are runtime gates: `COLLECTION_ENABLED` and the eligibility default are read at call
 time and fail closed. `CAPTURE_WIRED` is **not branched on in production at all** — its one
 branching use is the readiness gate's own ternary. What actually keeps the hook uncalled is a
-structural fact, not a constant: **there is no call site anywhere in the tree**, and
+structural fact, not a constant: **there is no production call site; the only call sites are its own
+offline `demo` and its tests**, and
 `test_training_data.SnapshotTests.test_no_production_path_calls_the_capture_hook` is what keeps it
-that way. So: two runtime gates plus one externally verified structural fact — not "three locks".
+that way. Read that guard for exactly what it proves and no more: it skips
+`bin/training_data.py` itself and asserts that the only other `bin/` module naming
+`training_data` is `release_gate.py`, which reads two version constants and captures nothing.
+`python3 bin/training_data.py demo` does call the hook — once with `enabled=True`, into a
+`tempfile.mkdtemp` store the demo creates and owns — and the tests call it too. Neither is a
+production path and neither touches a store a person keeps, which is why the guard is scoped to
+production rather than to the tree. So: two runtime gates plus one externally verified structural
+fact — not "three locks".
 
-It follows that **"zero examples collected" is the absence of a call site.** It is not a gate met
-and it is not a privacy achievement. Likewise `| training/ | present |` in the packaging table
-means the store's root-anchored ignore rule is present — never that a record, a dataset or an
+It follows that **"zero examples collected" is the absence of a production call site.** It is not a
+gate met and it is not a privacy achievement. Likewise `| training/ | present |` in the packaging
+table means the store's root-anchored ignore rule is present — never that a record, a dataset or an
 export manifest exists. Five `release_gate.VERSION_SOURCES` rows are training schema versions with
 zero stored objects behind them.
 
@@ -442,6 +468,37 @@ Beside those, three disclosed gaps that are narrower but real:
   check at all, and only the generated release block noticed, because it renders the constant. The
   check `fallback.a-running-state-refuses` exists because of that finding, and it is the reason to
   distrust any other claim whose enforcement turns out to be a document.
+
+### Limits the last phase review found
+
+- **A write at module level in `bin/improvement_loop.py` would execute at import, and no guard here
+  would see it.** The function sweep behind `test_decision_workbench.BoundedProposalTests` walks
+  only `ast.FunctionDef` nodes, so a `Path(...).write_text(...)` at module scope is invisible to it,
+  and invisible to the CLI inventories too — neither looks outside a function body. Proven by
+  mutation: inserting exactly that statement into a copy of the file left the class fully green
+  while the file was actually written to disk. The reachable class of such a write is **bounded, not
+  unbounded** — `LOOP_IMPORTS` pins the module's imports to five stdlib names, so what survives is
+  `pathlib`'s own mutators and nothing else — but bounded is not zero. The shipped
+  `bin/improvement_loop.py` is itself clean. What is unfinished is the sweep's node set, and
+  widening it also changes the D21-section sweep that shares the same helper: a separate change
+  with its own evidence to produce.
+- **A green release gate does not establish that any decision module works.** It establishes that
+  their version constants agree with the registry. `release_gate` couples to `decision_contract`,
+  `decision_provider`, `decision_eval` and `decision_context` through **one version string each, and
+  calls no function in any of them.** Proven by mutation in an isolated clone: rewriting *every*
+  public top-level function of all four to `raise RuntimeError(...)` — each module still importing
+  cleanly, so only behaviour was removed — left `python3 bin/release_gate.py check` at **exit 0 with
+  no findings**, while bumping `CONTRACT_VERSION` alone and touching no function moved it to **exit
+  3**. That is this repository's standing rule — a green suite says a unit works, never that
+  anything calls it — appearing at the level of the release gate rather than of a unit test.
+- **Two gates disagree on this checkout, and the release gate does not consult installed harness
+  freshness.** `python3 bin/release_gate.py check` exits 0 here, while
+  `python3 bin/harness_update.py check` exits 3. `harness_update` appears in `bin/release_gate.py`
+  in two places, neither of them reached by `run_check`: the static `CHECKLIST` prose that is
+  rendered into `docs/RELEASE.md` and never
+  evaluated for pass or fail, and the separate `reverify` subcommand. The staleness itself is
+  **pre-existing and is not this release's** — D07 reproduced the identical exit 3 against a clean
+  `git archive HEAD` extract of the tree.
 
 One gap D29 left to this task is now closed: `release_gate.CHECKLIST` did not cite the conformance
 report, so `python3 bin/release_gate.py check` pointed no reader at it. It cites both that report

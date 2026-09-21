@@ -198,7 +198,8 @@ gate nobody can keep green honestly.
 
 - The capability census by `verified` is 23 supported, 3 unsupported, 36 unknown. Re-derive it
   with `python3 bin/harness_adapter.py`.
-- There is no training-data capability row on any harness and no call site anywhere in the tree.
+- There is no training-data capability row on any harness and no production call site; the only
+  call sites are the module's own offline `demo` and its tests.
   `training_data.COLLECTION_ENABLED` and `CAPTURE_WIRED` are both `False`, and `build_dataset`
   requires an explicit `store_dir`. `training/` appearing in the packaging table means the
   store's ignore rule is present — never that a record, a dataset or an export manifest exists.
@@ -207,9 +208,14 @@ gate nobody can keep green honestly.
 ## Gaps this release carries forward
 
 - The six unavailable checks above, each with the act that would close it.
-- This document is not cited by `release_gate.CHECKLIST`, so `python3 bin/release_gate.py check`
-  does not point a reader at it. The suite is what keeps it current. Registering it there is a
-  change to the release gate's own surface and was left to whoever owns that decision.
+- This document was not cited by `release_gate.CHECKLIST` when this gap was written on
+  2026-09-20, so `python3 bin/release_gate.py check` pointed no reader at it, and registering
+  it there was a change to the release gate's own surface left to whoever owns that decision.
+  **Correction recorded 2026-09-21: closed.** D30 added a `CHECKLIST` row that cites this
+  report and `docs/DECISION-IMPROVEMENT-V1-HANDOFF.md` by name, so `check` does point a reader
+  at both. The sentence above was true when written and is kept rather than rewritten, because
+  this document is dated and annotating forward is the only honest way to age one. The suite is
+  still what keeps it current.
 - The conformance report is produced by the test class and has no command of its own. Reproducing
   it means running that class; there is no `release_gate` subcommand that prints this table.
 - Conformance is checked against this checkout only. A different platform, a different Python, or

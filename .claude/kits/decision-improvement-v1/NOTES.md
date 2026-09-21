@@ -3912,6 +3912,191 @@ This is the right shape for rot in a dated document: annotate forward, never rew
 being told not to (the file was mid-edit), stopped on noticing, caused no write, and **excluded
 what it saw from its verdict** — leaving F14, F16, F17 and F18 unverified rather than certifying
 them on a moving target. That is the correct call and the disclosure is worth more than the four
-findings. A second pass with no file restrictions is now running against exactly those four,
+findings. A second pass with no file restrictions RAN against exactly those four and ALL FOUR HOLD,
 because `release_gate.py` grew ~680 lines across `2f009d7` and `812a76e` after they were written.
 F17's "exactly three symbols" tally is explicitly in scope.
+
+**D27's four unverified findings, second pass, no file restrictions: F14, F16, F17, F18 ALL HOLD.**
+Ran against the settled tree at `5ec004f`. No stale count among the four — the F12 drift is confined
+to F12, corroborated by independent recounts (70 public symbols, 8 `VERSION_SOURCES` rows for the
+four named modules, 3 `decision_provider` public symbols, a 3-key `_HARNESS_SKILL_ROOTS`).
+
+**F16 is the finding that matters, and it was RECONFIRMED EMPIRICALLY rather than inherited.** The
+claim is that the release gate couples to the decision modules through **one version string each and
+calls no function in any**, so the gate would pass with every function deleted provided the constant
+survived. That claim was written before D28/D29 grew `release_gate.py` by ~680 lines and gave
+`run_check` two new callees, so it was the one most likely to have rotted. It did not. In an isolated
+local clone the verifier AST-mutated **every public top-level function** of `decision_contract`,
+`decision_provider`, `decision_eval` and `decision_context` to `raise RuntimeError(...)`, confirmed
+each module still imports cleanly so only behaviour was removed, and ran `release_gate.py check`:
+**still exit 0, findings: none.** The flip side also holds — bumping `CONTRACT_VERSION` alone, no
+function touched, moves `check` from exit 0 to **exit 3**.
+
+**So a green release gate does not establish that any decision module works.** It establishes that
+their version constants agree with the registry. That is the most important single sentence to come
+out of this verification sweep, and it is the kit's own standing rule — *a green suite says a unit
+works, never that anything calls it* — appearing at the level of the release gate itself rather than
+a unit test.
+
+**F17 resolved the previous pass's "uncertifiable" flag: three is still exactly right.** Reproduced
+independently by `sys.settrace` over what `improvement_loop demo` actually runs, filtering to calls
+into the five modules whose caller frame is a different file: exactly `decision_contract.parse_bundle`,
+`decision_contract.parse_proposal` (reached transitively through `workflow_eval.validate_draft`) and
+`decision_policy.bundle_ref`. A fourth trace hit, `PolicyBundle.sha`, is a METHOD on a class already
+among the 70, not a separate module-level symbol — and the finding does not name it either. The
+verifier also ran all five of `workflow_eval`'s offline verbs to actual completion (not to an
+argparse error) and inspected the sibling-import cache after each: **zero decision modules loaded,
+all five.** Non-vacuous.
+
+**F18 confirmed live, and the two gates genuinely disagree on this tree right now**:
+`release_gate.py check` exit 0 while `harness_update.py check` exit **3**. `harness_update` appears
+in `release_gate.py` in exactly two places, neither reached by `run_check` — the static `CHECKLIST`
+tuple (advisory prose rendered into `docs/RELEASE.md`, never evaluated for pass/fail) and
+`reverify()`, a separate subcommand. Still true after D30's new CHECKLIST row, which is likewise
+pure prose. The staleness itself is PRE-EXISTING and not this kit's — D07 proved it by running
+against a clean `git archive HEAD` extract and getting the identical exit 3.
+
+**GAP I FOUND AND HAVE NOT YET CLOSED: the handoff carries NEITHER F16 NOR F18.** Grepped it for
+"version string", "calls no function", "would still pass", "harness_update", "freshness" — zero
+hits. Both are exactly the kind of limit a V1 handoff exists to name: one says a green release gate
+does not prove the decision modules work, the other says two gates on this tree disagree and the
+release gate does not consult installed freshness. **Holding the edit until the Phase 8 review
+returns** rather than changing a document that review is reading — the same moving-target hazard I
+warned three agents about today, and it applies to me identically.
+
+reviewer: P8 model=opus findings=5 confirmed=5 result=accepted
+
+## Phase 8 review — accepted with five findings. The last phase review of the kit.
+
+The reviewer re-derived everything rather than reading prose: census 23/3/36 with per-harness
+unknown (claude 5/12, cursor 14/20, total 36/62); readiness over an ABSENT store in a temp
+`POLYTROPOS_DATA_HOME` = 11 gates, 0/4/7, `not_established` all ten codes; the conformance table
+parsed to 23 rows / 17 pass / 0 fail / 6 unavailable over 12 areas; `git log main..812a76e` = 47 and
+`main..HEAD` = 48; and **no remote ref for the branch — unpushed, confirmed.** Its own mutation
+probes on a temp copy: a rotten handoff test id fires 2 guards with identifying messages; cursor
+`adaptive_decisions` → `supported` fires 4 independent guards including the registry's own field
+validator; and **`CONFINED_DISPATCH_WIRED` → `True` now fires 7 conformance tests + 2 handoff tests,
+so D29's "only the rendered document noticed" hole is genuinely closed.**
+
+**Finding 2 is mine and it is the one that matters. A sentence that is literally false, with a test
+pinning it.** Three Phase 8 surfaces say capture has "no call site anywhere in the tree." False:
+`bin/training_data.py:4719,4730,4732,4742,4752,4759` call `capture_hook` inside `_demo`
+(4694-4791), reachable as `python3 bin/training_data.py demo`, one with `enabled=True` into a
+`mkdtemp` store. The cited guard, `tests/test_training_data.py:243-261`, **`continue`s past
+`training_data.py` itself** and asserts only that the other `bin/` modules naming it are exactly
+`{release_gate.py}` — so it proves **"no PRODUCTION call site"**, which the handoff says correctly
+seven lines earlier at :222. And `tests/test_decision_release_matrix.py:1963` **pins the overstated
+wording** with `assertIn("there is no call site anywhere in the tree", ...)`.
+
+**A test that enforces a false sentence is the most expensive defect shape in this kit**, because it
+makes the falsehood load-bearing: the next person to correct the prose gets a red suite and assumes
+they are wrong. **And the phrase is MINE** — it came from the Phase 7 review's adjudicated
+carry-verbatim text at NOTES.md:3117-3118, which I passed into D28, D29 and D30 unchanged. The
+implementers obeyed a mandated sentence. **A carry-verbatim mandate is a guard with no route check:
+I required the words without re-deriving the claim.** Correcting to "no production call site; the
+only call sites are its own offline `demo` and its tests" — the substance never changes, only the
+sentence becomes true.
+
+**Findings 1, 3, 4 — three precision defects, all confirmed:**
+- **1.** `docs/DECISION-IMPROVEMENT-CONFORMANCE.md:205-207` still says it is not cited by
+  `release_gate.CHECKLIST`. **D30 closed that** at `release_gate.py:1028-1045`. The document carries
+  **no revision pin**, unlike D27's assessment, so it reads as present-tense fact. The reviewer
+  named the asymmetry precisely: I annotated forward in one dated artifact and left a stale unpinned
+  sentence in another. Dated additive correction, not a rewrite.
+- **3.** The handoff names `812a76e` and "47 ahead" and claims everything it describes is a property
+  of that commit. Three things are not: the CHECKLIST row, `V1HandoffTests` itself, and the D21
+  hardening — all in `5ec004f`, which is **48** ahead and is the commit containing the document. A
+  document cannot be wholly a property of a commit that precedes it.
+- **4.** The module-level-write gap was proven again by the reviewer — a module-level `write_text` in
+  `improvement_loop.py` leaves `BoundedProposalTests` **green at 34/34 while the file is actually
+  written** (`ls` confirmed the artifact). Recorded in NOTES and in `5ec004f`'s body but **not in the
+  handoff's register**, which is the reader-facing one. A limit recorded only where readers do not
+  look is not disclosed.
+
+**Finding 5 is now closed rather than owed**: the second D27 pass returned while the review ran —
+F14, F16, F17, F18 **all HOLD** on `5ec004f`, no stale count among them.
+
+**Seven of my numbered questions came back REJECTED as defects, which is the right answer**: the
+handoff refuses the readiness tally explicitly ("Cite the codes; never cite the tally") and labels
+the one tally it prints with its input shape; no performance claim in any of the three documents,
+with the residual hole DISCLOSED rather than hidden (`GAIN_TOKENS` contains `improvement`, so
+`assert_no_gain_claim` cannot be applied to an honest document about this work — "improved recovery
+by X" is the one spelling the sweep cannot catch here, and a narrower scan covers
+`speedup|faster than|cheaper than|outperform|roi` instead); zero soft-yes vocabulary; all three
+link-but-never-merge pairs kept distinct with a test on each; entry gates with the right framing —
+**"An unmet gate is not a delay; it is the reason the work is not being done"** — and all eight O/J
+ids reading `pending` in their own kits; and **my call on D27's assessment was RIGHT**, with the
+reviewer confirming the counts were exactly true at `fd41902a` and that editing would have been
+backdating.
+
+One phrasing the reviewer flagged without counting it as a token, and it is worth keeping: the
+heading **"Authorized-but-unrun checks"** is verbatim from D30's acceptance line and is immediately
+neutralised by "run by nobody… each stays unrun until a person runs it themselves." Tighter would be
+"Prepared-but-unrun, each needing the operator's own authorization."
+
+**Fix batch dispatched** — findings 1-4, the corrected call-site wording in all four places
+including the assertion that pins it, plus F16 and F18 which I found missing from the handoff
+myself. F16 is the substantive one: **a green release gate does not establish that any decision
+module works**, proven by mutating every public function of four decision modules to `raise` and
+watching `release_gate check` stay at exit 0 while a lone version bump moves it to exit 3.
+
+## Phase 8 fix batch — all seven items closed
+
+**My own evidence:** suite **5576, exit 0, zero FAIL/ERROR** (5573 + 3 new tests); all five gates
+exit 0; the false phrase returns **zero** hits across all four surfaces (handoff, conformance,
+`release_gate.py`, generated `RELEASE.md`); and the safety constants are untouched —
+`COLLECTION_ENABLED False`, `CAPTURE_WIRED False`, `CONFINED_DISPATCH_WIRED False`, census still
+23/3/36. Nothing was weakened to make a sentence true.
+
+**Finding 2's fix does more than correct the wording — it makes the sentence self-checking.** The
+handoff now states the guard's actual scope (it skips `training_data.py` itself and asserts the only
+other `bin/` module naming it is `release_gate.py`, which reads two version constants and captures
+nothing) AND discloses the demo: `python3 bin/training_data.py demo` **does** call the hook, once
+with `enabled=True`, into a `mkdtemp` store the demo creates and owns. Neither that nor the tests is
+a production path and neither touches a store a person keeps — **which is why the guard is scoped to
+production rather than to the tree.** A knock-on I had not spotted: "zero examples collected" was
+false for the same reason and is now the absence of **a production call site**.
+
+**The replacement assertion refuses the old phrasing as well as pinning the new one** —
+`assertNotIn("no call site anywhere in the tree", ...)` on both the document and
+`TRAINING_NOT_AVAILABLE_LABEL`, so the falsehood cannot come back through either surface, and the
+document and the generated block can no longer drift apart. **M7 proves that anti-regression guard is
+live**: re-adding the false phrase ALONGSIDE the true one fails, which a naive "does it contain the
+right sentence" test would have allowed. That is the right shape — pinning truth is not the same as
+refusing the falsehood, and this needed both.
+
+Seven mutants, each caught **on the intended assertion**, with the traceback line read every time
+rather than inferred. M1 fails on the first assertion in its method with nothing downstream; M2 on
+the second; M3 on the label; M4/M5/M6 each on their own named guard, M5 via a subTest that names the
+exact missing phrase. Control before and after: 23 tests exit 0, every md5 restored MATCH, the
+tracked tree never mutated.
+
+**Finding 3's fix avoids the trap I set for it.** I asked for a formulation that stays true, and it
+wrote one that names NO second sha: `812a76e` is the release the document reports, dated its
+ahead-count "as of that commit", and then states that this file, the CHECKLIST row, `V1HandoffTests`
+and the D21 hardening are properties of **the commit that CARRIES this file, which is later** —
+pointing the reader at `git log main..HEAD --oneline | wc -l` as the measurement rather than a digit
+that rots. **"A document cannot be wholly a property of a commit that precedes it."** Measured
+independently: 47 ahead at `812a76e`, 48 at HEAD, no remote ref for the branch.
+
+**Finding 1 annotated forward rather than rewriting**, matching what I did for D27: the stale
+sentence is kept in past tense, dated to when it was true, and corrected with
+"**Correction recorded 2026-09-21: closed.**" No run figure or pinned count in that document moved.
+
+**Two disclosures from the implementer worth keeping, both unprompted:**
+- It corrected its own first draft: `assertIn("decision_contract", rg.VERSION_SOURCES)` is a
+  membership test against a tuple of **3-tuples** and failed; it now destructures the rows. That is
+  the shallow-probe failure this kit has hit nine times, self-caught for once.
+- It flagged that the D27-verification paragraph is **NOT pinned by a test**, deliberately — it
+  reports a past verification ACT, not a tree property, and word-pinning it would be exactly the
+  decoration `V1HandoffTests`' own header disclaims. Correct, and better volunteered than found.
+- It also caught the grep-exit-status trap on its own suite line (the shell's 1 came from a trailing
+  `grep -c` matching nothing, not from unittest). Same class as my zsh word-splitting error today.
+
+**`bin/harness_update.py check` still exits 3**, and that is now the documented F18 disagreement
+rather than an unexplained red — pre-existing, proven not-this-kit's by D07 against a clean
+`git archive HEAD` extract.
+
+**`_loop_functions()` deliberately NOT widened** — out of scope, and the limit is disclosed in the
+reader-facing register instead. The stale "is now running" line at NOTES.md:3915 was outside the
+implementer's scope and I have corrected it myself.
