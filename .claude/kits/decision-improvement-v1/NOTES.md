@@ -3463,3 +3463,79 @@ line-size ceiling was the other), and nothing was deleted as decoration.
 - `adaptive_decisions` derives `effective: unsupported` from `implemented: unsupported` (a design
   fact — the modes are refused by name) while `verified` stays `unknown` because nobody ran
   anything. Each row's note states that distinction.
+
+## D29 — Offline conformance
+
+outcome: D29 model=opus attempts=1 result=pass review=pending run=2026-09-16-aa6e
+
+**My own evidence, repo root, unpiped:** the class **21 tests, exit 0**; the FULL verify chain
+(class && discover && docs_build check && copilot_docs check && sync_codex_surfaces check &&
+release_gate check) **exit 0**; suite **5551, exit 0, zero FAIL/ERROR lines** — +21 over 5530,
+exactly this class. The three pins held byte-for-byte, so **`bin/release_gate.py` is genuinely
+untouched** and no second authority was created for the release surface.
+
+**I re-derived the conformance outcome myself rather than accept it: 17 pass / 0 fail / 6
+unavailable across 23 checks, covering all twelve concerns** (acceptance, caps, contracts, docs,
+fallback, migration, package, pins, privacy, private-store, resume, rollback). The six unavailable,
+by name: `contracts.installed-client-conformance`, `caps.os-enforcement-sentinels`,
+`caps.confining-ledgered-dispatch`, `rollback.live-rollback-of-a-running-pointer`,
+`private-store.install-time-copy`, `docs.site-build-strict`.
+
+**My first probe was shallower than my claim — again.** I called `run_conformance()` with no
+arguments; it requires `env`. That is the ninth time in this kit. The fix is the same every time:
+read the signature. Doing so paid off — `_Env`'s docstring documents the `_sibling` two-loaders
+trap I hit myself earlier ("`bin/` is not a package, so two loaders of one file produce two
+incompatible sets of classes"), and it resolves every module through `workflow_eval`'s cached
+`_sibling` so a bundle one module parses is the bundle another reads.
+
+**The anti-vacuity property is ENFORCED, not documented, and I checked both halves directly.**
+Feeding `run_conformance` only the unavailable specs raises `ConformanceRefused`: *"no check passed:
+6 unavailable, 0 failed. A report with no passing check establishes nothing."* And a runner that
+raises becomes a **fail**, never an `unavailable` — so a broken probe cannot wear the same word as
+an honest gap. This is the D23 defect class closed at the report level: an all-unavailable
+conformance run cannot be returned at all. `package.private-stores-are-not-packaged` is the
+genuine pass (9 stores each with a root-anchored rule, 877 tracked paths, zero findings).
+
+**M6 found a real design defect, and this is the finding worth keeping.** Mutating
+`CONFINED_DISPATCH_WIRED` to `True` originally moved **no check at all** — only the generated
+`docs/RELEASE.md` block noticed, because it renders the constant. **A safety property enforced only
+by a document mirror is not enforced.** So a 17th run check was added,
+`fallback.a-running-state-refuses`, asserting the refusal directly: no hand-built permitted verdict
+mints a pointer, a stored canary entry is refused by the pointer writer's validator and leaves no
+generation, and the same block passes under `mock.patch` of the constant so the refusal is READ AT
+CALL TIME. Note the first draft of that check caught M6 only by coincidence — `bundle_ref=None`
+made `activation_entry` raise for the wrong reason — and it was re-done with a valid
+`dp.bundle_ref(tpb.bundle_payload())`. **A guard that catches the mutant for the wrong reason is
+not a guard**; that is a new variant of the masking pattern and the first time this kit has caught
+it in a mutation harness rather than in a test.
+
+**Ten mutants, all caught, no survivors, and no guard deleted as decoration.** Two guards initially
+had no input route, and the route check came first both times: `run_conformance`'s general
+`except Exception → FAIL` (no test drove a runner into raising — the ROUTE was added, and it then
+bit as M2) and `_check_packaging`'s `tracked is not None` (`packaging_review` degrades an
+unreachable git to a NOTE, so a check reading only `findings` would pass while vouching for half
+its claim — `_Env(tracked=None)` added as the route, then bit as M3). **That is three times today
+the route check saved a live guard** — D28's `known_blocker`, D33's line-size ceiling, and these
+two. The kit's split rule is earning its keep; the deletion reflex would have been wrong every time.
+M8 is the one I would have missed: the same doc flip WITH the mirror regenerated, isolating the
+document/registry agreement guard from the drift check.
+
+**Mechanical consequence, precedented.** Creating a `docs/*.md` source bumped four census tripwires
+(`test_docs_build_adversarial`, `test_docs_build_cli`, `test_primitives_doc_adversarial`: 32→33
+sources, 34→35 page_map, 77→78 pages, plus temp-copy deltas). D34 set that precedent and each bump
+carries a dated comment naming D29. `release_gate build` was NOT needed — nothing here feeds the
+`docs/RELEASE.md` block — and one `mkdocs.yml` nav line is hand-added because that file is not
+generated and `NavCoverageTests` requires it.
+
+**Gaps for D30's handoff — the six unavailable checks are the substantive ones, plus:**
+- **`docs/DECISION-IMPROVEMENT-CONFORMANCE.md` is NOT cited by `release_gate.CHECKLIST`**, so
+  `release_gate check` does not point a reader at it. Left deliberately: D28 owns that surface and
+  its md5 was pinned. **D30 owns the handoff and should register the pointer** — a one-line
+  CHECKLIST addition plus `release_gate build` + `docs_build build`.
+- No command prints the conformance table; reproducing it means running the test class.
+- `test_no_check_that_runs_here_reaches_a_network_module` **excludes two checks** —
+  `contracts.stub-conformance-ids-resolve` (loads the suite through the loader) and
+  `package.private-stores-are-not-packaged` (spawns read-only git). Not covered by the sweep.
+- Conformance is checked against **this checkout only**: one platform, one Python, no installed copy.
+- The document's census (23/3/36) and training-data status are **dated observations with their
+  re-deriving commands, asserted by nothing** — deliberate, so no rotting number sits inside a gate.

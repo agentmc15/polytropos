@@ -1,0 +1,217 @@
+# Decision and improvement — offline conformance (Release 1)
+
+D28 wrote down what the Release 1 decision matrix **claims**. This document is the other
+question: do those claims hold **here**, in this checkout, on this host — and which of them could
+this host not put to the test at all?
+
+It is an offline conformance report. It runs no vendor client, spends nothing, reaches no
+network, touches no home directory and reads no real store. It **activates nothing**: no
+capability row moves because of this run, no pointer is written outside a temporary directory,
+and `unknown` in `primitives/harness-capabilities.json` still means no.
+
+## Three outcomes, not two
+
+| Outcome | What it means |
+| --- | --- |
+| pass | this run produced the evidence and the claim held |
+| fail | this run produced the evidence and the claim did not hold |
+| unavailable | **no evidence was produced**, because producing it needs something this run does not have and must not acquire |
+
+`unavailable` is the one that matters. It is not a soft pass and it is not a soft fail. A
+conformance report that silently omitted the checks it could not run would read as a clean bill
+of health for things nobody looked at, so every unavailable check below is counted, named, and
+given both the reason it is unavailable and the act that would produce its evidence.
+
+Two structural guards keep that honest, and both are exercised by the test class:
+
+- **A report in which nothing passed is refused rather than returned.** A registry of checks that
+  may each answer `unavailable` is satisfiable by one that runs nothing at all, and reads
+  identically. `run_conformance` raises `ConformanceRefused` instead.
+- **`fail` is reachable.** Three negative controls reach it — a checkout whose `.gitignore` has
+  lost a store's root-anchored rule, a contract test id that names no test, and an absent
+  generated mirror — so a column of `pass` is not merely the only thing this machinery can say.
+
+## The run
+
+Taken on 2026-09-20, on macOS, against this checkout, by
+`tests/test_decision_release_matrix.py`'s `JevFreeConformanceTests`.
+
+**17 passed, 0 failed, 6 unavailable** — 23 checks over the twelve concerns Release 1 names:
+`contracts`, `privacy`, `caps`, `resume`, `acceptance`, `fallback`, `pins`, `rollback`,
+`migration`, `package`, `docs` and `private-store`. Every concern carries at least one check and
+a test fails if one ever loses its last.
+
+Report schema: `polytropos.decision-conformance/1`. It is a new schema word and deliberately not
+a bump of any existing one: a reader skips a record whose `v` it does not recognise, so raising
+`polytropos.attempts/1` or `polytropos.policy-activation/1` to describe this document would
+discard stored records that have nothing to do with it.
+
+## Every check
+
+| Check | Area | Outcome | What it establishes, or what is missing |
+| --- | --- | --- | --- |
+| `contracts.payload-is-closed` | contracts | **pass** | A duplicate JSON key, a non-finite number, an unknown field, a boolean where a count belongs and a wrong state identity are each refused with their own stable reason code; the well-formed request still parses, so this is not a parser that refuses everything. |
+| `contracts.stub-conformance-ids-resolve` | contracts | **pass** | Every shared-contract and decision-conformance test id resolves to real cases rather than to zero, and every live gate names a blocker code its own owner declares. |
+| `contracts.installed-client-conformance` | contracts | **unavailable** | Whether the shared contracts hold against an installed vendor client. Nothing here runs `claude`, `codex`, `copilot` or `cursor`. |
+| `privacy.free-text-is-redacted-and-bounded` | privacy | **pass** | A credential shape is replaced before the field is retained, the value does not survive, the report is by kind and count and never by value, the field is length-bounded and says it was cut, and the summary refuses to claim that nothing secret remains. |
+| `caps.unknown-is-no` | caps | **pass** | `requires` refuses an unrun row, an absent row and the adaptive row alike; documented-and-implemented-but-never-run is `unknown`, not `supported`; and every harness's adaptive-decision row reads `implemented: unsupported` (the design decision) beside `verified: unknown` (nobody has run one), kept apart rather than merged. |
+| `caps.os-enforcement-sentinels` | caps | **unavailable** | Whether a protected profile actually denies a hidden-answer read, a control-state write, a controller mutation, a test escape and a judge write on this host. |
+| `caps.confining-ledgered-dispatch` | caps | **unavailable** | Whether a dispatch path exists that confines what it spawns and ledgers it. It does not. |
+| `resume.interrupted-attempt-closes-unknown` | resume | **pass** | After a process dies between dispatch and its record — leaving a started attempt with no finish, because a killed process tidies up nothing — resume closes it as `unknown` with no class and no return code it never saw, replays nothing, and a second resume closes nothing. |
+| `acceptance.authority-never-arrives-as-advice` | acceptance | **pass** | Ten spellings of execution, permission, budget, acceptance, review and promotion authority — punctuation and namespacing included — are each refused as `authority-field`, on the request object and on the open state map alike. |
+| `fallback.absent-pointer-is-legacy` | fallback | **pass** | No store, no directory and no generation all answer legacy with reason `no-pointer`; none raises and none mints a pin. |
+| `fallback.resolution-terminates-at-legacy` | fallback | **pass** | No pin, a pin at a bundle nobody has, and a pin that is not a reference all terminate at legacy with their own reason; legacy sets no parameters of its own and reaching it contacts nothing. |
+| `fallback.a-running-state-refuses` | fallback | **pass** | No hand-built verdict mints a running pointer; a stored entry claiming a permitted gate is refused by the pointer writer's own validator and leaves no generation behind; and the same gate block passes when `CONFINED_DISPATCH_WIRED` is True, so the refusal is read from that constant at call time and is not typed in. |
+| `pins.a-run-carries-the-pin-it-started-under` | pins | **pass** | An unpinned run pins nothing; a pin naming a deferred mode resolves which parameters it could read and still reports that this repository implements no such mode, by name; and a malformed pin raises rather than degrading into a safe-looking legacy that would hide which run is mis-pinned. |
+| `rollback.appends-a-generation-and-deletes-nothing` | rollback | **pass** | Two rollbacks append generations 1 and 2, generation 1 is byte-identical afterwards, every future run reads legacy with reason `pointer-rolled-back`, and a swap that lost the race writes nothing rather than half of something. |
+| `rollback.live-rollback-of-a-running-pointer` | rollback | **unavailable** | Whether rolling back moves a run that was actually following a bundle off it. |
+| `migration.old-ledger-answers-unknown` | migration | **pass** | An event written before the four provenance references existed — built as the old shape, not as today's shape with fields deleted — reads back `unknown` on all four, names every part of a partial reference it cannot answer, and still joins into the history; an event written today without references is the same shape as it. |
+| `migration.old-preferences-are-not-a-bundle` | migration | **pass** | The historical pull-only preference payload still loads, names the keys this contract does not translate, and refuses to parse as an approved policy bundle; a file predating every field added since reads with those fields unknown rather than defaulted; and nothing converts one into the other. |
+| `migration.a-store-is-copied-never-relocated` | migration | **pass** | An existing in-tree store keeps being used before and after migrating; the migration copies at 0600 and leaves the original exactly where it was; a second run reports a conflict rather than overwriting; nothing is deleted and no user data is relocated. |
+| `package.private-stores-are-not-packaged` | package | **pass** | Every private runtime store has its own root-anchored ignore rule, no tracked path lies under one, and the packaging review finds nothing at all. |
+| `private-store.defaults-outside-the-tree-and-private` | private-store | **pass** | Every store defaults outside the checkout, per user and per checkout; two checkouts do not share one; resolving a store creates nothing; a created one is 0700 with 0600 files; and an explicit store directory is honoured over every default. |
+| `private-store.install-time-copy` | private-store | **unavailable** | Whether an install of this plugin leaves a legacy in-tree store behind in the installed copy. |
+| `docs.generated-mirrors-carry-this-document` | docs | **pass** | This document's deep-dive mirror exists, is byte-identical to the generator's current output for this source, appears in the site nav exactly once, and the generated block of `docs/RELEASE.md` is current. |
+| `docs.site-build-strict` | docs | **unavailable** | Whether `mkdocs build --strict` succeeds over the generated site. |
+
+## What this run could not establish
+
+Six checks produced no evidence. Each says what is missing and what act would produce it. None of
+them is a pass, and none of them is a fail.
+
+### `contracts.installed-client-conformance`
+
+No `claude`, `codex`, `copilot` or `cursor` binary is invoked by this run, by any test, or by any
+verify command: those calls spend the user's own credits and reach the network. Stub conformance
+is what this host can produce. The registry's installed-client column is the only other evidence,
+and it reads `unknown` for every capability nobody has run — where `unknown` means no.
+
+**What would produce it:** run that harness's documented smoke on your own account, then record
+`verified_on` and `client_version` in that registry row by hand.
+
+### `caps.os-enforcement-sentinels`
+
+`exec_policy.run_sentinels` is the only thing that answers this, and answering means spawning
+sandboxed processes and binding a loopback port. This run does not call it, so no sentinel report
+exists, and `exec_policy.certify_profile` certifies nothing without one.
+
+Detecting a backend is not certifying one. `exec_policy.protected_profile_status` can report
+`enforced` on this host, and that is a statement about a binary being present — never about what
+it denied. The test class asserts both halves: whatever this host reports, an empty report and a
+sentinel-less one both fail to certify.
+
+**What would produce it:** run `exec_policy.run_sentinels` on a named profile and keep the
+report. A skipped, unavailable, inconclusive or leaked sentinel certifies nothing.
+
+### `caps.confining-ledgered-dispatch`
+
+There is no such path. `workflow_eval.CONFINED_DISPATCH_WIRED` is `False` — a **design decision**,
+recorded once and reaching all five harnesses — so `activation_decision` refuses every transition
+to `canary` and `active`, and `runtime_activation` resolves every run to legacy.
+
+That is linked to, and is not the same fact as, the **measured** `claude-code.confined_dispatch`
+host-limitation row (macOS, 2026-09-06), which is one harness's observation on one platform. The
+two are kept apart on purpose; merging them would turn one host's measurement into a design
+decision, or a design decision into five hosts' measurements.
+
+**What would produce it:** wire a confining, ledgered dispatch path and flip that constant with
+its own evidence. Until then, every check of a *running* state is a check of a refusal.
+
+### `rollback.live-rollback-of-a-running-pointer`
+
+No running pointer has ever existed in this repository, and none can be minted while
+`workflow_eval.CONFINED_DISPATCH_WIRED` is `False`, so there is no run following a bundle to move
+off one. The mechanics above are exercised on a rolled-back pointer in a temporary store. That
+establishes the store's behaviour and says nothing about a live cohort, a run in flight, or an
+external effect already taken.
+
+**What would produce it:** the act that moves `caps.confining-ledgered-dispatch`, followed by an
+approved activation and a rollback of it under observation.
+
+### `private-store.install-time-copy`
+
+A plugin install copies the whole directory and does not consult `.gitignore`, so a legacy
+in-tree store would be copied with it. Answering this means reading and writing `~/.claude`,
+which nothing in this repository touches — the remedy is printed, never executed.
+
+**What would produce it:** the operator runs the prune runbook in `docs/PRIVACY.md` after
+`claude plugin update`. It is manual by design.
+
+### `docs.site-build-strict`
+
+The documentation site is the one surface with a non-stdlib toolchain, and that toolchain is
+hash-locked and installed only in CI or a throwaway venv. This repository is stdlib-only and
+installs nothing, so the strict build is not run here.
+
+**What would produce it:** CI runs it on every push, installing `docs-src/requirements.txt` with
+`--require-hashes`. Locally it needs a throwaway venv.
+
+## What a green run here does not mean
+
+- It is not a statement about any host's isolation. One check of enforcement is unavailable and
+  the other is a check that a refusal holds.
+- It is not a statement about any vendor client. No client was run and none may be.
+- It is not a statement about whether any decision mechanism helps. No live trial has run, no
+  model was dispatched, and no outcome was observed. A mechanism release is valid without one —
+  a well-run trial that retains the baseline is a valid outcome — and this document makes no
+  claim about performance at all.
+- It moves nothing. **No capability row moves because of this run**; `unknown` stays `unknown`
+  until somebody runs the thing and records the date and the client version by hand.
+- It authorises nothing. This document is a report, not an approval, and it **activates
+  nothing**.
+
+## How to reproduce it
+
+From the repository root:
+
+```
+PYTHONPATH=tests python3 -m unittest test_decision_release_matrix.JevFreeConformanceTests
+```
+
+The check registry and its runners live beside that class in
+`tests/test_decision_release_matrix.py`. That registry is the authority for what conformance
+means here; this document is the half a person reads, and the class asserts that the two agree —
+same ids, same areas, same outcomes, same counts — so neither can drift from the other without
+the suite failing.
+
+The wider chain the release gate itself runs:
+
+```
+python3 -m unittest discover -s tests
+python3 bin/docs_build.py check
+python3 bin/copilot_docs.py check
+python3 bin/sync_codex_surfaces.py check
+python3 bin/release_gate.py check
+python3 bin/release_gate.py decision
+```
+
+## Dated observations, not gates
+
+Two figures below are snapshots of this checkout on 2026-09-20, recorded so a later reader can
+tell what moved. Neither is asserted by a test, because a number that rots inside a gate is a
+gate nobody can keep green honestly.
+
+- The capability census by `verified` is 23 supported, 3 unsupported, 36 unknown. Re-derive it
+  with `python3 bin/harness_adapter.py`.
+- There is no training-data capability row on any harness and no call site anywhere in the tree.
+  `training_data.COLLECTION_ENABLED` and `CAPTURE_WIRED` are both `False`, and `build_dataset`
+  requires an explicit `store_dir`. `training/` appearing in the packaging table means the
+  store's ignore rule is present — never that a record, a dataset or an export manifest exists.
+  Check it with `python3 bin/training_data.py readiness`.
+
+## Gaps this release carries forward
+
+- The six unavailable checks above, each with the act that would close it.
+- This document is not cited by `release_gate.CHECKLIST`, so `python3 bin/release_gate.py check`
+  does not point a reader at it. The suite is what keeps it current. Registering it there is a
+  change to the release gate's own surface and was left to whoever owns that decision.
+- The conformance report is produced by the test class and has no command of its own. Reproducing
+  it means running that class; there is no `release_gate` subcommand that prints this table.
+- Conformance is checked against this checkout only. A different platform, a different Python, or
+  an installed copy of the plugin is a different subject, and nothing here has been run against
+  one.
+- `fallback.a-running-state-refuses` exists because a mutation probe found the hole: flipping
+  `CONFINED_DISPATCH_WIRED` to True in a copy of the tree moved no check at all — only the
+  generated release block noticed, because it renders the constant. That check now asserts the
+  refusal directly. The same probe is the reason to distrust any other claim here whose only
+  enforcement turns out to be a rendered document.

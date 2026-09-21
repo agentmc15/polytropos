@@ -564,7 +564,7 @@ PYTHONPATH=tests python3 -m unittest test_decision_release_matrix.JevFreeMatrixT
 ### D29 — Offline conformance
 - id: D29
 - title: Offline conformance
-- status: pending
+- status: done
 - model: opus
 - depends: D28
 **Brief.** Own conformance document and `JevFreeConformanceTests`; test contracts/privacy/caps/resume/acceptance/fallback/pins/rollback/migration/package/docs/private store and record run versus unavailable checks.

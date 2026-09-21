@@ -46,6 +46,7 @@ import importlib.util
 import json
 import os
 import re
+import stat
 import sys
 import tempfile
 import unittest
@@ -610,6 +611,1193 @@ class JevFreeMatrixTests(unittest.TestCase):
         self.assertEqual(payload["jev_free"]["findings"], [])
         self.assertEqual(len(payload["matrix"]["rows"]), len(rg.HARNESSES))
 
+
+# ==================================================================================================
+#  D29 -- OFFLINE CONFORMANCE
+# ==================================================================================================
+#
+# WHAT A CONFORMANCE RUN IS FOR. D28 said what the release matrix CLAIMS. This says whether the
+# claims hold HERE, in this checkout, on this host -- and, just as load-bearing, which of them
+# this host could not put to the test at all.
+#
+# THERE ARE THREE OUTCOMES, NOT TWO. `pass`, `fail` and `unavailable`. `unavailable` is not a
+# soft pass and not a soft fail: it is "no evidence was produced, because producing it needs
+# something this run does not have and must not acquire" -- an installed vendor client, an OS
+# enforcement boundary exercised for real, a non-stdlib site toolchain, a running pointer that
+# cannot exist. A report that silently dropped those would read as a clean bill of health for
+# things nobody looked at, which is the exact defect this task exists to avoid. So every
+# unavailable check is COUNTED and NAMED, here and in `docs/DECISION-IMPROVEMENT-CONFORMANCE.md`,
+# each with what is missing and what act would produce it.
+#
+# AND A REPORT OF ALL-UNAVAILABLE PROVES NOTHING. A registry of checks that may each answer
+# "unavailable" is satisfiable by one that runs nothing, and reads identically. `run_conformance`
+# therefore REFUSES to return a report in which no check passed. The complement holds too:
+# `fail` is reachable, and three negative controls reach it, so a column of `pass` is not merely
+# the only thing this machinery is capable of saying.
+#
+# WHAT A GREEN RUN HERE ESTABLISHES ABOUT NOTHING. No vendor client was run, no host was
+# certified, no decision mechanism was measured, and no capability row moved: `unknown` in the
+# registry still means no. Every store, home, prefs directory and doctored repository root below
+# is a `tempfile.TemporaryDirectory`, and the checks that read THIS checkout read it only.
+
+#: This report's own schema word. NEW, and deliberately not a bump of any existing `*_VERSION`:
+#: a reader skips a record whose `v` it does not know, so raising one of those would discard
+#: stored records in order to describe a document that has nothing to do with them.
+CONFORMANCE_VERSION = "polytropos.decision-conformance/1"
+
+#: The document this class is the other half of. It is a `docs/*.md` SOURCE, which is why
+#: `docs_build` mirrors it and why `docs.generated-mirrors-carry-this-document` checks the mirror
+#: against the generator's current output rather than against anything a hand could have typed.
+CONFORMANCE_DOC = "docs/DECISION-IMPROVEMENT-CONFORMANCE.md"
+
+PASS, FAIL, UNAVAILABLE = "pass", "fail", "unavailable"
+CONFORMANCE_OUTCOMES = (PASS, FAIL, UNAVAILABLE)
+
+#: The concerns the task names, in its own order. Every one carries at least one check and a
+#: test below pins that, so an area cannot quietly lose its last check.
+CONFORMANCE_AREAS = ("contracts", "privacy", "caps", "resume", "acceptance", "fallback",
+                     "pins", "rollback", "migration", "package", "docs", "private-store")
+
+_RUNNERS = {}
+_UNSET = object()
+
+
+class ConformanceRefused(AssertionError):
+    """A report that establishes nothing, refused rather than returned."""
+
+
+class _NotConforming(Exception):
+    """One check's own refusal. This, and only this, is what `fail` means."""
+
+
+def _expect(condition, detail):
+    if not condition:
+        raise _NotConforming(detail)
+
+
+def _runs(check_id):
+    def wrap(fn):
+        _RUNNERS[check_id] = fn
+        return fn
+    return wrap
+
+
+class _Env:
+    """One conformance run's world: the modules under test, a scratch root, and a checkout.
+
+    ONE SET OF MODULE INSTANCES. `bin/` is not a package, so two loaders of one file produce two
+    incompatible sets of classes; every module below is reached through `workflow_eval`'s own
+    cached `_sibling`, so a bundle one parsed is the bundle another reads.
+
+    LAZILY, one at a time. `bin/exec_policy.py` imports `socket` at module level -- legitimately,
+    since one of its sentinels is a loopback probe -- so eagerly loading it would make this class
+    unconstructable inside `refusing_imports`, and the whole-run-under-refusal test below is
+    precisely the thing that must be able to construct it.
+
+    `root` is the checkout a check reads (the real one, or a doctored copy for a negative
+    control) and `tracked` is git's answer for it -- overridable, because a doctored root has no
+    git and a check that quietly skipped the tracked half would vouch for less than it says.
+    """
+
+    def __init__(self, tmp, root=ROOT, tracked=_UNSET):
+        self.tmp = Path(tmp)
+        self.root = Path(root)
+        self._tracked = tracked
+        self._n = 0
+        self._mods = {}
+
+    def _mod(self, key, build):
+        if key not in self._mods:
+            self._mods[key] = build()
+        return self._mods[key]
+
+    @property
+    def we(self):
+        return self._mod("workflow_eval", lambda: _load("workflow_eval"))
+
+    @property
+    def dp(self):
+        return self._mod("decision_policy", self.we._dp)
+
+    @property
+    def dc(self):
+        return self._mod("decision_contract", self.dp._contract)
+
+    @property
+    def al(self):
+        return self._mod("attempt_ledger", self.dp._al)
+
+    @property
+    def kc(self):
+        return self._mod("kit_contract", self.we._kc)
+
+    @property
+    def rt(self):
+        return self._mod("runtime_data", lambda: self.we._sibling("runtime_data"))
+
+    @property
+    def rd(self):
+        return self._mod("redact", self.we._rd)
+
+    @property
+    def ha(self):
+        return self._mod("harness_adapter", self.we._ha)
+
+    @property
+    def ep(self):
+        return self._mod("exec_policy", self.we._ep)
+
+    @property
+    def db(self):
+        return self._mod("docs_build", lambda: _load("docs_build"))
+
+    def work(self, name="work"):
+        self._n += 1
+        path = self.tmp / f"{self._n:02d}-{name}"
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    def tracked(self):
+        return rg.tracked_paths(self.root) if self._tracked is _UNSET else self._tracked
+
+    def registry_path(self):
+        return self.root / "primitives" / "harness-capabilities.json"
+
+    def scope(self):
+        return {"project": tpb.PROJECT, "task_classes": [tpb.TASK_CLASS],
+                "intended_uses": [tpb.USE]}
+
+    def runtime(self):
+        return self.dp.runtime_facts(
+            project=tpb.PROJECT, task_class=tpb.TASK_CLASS, intended_use=tpb.USE,
+            components={"decision_contract": self.dc.CONTRACT_VERSION,
+                        "task_contract": self.kc.CONTRACT_VERSION, "provider_contract": None})
+
+
+# ---- the checks that RUN here --------------------------------------------------------------------
+
+@_runs("contracts.payload-is-closed")
+def _check_contracts_closed(env):
+    dc = env.dc
+    al, kc = dc._al(), dc._kc()
+    codes = {}
+
+    def refused(label, thunk):
+        try:
+            thunk()
+        except dc.ContractError as exc:
+            codes[label] = exc.code
+        else:
+            raise _NotConforming(f"{label} was accepted; this contract is closed and it is not")
+
+    refused("duplicate key", lambda: dc.loads('{"status": "ok", "status": "invalid"}'))
+    refused("non-finite number", lambda: dc.loads('{"probability": NaN}'))
+    refused("unknown field",
+            lambda: dc.parse_request(dict(request_payload(dc, al, kc), speedup=1.4)))
+    refused("bool as a count", lambda: dc.parse_request(request_payload(
+        dc, al, kc, resource_policy={"operation_scope": "consult", "call_ceiling": True,
+                                     "repair_ceiling": 0})))
+    refused("a wrong state identity",
+            lambda: dc.parse_request(request_payload(dc, al, kc, state_sha="b" * 64)))
+    _expect(codes["duplicate key"] == "duplicate-key", f"a duplicate key gave {codes}")
+    _expect(codes["bool as a count"] == "wrong-type", f"a boolean count gave {codes}")
+    _expect(codes["unknown field"] == "unknown-field", f"an unknown field gave {codes}")
+    # ...and the well-formed payload still parses, so this is not a parser that refuses all.
+    request = dc.parse_request(request_payload(dc, al, kc))
+    _expect(request.correlation_id == "corr-d28", "the well-formed request did not parse")
+    return ("refused " + "; ".join(f"{label} [{code}]" for label, code in sorted(codes.items()))
+            + "; the well-formed request still parsed")
+
+
+@_runs("contracts.stub-conformance-ids-resolve")
+def _check_contract_ids(env):
+    report = rg.contracts_report(env.root)
+    _expect(not report["unresolved"],
+            f"contract test id(s) resolve to no test: {report['unresolved']}")
+    empty = sorted(f"{contract['id']}/{harness}"
+                   for contract in report["contracts"]
+                   for harness, cell in contract["cells"].items()
+                   if cell["tests"] and cell["test_count"] == 0)
+    _expect(not empty, f"mapped but zero-case contract cells: {empty}")
+    decision = rg.decision_conformance(env.root)
+    _expect(not decision["unresolved"],
+            f"decision conformance id(s) resolve to no test: {decision['unresolved']}")
+    _expect(not decision["unknown_blockers"],
+            f"live gate(s) name a blocker no owner declares: {decision['unknown_blockers']}")
+    cases = sum(cell["test_count"] for contract in report["contracts"]
+                for cell in contract["cells"].values())
+    return (f"{len(report['contracts'])} shared contracts, {cases} stub-conformance cases "
+            f"resolved to real tests; every decision-conformance id and every live-gate blocker "
+            f"resolves to its owner")
+
+
+@_runs("privacy.free-text-is-redacted-and-bounded")
+def _check_privacy(env):
+    rd = env.rd
+    secret = "AKIA" + "Q" * 16  # synthetic: a published SHAPE, never anybody's key
+    text = f"the setup wrote {secret} into the log " + "y" * rd.DEFAULT_FIELD_LIMIT
+    out = rd.redact(text)
+    _expect(secret not in out["text"], "the value survived redaction")
+    _expect("[redacted:aws-access-key-id]" in out["text"],
+            f"no placeholder: {out['text'][:80]!r}")
+    _expect(out["redactions"] == {"aws-access-key-id": 1},
+            f"the report is by kind and count or it is itself a leak: {out['redactions']}")
+    _expect(out["truncated"] is True and out["original_length"] == len(text),
+            "an unbounded field is an unbounded disclosure, and this one was not bounded")
+    _expect(len(out["text"]) <= rd.DEFAULT_FIELD_LIMIT + len(
+        rd.TRUNCATION_NOTE.format(dropped=out["original_length"])),
+        f"the bounded field is {len(out['text'])} chars")
+    line = rd.describe({"redactions": out["redactions"], "truncated": 1})
+    _expect("cannot prove no secret remains" in line,
+            f"the summary claims more than shape-matching can: {line!r}")
+    _expect(rd.redact("nothing to see here")["redactions"] == {},
+            "a clean field was reported dirty")
+    return (f"one kind caught by shape and reported as {out['redactions']}, the value absent "
+            f"from the retained text, the field cut to {rd.DEFAULT_FIELD_LIMIT} chars and saying "
+            f"so, and the summary refusing to claim absence")
+
+
+@_runs("caps.unknown-is-no")
+def _check_caps(env):
+    ha = env.ha
+    rows = ha.registry_capabilities("claude-code", path=env.registry_path())
+    _expect(rg.ADAPTIVE_ROW in rows, f"no {rg.ADAPTIVE_ROW!r} row on claude-code")
+
+    class _Probe(ha.Adapter):
+        name = "conformance-probe"
+
+        def capabilities(self):
+            return rows
+
+        def build_dispatch(self, task, model_id=None, prompt=""):  # pragma: no cover -- unused
+            return []
+
+    probe = _Probe()
+
+    def refuses(name, why):
+        try:
+            probe.requires(name)
+        except ha.CapabilityError:
+            return
+        raise _NotConforming(f"{why}: {name!r} was spent as though somebody had run it")
+
+    # A row that is MERELY never-run: documented nowhere, implemented here, unrun. Its effective
+    # state is `unknown`, and `requires` refuses it -- which is the whole of "unknown means no".
+    unrun = sorted(name for name, row in rows.items() if ha.effective(row) == ha.UNKNOWN)
+    _expect(unrun, "no claude-code row is merely unknown, so this probe proves nothing")
+    refuses(unrun[0], "an unrun capability")
+    refuses("a-row-that-does-not-exist", "an absent row")
+    _expect(probe.supports("a-row-that-does-not-exist") == ha.UNKNOWN,
+            "an absent row read as something other than unknown")
+    mixed = ha.capability("mixed", product=ha.SUPPORTED, implemented=ha.SUPPORTED,
+                          verified=ha.UNKNOWN)
+    _expect(ha.effective(mixed) == ha.UNKNOWN,
+            "documented and implemented but never run is unknown, not supported")
+    # The adaptive row says TWO things and they must stay apart: `implemented: unsupported` is
+    # the design decision that nothing is wired, and `verified: unknown` is that nobody has run
+    # one. Its effective state is the weakest of the three, so `requires` refuses it either way.
+    adaptive_row = rows[rg.ADAPTIVE_ROW]
+    _expect(adaptive_row["implemented"] == ha.UNSUPPORTED,
+            f"the adaptive mechanism reads implemented={adaptive_row['implemented']!r}")
+    _expect(adaptive_row["verified"] == ha.UNKNOWN,
+            f"the adaptive row reads verified={adaptive_row['verified']!r}; nobody has run one")
+    _expect(ha.effective(adaptive_row) == ha.UNSUPPORTED,
+            f"the adaptive row is effectively {ha.effective(adaptive_row)!r}")
+    refuses(rg.ADAPTIVE_ROW, "an unwired, unrun capability")
+    registry = ha.load_capabilities(env.registry_path())
+    census, adaptive = {}, {}
+    for harness, entry in sorted(registry["harnesses"].items()):
+        for name, raw in (entry.get("capabilities") or {}).items():
+            state = raw.get("verified", ha.UNKNOWN)
+            census[state] = census.get(state, 0) + 1
+            if name == rg.ADAPTIVE_ROW:
+                adaptive[harness] = state
+    stray = sorted(harness for harness, state in adaptive.items() if state != ha.UNKNOWN)
+    _expect(not stray, f"an adaptive row moved off unknown without anybody running it: {stray}")
+    return (f"`requires` refuses an unrun row ({unrun[0]!r}), an absent row and the adaptive "
+            f"row; unknown is the effective state beside two supporteds; all {len(adaptive)} "
+            f"adaptive-decision rows read implemented=unsupported and verified=unknown, kept "
+            f"apart; the census by `verified` is {census} -- a dated observation, not a gate, "
+            f"re-derived with `python3 bin/harness_adapter.py`")
+
+
+@_runs("resume.interrupted-attempt-closes-unknown")
+def _check_resume(env):
+    al = env.al
+    ledger = al.AttemptLedger(env.work("resume") / "attempts", "conformance")
+    attempt = ledger.record_started(run="run-a", task="T1", op="initial", model="a-model")
+    # THE CRASH, left exactly as a crash leaves it: a started attempt and no finish. Nothing
+    # tidies up after it, because a killed process runs nothing.
+    _expect([ev["attempt"] for ev in ledger.open_attempts("T1")] == [attempt],
+            "the started attempt did not read back as open")
+    closed = ledger.reconcile_open("run-b", "T1", note="the process died before it reported")
+    _expect(closed == [attempt], f"resume closed {closed!r}")
+    events = ledger.events()
+    started = [ev for ev in events if ev["kind"] == "attempt.started"]
+    finished = [ev for ev in events if ev["kind"] == "attempt.finished"]
+    _expect(len(started) == 1, f"resume REPLAYED the attempt: {len(started)} started events")
+    _expect(len(finished) == 1 and finished[0]["outcome"] == al.OUTCOME_UNKNOWN,
+            f"the closing record is {finished and finished[0].get('outcome')!r}, not unknown")
+    _expect(finished[0]["class"] == "unknown" and finished[0]["rc"] is None,
+            "a closed-unknown attempt claimed a class or a return code nobody observed")
+    _expect(finished[0]["reconciled_by"] == "run-b", "the closing record names no closer")
+    _expect(ledger.open_attempts("T1") == [], "the attempt is still open after reconciliation")
+    _expect(ledger.reconcile_open("run-c", "T1", note="again") == [],
+            "a second resume closed something a second time")
+    return (f"one started attempt, no finish, no tidy-up: resume closed it as "
+            f"{al.OUTCOME_UNKNOWN!r} with class unknown and rc null, replayed nothing, and a "
+            f"second resume closed nothing")
+
+
+@_runs("acceptance.authority-never-arrives-as-advice")
+def _check_acceptance(env):
+    dc = env.dc
+    al, kc = dc._al(), dc._kc()
+    spellings = ("approve", "approved_by", "acceptance_override", "skip_review", "permission",
+                 "max_dispatches", "budget.ceiling", "__approve__", "approve.", "argv")
+    surfaces = 0
+    for key in spellings:
+        # SURFACE ONE: the request object itself.
+        try:
+            dc.parse_request(dict(request_payload(dc, al, kc), **{key: "yes"}))
+        except dc.ContractError as exc:
+            _expect(exc.code == "authority-field",
+                    f"a request carrying {key!r} was refused as {exc.code!r}, not as authority")
+            surfaces += 1
+        else:
+            raise _NotConforming(f"a decision request carried {key!r} and was accepted")
+        # SURFACE TWO: the open state map, whose keys a caller chooses freely.
+        try:
+            dc.state_digest({"head": "0123abcd", key: "yes"})
+        except dc.ContractError as exc:
+            _expect(exc.code == "authority-field",
+                    f"a state carrying {key!r} was refused as {exc.code!r}, not as authority")
+            surfaces += 1
+        else:
+            raise _NotConforming(f"a state snapshot carried {key!r} and was accepted")
+    _expect(len(dc.BANNED_FIELDS) >= len(spellings), "the banned vocabulary shrank")
+    return (f"{len(spellings)} spellings of execution, permission, budget, acceptance, review "
+            f"and promotion authority -- punctuation and namespacing included -- each refused "
+            f"with code 'authority-field' on {surfaces} payload surfaces")
+
+
+@_runs("fallback.absent-pointer-is-legacy")
+def _check_absent_pointer(env):
+    we = env.we
+    scope = env.scope()
+    root = env.work("pointer")
+    empty = root / "prefs"
+    empty.mkdir(parents=True)
+    for label, prefs in (("no prefs directory at all", root / "never-created"),
+                         ("a prefs directory with nothing in it", empty)):
+        answer = we.runtime_activation(prefs, scope)
+        _expect(answer["mode"] == "legacy" and answer["reasons"] == ["no-pointer"],
+                f"{label}: {answer['mode']!r} {answer['reasons']!r}")
+        _expect(answer["pin"] is None and we.pin_for_run(answer) is None
+                and we.run_pin(answer) is None, f"{label}: a pin appeared from nowhere")
+    _expect(we.ABSENT_POINTER_IS_LEGACY_LABEL
+            in we.runtime_activation(root / "never-created", scope)["labels"],
+            "the answer does not carry the label saying an absent pointer is not an error")
+    generations, strays = we.activation_generations(empty, scope)
+    _expect(generations == [] and strays == [], "an empty store reported generations")
+    return ("three absences -- no store, no directory, no generation -- all answer legacy with "
+            "reason 'no-pointer', none of them raises, and none of them mints a pin")
+
+
+@_runs("fallback.resolution-terminates-at-legacy")
+def _check_resolution(env):
+    dp, dc, al = env.dp, env.dc, env.al
+    runtime = env.runtime()
+    unpinned = dp.resolve_bundle(None, [], runtime)
+    _expect(unpinned.source == "legacy" and unpinned.bundle is None
+            and unpinned.reasons == ("no-pin",), f"an unpinned run resolved {unpinned.source!r}")
+    _expect(dict(unpinned.parameters) == {}, "legacy set parameters of its own")
+    missing = dp.resolve_bundle(
+        al.make_ref("a-bundle-nobody-has", sha="a" * 64, version=dc.BUNDLE_VERSION), [], runtime)
+    _expect(missing.source == "legacy" and "bundle-unknown" in missing.reasons,
+            f"a pin at a missing bundle resolved {missing.source!r} {missing.reasons!r}")
+    garbage = dp.resolve_bundle({"id": "x"}, [], runtime)
+    _expect(garbage.source == "legacy" and garbage.reasons == ("pin-not-a-reference",),
+            f"a malformed pin resolved {garbage.reasons!r}")
+    _expect("legacy" in dp.RESOLUTION_SOURCES and dp.SELECTION_MODES[0] == "legacy",
+            "legacy is no longer the declared floor")
+    return ("no pin, a pin at a bundle nobody has, and a pin that is not a reference all "
+            "terminate at legacy with their own reason; legacy sets no parameters and reaching "
+            "it contacts nothing")
+
+
+@_runs("fallback.a-running-state-refuses")
+def _check_running_refuses(env):
+    """The load-bearing refusal, asserted rather than inferred from a constant.
+
+    Added because a mutation probe showed the gap: flipping `CONFINED_DISPATCH_WIRED` to True in
+    a copy of the tree moved no check at all -- only the generated release block noticed, because
+    it renders the constant. A conformance report whose central safety property is enforced by a
+    document mirror is not enforcing it. Every refusal below is reached with no fixture, and the
+    last two lines show the refusal is READ FROM the constant at call time rather than typed in.
+    """
+    we = env.we
+    permitted = {"v": we.ACTIVATION_VERSION, "target_state": "canary", "permitted": True,
+                 "blockers": [], "requirements": [], "sha": "a-verdict-nobody-earned",
+                 "unproven": list(we.ACTIVATION_UNPROVEN)}
+    # EVERY OTHER ARGUMENT IS VALID, deliberately. An earlier draft passed `bundle_ref=None`, and
+    # a mutation probe showed the cost: with the constant flipped to True the call still raised,
+    # on the bundle reference, so the check "caught" the mutant by coincidence rather than by
+    # observing a pointer get minted. Everything here is well formed, so the ONLY thing standing
+    # between this call and a running pointer is the refusal under test.
+    good_ref = env.dp.bundle_ref(tpb.bundle_payload())
+    try:
+        we.activation_entry(
+            permitted, scope=env.scope(), bundle_ref=good_ref,
+            eligibility={"task_classes": [tpb.TASK_CLASS], "cohort": [], "max_runs": 1},
+            monitors=[we.ACTIVATION_MONITORS[0]], by="d29-conformance")
+    except we.EvalError as exc:
+        _expect("CONFINED_DISPATCH_WIRED" in str(exc),
+                f"the refusal does not name what is unwired: {exc}")
+    else:
+        raise _NotConforming("a hand-built permitted verdict minted a running pointer")
+    # A STORED entry, offered to the writer's own validator. Both shapes refuse: one with no gate
+    # at all, one claiming a permitted gate a file cannot make true.
+    base = we.rollback_entry(scope=env.scope(),
+                            resolution=env.dp.resolve_bundle(None, [], env.runtime()),
+                            by="d29-conformance", reason="a fixture")
+    for gate, why in ((None, "a running entry with no gate verdict at all"),
+                      (permitted, "a running entry claiming a gate this repository cannot grant")):
+        try:
+            we.validate_entry(dict(base, state="canary", gate=gate),
+                              where="an offered generation")
+        except we.EvalError:
+            continue
+        raise _NotConforming(f"{why} was accepted")
+    prefs = env.work("running") / "prefs"
+    try:
+        we.swap_activation(prefs, env.scope(),
+                           entry=dict(base, state="canary", gate=permitted), expected=None)
+    except we.EvalError:
+        pass
+    else:
+        raise _NotConforming("a canary pointer was written to a store")
+    _expect(we.activation_generations(prefs, env.scope()) == ([], []),
+            "the refused write left a generation behind")
+    # DERIVED, NOT TYPED: the same gate block, read in a world where the path is wired, passes.
+    _expect(we._unwired_dispatch(permitted, "a stored gate") is not None,
+            "the re-derivation no longer refuses a permitted gate")
+    with mock.patch.object(we, "CONFINED_DISPATCH_WIRED", True):
+        _expect(we._unwired_dispatch(permitted, "a stored gate") is None,
+                "the refusal is not derived from CONFINED_DISPATCH_WIRED at all; it is typed in, "
+                "which means wiring the path would not change this answer")
+    return ("no hand-built verdict mints a running pointer, a stored entry claiming a permitted "
+            "gate is refused by the writer's validator and leaves no generation, and the same "
+            "gate block passes when `CONFINED_DISPATCH_WIRED` is True -- so the refusal is read "
+            "from that constant at call time and is not typed in")
+
+
+@_runs("pins.a-run-carries-the-pin-it-started-under")
+def _check_pins(env):
+    we, dp = env.we, env.dp
+    runtime = env.runtime()
+    answer = we.runtime_activation(env.work("pins") / "prefs", env.scope())
+    _expect(we.pin_for_run(answer) is None and we.run_pin(answer) is None,
+            "an unpinned run produced a pin")
+    unpinned = dp.pinned_bundle(None, [], runtime)
+    _expect(unpinned["pinned"] is False and unpinned["acts"] is True
+            and unpinned["resolution"].source == "legacy",
+            f"a run that pinned nothing resolved {unpinned!r}")
+    deferred = dp.pinned_bundle({"mode": "canary", "generation": 4, "activation": "act-x",
+                                 "bundle_ref": None}, [], runtime)
+    _expect(deferred["acts"] is False and deferred["generation"] == 4,
+            f"a pin naming a deferred mode reported acts={deferred['acts']!r}")
+    _expect("canary" in deferred["reason"],
+            f"the refusal does not name the mode it refused: {deferred['reason']!r}")
+    for broken, why in (({"mode": "legacy"}, "a pin missing three of its four keys"),
+                        ("a-string", "a pin that is not an object"),
+                        ({"mode": "sideways", "generation": 1, "activation": None,
+                          "bundle_ref": None}, "a pin naming an undeclared mode")):
+        try:
+            dp.pinned_bundle(broken, [], runtime)
+        except dp._contract().ContractError:
+            continue
+        raise _NotConforming(f"{why} was degraded to legacy instead of refused")
+    return ("an unpinned run pins nothing and resolves legacy; a pin naming a deferred mode "
+            "resolves which parameters it could read and still reports acts=False by name; and "
+            "three malformed pins raise rather than degrading into a safe-looking legacy")
+
+
+@_runs("rollback.appends-a-generation-and-deletes-nothing")
+def _check_rollback(env):
+    we, dp = env.we, env.dp
+    scope = env.scope()
+    prefs = env.work("rollback") / "prefs"
+    resolution = dp.resolve_bundle(None, [], env.runtime())
+
+    def entry(reason):
+        return we.rollback_entry(scope=scope, resolution=resolution, by="d29-conformance",
+                                 reason=reason)
+
+    first = we.swap_activation(prefs, scope, entry=entry("the first rollback"), expected=None)
+    path = prefs / we.POLICY_ACTIVATION / we.scope_key(scope) / "gen-000001.json"
+    before = path.read_bytes()
+    we.swap_activation(prefs, scope, entry=entry("the second rollback"), expected=1)
+    generations, strays = we.activation_generations(prefs, scope)
+    _expect(generations == [1, 2] and strays == [], f"the store holds {generations!r} {strays!r}")
+    _expect(path.read_bytes() == before, "generation 1 was rewritten by a later rollback")
+    history = we.activation_history(prefs, scope)
+    _expect([row["generation"] for row in history["generations"]] == [1, 2],
+            "the history has a hole in it, which is how a rollback comes to look undone")
+    _expect(first["bundle_ref"] is None and first["gate"] is None,
+            "a rolled-back pointer named a bundle or claimed a gate")
+    _expect(first["fallback"]["in_force_for_future_runs"] == "legacy",
+            "recording a fallback target was read as taking it")
+    answer = we.runtime_activation(prefs, scope)
+    _expect(answer["mode"] == "legacy" and answer["reasons"] == ["pointer-rolled-back"],
+            f"a rolled-back pointer resolved {answer['mode']!r} {answer['reasons']!r}")
+    # AN INTERRUPTED SWAP. A writer that read generation 1 and lost the race writes nothing at
+    # all: the store is left as the winner left it, never half-way between the two.
+    try:
+        we.swap_activation(prefs, scope, entry=entry("a lost update"), expected=1)
+    except we.ActivationConflict:
+        pass
+    else:
+        raise _NotConforming("a stale swap overwrote a generation it had never read")
+    _expect(we.activation_generations(prefs, scope)[0] == [1, 2],
+            "the refused swap left something behind anyway")
+    return ("two rollbacks append generations 1 and 2, generation 1 is byte-identical "
+            "afterwards, every future run reads legacy with reason 'pointer-rolled-back', and a "
+            "swap that lost the race writes nothing rather than half of something")
+
+
+@_runs("migration.old-ledger-answers-unknown")
+def _check_old_ledger(env):
+    al = env.al
+    root = env.work("old-ledger") / "attempts"
+    ledger = al.AttemptLedger(root, "conformance")
+    # THE GENUINELY OLD SHAPE: the keys `record_started` wrote before provenance references
+    # existed, and no others. Not a current record with fields deleted -- that would only ever
+    # prove that deleting a field works.
+    old = {"v": al.LEDGER_VERSION, "ts": "2026-01-02T03:04:05Z", "kind": "attempt.started",
+           "run": "run-old", "task": "T0", "attempt": "att-old", "op": "initial",
+           "model": "a-model", "prompt_sha": None, "verify_sha": None, "artifact": None}
+    env.rt.ensure_private(root / "conformance")
+    (root / "conformance" / al.EVENTS_FILE).write_text(
+        json.dumps(old, sort_keys=True) + "\n", encoding="utf-8")
+    events = ledger.events()
+    _expect(len(events) == 1 and ledger.corrupt == 0,
+            f"the old line read as {len(events)} event(s), {ledger.corrupt} corrupt")
+    read = al.provenance(events[0])
+    _expect(read == {name: None for name in al.PROVENANCE_REFS},
+            f"an old event invented provenance: {read!r}")
+    _expect(al.ref_gaps(None) == sorted(al.REF_FIELDS),
+            "an absent reference does not name every part it cannot answer")
+    _expect(al.ref_gaps(al.make_ref("acc-1")) == ["sha", "v"],
+            "a partially known reference does not name its gap")
+    _expect(al.read_ref({"sha": "a" * 64}) is None and al.read_ref("acc-1") is None,
+            "a reference-shaped value nothing minted was read as provenance")
+    fresh = ledger.record_started(run="run-new", task="T1", op="initial", model="a-model")
+    written = [ev for ev in ledger.events() if ev.get("attempt") == fresh][0]
+    explicit = sorted(name for name in al.PROVENANCE_REFS if name in written)
+    _expect(not explicit, f"a run that recorded no reference wrote explicit nulls: {explicit}")
+    _expect(ledger.task_history("T0"), "the old attempt dropped out of the joined history")
+    return ("an event written before the four provenance references existed reads back unknown "
+            "on all four, names every part it cannot answer, and still joins into the history; "
+            "an event written today without references is the same shape as it")
+
+
+@_runs("migration.old-preferences-are-not-a-bundle")
+def _check_old_preferences(env):
+    dp, dc, we = env.dp, env.dc, env.we
+    payload = tpb.preference_payload(by_task_class={"S": {"invented_knob": 2}})
+    view = dp.describe_legacy_preferences(payload)
+    _expect(view.reasons == (dp.LEGACY_PREFERENCE_REASON,), f"reasons {view.reasons!r}")
+    _expect("invented_knob" in view.unmapped,
+            f"a key this contract does not translate was translated anyway: {view.unmapped!r}")
+    try:
+        dc.parse_bundle(payload)
+    except dc.ContractError:
+        pass
+    else:
+        raise _NotConforming("a pull-only preference file parsed as an approved policy bundle")
+    # THE OLD FILE, with every field added since absent -- built as the shape it was, not as
+    # today's shape with keys removed.
+    ancient = {"v": we.POLICY_VERSION, "defaults": {"workflow": "kit"}}
+    older = dp.describe_legacy_preferences(ancient)
+    _expect(older.policy_version is None,
+            f"an absent revision count read as {older.policy_version!r} rather than unknown")
+    _expect(dict(older.by_task_class) == {}, "an absent section was invented")
+    _expect(dc.is_legacy_preference_payload(ancient) is True
+            and dc.is_legacy_preference_payload({"v": dc.BUNDLE_VERSION}) is False,
+            "the old shape and a bundle are no longer told apart by machine")
+    converters = sorted(name for name in dir(dp)
+                        if "preference" in name.lower() and "bundle" in name.lower())
+    _expect(not converters, f"something now converts a preference into a bundle: {converters}")
+    return ("the historical preference payload loads, names the keys it does not translate, and "
+            "refuses to parse as a bundle; a file predating every field added since reads with "
+            "those fields unknown rather than defaulted")
+
+
+@_runs("migration.a-store-is-copied-never-relocated")
+def _check_store_migration(env):
+    rt = env.rt
+    work = env.work("migration")
+    repo = work / "checkout"
+    (repo / "memory").mkdir(parents=True)
+    (repo / "memory" / "facts.jsonl").write_text('{"fact": "original"}\n', encoding="utf-8")
+    home = {"HOME": str(work / "home")}  # an explicit env, never this host's own home
+    resolved = rt.resolve_store("memory", repo, env=home, platform="linux")
+    _expect(resolved["origin"] == "legacy-in-tree" and Path(resolved["path"]) == repo / "memory",
+            f"an existing in-tree store stopped being used: {resolved!r}")
+    plan = rt.plan_migration("memory", repo, env=home, platform="linux")
+    target = Path(plan["target"])
+    _expect(plan["copy"] == ["facts.jsonl"] and not target.exists(),
+            f"planning wrote something: {plan!r}")
+    dry = rt.migrate("memory", repo, env=home, platform="linux", apply=False)
+    _expect(dry["copied"] == [] and not target.exists(), f"a dry migration wrote {dry!r}")
+    applied = rt.migrate("memory", repo, env=home, platform="linux", apply=True)
+    _expect(applied["copied"] == ["facts.jsonl"], f"the migration copied {applied!r}")
+    _expect((repo / "memory" / "facts.jsonl").is_file(),
+            "THE ORIGINAL WAS MOVED: a migration copies, and user data is never relocated")
+    _expect((target / "facts.jsonl").read_text(encoding="utf-8") == '{"fact": "original"}\n',
+            "the copy does not match what it copied")
+    _expect(stat.S_IMODE((target / "facts.jsonl").stat().st_mode) == rt.FILE_MODE,
+            "the copy is not private")
+    still = rt.resolve_store("memory", repo, env=home, platform="linux")
+    _expect(still["origin"] == "legacy-in-tree",
+            "a migration switched the store over; an in-tree store keeps being used")
+    (repo / "memory" / "facts.jsonl").write_text('{"fact": "changed"}\n', encoding="utf-8")
+    again = rt.migrate("memory", repo, env=home, platform="linux", apply=True)
+    _expect(again["conflicts"] == ["facts.jsonl"] and again["copied"] == [],
+            f"a second migration overwrote the destination: {again!r}")
+    _expect((target / "facts.jsonl").read_text(encoding="utf-8") == '{"fact": "original"}\n',
+            "an existing destination file was overwritten rather than reported as a conflict")
+    return ("an in-tree store keeps being used before and after migrating; the migration COPIES, "
+            "0600, leaving the original in place; a second run reports a conflict rather than "
+            "overwriting; nothing is deleted and nothing is relocated")
+
+
+@_runs("package.private-stores-are-not-packaged")
+def _check_packaging(env):
+    tracked = env.tracked()
+    _expect(tracked is not None,
+            "git could not list tracked files, so this run cannot vouch for the tracked half of "
+            "packaging; that is a failed check and not a quiet skip")
+    review = rg.packaging_review(env.root, tracked=tracked)
+    _expect(review["findings"] == [], f"packaging findings: {review['findings']}")
+    unignored = sorted(name for name, ok in review["stores"].items() if not ok)
+    _expect(not unignored, f"store(s) with no root-anchored ignore rule: {unignored}")
+    _expect(set(review["stores"]) == set(env.rt.STORES),
+            f"the review covers {sorted(review['stores'])}; the stores are "
+            f"{sorted(env.rt.STORES)}")
+    inside = sorted(path for path in tracked
+                    for store in env.rt.STORES if path.startswith(f"{store}/"))
+    _expect(not inside, f"tracked file(s) under a private store: {inside}")
+    return (f"{len(review['stores'])} private stores, each with its own root-anchored ignore "
+            f"rule, none carrying a tracked file among {len(tracked)} tracked paths, and no "
+            f"packaging finding at all")
+
+
+@_runs("docs.generated-mirrors-carry-this-document")
+def _check_docs(env):
+    db = env.db
+    source = env.root / CONFORMANCE_DOC
+    _expect(source.is_file(), f"{CONFORMANCE_DOC} is absent")
+    slug = db.deep_dive_slug(Path(CONFORMANCE_DOC).name)
+    mirror = env.root / "docs-site" / "deep-dives" / f"{slug}.md"
+    _expect(mirror.is_file(), f"{mirror} is missing; run `python3 bin/docs_build.py build`")
+    expected = db.render_deep_dive_page(CONFORMANCE_DOC, source.read_text(encoding="utf-8"),
+                                        db.deep_dive_page_map(env.root))
+    _expect(mirror.read_text(encoding="utf-8") == expected,
+            "the mirror is not this generator's current output for this source; a generated "
+            "page is never hand-edited and never left stale")
+    nav = (env.root / "mkdocs.yml").read_text(encoding="utf-8")
+    _expect(nav.count(f"deep-dives/{slug}.md") == 1,
+            f"mkdocs.yml carries the page {nav.count(f'deep-dives/{slug}.md')} time(s)")
+    stale = rg.check_release_doc(env.root)
+    _expect(stale is None, f"the generated release block is stale: {stale}")
+    return (f"the conformance document has its mirror at deep-dives/{slug}.md, byte-identical "
+            f"to the generator's current output, the nav carries it exactly once, and the "
+            f"generated block of docs/RELEASE.md is current")
+
+
+@_runs("private-store.defaults-outside-the-tree-and-private")
+def _check_private_store(env):
+    rt = env.rt
+    work = env.work("private-store")
+    repo = work / "fresh-checkout"
+    repo.mkdir(parents=True)
+    home = {"HOME": str(work / "home")}  # explicit: nothing here reads this host's own home
+    for name in rt.STORES:
+        resolved = rt.resolve_store(name, repo, env=home, platform="linux")
+        path = Path(resolved["path"])
+        _expect(resolved["origin"] == "user-data-root",
+                f"{name} resolved by {resolved['origin']!r} in a fresh checkout")
+        _expect(repo not in path.parents,
+                f"{name} defaults to {path}, which is inside the checkout")
+        _expect(not path.exists(), f"resolving {name} created it; a reader must not")
+    second = work / "another-checkout"
+    second.mkdir()
+    _expect(rt.store_path("memory", repo, env=home, platform="linux")
+            != rt.store_path("memory", second, env=home, platform="linux"),
+            "two checkouts share one store")
+    made = rt.ensure_private(Path(rt.store_path("memory", repo, env=home, platform="linux")))
+    _expect(stat.S_IMODE(made.stat().st_mode) == rt.DIR_MODE,
+            f"a created store is {oct(stat.S_IMODE(made.stat().st_mode))}, not "
+            f"{oct(rt.DIR_MODE)}")
+    _expect((rt.DIR_MODE, rt.FILE_MODE) == (0o700, 0o600), "the private modes changed")
+    chosen = work / "chosen"
+    ledger = env.al.AttemptLedger(chosen, "conformance")
+    ledger.record_started(run="r", task="T", op="initial", model="m")
+    _expect(ledger.events_path.is_file() and chosen in ledger.events_path.parents,
+            "an explicit store directory was not honoured over the default")
+    return (f"all {len(rt.STORES)} stores default outside the checkout, per user and per "
+            f"checkout; resolving one creates nothing; a created one is 0700 with 0600 files; "
+            f"and an explicit store directory is honoured over every default")
+
+
+# ---- the registry, and the report it produces ----------------------------------------------------
+
+#: Every check, in the task's own order of concerns. `kind` is `run` (this host produces the
+#: evidence) or `unavailable` (it cannot: `why` says what is missing, `moves_it` says what act
+#: would produce it). An `unavailable` row runs nothing, which is what the word means.
+CONFORMANCE_CHECKS = (
+    {"id": "contracts.payload-is-closed", "area": "contracts", "kind": "run",
+     "question": "Does the decision contract refuse a duplicate key, an unknown field, a "
+                 "bool-as-number, a non-finite number and a wrong state identity?"},
+    {"id": "contracts.stub-conformance-ids-resolve", "area": "contracts", "kind": "run",
+     "question": "Does every shared-contract and decision-conformance test id name real cases, "
+                 "and does every live gate name a blocker its owner declares?"},
+    {"id": "contracts.installed-client-conformance", "area": "contracts", "kind": "unavailable",
+     "question": "Do the shared contracts hold against an INSTALLED vendor client?",
+     "why": "no `claude`, `codex`, `copilot` or `cursor` binary is invoked by this run, by any "
+            "test, or by any verify command: those calls spend the user's own credits and reach "
+            "the network. Stub conformance is what this host can produce; the registry's "
+            "installed-client column is the only other evidence, and it reads `unknown` for "
+            "every capability nobody has run, where `unknown` means no",
+     "moves_it": "run that harness's documented smoke on your own account, then record "
+                 "`verified_on` and `client_version` in that registry row by hand"},
+    {"id": "privacy.free-text-is-redacted-and-bounded", "area": "privacy", "kind": "run",
+     "question": "Is user free text redacted and length-bounded before it is retained, and "
+                 "reported by kind and count rather than by value?"},
+    {"id": "caps.unknown-is-no", "area": "caps", "kind": "run",
+     "question": "Is an unrun capability refused rather than spent, and is every "
+                 "adaptive-decision row still unknown?"},
+    {"id": "caps.os-enforcement-sentinels", "area": "caps", "kind": "unavailable",
+     "question": "Does a protected profile actually DENY a hidden-answer read, a control-state "
+                 "write, a controller mutation, a test escape and a judge write on this host?",
+     "why": "`exec_policy.run_sentinels` is the only thing that answers it, and answering means "
+            "spawning sandboxed processes and binding a loopback port. This run does not call "
+            "it, so no sentinel report exists and `exec_policy.certify_profile` certifies "
+            "nothing without one. Detecting a backend is not certifying one: "
+            "`protected_profile_status` can report `enforced` on this host, which is a "
+            "statement about a binary being present and never about what it denied",
+     "moves_it": "run `exec_policy.run_sentinels` on a named profile and keep the report; a "
+                 "skipped, unavailable, inconclusive or leaked sentinel certifies nothing"},
+    {"id": "caps.confining-ledgered-dispatch", "area": "caps", "kind": "unavailable",
+     "question": "Is there a dispatch path that confines what it spawns and ledgers it, so that "
+                 "a running decision state could be reached at all?",
+     "why": "there is not. `workflow_eval.CONFINED_DISPATCH_WIRED` is False -- a DESIGN "
+            "DECISION, recorded once and reaching all five harnesses -- so `activation_decision` "
+            "refuses every transition to `canary` and `active`, and `runtime_activation` "
+            "resolves every run to legacy. It is linked to, and is not the same fact as, the "
+            "MEASURED `claude-code.confined_dispatch` host-limitation row (macOS, 2026-09-06), "
+            "which is one harness's observation on one platform",
+     "moves_it": "wire a confining, ledgered dispatch path and flip that constant with its own "
+                 "evidence; until then every check of a RUNNING state is a check of a refusal"},
+    {"id": "resume.interrupted-attempt-closes-unknown", "area": "resume", "kind": "run",
+     "question": "After a process dies between dispatch and its record, does resume close the "
+                 "attempt as unknown without replaying it?"},
+    {"id": "acceptance.authority-never-arrives-as-advice", "area": "acceptance", "kind": "run",
+     "question": "Can execution, permission, budget, acceptance, review or promotion authority "
+                 "arrive inside a decision payload, however it is spelled?"},
+    {"id": "fallback.absent-pointer-is-legacy", "area": "fallback", "kind": "run",
+     "question": "With no activation pointer of any kind, is a run legacy without erroring?"},
+    {"id": "fallback.resolution-terminates-at-legacy", "area": "fallback", "kind": "run",
+     "question": "Does bundle resolution always terminate at legacy, with nothing to contact?"},
+    {"id": "fallback.a-running-state-refuses", "area": "fallback", "kind": "run",
+     "question": "Does every route to a running decision state refuse, and is that refusal read "
+                 "from its owning constant at call time rather than typed in?"},
+    {"id": "pins.a-run-carries-the-pin-it-started-under", "area": "pins", "kind": "run",
+     "question": "Does a run resolve only the pin it started under, and is a malformed pin "
+                 "refused rather than degraded into legacy?"},
+    {"id": "rollback.appends-a-generation-and-deletes-nothing", "area": "rollback", "kind": "run",
+     "question": "Does a rollback append a generation, leave every earlier one byte-identical, "
+                 "resolve future runs to legacy, and write nothing when it loses a race?"},
+    {"id": "rollback.live-rollback-of-a-running-pointer", "area": "rollback",
+     "kind": "unavailable",
+     "question": "Does rolling back move a run that was actually FOLLOWING a bundle off it?",
+     "why": "no running pointer has ever existed in this repository, and none can be minted "
+            "while `workflow_eval.CONFINED_DISPATCH_WIRED` is False, so there is no run "
+            "following a bundle to move. The mechanics are exercised on a rolled-back pointer "
+            "in a temporary store; that establishes the store's behaviour and says nothing "
+            "about a live cohort, a run in flight, or an external effect already taken",
+     "moves_it": "the act that moves `caps.confining-ledgered-dispatch`, followed by an "
+                 "approved activation and a rollback of it under observation"},
+    {"id": "migration.old-ledger-answers-unknown", "area": "migration", "kind": "run",
+     "question": "Does a ledger event written before the provenance references existed read "
+                 "back as unknown rather than defaulted or back-filled?"},
+    {"id": "migration.old-preferences-are-not-a-bundle", "area": "migration", "kind": "run",
+     "question": "Does the historical preference file still load, and does it stay a preference "
+                 "rather than becoming an approved policy bundle?"},
+    {"id": "migration.a-store-is-copied-never-relocated", "area": "migration", "kind": "run",
+     "question": "Does migrating a store copy it, keep using the in-tree one, and refuse to "
+                 "overwrite or delete anything?"},
+    {"id": "package.private-stores-are-not-packaged", "area": "package", "kind": "run",
+     "question": "Is every private runtime store excluded from the package, with no tracked "
+                 "file under one?"},
+    {"id": "private-store.defaults-outside-the-tree-and-private", "area": "private-store",
+     "kind": "run",
+     "question": "Does every store default outside the checkout, per user and per checkout, "
+                 "0700/0600, reached through its own explicit directory seam?"},
+    {"id": "private-store.install-time-copy", "area": "private-store", "kind": "unavailable",
+     "question": "Does an INSTALL of this plugin leave a legacy in-tree store behind in the "
+                 "installed copy?",
+     "why": "a plugin install copies the whole directory and does not consult `.gitignore`, so "
+            "a legacy in-tree store would be copied with it. Answering this means reading and "
+            "writing `~/.claude`, which nothing in this repository touches -- the remedy is "
+            "printed, never executed",
+     "moves_it": "the operator runs the prune runbook in `docs/PRIVACY.md` after "
+                 "`claude plugin update`; it is manual by design"},
+    {"id": "docs.generated-mirrors-carry-this-document", "area": "docs", "kind": "run",
+     "question": "Is this document's generated mirror present, current byte for byte and in the "
+                 "nav -- and is the generated release block current?"},
+    {"id": "docs.site-build-strict", "area": "docs", "kind": "unavailable",
+     "question": "Does `mkdocs build --strict` succeed over the generated site?",
+     "why": "the site is the one surface with a non-stdlib toolchain, and that toolchain is "
+            "hash-locked and installed only in CI or a throwaway venv. This repository is "
+            "stdlib-only and installs nothing, so the strict build is not run here",
+     "moves_it": "CI runs it on every push, installing `docs-src/requirements.txt` with "
+                 "`--require-hashes`; locally it needs a throwaway venv"},
+)
+
+
+def run_conformance(env, checks=None, runners=None):
+    """Every check, run or declared unavailable -> the report. REFUSES an empty establishment.
+
+    A check that raises anything at all is a FAIL: a check that blew up did not pass, and
+    reporting it as unavailable would let a broken probe masquerade as an honest gap.
+    """
+    checks = CONFORMANCE_CHECKS if checks is None else checks
+    runners = _RUNNERS if runners is None else runners
+    rows = []
+    for spec in checks:
+        if spec["kind"] == "unavailable":
+            rows.append(dict(spec, outcome=UNAVAILABLE, detail=spec["why"]))
+            continue
+        runner = runners.get(spec["id"])
+        if runner is None:
+            rows.append(dict(spec, outcome=FAIL,
+                             detail="no runner is registered for this check id"))
+            continue
+        try:
+            rows.append(dict(spec, outcome=PASS, detail=runner(env)))
+        except _NotConforming as exc:
+            rows.append(dict(spec, outcome=FAIL, detail=str(exc)))
+        except Exception as exc:  # noqa: BLE001 -- a check that blew up did not pass
+            rows.append(dict(spec, outcome=FAIL,
+                             detail=f"the check itself raised {type(exc).__name__}: {exc}"))
+    counts = {outcome: sum(1 for row in rows if row["outcome"] == outcome)
+              for outcome in CONFORMANCE_OUTCOMES}
+    report = {
+        "v": CONFORMANCE_VERSION,
+        "checks": rows,
+        "counts": counts,
+        "areas": sorted({row["area"] for row in rows}),
+        "unavailable": [row["id"] for row in rows if row["outcome"] == UNAVAILABLE],
+        "failed": [row["id"] for row in rows if row["outcome"] == FAIL],
+    }
+    if counts[PASS] == 0:
+        raise ConformanceRefused(
+            f"no check passed: {counts[UNAVAILABLE]} unavailable, {counts[FAIL]} failed. A "
+            f"report with no passing check establishes nothing -- one in which every outcome is "
+            f"'unavailable' is satisfiable by a registry that runs nothing at all, and reads "
+            f"identically -- so it is refused rather than returned")
+    return report
+
+
+_DOC_ROW = re.compile(r"^\|\s*`(?P<id>[a-z0-9.\-]+)`\s*\|\s*(?P<area>[a-z\-]+)\s*\|\s*"
+                      r"\*\*(?P<outcome>pass|fail|unavailable)\*\*\s*\|", re.M)
+
+
+def document_rows(text):
+    """The conformance table as the document states it -> `{id: (area, outcome)}`."""
+    return {match.group("id"): (match.group("area"), match.group("outcome"))
+            for match in _DOC_ROW.finditer(text)}
+
+
+class JevFreeConformanceTests(unittest.TestCase):
+    """D29 -- the offline conformance run, and the document that reports it.
+
+    `CONFORMANCE_CHECKS` is the authority for what conformance means here; the document is the
+    half a person reads, and every assertion below exists to stop the two drifting.
+    """
+
+    maxDiff = None
+
+    @classmethod
+    def setUpClass(cls):
+        cls._tmp = tempfile.TemporaryDirectory(prefix="polytropos-d29-")
+        cls.env = _Env(cls._tmp.name)
+        cls.report = run_conformance(cls.env)
+        cls.doc_path = ROOT / CONFORMANCE_DOC
+        cls.doc = cls.doc_path.read_text(encoding="utf-8") if cls.doc_path.is_file() else ""
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._tmp.cleanup()
+
+    def _one(self, check_id):
+        """One check, re-run beside a cheap passing one so the report is returnable at all."""
+        spec = [dict(s) for s in CONFORMANCE_CHECKS if s["id"] == check_id]
+        self.assertEqual(len(spec), 1, check_id)
+        control = [dict(s) for s in CONFORMANCE_CHECKS
+                   if s["id"] == "contracts.payload-is-closed"]
+        report = run_conformance(self.env, checks=spec + control)
+        return [row for row in report["checks"] if row["id"] == check_id][0]
+
+    # ==============================================================================================
+    #  THE RUN ITSELF
+    # ==============================================================================================
+
+    def test_every_check_that_runs_here_passes_and_its_failures_are_named_not_counted(self):
+        """The run, first. A failure is reported with the check's OWN detail rather than as a
+        tally, because a tally is what you read when nobody meant to fix it."""
+        failed = [(row["id"], row["detail"]) for row in self.report["checks"]
+                  if row["outcome"] == FAIL]
+        self.assertEqual(failed, [],
+                         "\n".join(f"{cid}: {detail}" for cid, detail in failed))
+
+    def test_the_report_carries_three_outcomes_and_unavailable_is_neither_of_the_others(self):
+        counts = self.report["counts"]
+        self.assertEqual(sorted(counts), sorted(CONFORMANCE_OUTCOMES))
+        self.assertEqual(sum(counts.values()), len(CONFORMANCE_CHECKS))
+        self.assertGreater(counts[UNAVAILABLE], 0,
+                           "a conformance run on this host cannot exercise an installed client "
+                           "or an OS enforcement boundary; reporting none of that is the defect")
+        self.assertEqual(counts[FAIL], 0)
+        self.assertEqual(len(self.report["unavailable"]), counts[UNAVAILABLE])
+        self.assertEqual(self.report["v"], CONFORMANCE_VERSION)
+
+    def test_at_least_one_check_actually_passed_on_this_host(self):
+        """THE POSITIVE CONTROL. Without it, a wall of refusals and gaps is satisfiable by a
+        registry that produces no evidence at all, and reads exactly the same."""
+        passed = [row["id"] for row in self.report["checks"] if row["outcome"] == PASS]
+        self.assertGreater(len(passed), 0)
+        self.assertIn("package.private-stores-are-not-packaged", passed)
+        for row in self.report["checks"]:
+            if row["outcome"] == PASS:
+                self.assertTrue(row["detail"].strip(),
+                                f"{row['id']} passed without saying what it established")
+
+    def test_a_report_in_which_nothing_passed_is_refused_rather_than_returned(self):
+        """And that refusal bites: the same machinery, given a registry in which every row is
+        unavailable, refuses instead of reporting a clean run."""
+        hollow = tuple(dict(spec, kind="unavailable", why=spec.get("why", "declared unavailable"),
+                            moves_it=spec.get("moves_it", "n/a"))
+                       for spec in CONFORMANCE_CHECKS)
+        with self.assertRaises(ConformanceRefused) as caught:
+            run_conformance(self.env, checks=hollow)
+        self.assertIn("establishes nothing", str(caught.exception))
+
+    # ==============================================================================================
+    #  THE FAIL OUTCOME IS REACHABLE -- THREE NEGATIVE CONTROLS
+    # ==============================================================================================
+
+    def test_a_store_without_its_ignore_rule_fails_the_packaging_check(self):
+        """A doctored checkout whose `.gitignore` has lost one store's root-anchored rule. The
+        check must report `fail` -- not `unavailable`, and not a pass with a note."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            rules = (ROOT / ".gitignore").read_text(encoding="utf-8")
+            broken = "\n".join(line for line in rules.splitlines() if line.strip() != "/memory/")
+            (root / ".gitignore").write_text(broken + "\n", encoding="utf-8")
+            env = _Env(root / "scratch", root=root, tracked=[])
+            row = self._only(env, "package.private-stores-are-not-packaged")
+        self.assertEqual(row["outcome"], FAIL)
+        self.assertIn("store 'memory' has no root-anchored rule", row["detail"])
+
+    def test_a_contract_test_id_that_names_nothing_fails_the_contracts_check(self):
+        with mock.patch.object(rg, "LEGACY_TESTS",
+                               tuple(rg.LEGACY_TESTS) + ("test_nothing.NoSuchTests.test_none",)):
+            row = self._one("contracts.stub-conformance-ids-resolve")
+        self.assertEqual(row["outcome"], FAIL)
+        self.assertIn("test_nothing.NoSuchTests.test_none", row["detail"])
+
+    def test_an_absent_generated_mirror_fails_the_docs_check(self):
+        with mock.patch.object(sys.modules[__name__], "CONFORMANCE_DOC",
+                               "docs/A-DOCUMENT-NOBODY-WROTE.md"):
+            row = self._one("docs.generated-mirrors-carry-this-document")
+        self.assertEqual(row["outcome"], FAIL)
+        self.assertIn("A-DOCUMENT-NOBODY-WROTE.md", row["detail"])
+
+    def test_a_check_that_blows_up_is_a_failure_and_never_an_honest_gap(self):
+        """The route into `run_conformance`'s general `except`. A probe that raised is a probe
+        that established nothing, and reporting it as `unavailable` would let a broken check
+        wear the same word as a real, named, acted-upon gap."""
+        spec = [dict(s) for s in CONFORMANCE_CHECKS
+                if s["kind"] == "run" and s["id"] != "contracts.payload-is-closed"][:1]
+        control = [dict(s) for s in CONFORMANCE_CHECKS
+                   if s["id"] == "contracts.payload-is-closed"]
+
+        def explode(env):
+            raise RuntimeError("the probe itself is broken")
+
+        report = run_conformance(
+            self.env, checks=spec + control,
+            runners=dict(_RUNNERS, **{spec[0]["id"]: explode}))
+        row = [r for r in report["checks"] if r["id"] == spec[0]["id"]][0]
+        self.assertEqual(row["outcome"], FAIL)
+        self.assertIn("the check itself raised RuntimeError", row["detail"])
+        self.assertEqual(report["counts"][UNAVAILABLE], 0)
+
+    def test_a_missing_runner_is_a_failure_rather_than_a_silently_skipped_check(self):
+        spec = [dict(s) for s in CONFORMANCE_CHECKS
+                if s["kind"] == "run" and s["id"] != "contracts.payload-is-closed"][:1]
+        control = [dict(s) for s in CONFORMANCE_CHECKS
+                   if s["id"] == "contracts.payload-is-closed"]
+        runners = {k: v for k, v in _RUNNERS.items() if k != spec[0]["id"]}
+        report = run_conformance(self.env, checks=spec + control, runners=runners)
+        row = [r for r in report["checks"] if r["id"] == spec[0]["id"]][0]
+        self.assertEqual(row["outcome"], FAIL)
+        self.assertIn("no runner is registered", row["detail"])
+
+    def test_a_run_that_cannot_ask_git_fails_the_packaging_check_rather_than_skipping_it(self):
+        """The route into the packaging check's own `tracked is not None` guard. `packaging_review`
+        degrades a git it cannot reach to a NOTE, so a check that just read its findings would
+        pass while vouching for only half of what it claims."""
+        env = _Env(self.env.tmp / "no-git", root=ROOT, tracked=None)
+        row = self._only(env, "package.private-stores-are-not-packaged")
+        self.assertEqual(row["outcome"], FAIL)
+        self.assertIn("cannot vouch for the tracked half", row["detail"])
+
+    def _only(self, env, check_id):
+        """One check against a doctored env, with a control that passes there too."""
+        specs = [dict(s) for s in CONFORMANCE_CHECKS
+                 if s["id"] in (check_id, "contracts.payload-is-closed")]
+        report = run_conformance(env, checks=specs)
+        outcomes = {row["id"]: row["outcome"] for row in report["checks"]}
+        self.assertEqual(outcomes["contracts.payload-is-closed"], PASS,
+                         "the control did not pass, so the doctored result proves nothing")
+        return [row for row in report["checks"] if row["id"] == check_id][0]
+
+    # ==============================================================================================
+    #  THE UNAVAILABLE OUTCOME, NAMED AND DERIVED WHERE IT CAN BE
+    # ==============================================================================================
+
+    def test_every_unavailable_check_says_what_is_missing_and_what_would_produce_it(self):
+        """An unavailable row that did not say what act would move it is a gap nobody can
+        close, which is a worse record than no row at all."""
+        unavailable = [row for row in self.report["checks"] if row["outcome"] == UNAVAILABLE]
+        self.assertTrue(unavailable)
+        for row in unavailable:
+            with self.subTest(check=row["id"]):
+                self.assertGreater(len(row["why"]), 120, row["id"])
+                self.assertGreater(len(row["moves_it"]), 40, row["id"])
+                self.assertEqual(row["detail"], row["why"])
+
+    def test_the_unavailable_enforcement_rows_are_derived_from_their_owner_not_typed(self):
+        """`caps.confining-ledgered-dispatch` and `rollback.live-rollback-of-a-running-pointer`
+        are unavailable because one constant is False. If somebody wires it, this fails, and the
+        rows have to be reclassified rather than going on reading `unavailable` by habit."""
+        self.assertIs(self.env.we.CONFINED_DISPATCH_WIRED, False)
+        self.assertEqual(list(self.env.dp.DEFERRED_MODES), ["canary", "active"])
+        self.assertNotIn("canary", self.env.dp.SELECTION_MODES)
+        rows = {row["id"]: row for row in self.report["checks"]}
+        for check_id in ("caps.confining-ledgered-dispatch",
+                         "rollback.live-rollback-of-a-running-pointer"):
+            with self.subTest(check=check_id):
+                self.assertEqual(rows[check_id]["outcome"], UNAVAILABLE)
+                self.assertIn("CONFINED_DISPATCH_WIRED", rows[check_id]["why"])
+
+    def test_detecting_a_confinement_backend_is_not_certifying_one(self):
+        """Why `caps.os-enforcement-sentinels` is unavailable rather than passing: this host may
+        well report an enforced profile, and `certify_profile` still certifies nothing without a
+        sentinel report, which this run did not produce."""
+        ep = self.env.ep
+        status = ep.protected_profile_status()
+        self.assertIn(status.status, (ep.PROFILE_ENFORCED, ep.PROFILE_UNAVAILABLE))
+        for report in ({}, {"status": ep.PROFILE_ENFORCED, "backend": "sandbox-exec",
+                            "controlled_tree_intact": True, "sentinels": ()}):
+            verdict = ep.certify_profile(report)
+            self.assertFalse(verdict["certified"], verdict)
+        row = {r["id"]: r for r in self.report["checks"]}["caps.os-enforcement-sentinels"]
+        self.assertIn("sentinel", row["why"].lower())
+
+    def test_no_check_that_runs_here_reaches_a_network_module(self):
+        """The runnable checks again, with every network module refused at the import hook. One
+        that reached for a transport would raise, which `run_conformance` reports as a FAIL
+        rather than swallowing. The two excluded checks are the two that legitimately spawn
+        read-only git or load the whole test suite through the loader."""
+        excluded = ("contracts.stub-conformance-ids-resolve",
+                    "package.private-stores-are-not-packaged")
+        with tempfile.TemporaryDirectory() as tmp, refusing_imports(rg.NETWORK_IMPORTS) as blocked:
+            env = _Env(tmp)
+            report = run_conformance(env, checks=tuple(
+                spec for spec in CONFORMANCE_CHECKS
+                if spec["kind"] == "run" and spec["id"] not in excluded))
+        self.assertEqual([row["id"] for row in report["checks"] if row["outcome"] != PASS], [])
+        self.assertEqual(blocked, [], f"a conformance check reached for {blocked}")
+
+    # ==============================================================================================
+    #  THE DOCUMENT AND THE RUN DO NOT DRIFT
+    # ==============================================================================================
+
+    def test_the_document_states_every_check_with_the_outcome_this_run_derived(self):
+        self.assertTrue(self.doc_path.is_file(),
+                        f"{CONFORMANCE_DOC} is absent; it is this task's other half")
+        stated = document_rows(self.doc)
+        derived = {row["id"]: (row["area"], row["outcome"]) for row in self.report["checks"]}
+        self.assertEqual(stated, derived,
+                         "the conformance document and the run that produces it disagree")
+
+    def test_the_documents_counts_are_the_runs_counts(self):
+        counts = self.report["counts"]
+        line = (f"{counts[PASS]} passed, {counts[FAIL]} failed, "
+                f"{counts[UNAVAILABLE]} unavailable")
+        self.assertIn(line, self.doc,
+                      f"the document does not carry the line {line!r} this run derived")
+
+    def test_the_document_names_every_unavailable_check_in_its_own_section(self):
+        """Counting them is not naming them: a reader has to be able to see WHICH ones."""
+        parts = self.doc.split("## What this run could not establish", 1)
+        self.assertEqual(len(parts), 2, "the document has no section for what it could not do")
+        for check_id in self.report["unavailable"]:
+            with self.subTest(check=check_id):
+                self.assertIn(f"`{check_id}`", parts[1])
+
+    def test_the_document_makes_no_performance_claim_and_activates_nothing(self):
+        lowered = self.doc.lower()
+        for word in ("speedup", "win rate", "winrate", "faster than", "cheaper than",
+                     "% better", "outperform"):
+            self.assertNotIn(word, lowered, f"the document claims {word!r}")
+        self.assertIn("activates nothing", lowered)
+        self.assertIn("no capability row moves because of this run", lowered)
+
+    def test_every_named_area_carries_a_check_and_no_check_invents_an_area(self):
+        areas = {spec["area"] for spec in CONFORMANCE_CHECKS}
+        self.assertEqual(sorted(areas), sorted(CONFORMANCE_AREAS))
+        for area in CONFORMANCE_AREAS:
+            with self.subTest(area=area):
+                self.assertIn(f"`{area}`", self.doc)
+
+    def test_the_check_registry_is_closed_and_every_runnable_check_has_a_runner(self):
+        ids = [spec["id"] for spec in CONFORMANCE_CHECKS]
+        self.assertEqual(len(ids), len(set(ids)), "a duplicated check id")
+        base = {"id", "area", "kind", "question"}
+        for spec in CONFORMANCE_CHECKS:
+            with self.subTest(check=spec["id"]):
+                self.assertIn(spec["kind"], ("run", "unavailable"))
+                extra = {"why", "moves_it"} if spec["kind"] == "unavailable" else set()
+                self.assertEqual(set(spec), base | extra)
+                if spec["kind"] == "run":
+                    self.assertIn(spec["id"], _RUNNERS)
+        self.assertEqual(sorted(_RUNNERS),
+                         sorted(spec["id"] for spec in CONFORMANCE_CHECKS
+                                if spec["kind"] == "run"))
+
+    def test_the_document_says_how_to_reproduce_the_run_and_bumps_no_existing_version(self):
+        self.assertIn("test_decision_release_matrix.JevFreeConformanceTests", self.doc)
+        self.assertIn(CONFORMANCE_VERSION, self.doc)
+        for other in (rg.GATE_VERSION, self.env.we.ACTIVATION_VERSION,
+                      self.env.dc.CONTRACT_VERSION, self.env.al.LEDGER_VERSION):
+            self.assertNotEqual(CONFORMANCE_VERSION, other)
 
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()

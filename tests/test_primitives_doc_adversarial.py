@@ -300,17 +300,19 @@ class CensusBumpTripwireTests(unittest.TestCase):
     pages too. So the total is bumped here and asserted as a delta in the temp-copy
     test below, which is what that test is actually about. 2026-09-20: all three moved
     by one when D34 added docs/TRAINING-DATA-READINESS.md (32 / 34 / 77) -- unlike D27's
-    file under docs/ASSESSMENTS/, a file directly in docs/ is inside this glob."""
+    file under docs/ASSESSMENTS/, a file directly in docs/ is inside this glob -- and all
+    three moved by one again when D29 added docs/DECISION-IMPROVEMENT-CONFORMANCE.md
+    (33 / 35 / 78), for the same reason."""
 
     def test_pinned_counts_match_the_real_tree(self):
         docs_build = _load("_t8_docs_build_real", BIN_DIR / "docs_build.py")
         md_sources = sorted((REPO_ROOT / "docs").glob("*.md"))
-        self.assertEqual(len(md_sources), 32)
+        self.assertEqual(len(md_sources), 33)
         page_map = docs_build.deep_dive_page_map(REPO_ROOT)
-        self.assertEqual(len(page_map), 34)
-        # 77 since D34's readiness runbook (was 76). Unlike 32/34 above, this total is not
-        # a doc-only pin: every skill page counts toward it.
-        self.assertEqual(len(docs_build.expected_pages(REPO_ROOT)), 77)
+        self.assertEqual(len(page_map), 35)
+        # 78 since D29's conformance report (77 after D34's readiness runbook, 76 before).
+        # Unlike 33/35 above, this total is not a doc-only pin: every skill page counts too.
+        self.assertEqual(len(docs_build.expected_pages(REPO_ROOT)), 78)
 
     def test_one_more_doc_breaks_the_pinned_counts(self):
         docs_build = _load("_t8_docs_build_copy", BIN_DIR / "docs_build.py")
@@ -320,15 +322,15 @@ class CensusBumpTripwireTests(unittest.TestCase):
                 shutil.copytree(REPO_ROOT / name, tmp / name)
 
             md_before = sorted((tmp / "docs").glob("*.md"))
-            self.assertEqual(len(md_before), 32)
+            self.assertEqual(len(md_before), 33)
             pages_before = len(docs_build.expected_pages(tmp))
 
             (tmp / "docs" / "ZZZ-STUB.md").write_text("# Stub\n\nStub content.\n", encoding="utf-8")
 
             md_after = sorted((tmp / "docs").glob("*.md"))
-            self.assertEqual(len(md_after), 33, "one more doc must move the pinned 32 -> 33")
+            self.assertEqual(len(md_after), 34, "one more doc must move the pinned 33 -> 34")
             page_map_after = docs_build.deep_dive_page_map(tmp)
-            self.assertEqual(len(page_map_after), 35, "one more doc must move the pinned 34 -> 35")
+            self.assertEqual(len(page_map_after), 36, "one more doc must move the pinned 35 -> 36")
             self.assertEqual(len(docs_build.expected_pages(tmp)), pages_before + 1,
                              "one more doc must add exactly one page to the set")
 
