@@ -2575,7 +2575,7 @@ up as agreement. No site fragment was written (unreviewed public prose for no ac
 the card's page has no "In practice" section. The `.cursor/`-absent assertion is conditional on
 the pre-existing state, so it stays correct for a developer who has legitimately installed the
 bundle into this checkout.
-outcome: D25 model=opus attempts=1 result=pass review=pending run=2026-09-16-aa6e
+outcome: D25 model=opus attempts=1 result=pass review=pass run=2026-09-16-aa6e
 
 ## D26 — Assessment fixtures (opus) — Phase 6 task 2 of 3
 
@@ -4100,3 +4100,61 @@ rather than an unexplained red — pre-existing, proven not-this-kit's by D07 ag
 **`_loop_functions()` deliberately NOT widened** — out of scope, and the limit is disclosed in the
 reader-facing register instead. The stale "is now running" line at NOTES.md:3915 was outside the
 implementer's scope and I have corrected it myself.
+
+session: 2f6e4acb-ed7e-4113-84aa-b3c76076d710
+
+## Kit complete — 34/34 done, ledger closed
+
+**A line-number edit missed silently, and this is the second time today.** I set D25's `review=pass`
+with `sed '2574s/...'`, but an append had shifted the file and line 2574 was prose — sed matched
+nothing and reported nothing, so the flag stayed `pending` until the final tally caught it. The same
+shift earlier made an `awk` range hand me D34's verify command as D27's. **Edit a ledger by CONTENT
+match with a uniqueness assertion, never by line number** — `assert s.count(old)==1` fails loudly
+where `sed` fails silently. Fixed by content match.
+
+**Final ledger: 34 outcome lines for 34 done tasks, 7 reviewer lines (one per phase), 1 session
+line, zero duplicate ids.** Review states: 9 `clean`, 7 `pass`, 15 `revised`, **3 `pending`**.
+
+**The three `pending` are D28, D29 and D30, and the honest statement is that they carry NO individual
+verifier.** I ran each task's verify command myself and the Phase 8 review covered all three
+substantively — re-deriving the census, the readiness split over an absent store, the conformance
+table, the ahead-counts, and running its own mutation probes. That is real independent scrutiny, but
+it is PHASE-level, not the per-task adversarial pass the other 31 got. **`review=pending` is the
+accurate label and I am leaving it rather than promoting it to `clean` on the strength of a phase
+review.** A reviewer who reads three tasks together is not three verifiers, and the ledger should
+not imply otherwise.
+
+**What this kit's 34 tasks and 7 phase reviews actually taught, in one place:**
+
+1. **A guard surviving its own deletion is EITHER decoration OR a guard no test routes to — check
+   for the ROUTE first.** Nine subagents deleted their own guards as decoration and were right;
+   four times today the route check saved a LIVE guard instead (D28's `known_blocker`, D33's
+   line-size ceiling, D29's two). Both outcomes are legitimate; only the order is not optional.
+2. **Assert precisely enough to identify WHICH guard fired.** An aggregate false for the wrong
+   reason is indistinguishable from one false for the right reason (D22's `eligible`); a backstop
+   refusing with a different message hides the primary guard's deletion (D20's `ref_gaps`); a guard
+   catching a mutant for the wrong reason is not a guard (D29's `bundle_ref=None`). Three tasks,
+   three verifiers, one rule.
+3. **A positive control that provably bites is what separates a suite of refusals from a function
+   that refuses everything.** D23 shipped without one, survived my own verification, and was caught
+   only at phase review. D29 closed the same class at the REPORT level: an all-`unavailable`
+   conformance run cannot be returned at all.
+4. **A text scan is not a verification, in both directions.** Prose describing a guard satisfies a
+   scan looking for it — and a bare grep cannot tell a claim from its negation, which caught me as a
+   READER on the handoff's "three locks", "no secret", and "unlearn" lines.
+5. **A test that pins a false sentence makes the falsehood load-bearing.** The worst defect this kit
+   produced, and it came from MY carry-verbatim mandate. **A carry-verbatim mandate is a guard with
+   no route check**: I required the words without re-deriving the claim.
+6. **Never quote a number that rots; annotate forward, never rewrite backward.** D27's digits were
+   true when written and drifted because a DEPENDENT task edited the file it cites. Editing a dated
+   artifact to match a later tree is backdating.
+7. **A green suite says a unit works, never that anything calls it** — and F16 showed the same thing
+   at the level of the RELEASE GATE: mutating every public function of four decision modules to
+   `raise` leaves `release_gate check` at exit 0.
+8. **Mutation hygiene is most of the value**: mutate a COPY, control UNMUTATED FIRST, print the
+   mutant, `ast.dump`-compare so a comment-only edit is rejected, clear `__pycache__` and use
+   `-B`, parse the INTEGER out of `Ran N tests`, and read the FAILURE MESSAGE. Four runs in this kit
+   were invalidated before that discipline was complete.
+
+Suite grew 4860 → **5576** across 34 tasks, 7 phase reviews and 16 verification passes, green at
+every one of the boundaries committed. Zero `Co-Authored-By` across every kit commit.
