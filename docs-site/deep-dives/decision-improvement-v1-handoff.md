@@ -499,6 +499,13 @@ Beside those, three disclosed gaps that are narrower but real:
   evaluated for pass or fail, and the separate `reverify` subcommand. The staleness itself is
   **pre-existing and is not this release's** — D07 reproduced the identical exit 3 against a clean
   `git archive HEAD` extract of the tree.
+  **Note recorded 2026-09-21: the observed disagreement no longer reproduces on the machine it was
+  observed on.** The plugin was bumped to 0.6.2 and the installed copy refreshed, after which
+  `python3 bin/harness_update.py check` exits 0 there with Claude in sync. The sentence above was
+  true when written and is kept rather than rewritten. What it observed was machine state, which
+  is why it moved; the structural half is a property of the code and has not: `run_check` still
+  does not consult installed freshness, so the two gates can disagree again on any machine whose
+  install lags its checkout, and a green release gate will not say so.
 
 One gap D29 left to this task is now closed: `release_gate.CHECKLIST` did not cite the conformance
 report, so `python3 bin/release_gate.py check` pointed no reader at it. It cites both that report
