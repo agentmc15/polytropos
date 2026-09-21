@@ -548,7 +548,7 @@ PYTHONPATH=tests python3 -m unittest test_training_data.ReadinessTests
 ### D28 — Jev-free matrix
 - id: D28
 - title: Jev-free matrix
-- status: pending
+- status: done
 - model: opus
 - depends: D24, D27, D34
 **Brief.** Own release matrix and `tests/test_decision_release_matrix.py:JevFreeMatrixTests`. Matrix harness/client/OS/adapter/enforcement/mode/fallback; canary/active unavailable absent D23 evidence and Cursor adaptive unsupported pending independent proof.

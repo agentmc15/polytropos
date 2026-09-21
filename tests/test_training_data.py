@@ -3350,6 +3350,64 @@ class DatasetExportTests(unittest.TestCase):
         self.assertEqual(self.export([first, second])
                          ["manifest"]["content"]["counts"]["included"], 2)
 
+    def test_a_payload_or_audit_line_past_the_line_ceiling_refuses_and_names_which_one(self):
+        """`MAX_RECORD_BYTES` reused a FOURTH time, on the two lines an export actually writes.
+
+        IT IS NOT A SUBSET OF THE OTHER THREE. `snapshot` bounds a whole record and `persist`
+        bounds the line it stores; `_seal` bounds ONE lifecycle record. `AUDIT_FIELDS` then folds
+        a full adjudication -- itself separately bounded at the same 16 KiB -- into the audit line
+        beside the snapshot's own provenance, so a near-ceiling record carrying a near-ceiling
+        label can produce an audit line past a ceiling neither of its two parts crossed. Deleting
+        the block in `build_dataset` left every other test in this class green, which is the gap
+        this test exists to close.
+
+        THE CEILING IS PATCHED DOWN rather than a 16 KiB fixture built, the way
+        `test_an_export_past_its_ceiling_refuses_rather_than_trimming` does it for
+        `MAX_DATASET_EXAMPLES`. Both arms are reached by WHERE the patched ceiling sits relative
+        to the two measured line sizes: the audit line is the larger, so a ceiling just under it
+        names `audit_metadata`, and a ceiling under the payload names `payload`, because the loop
+        checks payload first. The sizes are measured off the control export rather than typed
+        here, so this does not become a second place a byte count has to be kept true.
+
+        THE MESSAGE IS ASSERTED, NOT JUST THE CODE. All four sites raise `bounds-exceeded`; only
+        this one says "<N>-byte <what> line for <example_id>". A test that read only the code
+        would pass against any of the other three and prove nothing about this one.
+
+        NOTHING ELSE REFUSES FIRST FOR THIS FIXTURE, and that was checked rather than assumed:
+        `persist` and `persist_lifecycle` both ran in `resolve`, BEFORE the patch is entered, and
+        commenting out the `raise` in `build_dataset` makes this same export SUCCEED instead of
+        refusing somewhere else -- so the refusals below are this block and no other.
+        """
+        self.resolve(self.record)
+        control = self.export([self.record])
+        sizes = {}
+        for what in ("payload", "audit_metadata"):
+            self.assertEqual(len(control[what]), 1)
+            sizes[what] = len((td.canonical(control[what][0]) + "\n").encode("utf-8"))
+        # The audit line being the larger is what makes the two arms separable at all.
+        self.assertLess(sizes["payload"], sizes["audit_metadata"])
+        self.assertLess(sizes["audit_metadata"], td.MAX_RECORD_BYTES)
+        eid = self.record["example_id"]
+
+        for what, ceiling in (("audit_metadata", sizes["audit_metadata"] - 1),
+                              ("payload", sizes["payload"] - 1)):
+            with self.subTest(line=what):
+                with mock.patch.object(td, "MAX_RECORD_BYTES", ceiling):
+                    with self.assertRaises(dc.ContractError) as raised:
+                        self.export([self.record])
+                self.assertEqual(raised.exception.code, "bounds-exceeded")
+                self.assertIn(f"{sizes[what]}-byte {what} line for {eid}",
+                              str(raised.exception))
+
+        # THE UNDER-THE-CEILING CONTROL, re-run after both patches: at the real ceiling the same
+        # material still exports both lines. Without it the refusals above could be a fixture that
+        # had stopped exporting anything at all.
+        again = self.export([self.record])
+        self.assertEqual(again["manifest"]["content"]["counts"]["included"], 1)
+        self.assertEqual(len(again["payload"]), 1)
+        self.assertEqual(len(again["audit_metadata"]), 1)
+        self.assertEqual(again["manifest"]["content"]["excluded"], [])
+
     def test_a_source_manifest_from_another_schema_is_refused(self):
         self.resolve(self.record)
         for bad in (None, {}, {"v": "something.else/1", "content": {}}):
@@ -3905,6 +3963,41 @@ class ReadinessTests(unittest.TestCase):
                         store_dir=self.store, scope=_scope(), enabled=True)
         self.assertEqual(counted, [1])
 
+    def test_the_capture_wired_gates_met_arm_is_reachable_which_is_not_a_caller_existing(self):
+        """READ THE TITLE LITERALLY. This test proves ONE thing: the ternary behind
+        `capture-wired-to-a-caller` has a reachable `met` arm, so the gate reports the constant it
+        reads instead of being hard-wired to `unmet`. It is NOT evidence that capture is wired,
+        and it must never be cited as any.
+
+        WHY IT IS THE ONLY GATE THAT NEEDS PATCHING TO GET THERE. The other ten are driven to
+        `met` by real fixtures -- a record is captured, a label is adjudicated, a dataset is
+        exported -- so their `met` arms run in the ordinary walk. `CAPTURE_WIRED` is a module
+        constant that is False in every checkout, so without this patch the arm is never
+        executed at all and could be anything.
+
+        WHAT ACTUALLY KEEPS THE HOOK UNCALLED IS NOT THIS CONSTANT.
+        `test_no_production_path_calls_the_capture_hook` is the enforcement: it scans every module
+        in `bin/` and asserts the exact set that so much as names `training_data`. `CAPTURE_WIRED`
+        is never branched on in production -- its occurrences populate report fields and this gate
+        label -- so flipping it here changes a report's wording and nothing about what runs. Read
+        the two tests together; neither alone says what the other says.
+        """
+        with mock.patch.object(td, "CAPTURE_WIRED", True):
+            report = td.readiness_report([], store_dir=self.store, now=NOW)
+            self.assertEqual(self.gates(report)["capture-wired-to-a-caller"], "met")
+            self.assertIs(self.detail(report, "capture-wired-to-a-caller")["capture_wired"],
+                          True)
+            self.assertNotIn("capture-wired-to-a-caller", report["not_ready"])
+            # Flipping the constant closes ONE gate and establishes nothing: the report still
+            # denies readiness through the codes that ride on every shape of it.
+            self.assertEqual(report["not_established"], list(td.readiness_codes()))
+
+        # THE CONTROL, and the state every checkout is actually in.
+        self.assertIs(td.CAPTURE_WIRED, False)
+        unpatched = td.readiness_report([], store_dir=self.store, now=NOW)
+        self.assertEqual(self.gates(unpatched)["capture-wired-to-a-caller"], "unmet")
+        self.assertIs(self.detail(unpatched, "capture-wired-to-a-caller")["capture_wired"], False)
+
     def test_no_gate_reads_met_for_a_scope_whose_rights_nobody_approved(self):
         for status in td.ELIGIBILITY_STATUSES:
             if status == td.ELIGIBLE_TO_PERSIST:
@@ -4219,6 +4312,49 @@ class ReadinessTests(unittest.TestCase):
             self.assertEqual(report["not_ready"],
                              [row["gate"] for row in report["gates"] if row["state"] != "met"])
         self.assertEqual(seen, set(td.GATE_STATES))
+
+    def test_the_empty_store_split_is_pinned_by_state_and_by_membership(self):
+        """The test above counts to eleven and sees all three states SOMEWHERE across three
+        reports; it would not notice the canonical empty-store split moving from 0/4/7 to 1/3/7,
+        nor two gates swapping sides. This pins both.
+
+        MEMBERSHIP, NOT JUST A TALLY. A count alone lets one gate trade places with another
+        unnoticed, which is exactly how an `unknown` quietly becomes an `unmet` -- the distinction
+        `readiness_report` is built around ("an unseen thing is `unknown`, never `unmet`").
+
+        WHAT 0-MET DOES NOT MEAN. It is a property of THE EMPTY STORE, not of the mechanism.
+        Nothing was captured, so seven gates cannot see what they are asked about and four report
+        a switch that is off, a hook nothing calls, no records and no measured target. The same
+        function reads 6-of-11 `met` after a capture/adjudicate walk and 8-of-11 with a dataset
+        in hand (`self.report()` and `self.report(dataset=...)` in the test above run exactly
+        those two shapes). WHAT DENIES READINESS UNCONDITIONALLY IS `readiness_codes()`, which
+        rides on every report whatever the gates say -- never this tally, and no arithmetic over
+        it is an authorization.
+        """
+        report = td.readiness_report([], store_dir=self.store, now=NOW)
+        self.assertEqual(report["gate_states"], {"met": 0, "unmet": 4, "unknown": 7})
+        by_state = {}
+        for row in report["gates"]:
+            by_state.setdefault(row["state"], set()).add(row["gate"])
+        self.assertEqual(by_state.get("met", set()), set())
+        self.assertEqual(by_state["unmet"], {
+            "collection-switched-on",
+            "capture-wired-to-a-caller",
+            "records-captured",
+            "collection-target-chosen",
+        })
+        self.assertEqual(by_state["unknown"], {
+            "scope-eligibility-approved",
+            "records-intact",
+            "labels-adjudicated",
+            "retention-enforceable",
+            "grouped-partition-assigned",
+            "exposure-recorded-in-the-eval-store",
+            "dataset-exported-and-readable",
+        })
+        # Nothing met means every gate is in `not_ready`, and the codes deny readiness anyway.
+        self.assertEqual(report["not_ready"], list(td.READINESS_GATES))
+        self.assertEqual(report["not_established"], list(td.readiness_codes()))
 
     def test_the_enabling_steps_are_one_list_read_by_both_the_status_card_and_the_report(self):
         card = td.status(repo_root=ROOT, env={"POLYTROPOS_DATA_HOME": str(self.tmp / "h")})

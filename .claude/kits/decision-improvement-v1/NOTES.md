@@ -2799,7 +2799,7 @@ assertion, so a second importer cannot appear silently.
 nothing acts on it), export/manifests/grouping/splits, the readiness report, and
 `REVIEW_ONLY_CLASSES` (`missing-context`, `implementation-error`, `multiple-causes`) which are
 asserted unreachable from any operational signal by design.
-outcome: D31 model=opus attempts=1 result=pass review=pending run=2026-09-16-aa6e
+outcome: D31 model=opus attempts=1 result=pass review=pass run=2026-09-16-aa6e
 
 ## D32 — Reviewed labels and eligibility lifecycle (opus) — Phase 7 task 2 of 4
 
@@ -2877,7 +2877,7 @@ Locks verified still shut and **no training store created even after `training_d
 `exists: False`, root contains only the pre-existing `journal`. No production caller —
 `release_gate` remains the only `bin/` module naming `training_data`, reading version constants
 only, still pinned as an exact set by D31's test.
-outcome: D32 model=opus attempts=1 result=pass review=pending run=2026-09-16-aa6e
+outcome: D32 model=opus attempts=1 result=pass review=pass run=2026-09-16-aa6e
 
 ## D33 — Grouped dataset splits and reproducible exports (opus) — Phase 7 task 3 of 4
 
@@ -2949,7 +2949,7 @@ an operator exports without recording exposure.**
 **Process note: the full suite was KILLED for memory once here, with ZERO competing runs** — the
 suite is now 5454 tests and the machine is tight. Unlike the earlier kill this was not a collision;
 I checked `ps` first. Re-ran clean.
-outcome: D33 model=opus attempts=1 result=pass review=pending run=2026-09-16-aa6e
+outcome: D33 model=opus attempts=1 result=pass review=revised run=2026-09-16-aa6e
 
 ## D34 — Collection readiness and operator runbook (opus) — Phase 7 task 4 of 4, phase COMPLETE
 
@@ -3028,7 +3028,7 @@ are passed IN rather than enumerated — there is no "read every capture date" f
 would add a path seam to a module whose `safe_paths` surface is pinned at exactly five names.
 Label "agreement" is a count of live heads reaching the same target, **not an inter-rater statistic
 and not corrected for chance**.
-outcome: D34 model=opus attempts=1 result=pass review=pending run=2026-09-16-aa6e
+outcome: D34 model=opus attempts=1 result=pass review=revised run=2026-09-16-aa6e
 
 ## Phase 7 review — ACCEPT WITH FINDINGS, all seven closed
 
@@ -3138,3 +3138,328 @@ repo, so the prefix is load-bearing only for a LEGACY IN-TREE store; for the def
 store the protection is scan confinement. D31's claim is true and the consequence real, but it is
 not the only mechanism.
 reviewer: P7 model=opus findings=10 confirmed=10 result=accepted
+
+## Phase 8 — independent verification of the Phase 7 tasks
+
+**D31 verified (sonnet, read-only, `SnapshotTests` only): 72 tests, exit 0. `review=pass`.**
+
+One correction the verifier earned, and it lands on my own prose: I have been describing D31 as
+"three locks that are all shut" (it is c12170b's subject line). Two of the three are runtime gates
+and one is not. `COLLECTION_ENABLED` is branched on in `collection_state()`; the
+`eligibility="unknown"` default is re-checked independently in `collection_state()`, `snapshot()`
+and `persist()` — triply fail-closed. **`CAPTURE_WIRED` is never branched on anywhere.** Every one
+of its ~13 occurrences only populates a report field (`"wired": bool(CAPTURE_WIRED)`) or a
+readiness-gate label. Nothing inside `capture_hook` refuses because of it.
+
+What actually enforces "nothing calls this" is structural, not a branch:
+`test_no_production_path_calls_the_capture_hook` scans every `bin/*.py` for `training_data`,
+finds only `release_gate.py`, and greps that file to confirm it never reaches
+`capture_hook`/`collection_scope`/`persist(`/`snapshot(`. The verifier re-derived that
+independently across the whole repo rather than trusting the test's own scan, and confirmed
+`release_gate.py` reads five version constants and nothing else. **No call site — confirmed, and
+that is the correct answer, not a gap.**
+
+This is disclosed, not hidden: `NOT_WIRED_LABEL` says in the module itself that a green test proves
+the seam works and does not prove anything invokes it. So it is not a defect. But "three locks"
+overstates the mechanism by one, and the carry-forward wording should be **two runtime gates plus
+one externally-verified structural fact.**
+
+Two things the verifier checked that this kit has been burned on before, both clean:
+- **Positive controls exist and bite.** `test_the_switch_is_re_derived_at_call_time_not_captured_at_import`
+  flips `COLLECTION_ENABLED` True and proves the build callable IS invoked (`build.calls == 1`),
+  paired against the never-called test. Redaction has its own control pair: a credential shape
+  produces `{"anthropic-key": 1}`, clean text produces `{}`. This module does NOT carry the D23 /
+  Phase-5 "satisfiable by a function that refuses everything" defect.
+- **The redaction claim is narrower than it sounds, and says so.** `test_the_redaction_claim_names_exactly_the_two_fields_that_are_redacted`
+  walks the AST, asserts exactly 2 `redact(` call sites (`_entry`, `revoke`), pins
+  `REDACTED_FIELDS`, and greps both the module docstring and `docs/TRAINING-DATA-READINESS.md` to
+  confirm the old overclaiming sentence is gone. `test_a_credential_shape_in_the_question_wording_is_not_redacted_and_the_record_says_so`
+  then proves the gap is REAL: a synthetic token in the question wording reaches `_payload_line`
+  unredacted, with the field named in `not_redacted`. A disclosed hole with a test that proves the
+  hole is the honest form.
+
+Masking sweep found none. Worth keeping: `test_a_record_whose_eligibility_is_not_approved_cannot_be_persisted`
+tampers `eligibility.status` and then **recomputes `content_sha`** so the digest guard passes
+cleanly — isolating `persist()`'s own eligibility re-check instead of re-tripping `assert_intact`.
+That is the right way to defeat the masking pattern in a test, and the first instance in this kit
+of a test that was already built to do it.
+
+**D34 verified (sonnet, read-only, `ReadinessTests` only): 41 tests, exit 0. `review=pass`.**
+
+**A correction to a claim I have put in every brief since D34 landed.** I have been carrying
+"readiness = 11 gates, 0 met, 4 unmet, 7 unknown" as a property of the readiness report. It is not.
+It is a property of ONE INPUT SHAPE — the pristine empty store. The verifier re-derived the tally
+live from `readiness_report` with `records=[]` and got exactly 0/4/7, confirming the figure; then
+ran the two other shapes the suite itself uses and found **6 of 11 `met` after a capture→adjudicate
+walk, and 8 of 11 `met` after an export.** That is correct behaviour — a real walk should close the
+mechanical gates while `capture-wired-to-a-caller`, `exposure-recorded-in-the-eval-store` and
+`collection-target-chosen` stay open — but "0 met" describes an empty store, not the mechanism.
+
+**This matters for D30.** "Nothing is ready to train" is NOT enforced by the gate tally, and D30
+must not cite the tally as if it were. What is enforced is `readiness_codes()` — ten codes, five
+inherited from D33 and five owned by D34 (`synthetic-fixtures-are-not-readiness`,
+`label-agreement-counted-not-calibrated`, `sampling-bias-not-estimable`,
+`checkpoint-link-is-a-forward-declaration`, `readiness-is-a-report-not-an-authorization`) — which
+`test_every_report_carries_the_codes_that_deny_readiness_unconditionally` asserts ride on all three
+computed report shapes, including the 8-of-11-met one. **The denial is unconditional; the tally is
+not.** Cite the codes.
+
+Clean on the checks this kit keeps failing: the doc never hand-types the tally (zero grep hits), so
+there is no reconstructed-from-prose record; no softening language anywhere near gate text (the
+phrasing is "unknown is NOT unmet — it means this report could not SEE the thing"); and
+`docs/TRAINING-DATA-READINESS.md` is confirmed hand-authored SOURCE with its generated mirror at
+`docs-site/deep-dives/training-data-readiness.md`, matching the repo pattern.
+
+**Positive control — the check I asked for specifically, and it mostly holds.** 10 of 11 gates are
+driven to `met` by real fixtures; six have a dedicated named `assertEqual(..., "met")`. So the
+readiness function is NOT vacuously satisfiable by an always-unmet implementation — it does not
+carry the D23 defect. Two named gaps remain, both real, neither blocking:
+
+- **(a) Nothing pins the canonical {met:0, unmet:4, unknown:7} empty-store split.**
+  `test_every_gate_state_is_reached_and_no_report_invents_a_gate_or_a_state` asserts only that the
+  gates sum to 11 and that all three states appear SOMEWHERE across three shapes. The split could
+  drift to 1/3/7 and nothing would fail.
+- **(b) `capture-wired-to-a-caller` has zero positive control** — `bin/training_data.py:4385-4386`.
+  No test anywhere patches `CAPTURE_WIRED` True to prove the gate's `met` arm fires. This is the
+  one gate whose `met` branch is never executed in the suite.
+
+**(b) converges with what the D31 verifier found independently**: `CAPTURE_WIRED` is never branched
+on in production either. So the constant is pinned `False` in seven places, reflected into a gate,
+and its `True` path is executed nowhere in the repository. Two verifiers reached that from opposite
+directions without seeing each other's work. Both gaps are test-only and cheap; closing them is
+queued for this phase rather than deferred.
+
+Also worth keeping: `test_the_grouping_gate_is_derived_from_the_exclusions_and_can_actually_read_unmet`
+is the in-source record of the `grouped-partition-assigned` defect review caught — the gate used to
+be a decorative constant computed over an always-empty list. Its companion,
+`test_every_code_the_grouping_gate_watches_is_one_an_export_can_emit`, mutation-tests a renamed
+exclusion code and catches it, closing the "watches a code nothing produces" route by name.
+
+**D32 verified (sonnet, read-only, `LabelEligibilityTests` only): 70 tests, exit 0. `review=pass`.**
+Clean on all six attacks — the only one of the four Phase 7 tasks with no gap named against it.
+
+Three findings that correct or sharpen the kit's own standing rules:
+
+- **`REVOCATION_REACH` is the BEST form, not a mirror needing the D19/D20 treatment.** I briefed
+  this as a mirror to be pinned by exact partition against its owner. It is not a mirror at all:
+  `DOWNSTREAM_KINDS` and `REVOCATION_REACH` are both OWNED inside `training_data.py`, so there is
+  no second copy of anyone else's vocabulary — which is exactly D20's "keep no mirror" ideal.
+  Closure is nonetheless enforced at CALL time, not import: `_dependents()` calls
+  `_assert_partition(REVOCATION_REACH, DOWNSTREAM_KINDS, REACH_LEVELS)` on every `revoke()`, and
+  that helper computes BOTH `missing = owner - mapping` and `extra = mapping - owner`, raising
+  `unknown-value` on either. Both directions are proven live: adding a fifth kind
+  (`fine-tuned-adapter`) makes `revoke()` refuse rather than silently drop it, and corrupting the
+  checkpoint row to `"erased"` also refuses. Real closure, not an "at least covers" check.
+
+- **`trained-checkpoint: identified-only` is enforced behaviourally, not by table self-assertion.**
+  Four named dependents split 3-vs-1 drive the bucketing logic, and `checkpoint-1` lands only in
+  `identified`, never in `invalidated`. Note the 3-vs-1 split also means this is NOT the D26
+  one-element-list trap — ordering and bucketing are both actually exercised. Stronger still,
+  `assert_no_unlearning_claim` REFUSES an adversarial caller attaching `unlearned: True` /
+  `weights_purged` / `scrubbedFromWeights`, and the string sweep guards itself with
+  `assertGreater(checked, 1)` so it cannot pass by finding nothing.
+
+- **`MappingProxyType` count in `training_data.py` is zero.** The file avoids the exact bug class
+  this kit hit earlier (a proxy handed to a walker expecting `dict`). The "cannot rewrite its
+  input" property is structural: `adjudicate()` never assigns into `record`, builds a fresh `entry`
+  carrying only `example_id`/`input_sha` pointers, and uses exactly ONE defensive `_copy` at the
+  single boundary where a caller-owned mutable (`claim`) crosses in — no second copy to mask it,
+  and `_copy`'s own docstring cites the D14 two-copies lesson.
+
+`OPERATIONAL_CLASS_BASES` is not decoration: flipping only `operational_class_basis` from
+`declared` to `ledger` on otherwise identical fixture data flips refuse → resolve. The weaker
+default was chosen deliberately at F3 so unstated provenance can never pass as a ledger reading.
+
+Ordering hazard confirmed handled: `revoke()` runs `assert_no_input_field` and
+`assert_no_unlearning_claim` BEFORE `_dependents()`/`_closed()`, because `_closed` would raise
+`unknown-field` first and hide a nested `{"ref":{"scrubbedFromWeights":true}}`. That is the
+evaluation-order trap from D21 caught in design rather than at review.
+
+**D33 verified (sonnet, read-only, `DatasetExportTests` only): 53 tests, exit 0. Verdict REVISE —
+one confirmed surviving mutant. `review=` stays `pending` until the gap is closed.**
+
+**The finding, and it contradicts a claim in this very ledger.** `bin/training_data.py:3522-3526`,
+inside `build_dataset`, bounds the exported payload/audit LINE against `MAX_RECORD_BYTES`:
+
+      for what, line in (("payload", payload), ("audit_metadata", audit)):
+          size = len((canonical(line) + "\n").encode("utf-8"))
+          if size > MAX_RECORD_BYTES:
+              raise _refuse("bounds-exceeded", f"refusing a {size}-byte {what} line for {eid}")
+
+The verifier rsync'd the tree to scratch, replaced that whole block with a no-op, and reran all 53
+`DatasetExportTests`: **OK, zero failures.** Nothing exercises it in either direction — no fixture
+produces an oversized line and nothing patches the ceiling down the way
+`test_an_export_past_its_ceiling_refuses_rather_than_trimming` does for `MAX_DATASET_EXAMPLES`.
+
+**This ledger records "44 mutants, 44 caught, 0 survivors" for D33. That claim is now known
+incomplete** — either the sweep never generated this line or the tree it mutated was not the tree
+that ships. A mutation count is only as good as its operator set, and a clean sweep is not proof
+that every branch was in it. Do not quote the 44 figure again without saying what it covered.
+
+Why this is NOT dead code, which is the part that makes it worth fixing rather than deleting: it is
+a **fourth distinct reuse** of `MAX_RECORD_BYTES`, separate from D31's whole-snapshot check (1107)
+and D32's lifecycle-record check (~1921). `AUDIT_FIELDS` folds a full `label` audit from a
+SEPARATELY 16KB-bounded lifecycle record into the audit line, so a near-ceiling snapshot plus a
+near-ceiling adjudication can plausibly exceed the ceiling. The verifier confirmed reachability by
+patching the constant down in a live session: `bounds-exceeded: refusing a 671-byte payload line`.
+So this is the standing rule's FIRST branch, not the second — a live guard no test routes to, not
+decoration. Keep it, cover it.
+
+Everything else held under direct attack, including two mutations the verifier ran itself:
+- Deleting the `verify_manifest` findings raise (~3379-3389) made
+  `test_a_group_split_across_partitions_refuses_the_whole_export` fail cleanly — load-bearing, not
+  masked. The test also calls `verify_manifest(forged)` directly to confirm `group-split` is the
+  ONLY finding, ruling out a digest mismatch doing the refusing instead.
+- Deleting `build_dataset`'s `if store_dir is None: raise` made the required-store test fail — and
+  revealed the failure mode is a silent degrade to *excluded*, not a refusal, which is exactly why
+  that guard has to be explicit.
+- **The one-element-list trap is avoided ON PURPOSE and cites D26 by name**: `_pool()`'s own
+  comment says "the uneven sizes are what makes the determinism assertions non-vacuous: with one
+  group of one item, `sorted()` pins nothing." A defect this kit shipped once is now a documented
+  fixture constraint.
+- "Byte for byte" is real: `dataset["bytes"]` compared directly, `Path.read_bytes()` off disk, and
+  a cross-process digest test spawning children under `PYTHONHASHSEED=0` and `424242`.
+- `store_dir` confirmed to have no default by `ast.parse` of the signature — no import, no
+  execution — and no wrapper supplies one.
+
+**Three test-only gaps now dispatched together** (one implementer, `tests/test_training_data.py`
+only): D33's uncovered line-size ceiling above; D34's `capture-wired-to-a-caller` `met` arm, the
+only one of 11 gates with no positive control; and a pin on the canonical empty-store tally
+{met:0, unmet:4, unknown:7} INCLUDING set membership, since a count alone lets one gate swap sides
+with another unnoticed. The `CAPTURE_WIRED` test carries an explicit honesty fence: it proves the
+ternary's arm is reachable when the constant is patched, and must never read as evidence a caller
+exists — the structural test is what proves that, and the two are to be read together.
+
+**Three gaps closed (opus, `tests/test_training_data.py` only, +136 lines, 3 tests, 0 deletions).**
+`bin/training_data.py` byte-identical before and after (sha `4943e44b…` both times) — no production
+change was needed. D33 and D34 move to `review=revised`.
+
+Each test was mutation-proven, and two of the three proofs produced a stronger result than asked:
+
+- **Gap 1, D33's line-size ceiling.** The mutant is printed verbatim in the agent's report; the
+  file sha moved `4943e44…` → `7ec5e8c4…`, so it was not a no-op — the failure mode that has
+  invalidated four runs in this kit. Under the mutant the new test went RED on both subtests, and
+  **the export SUCCEEDED OUTRIGHT** — which is the empirical answer to "does another
+  `MAX_RECORD_BYTES` site refuse first": none does. `persist`/`persist_lifecycle` run inside
+  `self.resolve(...)` BEFORE the patch context is entered, and `snapshot`'s own check runs at
+  fixture construction, earlier still. `build_dataset` reaches only line 3524. Masking ruled out by
+  measurement, not by argument. Running the whole class against the mutant gave 54 tests,
+  **failures=2, both new** — confirming every pre-existing test stays green when the block is
+  deleted, exactly as the verifier found.
+  The assertion pins the message phrasing `f"{size}-byte {what} line for {eid}"`, which the other
+  three call sites do not use ("the record serializes to N bytes…", "refusing a N-byte snapshot
+  line", "refusing a N-byte {kind} line"), so it cannot pass against any of them. Sizes were
+  MEASURED off a control export (payload 671, audit 7261, ceiling 16384), not typed.
+
+- **Gap 2, `capture-wired-to-a-caller`.** Mutating the ternary to a constant `"unmet"` and running
+  the WHOLE module gave **239 tests, exactly one failure — the new one.** That is direct proof the
+  `met` arm had zero coverage before, not an inference from a grep.
+  The agent re-derived the "never branched on in production" claim by AST rather than trusting my
+  brief, and **sharpened it**: `CAPTURE_WIRED` has exactly 7 Load sites, and the only branching
+  node whose TEST names it is the `IfExp` at 4385 — the gate ternary itself. The `If` at 3840 looks
+  like a branch on it but its test is `state["collecting"]`; the constant merely sits in the body.
+  So the honest count is seven loads, one of which is a branch, and that branch is the gate.
+  The test's name and docstring carry the fence explicitly — it proves the ternary has a reachable
+  arm and is "NOT evidence that capture is wired, and it must never be cited as any" — and it names
+  `test_no_production_path_calls_the_capture_hook` as the actual enforcement so the two are read
+  together. It also asserts `not_established` still equals `readiness_codes()` under the patch:
+  **closing this gate establishes nothing.**
+
+- **Gap 3, the empty-store tally.** Re-derived independently before any assertion was written and
+  matched: 0 met / 4 unmet / 7 unknown, with the membership I carried. The non-empty shapes were
+  re-derived too and my brief was slightly loose — after `walked()` it is **met 6 / unmet 2 /
+  unknown 3**, and with a dataset **met 8 / unmet 3 / unknown 0**. "6-of-11 and 8-of-11 met" was
+  right; I had not stated the other two columns.
+  Two mutants prove the pin bites where the old test does not. (1) Tally-changing: one gate flipped
+  `unmet`→`unknown`. New test RED, `test_every_gate_state_is_reached_…` **GREEN** — the predicted
+  drift. (2) Membership-only, two coordinated edits that keep the tally at 0/4/7 while two gates
+  swap sides. New test RED, the old test **GREEN again**. So the membership assertions bite
+  independently of the count, which is why a bare count was not enough.
+
+**Suite: 5530 green, exit 0 (module: 239, exit 0).** Delta accounted: 5504 + 3 new + 23 collected
+from D28's `tests/test_decision_release_matrix.py`, already on disk and picked up by `discover`.
+**I am NOT treating 5530 as the boundary figure** — that run overlapped D28's mutation windows on
+the tracked tree (below), so it will be re-run clean before I commit.
+
+**Method hazard, carried forward as a kit rule.** D28's mutation harness is rooted at the
+REPOSITORY, not an rsync'd copy: it mutates tracked source in place and restores afterwards. The
+tree is currently clean (`bin/training_data.py` matches its pin; only D28's own `bin/release_gate.py`
+is modified under `bin/`), so nothing leaked. But it is unsafe twice over — a concurrent suite run
+that overlaps a mutation window is meaningless in both directions, and **a false SURVIVOR is the
+dangerous one**, since it reads as "this guard is decoration" and invites deleting a live guard;
+and a process killed inside the window leaves the repo silently mutated, which is not hypothetical
+here because D28's first dispatch died to a 600s stall watchdog. D28 has been warned to re-run any
+survivor it concluded, on a copy.
+
+## D28 — Jev-free matrix
+
+outcome: D28 model=opus attempts=2 result=pass review=pending run=2026-09-16-aa6e
+
+`attempts=2`: the first dispatch died to a 600s stall watchdog having written nothing, so the brief
+was re-sent unchanged. Nothing needed undoing — the pins were byte-identical across the failure.
+
+**My own evidence, run from the repo root, unpiped, exit status read directly:** verify
+`test_decision_release_matrix.JevFreeMatrixTests` **23 tests, exit 0**; full suite **5530, exit 0,
+zero FAIL/ERROR lines**, with no mutation window overlapping it this time; `release_gate check`,
+`docs_build check`, `copilot_docs check`, `sync_codex_surfaces check`, `sync_pricing_refs --check`
+and the new `release_gate decision` all exit 0.
+
+**I misread four gates as exit 2 first.** The shell here is zsh, which does NOT word-split an
+unquoted variable, so `for g in "bin/x.py check"; python3 $g` passed the whole string as one
+filename and python exited 2 on a missing file. The gates were green all along. **This is the
+second time in this kit I have reported a false gate failure** — the first was calling
+`routing_scorecard.py demo` when the documented form is `--demo`. Both times the rule that saved it
+was the same: look at the actual output before calling it a regression.
+
+**I also recorded a method hazard that was not real, and it is corrected here.** I wrote that D28's
+mutation harness was rooted at the repository and mutating tracked source in place. It was not: the
+harness built a tar copy under the scratchpad, `git init`-ed it so `git ls-files` works, ran the
+unmutated control there, and `sed`-ed `ROOT` to the mirror BEFORE the first execution — the run's
+own first line printed the mirror path. What the concurrent agent saw on disk was an unedited draft
+that never ran. The pins held across the whole window. The general rule stands and D28 tightened
+its harness anyway (it now REFUSES to start if `ROOT` resolves inside the repo), but the specific
+accusation was wrong and the ledger should not carry it as fact.
+
+**Mutation result: control exit=0 at N=23, twelve mutants, all RED, zero survivors.** One did
+survive the first pass — `known_blocker=True` left the live-gate test green. Per the standing rule
+the agent checked for the INPUT ROUTE before concluding decoration, and found it: the check only
+differs when a gate names a blocker no owner declares, and every blocker in the table is a known
+one, so the real tree can never exercise it. **It fixed the TEST, not the guard** — feeding in a
+gate carrying `a-blocker-nobody-declares` and following the finding through to `run_check`'s exit 3.
+That is the standing rule's first branch resolving correctly for the second time today (D33's
+line-size ceiling was the other), and nothing was deleted as decoration.
+
+**The seven adjudicated constraints, each verified by me rather than accepted:**
+
+1. **No training capability row exists anywhere.** I walked the registry myself: zero rows whose
+   path matches `train|capture|collect|dataset`. The mutation that adds one goes red.
+2. **No `unknown` reduced by asserting.** I re-derived the census: **23 supported / 3 unsupported /
+   36 unknown**. The 31 became 36 via exactly the five new `adaptive_decisions` rows, every one
+   `verified: unknown` with `verified_on: null`. Supported and unsupported are UNCHANGED at 23 and
+   3 — no existing row moved.
+3. **Packaging untouched**; `| training/ | present |` remains the only training claim, and the
+   generated prose spells out that it means the store's ignore rule is present, never a record.
+4. **No `VERSION_SOURCES` row registered and no constant bumped** — so nothing new reads as a
+   stored object.
+5. **`canary`/`active` unavailable, machine-derived.** The cell is computed from
+   `workflow_eval.CONFINED_DISPATCH_WIRED`; flipping the constant moves it, which is the test.
+   D23's refusal is cited by name, never routed around.
+6. **Cursor's two claims kept apart** in two separate columns: the adaptive profile `unsupported`
+   pending independent proof, beside Cursor's six dated `verified: supported` rows with their
+   client version. `bin/cursor_adapter.py` and `bin/cursor_execute.py` untouched.
+7. **Host limitation and design decision linked, not merged.** `confined_dispatch` is measured,
+   dated 2026-09-06, macOS — and I confirmed it is the ONLY harness carrying such a row. It rides
+   in the OS/Enforcement columns; `CONFINED_DISPATCH_WIRED` rides in Decision mode and reaches all
+   five. A test asserts exactly that asymmetry.
+
+**Limitations left in place deliberately, and they belong in D30's handoff:**
+- The AST scan is **per-file over two named lists, not transitive** — a module reached only through
+  `_sibling()` at call time is not walked unless listed. The behavioural test covers the transitive
+  case only for the paths it actually exercises (startup, rules, replay, rollback).
+- **The OS column is empty for codex, copilot, cursor and stub.** That is the honest state; Claude's
+  macOS evidence was deliberately not allowed to read across to another harness.
+- Baseline conformance **reuses D02's frozen goldens** rather than adding per-adapter tests — the
+  one-authority choice. The new work is the per-adapter separation and id resolution.
+- `adaptive_decisions` derives `effective: unsupported` from `implemented: unsupported` (a design
+  fact — the modes are refused by name) while `verified` stays `unknown` because nobody ran
+  anything. Each row's note states that distinction.

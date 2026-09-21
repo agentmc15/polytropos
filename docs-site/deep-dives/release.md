@@ -72,6 +72,48 @@ directory, or refreshes the plugin cache. The roadmap's exit gate is the rule th
 release claims match demonstrated behaviour, and unknown host capabilities, unrun live checks,
 and unimplemented modes stay visible rather than being presented as parity.
 
+## Release 1 of the decision work, and what "Jev-free" means here
+
+The decision-and-improvement work ships as an offline edition. "Jev" is the optional provider a
+separately gated Release 2 would add; it does not exist in this tree, and the block below computes
+that rather than asserting it. `python3 bin/release_gate.py decision` walks the decision surface
+(`bin/decision_*.py`, `bin/improvement_loop.py`, `bin/workflow_eval.py`) and what starts a run (the
+four native drivers and `bin/kit_contract.py`) by AST: a network import, a name carrying the
+provider's token, or an environment read on the decision surface is a finding and fails `check`.
+That is a statement about source shape. The behavioural half -- the whole surface imported,
+`rules` and `replay` answered, and a rollback taken and read back, with every network module
+refused at the import hook and scrubbed from `sys.modules` -- is
+`tests/test_decision_release_matrix.py`, whose ids this gate resolves so that they cannot rot.
+
+Three things the matrix refuses to say, each for its own reason.
+
+- **`canary` and `active` are unavailable on every harness.** `workflow_eval.CONFINED_DISPATCH_WIRED`
+  is False -- this repository has no dispatch path that both confines and is recorded in the attempt
+  ledger before and after the call -- so the D23 gate refuses every transition and
+  `runtime_activation` resolves every run to legacy with a reason code. The matrix cell is derived
+  from that constant rather than typed beside it. Note what it is NOT: `claude-code`'s
+  `confined_dispatch` row reads `unsupported` because somebody measured a HOST limitation on macOS
+  (Seatbelt blocks the keychain the subscription credential lives in) and dated the measurement. The
+  constant is a DESIGN decision about this repository. Both appear, in different columns of
+  different tables, because a reader has to be able to tell which one a different host would move.
+- **Cursor's adaptive profile is `unsupported` pending independent proof, and that says nothing
+  against Cursor's current implementation.** Its dispatch, identity probe, read-only dispatch,
+  structured events, durable attempts and independent review all carry a dated `verified: supported`
+  row against a named client version, and the table prints those beside the adaptive verdict so the
+  two claims cannot be read as one. An unavailable adaptive profile is not an absent implementation.
+- **Nothing here is a performance claim.** No cell carries a gain, a ratio, a latency or a cost; no
+  live trial has run; and a mechanism release is valid without one -- a well-run trial that retains
+  the baseline is a valid outcome. Whether a decision mechanism helps is `bin/decision_eval.py`'s
+  question and it has no live answer yet.
+
+Training-data collection is not a harness capability and has no registry row anywhere. It ships off
+(`training_data.COLLECTION_ENABLED` and `CAPTURE_WIRED` are both False and nothing in the tree calls
+the hook), `build_dataset` requires an explicit store directory, and `training/` in the packaging
+table means only that the store's ignore rule is present -- never that a record, a dataset or an
+export manifest exists. The five `adaptive_decisions` rows this release added to
+`primitives/harness-capabilities.json` are `verified: unknown` with no date, on every harness
+including the stub, because nobody has run one.
+
 ## What remains external validation
 
 - **Every vendor client has now been run once, and once is not much.** Each driver made one
@@ -163,11 +205,11 @@ Three answers per capability, never collapsed: does the product support it, has 
 
 | Harness | Driver | Binary | Client mode | Client version | Latest evidence | Rows |
 |---|---|---|---|---|---|---|
-| Claude Code | `bin/claude_execute.py` | `claude` | cli (claude -p) | Claude Code 2.1.273, macOS 14.4 sandbox-exec (Darwin 23.4.0) | 2026-09-16 | 6 verified / 1 unknown / 4 unsupported |
-| OpenAI Codex CLI | `bin/codex_execute.py` | `codex` | cli (codex exec --json) | codex-cli 0.153.3 | 2026-09-16 | 5 verified / 2 unknown / 6 unsupported |
-| GitHub Copilot CLI | `bin/copilot_execute.py` | `copilot` | cli (copilot -p) | GitHub Copilot CLI 1.0.80 | 2026-09-16 | 3 verified / 2 unknown / 4 unsupported |
-| Cursor CLI | `bin/cursor_execute.py (bin/cursor_adapter.py)` | `agent` | cli (agent -p) | Cursor CLI 2026.09.10-fd3934a | 2026-09-16 | 6 verified / 6 unknown / 7 unsupported |
-| Stub (conformance target; runs nothing) | `bin/harness_adapter.py StubAdapter; bin/kit_scheduler.py StubDispatcher` | none | none | not recorded | 2026-09-13 | 3 verified / 0 unknown / 2 unsupported |
+| Claude Code | `bin/claude_execute.py` | `claude` | cli (claude -p) | Claude Code 2.1.273, macOS 14.4 sandbox-exec (Darwin 23.4.0) | 2026-09-16 | 6 verified / 1 unknown / 5 unsupported |
+| OpenAI Codex CLI | `bin/codex_execute.py` | `codex` | cli (codex exec --json) | codex-cli 0.153.3 | 2026-09-16 | 5 verified / 2 unknown / 7 unsupported |
+| GitHub Copilot CLI | `bin/copilot_execute.py` | `copilot` | cli (copilot -p) | GitHub Copilot CLI 1.0.80 | 2026-09-16 | 3 verified / 2 unknown / 5 unsupported |
+| Cursor CLI | `bin/cursor_execute.py (bin/cursor_adapter.py)` | `agent` | cli (agent -p) | Cursor CLI 2026.09.10-fd3934a | 2026-09-16 | 6 verified / 6 unknown / 8 unsupported |
+| Stub (conformance target; runs nothing) | `bin/harness_adapter.py StubAdapter; bin/kit_scheduler.py StubDispatcher` | none | none | not recorded | 2026-09-13 | 3 verified / 0 unknown / 3 unsupported |
 
 #### Claude Code
 
@@ -179,6 +221,7 @@ Three answers per capability, never collapsed: does the product support it, has 
 
 | Capability | Product | Implemented | Verified | On | Client | Effective |
 |---|---|---|---|---|---|---|
+| adaptive_decisions | not-applicable | unsupported | unknown |  |  | unsupported |
 | cancel | unknown | supported | unknown |  |  | unknown |
 | concurrent_dispatch | not-applicable | unsupported | unknown |  |  | unsupported |
 | confined_dispatch | unsupported | unsupported | unsupported | 2026-09-06 |  | unsupported |
@@ -201,6 +244,7 @@ Three answers per capability, never collapsed: does the product support it, has 
 
 | Capability | Product | Implemented | Verified | On | Client | Effective |
 |---|---|---|---|---|---|---|
+| adaptive_decisions | not-applicable | unsupported | unknown |  |  | unsupported |
 | async_tools | unknown | unsupported | unknown |  |  | unsupported |
 | cancel | unknown | supported | unknown |  |  | unknown |
 | concurrent_dispatch | not-applicable | unsupported | unknown |  |  | unsupported |
@@ -225,6 +269,7 @@ Three answers per capability, never collapsed: does the product support it, has 
 
 | Capability | Product | Implemented | Verified | On | Client | Effective |
 |---|---|---|---|---|---|---|
+| adaptive_decisions | not-applicable | unsupported | unknown |  |  | unsupported |
 | cancel | unknown | supported | unknown |  |  | unknown |
 | concurrent_dispatch | not-applicable | unsupported | unknown |  |  | unsupported |
 | dispatch | supported | supported | supported | 2026-09-16 | GitHub Copilot CLI 1.0.80 | supported |
@@ -245,6 +290,7 @@ Three answers per capability, never collapsed: does the product support it, has 
 
 | Capability | Product | Implemented | Verified | On | Client | Effective |
 |---|---|---|---|---|---|---|
+| adaptive_decisions | not-applicable | unsupported | unknown |  |  | unsupported |
 | ambient_diagnosis | not-applicable | supported | unknown |  |  | unknown |
 | cancel | unknown | unsupported | unknown |  |  | unsupported |
 | cli_sandbox | supported | unsupported | unknown |  |  | unsupported |
@@ -275,6 +321,7 @@ Three answers per capability, never collapsed: does the product support it, has 
 
 | Capability | Product | Implemented | Verified | On | Client | Effective |
 |---|---|---|---|---|---|---|
+| adaptive_decisions | not-applicable | unsupported | unknown |  |  | unsupported |
 | cancel | unsupported | unsupported | unsupported |  |  | unsupported |
 | concurrent_dispatch | not-applicable | supported | supported | 2026-09-13 |  | supported |
 | dispatch | supported | supported | supported | 2026-09-06 |  | supported |
@@ -443,7 +490,7 @@ free text is redacted and bounded before it is persisted or dispatched and repor
 | copilot | none mapped | polytropos's own |
 | cursor | none mapped | polytropos's own |
 | stub | `test_workflow_eval.DirectWorkflowTests.test_a_credential_in_the_statement_is_redacted_before_dispatch_and_counted_by_kind` (1); `test_workflow_eval.PlanTests.test_a_statement_with_a_credential_shape_is_labelled_and_never_quoted` (1); `test_workflow_eval.DirectWorkflowTests.test_the_prompt_is_leak_free_and_the_store_is_written_only_after_every_dispatch` (1) | polytropos's own |
-| shared | `test_privacy_primitives.RedactionTests` (7); `test_privacy_primitives.DataHomeTests` (3); `test_privacy_primitives.ResolutionTests` (4); `test_privacy_primitives.PrivateCreationTests` (2); `test_privacy_primitives.RetentionTests` (3); `test_privacy_layout.PrivacyLayoutTests` (6); `test_memory_recall.GateTests` (2); `test_memory_recall.BudgetTests` (3); `test_memory_recall.ProvenanceAndScopeTests` (7); `test_lessons_store.RecallTests` (8); `test_lessons_store.CompatibilityTests.test_the_module_dispatches_nothing_and_reads_no_home` (1); `test_attempt_ledger.LedgerRecordTests.test_verify_tails_are_redacted_before_they_are_stored` (1); `test_journal_collect.ContentHygieneTests.test_transcript_text_marker_never_reaches_the_written_digest` (1); `test_journal_summarize.IsolatedSummaryDispatchTests` (5); `test_journal_collect.ReadOnlyProofTests.test_source_and_kit_trees_are_byte_identical_only_journal_dir_gains_files` (1); `test_journal_sources.ReadOnlyProofTests.test_combined_fixture_tree_is_byte_identical_after_run_adapters` (1); `test_copilot_usage.ReadOnlyProofTests.test_fixture_home_bytes_unchanged_and_no_new_files` (1); `test_codex_usage.ReadOnlyProofTests.test_temp_home_file_tree_byte_identical_after_run` (1); `test_kit_verify_hook.StaticSafetyTests.test_module_never_calls_path_home` (1); `test_training_data.SnapshotTests.test_every_non_approved_eligibility_refuses_before_a_payload_exists` (1); `test_training_data.SnapshotTests.test_a_credential_shape_in_an_input_entry_is_labelled_and_never_reaches_the_record_or_the_disk` (1); `test_training_data.SnapshotTests.test_the_redaction_claim_names_exactly_the_two_fields_that_are_redacted` (1); `test_training_data.LabelEligibilityTests.test_every_export_refusal_code_is_reachable_by_its_own_case` (1); `test_training_data.DatasetExportTests.test_a_payload_line_carries_no_provenance_and_the_audit_line_carries_all_of_it` (1); `test_training_data.ReadinessTests` (41) | n/a |
+| shared | `test_privacy_primitives.RedactionTests` (7); `test_privacy_primitives.DataHomeTests` (3); `test_privacy_primitives.ResolutionTests` (4); `test_privacy_primitives.PrivateCreationTests` (2); `test_privacy_primitives.RetentionTests` (3); `test_privacy_layout.PrivacyLayoutTests` (6); `test_memory_recall.GateTests` (2); `test_memory_recall.BudgetTests` (3); `test_memory_recall.ProvenanceAndScopeTests` (7); `test_lessons_store.RecallTests` (8); `test_lessons_store.CompatibilityTests.test_the_module_dispatches_nothing_and_reads_no_home` (1); `test_attempt_ledger.LedgerRecordTests.test_verify_tails_are_redacted_before_they_are_stored` (1); `test_journal_collect.ContentHygieneTests.test_transcript_text_marker_never_reaches_the_written_digest` (1); `test_journal_summarize.IsolatedSummaryDispatchTests` (5); `test_journal_collect.ReadOnlyProofTests.test_source_and_kit_trees_are_byte_identical_only_journal_dir_gains_files` (1); `test_journal_sources.ReadOnlyProofTests.test_combined_fixture_tree_is_byte_identical_after_run_adapters` (1); `test_copilot_usage.ReadOnlyProofTests.test_fixture_home_bytes_unchanged_and_no_new_files` (1); `test_codex_usage.ReadOnlyProofTests.test_temp_home_file_tree_byte_identical_after_run` (1); `test_kit_verify_hook.StaticSafetyTests.test_module_never_calls_path_home` (1); `test_training_data.SnapshotTests.test_every_non_approved_eligibility_refuses_before_a_payload_exists` (1); `test_training_data.SnapshotTests.test_a_credential_shape_in_an_input_entry_is_labelled_and_never_reaches_the_record_or_the_disk` (1); `test_training_data.SnapshotTests.test_the_redaction_claim_names_exactly_the_two_fields_that_are_redacted` (1); `test_training_data.LabelEligibilityTests.test_every_export_refusal_code_is_reachable_by_its_own_case` (1); `test_training_data.DatasetExportTests.test_a_payload_line_carries_no_provenance_and_the_audit_line_carries_all_of_it` (1); `test_training_data.ReadinessTests` (43) | n/a |
 
 #### Legacy kits
 
@@ -452,6 +499,81 @@ free text is redacted and bounded before it is persisted or dispatched and repor
 #### No real client is ever spawned
 
 `test_proc_runner_wiring.OneRunnerTests` (2); `test_claude_execute.DryRunSpawnsNothingTests` (3); `test_claude_execute.ReviewDryRunTests.test_review_dry_run_prints_dispatch_and_spawns_nothing` (1); `test_codex_execute.DryRunSpawnsNothingTests.test_dry_run_never_touches_subprocess_and_leaves_kit_untouched` (1); `test_copilot_execute.DryRunSpawnsNothingTests.test_dry_run_never_touches_subprocess_and_leaves_tasks_file_untouched` (1); `test_copilot_ralph.CliSafetySmokeTests.test_demo_and_dry_run_spawn_nothing` (1); `test_copilot_budget.BudgetLedgerTests.test_budget_command_never_dispatches_writes_or_loads_pricing_or_prefs` (1); `test_cursor_execute.DryRunTests.test_dry_run_prints_the_argv_and_spawns_nothing_not_even_the_probe` (1); `test_cursor_execute.ReviewTests.test_a_review_dry_run_spawns_nothing` (1); `test_cursor_execute.SourceHygieneTests.test_help_runs_offline` (1); `test_cursor_adapter.RegistryAndPricingTests.test_the_demo_and_help_run_offline` (1); `test_cursor_adapter.RegistryAndPricingTests.test_the_adapter_carries_no_process_primitive_of_its_own` (1); `test_cursor_adapter.InstallTests.test_doctor_reports_without_spawning_anything_but_the_named_stub` (1); `test_kit_scheduler.DryRunAndCliTests.test_dry_run_claims_nothing_copies_nothing_spawns_nothing` (1); `test_kit_scheduler.DryRunAndCliTests.test_the_demo_runs_offline` (1); `test_kit_scheduler.DryRunAndCliTests.test_the_module_carries_no_shell_strings_and_no_bare_subprocess` (1); `test_workflow_eval.CliTests.test_demo_runs_offline_and_spends_nothing` (1); `test_workflow_eval.AdapterTests.test_the_module_names_no_model_id_and_carries_no_process_primitive` (1); `test_attempt_ledger.RalphDurableLoopTests.test_demo_and_dry_run_still_spawn_nothing` (1); `test_plugin_staleness.SourceHygieneTests.test_no_real_cli_invocation_outside_comments` (1); `test_telemetry_snapshot.SourceLawTests.test_no_process_spawning_tokens_anywhere_in_the_source` (1); `test_repo_bench.RunLoopSafetyTests.test_every_cell_was_dispatched_through_the_injected_stub` (1); `test_release_gate.ModuleShapeTests.test_module_carries_no_process_primitive_or_home_path` (1); `test_graph_ground.SourceHygieneTests.test_the_module_never_invokes_graphify_or_spawns_on_its_own` (1); `test_graph_brief.SourceIntrospectionTests.test_no_home_dir_or_network_or_subprocess_primitives_in_any_function` (1); `test_lessons_promote.NoDispatchImportTests.test_source_has_no_subprocess_or_execute_module_imports` (1); `test_journal_schedule.ModuleSafetyTests.test_module_has_no_subprocess` (1); `test_routing_policy.DriverCommandLineTests.test_dry_run_under_each_policy_previews_the_decision_and_spawns_nothing` (1)
+
+### Decision and improvement (Release 1): what runs, and with what absent
+
+Release 1 is Jev-free by construction -- the optional provider a separately gated Release 2 would add does not exist in this tree. The columns below are read from the capability registry and from the constant in the module that owns each word (`decision_policy.SELECTION_MODES` and `DEFERRED_MODES`, `decision_provider.PROVIDER_MODES`, `workflow_eval.CONFINED_DISPATCH_WIRED` and `RUNTIME_REASONS`), never typed here.
+
+- this matrix makes NO performance claim. It reports what is available and on what evidence; no cell carries a gain, a ratio, a latency or a cost, no live trial has run, and a mechanism release is valid without one -- a well-run trial that retains the baseline is a valid outcome.
+- `canary` and `active` are UNAVAILABLE on every harness, and the refusal is machine-derived: `workflow_eval.CONFINED_DISPATCH_WIRED` is False, so `activation_decision` refuses every transition and `runtime_activation` resolves every run to legacy. Absent D23 evidence there is no such thing as a partially available canary.
+- Cursor's adaptive profile is `unsupported` pending independent proof, and that is a claim about the ADAPTIVE PROFILE ONLY. Cursor's current CLI implementation is present and verified -- its dispatch, identity probe, read-only dispatch, structured events, durable attempts and independent review all carry a dated `verified: supported` row against a named client version -- and nothing here reimplements it, retires it or reports it as absent.
+- V1 starts, decides and rolls back with every optional provider ABSENT. `rules` computes locally over the request's own state, `replay` reads a caller-selected local store and abstains on a miss, and a rollback names a fallback `decision_policy.resolve_bundle` chose and contacts nothing. No endpoint, key, SDK, model id or price for an optional provider appears anywhere in this repository, and none is guessed at here.
+- training-data collection is NOT a capability of any harness and has no registry row. `training_data.COLLECTION_ENABLED` and `CAPTURE_WIRED` are both False, no call site exists anywhere in the tree, and `build_dataset` requires an explicit `store_dir`. What ships is code that is present and unwired; `training/` in the packaging table means the store's ignore rule is present, never that a record, a dataset or an export manifest exists.
+
+| Harness | Client | OS | Adapter | Enforcement | Decision mode | Fallback |
+|---|---|---|---|---|---|---|
+| Claude Code | cli (claude -p); Claude Code 2.1.273, macOS 14.4 sandbox-exec (Darwin 23.4.0) | `confined_verify` supported on 2026-09-16 (macOS 14.4 sandbox-exec (Darwin 23.4.0)); `confined_dispatch` unsupported on 2026-09-06 (measured on macOS) | `workflow_eval.claude_adapter` (supported) | `confined_verify`=supported, `confined_dispatch`=unsupported | legacy, shadow -- canary, active unavailable (`confining-dispatch-unwired`) | legacy (`no-pointer`) |
+| OpenAI Codex CLI | cli (codex exec --json); codex-cli 0.153.3 | no confinement row; not recorded | `workflow_eval.codex_adapter` (unknown) | no per-harness row | legacy, shadow -- canary, active unavailable (`confining-dispatch-unwired`) | legacy (`no-pointer`) |
+| GitHub Copilot CLI | cli (copilot -p); GitHub Copilot CLI 1.0.80 | no confinement row; not recorded | `workflow_eval.copilot_adapter` (unknown) | no per-harness row | legacy, shadow -- canary, active unavailable (`confining-dispatch-unwired`) | legacy (`no-pointer`) |
+| Cursor CLI | cli (agent -p); Cursor CLI 2026.09.10-fd3934a | no confinement row; not recorded | `workflow_eval.cursor_adapter` (unknown) | no per-harness row | legacy, shadow -- canary, active unavailable (`confining-dispatch-unwired`) | legacy (`no-pointer`) |
+| Stub (conformance target; runs nothing) | none; not recorded | no confinement row; not recorded | `workflow_eval.stub_adapter` (supported) | no per-harness row | legacy, shadow -- canary, active unavailable (`confining-dispatch-unwired`) | legacy (`no-pointer`) |
+
+#### The adaptive profile, beside the implementation that is present
+
+Two different claims about two different things, and the table keeps them apart. The left column is whether a run on that harness may take a decision-policy bundle in a running state. The right is what the registry says is already implemented and verified there -- an unavailable adaptive profile is not an absent implementation.
+
+| Harness | `adaptive_decisions` | Verified rows present today |
+|---|---|---|
+| Claude Code | unsupported (verified: unknown) | `confined_verify` 2026-09-16, `dispatch` 2026-09-16, `durable_attempts` 2026-09-16, `independent_review` 2026-09-16, `tool_pin` 2026-09-16, `workflow_evaluation` 2026-09-16 |
+| OpenAI Codex CLI | unsupported (verified: unknown) | `dispatch` 2026-09-16, `durable_attempts` 2026-09-16, `independent_review` 2026-09-16, `sandbox_read_only` 2026-09-16, `structured_events` 2026-09-16 |
+| GitHub Copilot CLI | unsupported (verified: unknown) | `dispatch` 2026-09-16, `durable_attempts` 2026-09-16, `independent_review` 2026-09-16 |
+| Cursor CLI | unsupported (verified: unknown) | `dispatch` 2026-09-16, `durable_attempts` 2026-09-16, `identity_probe` 2026-09-16, `independent_review` 2026-09-16, `read_only_dispatch` 2026-09-16, `structured_events` 2026-09-16 |
+| Stub (conformance target; runs nothing) | unsupported (verified: unknown) | `concurrent_dispatch` 2026-09-13, `dispatch` 2026-09-06, `workflow_evaluation` 2026-09-13 |
+
+#### Baseline conformance, per adapter
+
+Separately per adapter, never merged: a single line would let three passing adapters carry a fourth. These are D02's frozen legacy goldens, which pinned each driver's existing decision path before anything was extracted from it.
+
+| Adapter | Tests | Cases |
+|---|---|---|
+| claude-code | `test_decision_legacy.LegacyDecisionGoldenTests.test_claude_dispatch_failure_stops_before_verify_even_if_verify_would_pass` (1); `test_decision_legacy.LegacyDecisionGoldenTests.test_claude_escalates_tier_ladder_on_verify_failure_until_pass` (1); `test_decision_legacy.LegacyDecisionGoldenTests.test_claude_ladder_exhausted_blocks_after_every_rung` (1); `test_decision_legacy.LegacyDecisionGoldenTests.test_claude_admission_denial_returns_budget_stop_without_dispatch` (1) | 4 |
+| codex | `test_decision_legacy.LegacyDecisionGoldenTests.test_codex_unknown_class_dispatch_failure_still_climbs_the_ladder` (1); `test_decision_legacy.LegacyDecisionGoldenTests.test_codex_no_escalation_class_dispatch_failure_stops_ladder_and_skips_recovery` (1); `test_decision_legacy.LegacyDecisionGoldenTests.test_codex_ladder_exhausted_triggers_reserved_orchestrator_recovery` (1); `test_decision_legacy.LegacyDecisionGoldenTests.test_codex_admission_denial_raises_rather_than_returning` (1) | 4 |
+| copilot | `test_decision_legacy.LegacyDecisionGoldenTests.test_copilot_dispatch_failure_stops_before_verify_even_if_verify_would_pass` (1); `test_decision_legacy.LegacyDecisionGoldenTests.test_copilot_escalates_tier_ladder_on_verify_failure_until_pass` (1); `test_decision_legacy.LegacyDecisionGoldenTests.test_copilot_admission_denial_returns_budget_stop_without_dispatch` (1) | 3 |
+| cursor | `test_decision_legacy.LegacyDecisionGoldenTests.test_cursor_verify_failure_blocks_after_exactly_one_attempt_no_ladder` (1); `test_decision_legacy.LegacyDecisionGoldenTests.test_cursor_dispatch_failure_stops_immediately` (1); `test_decision_legacy.LegacyDecisionGoldenTests.test_cursor_admission_denial_returns_budget_stop_without_dispatch` (1) | 3 |
+| stub | `test_workflow_eval.AdapterTests.test_every_adapter_builds_a_dispatch_and_a_read_only_review_with_the_prompt_verbatim` (1) | 1 |
+| shared | `test_decision_legacy.LegacyDecisionGoldenTests.test_all_drivers_delegate_parsing_and_readiness_to_the_one_kit_contract` (1); `test_decision_legacy.LegacyDecisionGoldenTests.test_no_native_driver_reads_the_applied_routing_policy_file` (1); `test_decision_legacy.LegacyDecisionGoldenTests.test_workflow_eval_absent_policy_file_is_none_the_legacy_default` (1); `test_decision_provider.RulesReplayProviderTests` (39); `test_decision_release_matrix.JevFreeMatrixTests` (23) | 65 |
+
+#### The live gates a running state would have to pass
+
+Every one of them refuses today, and the last one refuses unconditionally. Nothing below is a plan to open them: they are named so that a reader can see which owner decides each, and which test proves the refusal.
+
+| Gate | Owner | Blocker | Proof |
+|---|---|---|---|
+| protected profile (D07) | exec_policy.certify_profile over exec_policy.run_sentinels, relayed by workflow_eval.promotion_eligibility | `protected-profile-uncertified` | `test_decision_activation.ProtectedActivationGateTests.test_each_of_the_four_gates_refuses_on_its_own_with_the_other_three_satisfied` (1) |
+| current grouped and exposed evaluation manifest | workflow_eval.verify_manifest for the document, workflow_eval.require_held_out for the store, composed by workflow_eval.manifest_currency | `evaluation-manifest-not-current` | `test_decision_activation.ProtectedActivationGateTests.test_the_manifest_gate_asks_both_the_document_and_the_store` (1) |
+| predeclared endpoint, margins, caps and stops (D19) | workflow_eval.OPERATOR_DECLARATIONS union decision_eval.RECOVERY_REPORT_DECLARATIONS, composed by workflow_eval.trial_plan_completeness | `trial-plan-incomplete` | `test_decision_activation.ProtectedActivationGateTests.test_the_trial_plan_gate_is_the_union_of_two_owners_neither_of_which_covers_it` (1) |
+| exact approval (D22) | workflow_eval.promotion_eligibility's own approval row, re-derived through workflow_eval.approval_holds | `exact-approval-missing` | `test_decision_activation.ProtectedActivationGateTests.test_a_wired_runtime_refuses_an_approval_that_bound_and_re_derived_nothing` (1) |
+| a confining, ledgered dispatch path -- UNCONDITIONAL | workflow_eval.CONFINED_DISPATCH_WIRED, re-read at call time by the pointer writer and by the pointer reader | `confining-dispatch-unwired` | `test_decision_activation.ProtectedActivationGateTests.test_every_named_gate_is_satisfiable_and_the_transition_still_refuses` (1); `test_decision_activation.ProtectedActivationGateTests.test_no_argument_gets_a_pointer_past_the_gate_today` (1); `test_decision_activation.ProtectedActivationGateTests.test_a_running_pointer_written_in_another_world_reads_as_legacy_in_this_one` (1) |
+
+#### With every optional provider absent
+
+| Surface | What answers | Evidence |
+|---|---|---|
+| Startup | the four native drivers and `bin/kit_contract.py`; no optional-provider import, key or SDK anywhere on the path | 5 modules walked by AST; 0 findings |
+| Decision | `rules`, `replay` -- `rules` computes locally over the request's own state, `replay` reads a caller-selected local store and abstains on a miss | `test_decision_provider.RulesReplayProviderTests` |
+| Runtime mode | `legacy`, `shadow`; `canary`, `active` refused by name | `workflow_eval.CONFINED_DISPATCH_WIRED` is False |
+| Rollback | `workflow_eval.rollback_entry` names the fallback `decision_policy.resolve_bundle` chose and contacts nothing; every future run reads legacy | `test_decision_activation.ProtectedActivationGateTests.test_rollback_names_the_fallback_its_owner_chose_and_ends_at_legacy`; `test_decision_activation.ProtectedActivationGateTests.test_rollback_contacts_no_provider_and_writes_through_no_other_owner` |
+| Training data | nothing: collection ships off and no harness advertises it | `training_data.COLLECTION_ENABLED` is False, `CAPTURE_WIRED` is False |
+
+The modules walked are `bin/decision_contract.py`, `bin/decision_provider.py`, `bin/decision_policy.py`, `bin/decision_eval.py`, `bin/decision_context.py`, `bin/improvement_loop.py`, `bin/workflow_eval.py` (the decision surface, which reads no environment variable at all) and `bin/kit_contract.py`, `bin/claude_execute.py`, `bin/codex_execute.py`, `bin/copilot_execute.py`, `bin/cursor_execute.py` (what starts a run). The scan is a statement about source shape; the behavioural proof -- the whole surface imported, `rules` and `replay` answered and a rollback taken with every network module refused at `sys.meta_path` -- is `test_decision_release_matrix.JevFreeMatrixTests.test_rules_replay_and_rollback_all_run_with_every_network_module_refused`.
+
+#### Named protected profiles
+
+| Profile | Platform | Backend | Implemented |
+|---|---|---|---|
+| `container` | any | `container` | no |
+| `darwin-seatbelt` | darwin | `sandbox-exec` | yes |
+| `linux-bubblewrap` | linux | `bubblewrap` | no |
 
 ### Historical primitive matrix (unchanged)
 
@@ -527,6 +649,7 @@ Each guarantee names the evidence behind it and what stays unresolved. Every com
 | Pricing is one file per harness and no generated mirror has drifted | the `data` section of `python3 bin/harness_update.py check` reports up-to-date with zero stale mirrors and every docs label ok (read-only; it also ages each `cached_date`) | the card's exit code also covers the user's installed Claude and Copilot homes, which drift from an unmerged branch by design; prices are labelled snapshots and their age is reported, never corrected here |
 | Routing defaults changed only by a reviewed, versioned proposal | `python3 bin/workflow_eval.py policy` lists the version in force and its journal; no driver reads the file (a test fails if one starts to) | no live evaluation has run, so no proposal has evidence behind it yet |
 | Training-data collection ships off and no example has been gathered | `python3 bin/training_data.py readiness` prints both switches off, the eleven gates with the act that opens each, and what a readiness report does not establish; `python3 bin/training_data.py demo` walks capture to refused re-export in a temporary directory and spends nothing; the runbook is docs/TRAINING-DATA-READINESS.md | the walk is synthetic fixture data. It demonstrates mechanics and establishes nothing about a dataset's sufficiency, a label's correctness or a model, no minimum sample count is asserted anywhere, and an export records no exposure in the evaluation store -- the operator does that themselves |
+| Release 1 of the decision work starts, decides, and rolls back with every optional provider absent | `python3 bin/release_gate.py decision` walks the decision surface and the four drivers by AST: no network import, no optional-provider name, and no environment read on the surface at all. The behavioural half -- the whole surface imported, `rules` and `replay` answered, and a rollback taken, with every network module refused at the import hook -- is `tests/test_decision_release_matrix.py`, whose ids this gate resolves | `canary` and `active` are unavailable on every harness, because `workflow_eval.CONFINED_DISPATCH_WIRED` is False and D23's gate relays that row; Cursor's adaptive profile is `unsupported` pending independent proof, which says nothing against Cursor's current implementation, whose rows are verified and dated; and no cell anywhere carries a gain, a ratio or a latency |
 | Nothing here ran a paid call, wrote a home directory, or pushed | the invariants in CLAUDE.md, the no-real-CLI tests named below, and this gate's own process list (read-only git, in-process unittest) | the optional live commands below are prepared and stay unrun until a person runs them on their own account |
 
 ### Migration and rollback
@@ -539,6 +662,7 @@ Each guarantee names the evidence behind it and what stays unresolved. Every com
 | Cursor project bundle (`.cursor/`) | `python3 bin/harness_select.py install --harness cursor --project DIR`; `python3 bin/harness_select.py doctor --harness cursor --project DIR` | the manifest at `.cursor/polytropos/install-manifest.json` names every file the installer owns; remove those and only those |
 | Claude Code plugin cache | bump `.claude-plugin/plugin.json`, then `claude plugin update polytropos@polytropos-local`, then the prune runbook in docs/PRIVACY.md | `claude plugin install` of the previous version directory; repo code never touches `~/.claude` |
 | Routing policy (`workflow_eval.POLICY_FILE` under the `prefs` store) | `python3 bin/workflow_eval.py propose` -> `review` -> `apply`; every version kept | `python3 bin/workflow_eval.py rollback --version N`; the replaced version is kept too |
+| Runtime decision activation (`workflow_eval.POLICY_ACTIVATION` generations under the `prefs` store) | nothing to do and nothing that could be done: no pointer exists, an absent pointer means legacy, and `workflow_eval.activation_decision` refuses every transition while `CONFINED_DISPATCH_WIRED` is False | `python3 bin/workflow_eval.py activation` reports what is in force; `python3 bin/workflow_eval.py rollback` appends a generation and deletes nothing, and every future run reads legacy whatever fallback it named |
 | Training-data collection (off: `training_data.COLLECTION_ENABLED` and `CAPTURE_WIRED` are both False and nothing calls the hook) | docs/TRAINING-DATA-READINESS.md is the runbook, and `python3 bin/training_data.py readiness` prints its gates: declare an approved scope, turn the switch on at the call site, wire a caller, then record the export's exposure in the evaluation store yourself | set both constants back to False and remove the call site; nothing is deleted and no record is rewritten. `python3 bin/runtime_data.py forget --store training` lists before it deletes and deletes only with `--apply` |
 | Kits written before the contract | nothing to do: a kit without `depends:` is a chain, without a ledger its freshness is `unknown` and disclosed, and `python3 bin/kit_contract.py graph --kit DIR` names anything the validator refuses | not applicable; no kit file is rewritten by a driver |
 | Generated mirrors (docs-site/, copilot-docs/, codex/prompts/, the pricing references, the block in docs/RELEASE.md) | edit the source, then `python3 bin/docs_build.py build`, `python3 bin/copilot_docs.py build`, `python3 bin/sync_codex_surfaces.py build`, `python3 bin/sync_pricing_refs.py`, `python3 bin/release_gate.py build` | `git checkout -- <mirror>`; the mirrors carry no state of their own |
