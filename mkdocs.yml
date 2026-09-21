@@ -67,6 +67,7 @@ nav:
     - Claude Code:
       - skills/claude/index.md
       - architect: skills/claude/architect.md
+      - assess-improvement: skills/claude/assess-improvement.md
       - bench-routing: skills/claude/bench-routing.md
       - context-weight: skills/claude/context-weight.md
       - cost-report: skills/claude/cost-report.md
@@ -123,6 +124,10 @@ nav:
     - Copilot workflow layer: deep-dives/copilot-workflow.md
     - Cursor harness: deep-dives/cursor-harness.md
     - Daily work journal: deep-dives/daily-journal.md
+    - Decision & improvement authority inventory: deep-dives/decision-improvement-authority-inventory.md
+    - Decision & improvement conformance: deep-dives/decision-improvement-conformance.md
+    - Decision & improvement reconciliation: deep-dives/decision-improvement-reconciliation.md
+    - Decision & improvement V1 handoff: deep-dives/decision-improvement-v1-handoff.md
     - Effort dial: deep-dives/effort-dial.md
     - Evidence loop: deep-dives/evidence-loop.md
     - Fusion tier 1: deep-dives/fusion-tier1.md
@@ -138,5 +143,6 @@ nav:
     - Role experiment: deep-dives/role-experiment.md
     - Routing history: deep-dives/routing-history.md
     - Routing trends: deep-dives/routing-trends.md
+    - Training-data readiness: deep-dives/training-data-readiness.md
     - Workflow evaluation: deep-dives/workflow-eval.md
     - Release gate: deep-dives/release.md

@@ -22,6 +22,12 @@ __pycache__/
 # its default home is the per-user data root, this entry covers a legacy in-tree store only)
 /attempts/
 
+# decision-time training snapshots (bounded, redacted evidence one decision was taken on, with
+# source ids and eligibility — never committed; its default home is the per-user data root, this
+# entry covers a legacy in-tree store only. Collection is OFF: training_data.COLLECTION_ENABLED
+# is False and nothing calls the hook, so a fresh checkout never creates this directory)
+/training/
+
 # conversation summaries (transcript-derived: home-dir paths, session ids — never committed)
 /conv-summaries/
 

@@ -130,6 +130,12 @@ BUNDLE_DIR = REPO_ROOT / "cursor"
 #: (bundle-relative source, project-relative destination)
 BUNDLE = (
     ("skills/polytropos-execute/SKILL.md", ".cursor/skills/polytropos-execute/SKILL.md"),
+    # A skill's own `references/` files are bundle entries in their own right: Cursor reads a
+    # project skill dir from disk, so a linked reference that is not installed beside its
+    # SKILL.md is a dead link in the installed project, not a fallback to this checkout.
+    ("skills/assess-improvement/SKILL.md", ".cursor/skills/assess-improvement/SKILL.md"),
+    ("skills/assess-improvement/references/assessment-template.md",
+     ".cursor/skills/assess-improvement/references/assessment-template.md"),
     ("agents/polytropos-implementer.md", ".cursor/agents/polytropos-implementer.md"),
     ("agents/polytropos-verifier.md", ".cursor/agents/polytropos-verifier.md"),
 )

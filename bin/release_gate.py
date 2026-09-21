@@ -34,6 +34,7 @@ no-op and `check` can fail on drift.
 """
 
 import argparse
+import ast
 import importlib.util
 import io
 import json
@@ -145,9 +146,29 @@ VERSION_SOURCES = (
     ("graph provenance sidecar", "graph_ground", "SIDECAR_VERSION"),
     ("integration manifest", "kit_scheduler", "MANIFEST_VERSION"),
     ("workflow evaluation", "workflow_eval", "EVAL_VERSION"),
+    ("evaluation manifest", "workflow_eval", "MANIFEST_VERSION"),
     ("policy proposal", "workflow_eval", "PROPOSAL_VERSION"),
     ("routing policy file", "workflow_eval", "POLICY_VERSION"),
+    ("policy reference block", "workflow_eval", "POLICY_REFS_VERSION"),
+    ("policy approval record", "workflow_eval", "APPROVAL_VERSION"),
+    ("policy activation pointer", "workflow_eval", "ACTIVATION_VERSION"),
+    ("policy evidence report", "workflow_eval", "POLICY_EVIDENCE_VERSION"),
+    ("three-arm trial protocol", "workflow_eval", "TRIAL_PROTOCOL_VERSION"),
     ("lessons store", "lessons_store", "SCHEMA"),
+    ("protected profile sentinels", "exec_policy", "SENTINEL_VERSION"),
+    ("decision contract", "decision_contract", "CONTRACT_VERSION"),
+    ("policy bundle", "decision_contract", "BUNDLE_VERSION"),
+    ("candidate proposal", "decision_contract", "CANDIDATE_VERSION"),
+    ("decision replay record", "decision_provider", "REPLAY_VERSION"),
+    ("decision prediction join", "decision_eval", "JOIN_VERSION"),
+    ("decision calibration report", "decision_eval", "CALIBRATION_VERSION"),
+    ("decision recovery report", "decision_eval", "RECOVERY_REPORT_VERSION"),
+    ("context candidate manifest", "decision_context", "CONTEXT_VERSION"),
+    ("training snapshot", "training_data", "SNAPSHOT_VERSION"),
+    ("training cause taxonomy", "training_data", "TAXONOMY_VERSION"),
+    ("training label lifecycle", "training_data", "LIFECYCLE_VERSION"),
+    ("training dataset export", "training_data", "DATASET_VERSION"),
+    ("training readiness report", "training_data", "READINESS_VERSION"),
 )
 
 #: Pricing files, one per harness, never merged. Read for `cached_date` and roster size only.
@@ -584,6 +605,25 @@ CONTRACTS = (
                 "test_copilot_usage.ReadOnlyProofTests.test_fixture_home_bytes_unchanged_and_no_new_files",
                 "test_codex_usage.ReadOnlyProofTests.test_temp_home_file_tree_byte_identical_after_run",
                 "test_kit_verify_hook.StaticSafetyTests.test_module_never_calls_path_home",
+                # Training-data collection (D31-D34). It ships OFF, so what these prove is the
+                # eligibility gate rather than a running collector: unknown use rights fail
+                # closed before a payload exists, an export refuses on every code it names,
+                # provenance stays out of the model's input, and the readiness report says what
+                # it does not establish.
+                #
+                # THE REDACTION ROW HERE IS TWO FIELDS WIDE, NOT WHOLE-RECORD. `training_data`
+                # puts exactly two fields through `bin/redact.py` -- an input entry's text and a
+                # revocation's reason -- and the test named below is the input-entry one. The
+                # question's wording and rubric are stored and exported byte-exact because
+                # `decision_contract` digests them, so a credential shape typed into a question
+                # is not caught and is not counted; `training_data.REDACTION_SCOPE_NOTE` says so
+                # on every record and the scope test below pins the claim to the call sites.
+                "test_training_data.SnapshotTests.test_every_non_approved_eligibility_refuses_before_a_payload_exists",
+                "test_training_data.SnapshotTests.test_a_credential_shape_in_an_input_entry_is_labelled_and_never_reaches_the_record_or_the_disk",
+                "test_training_data.SnapshotTests.test_the_redaction_claim_names_exactly_the_two_fields_that_are_redacted",
+                "test_training_data.LabelEligibilityTests.test_every_export_refusal_code_is_reachable_by_its_own_case",
+                "test_training_data.DatasetExportTests.test_a_payload_line_carries_no_provenance_and_the_audit_line_carries_all_of_it",
+                "test_training_data.ReadinessTests",
             ),
         },
     },
@@ -636,6 +676,257 @@ NO_REAL_CLI_TESTS = (
     "test_journal_schedule.ModuleSafetyTests.test_module_has_no_subprocess",
     "test_routing_policy.DriverCommandLineTests.test_dry_run_under_each_policy_previews_the_decision_and_spawns_nothing",
 )
+
+# ---- the decision-and-improvement matrix, and the Jev-free proof (D28) -------------------------
+#
+# Release 1 of the decision-and-improvement work is JEV-FREE by construction. "Jev" is the
+# optional provider a separately gated Release 2 would add; it does not exist in this tree, and
+# nothing this repository does on startup, in `rules` or `replay`, or on rollback needs an
+# import, a key, an SDK or a socket belonging to it or to any other vendor. This section is where
+# that claim is COMPUTED instead of asserted, beside a matrix of what each harness may actually
+# run.
+#
+# WHAT IT COMPUTES, AND OUT OF WHAT.
+#
+#   The matrix          one row per harness -- client, the OS its own confinement evidence names,
+#                       the evaluation adapter that answers for it, the enforcement it has, the
+#                       decision modes it can run, and what it falls back to. Every cell comes
+#                       from the registry or from the constant in the module that owns it
+#                       (`decision_policy.SELECTION_MODES` and `DEFERRED_MODES`,
+#                       `workflow_eval.CONFINED_DISPATCH_WIRED`, `RUNTIME_REASONS`), so no cell
+#                       can be typed into agreement with a wish.
+#   The Jev-free        an AST walk of the V1 decision surface and of what starts a run: every
+#   report              module each one imports and every environment variable each one reads. A
+#                       network import, an optional-provider import or identifier, or an
+#                       environment read on the decision surface is a FINDING and fails `check`.
+#                       It is a statement about source shape; the BEHAVIOURAL proof -- import the
+#                       surface, run rules and replay, take a rollback, all with those modules
+#                       refused at `sys.meta_path` -- is `tests/test_decision_release_matrix.py`,
+#                       which this table names.
+#   Baseline            the four native adapters' legacy-path tests, listed PER ADAPTER and never
+#   conformance         merged into one "every harness passes" line, because whether they conform
+#                       separately is exactly the question.
+#
+# WHAT IT REFUSES TO SAY.
+#
+#   * THAT `canary` OR `active` IS AVAILABLE ANYWHERE. `workflow_eval.CONFINED_DISPATCH_WIRED` is
+#     False, so D23's gate refuses every transition and `runtime_activation` resolves every run to
+#     legacy with a reason code. The mode cell is derived from that constant and from
+#     `decision_policy.DEFERRED_MODES`, and moves only when they do.
+#   * THAT CURSOR'S ADAPTIVE PROFILE IS SUPPORTED. It is `unsupported` pending independent proof
+#     -- and that is a claim about the adaptive profile ALONE. Cursor's current CLI implementation
+#     is verified, dated, and named in the same row, because an unavailable adaptive profile is
+#     not an absent implementation, and reporting it as one would be a second, different untruth.
+#   * THAT ANYTHING HERE IS FASTER, CHEAPER OR BETTER. No cell carries a gain, a ratio or a
+#     latency, and `decision_matrix` refuses a row whose keys are not exactly
+#     `DECISION_ROW_KEYS`. A release matrix says what is available and on what evidence; whether a
+#     mechanism helped is `bin/decision_eval.py`'s question and it has no live answer.
+#   * THAT TRAINING-DATA COLLECTION IS AVAILABLE ON ANY HARNESS. It ships off --
+#     `training_data.COLLECTION_ENABLED` and `CAPTURE_WIRED` are both False and nothing calls the
+#     hook -- and there is deliberately NO capability row for it in the registry. The code is
+#     present and unwired, which is a different sentence from "available", and the packaging
+#     review's `training/` row says only that the store's ignore rule is present, never that a
+#     record exists.
+
+#: The V1 decision surface: every module that takes, records, replays or rolls back a decision.
+#: The Jev-free scan reads exactly these files, plus `DECISION_STARTUP` below.
+DECISION_SURFACE = ("decision_contract", "decision_provider", "decision_policy", "decision_eval",
+                    "decision_context", "improvement_loop", "workflow_eval")
+
+#: What STARTS a run. Named apart from the surface because "startup" in the task's sense is a
+#: driver starting, not a library importing, and because these legitimately read the environment
+#: (PATH, a harness home) while the decision surface reads none at all.
+DECISION_STARTUP = ("kit_contract", "claude_execute", "codex_execute", "copilot_execute",
+                    "cursor_execute")
+
+#: Top-level modules that open a socket, speak a wire protocol, or fetch a URL. An import of one
+#: of these anywhere in the decision surface or the startup path is a finding: V1 must start,
+#: decide and roll back with no network at all, and a transport that is present but unused today
+#: is a transport somebody wires tomorrow without a second look.
+NETWORK_IMPORTS = ("aiohttp", "asyncore", "ftplib", "http", "httpx", "imaplib", "nntplib",
+                   "poplib", "requests", "smtplib", "socket", "socketserver", "ssl",
+                   "telnetlib", "urllib", "urllib3", "webbrowser", "xmlrpc")
+
+#: The optional provider Release 2 would add, as a token. Matched against IMPORTED MODULE NAMES
+#: and IDENTIFIERS, never against prose -- this file and the documents around it discuss the
+#: provider by name constantly, and a scan that could not tell a sentence from a call would be
+#: useless here.
+OPTIONAL_PROVIDER_TOKENS = ("jev",)
+
+#: Environment reads, as attribute uses. The decision surface performs none; the only environment
+#: variable on the path to a decision is `runtime_data.DATA_HOME_VAR`, which names a DIRECTORY.
+ENVIRONMENT_USES = ("environ", "getenv", "getenvb")
+
+#: The registry rows that say something about an OS execution boundary, in the order the matrix
+#: reads them.
+CONFINEMENT_ROWS = ("confined_verify", "confined_dispatch")
+
+#: The registry row this section added: whether a run on a harness may take a decision-policy
+#: bundle in a running state. `unsupported` on every harness, and it is ONE unwired mechanism
+#: rather than four -- the row is per harness because the evidence that would move it is.
+ADAPTIVE_ROW = "adaptive_decisions"
+
+#: Exactly the keys a matrix row carries. Closed, and enforced by `decision_matrix`, so a later
+#: edit cannot quietly add a `speedup`, a `latency_ms` or a `win_rate` column to a table whose
+#: whole point is that it makes no such claim.
+DECISION_ROW_KEYS = ("harness", "label", "client", "os", "adapter", "enforcement", "mode",
+                     "adaptive", "fallback", "implementation_present")
+
+NO_PERFORMANCE_CLAIM_LABEL = (
+    "this matrix makes NO performance claim. It reports what is available and on what evidence; "
+    "no cell carries a gain, a ratio, a latency or a cost, no live trial has run, and a "
+    "mechanism release is valid without one -- a well-run trial that retains the baseline is a "
+    "valid outcome")
+
+OPTIONAL_PROVIDER_ABSENT_LABEL = (
+    "V1 starts, decides and rolls back with every optional provider ABSENT. `rules` computes "
+    "locally over the request's own state, `replay` reads a caller-selected local store and "
+    "abstains on a miss, and a rollback names a fallback `decision_policy.resolve_bundle` chose "
+    "and contacts nothing. No endpoint, key, SDK, model id or price for an optional provider "
+    "appears anywhere in this repository, and none is guessed at here")
+
+ADAPTIVE_UNAVAILABLE_LABEL = (
+    "`canary` and `active` are UNAVAILABLE on every harness, and the refusal is machine-derived: "
+    "`workflow_eval.CONFINED_DISPATCH_WIRED` is False, so `activation_decision` refuses every "
+    "transition and `runtime_activation` resolves every run to legacy. Absent D23 evidence there "
+    "is no such thing as a partially available canary")
+
+CURSOR_ADAPTIVE_SCOPE_LABEL = (
+    "Cursor's adaptive profile is `unsupported` pending independent proof, and that is a claim "
+    "about the ADAPTIVE PROFILE ONLY. Cursor's current CLI implementation is present and "
+    "verified -- its dispatch, identity probe, read-only dispatch, structured events, durable "
+    "attempts and independent review all carry a dated `verified: supported` row against a named "
+    "client version -- and nothing here reimplements it, retires it or reports it as absent")
+
+TRAINING_NOT_AVAILABLE_LABEL = (
+    "training-data collection is NOT a capability of any harness and has no registry row. "
+    "`training_data.COLLECTION_ENABLED` and `CAPTURE_WIRED` are both False, there is no "
+    "production call site -- the only call sites are the module's own offline `demo` and its "
+    "tests -- and `build_dataset` requires an explicit `store_dir`. What ships is "
+    "code that is present and unwired; `training/` in the packaging table means the store's "
+    "ignore rule is present, never that a record, a dataset or an export manifest exists")
+
+#: The live gates a transition to a running state would have to pass, each with the owner that
+#: decides it, the blocker code it emits, and the tests that prove it refuses. Every id is
+#: resolved by `check`, so a rename fails the gate rather than rotting here.
+DECISION_LIVE_GATES = (
+    {"gate": "protected profile (D07)",
+     "owner": "exec_policy.certify_profile over exec_policy.run_sentinels, relayed by "
+              "workflow_eval.promotion_eligibility",
+     "blocker": "protected-profile-uncertified",
+     "tests": ("test_decision_activation.ProtectedActivationGateTests"
+               ".test_each_of_the_four_gates_refuses_on_its_own_with_the_other_three_satisfied",)},
+    {"gate": "current grouped and exposed evaluation manifest",
+     "owner": "workflow_eval.verify_manifest for the document, workflow_eval.require_held_out "
+              "for the store, composed by workflow_eval.manifest_currency",
+     "blocker": "evaluation-manifest-not-current",
+     "tests": ("test_decision_activation.ProtectedActivationGateTests"
+               ".test_the_manifest_gate_asks_both_the_document_and_the_store",)},
+    {"gate": "predeclared endpoint, margins, caps and stops (D19)",
+     "owner": "workflow_eval.OPERATOR_DECLARATIONS union "
+              "decision_eval.RECOVERY_REPORT_DECLARATIONS, composed by "
+              "workflow_eval.trial_plan_completeness",
+     "blocker": "trial-plan-incomplete",
+     "tests": ("test_decision_activation.ProtectedActivationGateTests"
+               ".test_the_trial_plan_gate_is_the_union_of_two_owners_neither_of_which_covers_it",)},
+    {"gate": "exact approval (D22)",
+     "owner": "workflow_eval.promotion_eligibility's own approval row, re-derived through "
+              "workflow_eval.approval_holds",
+     "blocker": "exact-approval-missing",
+     "tests": ("test_decision_activation.ProtectedActivationGateTests"
+               ".test_a_wired_runtime_refuses_an_approval_that_bound_and_re_derived_nothing",)},
+    {"gate": "a confining, ledgered dispatch path -- UNCONDITIONAL",
+     "owner": "workflow_eval.CONFINED_DISPATCH_WIRED, re-read at call time by the pointer writer "
+              "and by the pointer reader",
+     "blocker": "confining-dispatch-unwired",
+     "tests": ("test_decision_activation.ProtectedActivationGateTests"
+               ".test_every_named_gate_is_satisfiable_and_the_transition_still_refuses",
+               "test_decision_activation.ProtectedActivationGateTests"
+               ".test_no_argument_gets_a_pointer_past_the_gate_today",
+               "test_decision_activation.ProtectedActivationGateTests"
+               ".test_a_running_pointer_written_in_another_world_reads_as_legacy_in_this_one")},
+)
+
+#: The tests the "with every optional provider absent" table cites BY NAME, each bound to its own
+#: constant rather than to a position in a tuple: a reordered list would otherwise leave the
+#: generated page citing a different test while still reading as though it had been checked.
+POINTER_ABSENT_TESTS = (
+    "test_decision_activation.ProtectedActivationGateTests"
+    ".test_absent_pointer_is_legacy_and_is_not_an_error",
+    "test_decision_activation.ProtectedActivationGateTests"
+    ".test_every_way_a_pointer_fails_to_resolve_ends_at_legacy_with_its_own_reason",
+)
+ROLLBACK_EVIDENCE_TESTS = (
+    "test_decision_activation.ProtectedActivationGateTests"
+    ".test_rollback_names_the_fallback_its_owner_chose_and_ends_at_legacy",
+    "test_decision_activation.ProtectedActivationGateTests"
+    ".test_rollback_contacts_no_provider_and_writes_through_no_other_owner",
+)
+PROVIDER_EVIDENCE_TEST = "test_decision_provider.RulesReplayProviderTests"
+JEV_FREE_BEHAVIOURAL_TEST = (
+    "test_decision_release_matrix.JevFreeMatrixTests"
+    ".test_rules_replay_and_rollback_all_run_with_every_network_module_refused")
+
+#: The fallback path, and the tests that prove it holds with every optional provider absent.
+DECISION_FALLBACK_TESTS = (
+    POINTER_ABSENT_TESTS + ROLLBACK_EVIDENCE_TESTS + (JEV_FREE_BEHAVIOURAL_TEST,))
+
+#: Baseline conformance, PER ADAPTER. D02 froze each native driver's legacy decision path before
+#: anything was extracted from it, so these are the per-harness answers to "does the baseline
+#: still hold here", and they are reported separately on purpose: a merged line would let three
+#: passing adapters carry a fourth.
+DECISION_CONFORMANCE = {
+    "claude-code": (
+        "test_decision_legacy.LegacyDecisionGoldenTests"
+        ".test_claude_dispatch_failure_stops_before_verify_even_if_verify_would_pass",
+        "test_decision_legacy.LegacyDecisionGoldenTests"
+        ".test_claude_escalates_tier_ladder_on_verify_failure_until_pass",
+        "test_decision_legacy.LegacyDecisionGoldenTests"
+        ".test_claude_ladder_exhausted_blocks_after_every_rung",
+        "test_decision_legacy.LegacyDecisionGoldenTests"
+        ".test_claude_admission_denial_returns_budget_stop_without_dispatch",
+    ),
+    "codex": (
+        "test_decision_legacy.LegacyDecisionGoldenTests"
+        ".test_codex_unknown_class_dispatch_failure_still_climbs_the_ladder",
+        "test_decision_legacy.LegacyDecisionGoldenTests"
+        ".test_codex_no_escalation_class_dispatch_failure_stops_ladder_and_skips_recovery",
+        "test_decision_legacy.LegacyDecisionGoldenTests"
+        ".test_codex_ladder_exhausted_triggers_reserved_orchestrator_recovery",
+        "test_decision_legacy.LegacyDecisionGoldenTests"
+        ".test_codex_admission_denial_raises_rather_than_returning",
+    ),
+    "copilot": (
+        "test_decision_legacy.LegacyDecisionGoldenTests"
+        ".test_copilot_dispatch_failure_stops_before_verify_even_if_verify_would_pass",
+        "test_decision_legacy.LegacyDecisionGoldenTests"
+        ".test_copilot_escalates_tier_ladder_on_verify_failure_until_pass",
+        "test_decision_legacy.LegacyDecisionGoldenTests"
+        ".test_copilot_admission_denial_returns_budget_stop_without_dispatch",
+    ),
+    "cursor": (
+        "test_decision_legacy.LegacyDecisionGoldenTests"
+        ".test_cursor_verify_failure_blocks_after_exactly_one_attempt_no_ladder",
+        "test_decision_legacy.LegacyDecisionGoldenTests"
+        ".test_cursor_dispatch_failure_stops_immediately",
+        "test_decision_legacy.LegacyDecisionGoldenTests"
+        ".test_cursor_admission_denial_returns_budget_stop_without_dispatch",
+    ),
+    "stub": (
+        "test_workflow_eval.AdapterTests"
+        ".test_every_adapter_builds_a_dispatch_and_a_read_only_review_with_the_prompt_verbatim",
+    ),
+    SHARED: (
+        "test_decision_legacy.LegacyDecisionGoldenTests"
+        ".test_all_drivers_delegate_parsing_and_readiness_to_the_one_kit_contract",
+        "test_decision_legacy.LegacyDecisionGoldenTests"
+        ".test_no_native_driver_reads_the_applied_routing_policy_file",
+        "test_decision_legacy.LegacyDecisionGoldenTests"
+        ".test_workflow_eval_absent_policy_file_is_none_the_legacy_default",
+        PROVIDER_EVIDENCE_TEST,
+        "test_decision_release_matrix.JevFreeMatrixTests",
+    ),
+}
 
 # ---- the release checklist, migration notes, triggers, and prepared commands ------------------
 
@@ -709,6 +1000,53 @@ CHECKLIST = (
         "limit": "no live evaluation has run, so no proposal has evidence behind it yet",
     },
     {
+        "guarantee": "Training-data collection ships off and no example has been gathered",
+        "evidence": "`python3 bin/training_data.py readiness` prints both switches off, the "
+                    "eleven gates with the act that opens each, and what a readiness report does "
+                    "not establish; `python3 bin/training_data.py demo` walks capture to refused "
+                    "re-export in a temporary directory and spends nothing; the runbook is "
+                    "docs/TRAINING-DATA-READINESS.md",
+        "limit": "the walk is synthetic fixture data. It demonstrates mechanics and establishes "
+                 "nothing about a dataset's sufficiency, a label's correctness or a model, no "
+                 "minimum sample count is asserted anywhere, and an export records no exposure "
+                 "in the evaluation store -- the operator does that themselves",
+    },
+    {
+        "guarantee": "Release 1 of the decision work starts, decides, and rolls back with every "
+                     "optional provider absent",
+        "evidence": "`python3 bin/release_gate.py decision` walks the decision surface and the "
+                    "four drivers by AST: no network import, no optional-provider name, and no "
+                    "environment read on the surface at all. The behavioural half -- the whole "
+                    "surface imported, `rules` and `replay` answered, and a rollback taken, with "
+                    "every network module refused at the import hook -- is "
+                    "`tests/test_decision_release_matrix.py`, whose ids this gate resolves",
+        "limit": "`canary` and `active` are unavailable on every harness, because "
+                 "`workflow_eval.CONFINED_DISPATCH_WIRED` is False and D23's gate relays that "
+                 "row; Cursor's adaptive profile is `unsupported` pending independent proof, "
+                 "which says nothing against Cursor's current implementation, whose rows are "
+                 "verified and dated; and no cell anywhere carries a gain, a ratio or a latency",
+    },
+    {
+        # D30 registered this row. D29 left the conformance report uncited on purpose -- D28 owned
+        # this surface and its bytes were pinned -- so `check` pointed no reader at it. The handoff
+        # owns the pointer, and names both documents rather than one.
+        "guarantee": "The decision work's conformance and its handoff are written down, and both "
+                     "say what they did not establish",
+        "evidence": "docs/DECISION-IMPROVEMENT-CONFORMANCE.md reports 23 offline checks in three "
+                    "outcomes -- pass, fail, and `unavailable` for a check whose evidence this "
+                    "host cannot produce; docs/DECISION-IMPROVEMENT-V1-HANDOFF.md carries the "
+                    "accepted commit, the rollback procedure, the steps that stay the operator's "
+                    "own, and the deferred register. `PYTHONPATH=tests python3 -m unittest "
+                    "test_decision_release_matrix` runs both documents' enforcement: the "
+                    "conformance class re-runs every check and refuses a report in which nothing "
+                    "passed, and the handoff class resolves every path, command and test id the "
+                    "handoff names",
+        "limit": "conformance is established for this checkout only -- one platform, one Python, "
+                 "no installed copy -- and six of the 23 checks are unavailable rather than "
+                 "passed. Neither document authorizes anything or moves a capability row: both "
+                 "are reports",
+    },
+    {
         "guarantee": "Nothing here ran a paid call, wrote a home directory, or pushed",
         "evidence": "the invariants in CLAUDE.md, the no-real-CLI tests named below, and this "
                     "gate's own process list (read-only git, in-process unittest)",
@@ -721,7 +1059,7 @@ CHECKLIST = (
 MIGRATION_NOTES = (
     {
         "surface": "Runtime stores (memory, telemetry, journal, benchruns, prefs, trends, "
-                   "attempts, evals)",
+                   "attempts, evals, training)",
         "forward": "`python3 bin/runtime_data.py where`; an in-tree store keeps being used; "
                    "`python3 bin/runtime_data.py migrate --store NAME --apply` copies it out and "
                    "never deletes the original",
@@ -765,6 +1103,27 @@ MIGRATION_NOTES = (
         "surface": "Routing policy (`workflow_eval.POLICY_FILE` under the `prefs` store)",
         "forward": "`python3 bin/workflow_eval.py propose` -> `review` -> `apply`; every version kept",
         "back": "`python3 bin/workflow_eval.py rollback --version N`; the replaced version is kept too",
+    },
+    {
+        "surface": "Runtime decision activation (`workflow_eval.POLICY_ACTIVATION` generations "
+                   "under the `prefs` store)",
+        "forward": "nothing to do and nothing that could be done: no pointer exists, an absent "
+                   "pointer means legacy, and `workflow_eval.activation_decision` refuses every "
+                   "transition while `CONFINED_DISPATCH_WIRED` is False",
+        "back": "`python3 bin/workflow_eval.py activation` reports what is in force; "
+                "`python3 bin/workflow_eval.py rollback` appends a generation and deletes "
+                "nothing, and every future run reads legacy whatever fallback it named",
+    },
+    {
+        "surface": "Training-data collection (off: `training_data.COLLECTION_ENABLED` and "
+                   "`CAPTURE_WIRED` are both False and nothing calls the hook)",
+        "forward": "docs/TRAINING-DATA-READINESS.md is the runbook, and `python3 "
+                   "bin/training_data.py readiness` prints its gates: declare an approved scope, "
+                   "turn the switch on at the call site, wire a caller, then record the export's "
+                   "exposure in the evaluation store yourself",
+        "back": "set both constants back to False and remove the call site; nothing is deleted "
+                "and no record is rewritten. `python3 bin/runtime_data.py forget --store "
+                "training` lists before it deletes and deletes only with `--apply`",
     },
     {
         "surface": "Kits written before the contract",
@@ -1477,6 +1836,257 @@ def reverify(harness, released_on, repo_root=REPO_ROOT):
     }
 
 
+# ---- the decision matrix, computed ------------------------------------------------------------
+
+_PROVIDER_TOKEN = re.compile(r"(?:\A|_)(?:" + "|".join(OPTIONAL_PROVIDER_TOKENS) + r")(?:\Z|_)",
+                             re.IGNORECASE)
+
+
+def _imports_and_uses(path):
+    """`(imports, identifiers)` for one module by AST -> uses, never words.
+
+    `None` when the file is missing or will not parse, which is itself a finding: a decision
+    surface this gate cannot read is one it cannot vouch for. Prose is deliberately not walked --
+    this file, `docs/RELEASE.md` and the modules themselves discuss the optional provider by
+    name constantly, and a scan that could not tell a sentence from a call would be useless.
+    """
+    try:
+        tree = ast.parse(Path(path).read_text(encoding="utf-8"))
+    except (OSError, SyntaxError, ValueError):
+        return None
+    imports, identifiers = set(), set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                imports.add(alias.name.split(".")[0])
+        elif isinstance(node, ast.ImportFrom):
+            if node.module and not node.level:
+                imports.add(node.module.split(".")[0])
+        elif isinstance(node, ast.Name):
+            identifiers.add(node.id)
+        elif isinstance(node, ast.Attribute):
+            identifiers.add(node.attr)
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            identifiers.add(node.name)
+        elif isinstance(node, ast.arg):
+            identifiers.add(node.arg)
+        elif isinstance(node, ast.keyword) and node.arg:
+            identifiers.add(node.arg)
+    return imports, identifiers
+
+
+def jev_free_report(repo_root=REPO_ROOT):
+    """What the V1 decision surface imports and reads -> a report, with findings.
+
+    THREE RULES, and each one fails `check`:
+
+      * no module in `DECISION_SURFACE` or `DECISION_STARTUP` imports anything in
+        `NETWORK_IMPORTS`. V1 must start, decide and roll back with no network at all;
+      * no module on either list imports, defines or calls anything whose name carries an
+        `OPTIONAL_PROVIDER_TOKENS` token;
+      * no module in `DECISION_SURFACE` reads the environment at all. The startup path
+        legitimately does -- a driver resolves PATH and a harness home -- so the rule is scoped
+        to the surface, where the only environment variable anywhere on the path to a decision
+        is `runtime_data.DATA_HOME_VAR`, which names a directory and not a credential.
+
+    THIS IS A STATEMENT ABOUT SOURCE SHAPE AND NOTHING MORE. It reads the files at `repo_root`;
+    it imports none of them, and a transitive import through `_sibling` is invisible to it. The
+    behavioural proof -- import the whole surface, answer through `rules` and `replay`, take a
+    rollback, all with every network module refused at `sys.meta_path` -- lives in
+    `tests/test_decision_release_matrix.py`, which `DECISION_FALLBACK_TESTS` names and `check`
+    resolves.
+    """
+    root = Path(repo_root)
+    findings = []
+    out = {}
+    for group, names, forbid_env in (("surface", DECISION_SURFACE, True),
+                                     ("startup", DECISION_STARTUP, False)):
+        rows = {}
+        for name in names:
+            path = root / "bin" / f"{name}.py"
+            read = _imports_and_uses(path)
+            if read is None:
+                findings.append(f"jev-free: bin/{name}.py is missing or will not parse; a "
+                                f"decision surface this gate cannot read is one it cannot vouch for")
+                rows[name] = {"imports": [], "environment": [], "optional_provider": [],
+                              "readable": False}
+                continue
+            imports, identifiers = read
+            network = sorted(imports & set(NETWORK_IMPORTS))
+            provider = sorted({n for n in imports | identifiers if _PROVIDER_TOKEN.search(n)})
+            environment = sorted(identifiers & set(ENVIRONMENT_USES))
+            for module in network:
+                findings.append(f"jev-free: bin/{name}.py imports {module!r}; the decision "
+                                f"surface and the startup path reach no network")
+            for token in provider:
+                findings.append(f"jev-free: bin/{name}.py names {token!r}; an optional provider "
+                                f"belongs to Release 2 and to no module here")
+            if forbid_env and environment:
+                findings.append(
+                    f"jev-free: bin/{name}.py reads the environment ({', '.join(environment)}); "
+                    f"the decision surface reads none -- the only environment variable on the "
+                    f"path to a decision is runtime_data.DATA_HOME_VAR, which names a directory")
+            rows[name] = {"imports": sorted(imports), "environment": environment,
+                          "optional_provider": provider, "readable": True}
+        out[group] = rows
+    return {
+        "schema": GATE_VERSION,
+        "surface": out["surface"],
+        "startup": out["startup"],
+        "findings": findings,
+        "behavioural_proof": JEV_FREE_BEHAVIOURAL_TEST,
+        "labels": [OPTIONAL_PROVIDER_ABSENT_LABEL],
+    }
+
+
+def decision_vocabulary():
+    """The decision vocabulary, read from the module that owns each word. Nothing is typed here:
+    a mode this repository stopped implementing changes this table by changing that module."""
+    dp = _sibling("decision_policy")
+    prov = _sibling("decision_provider")
+    we = _sibling("workflow_eval")
+    td = _sibling("training_data")
+    ep = _sibling("exec_policy")
+    return {
+        "selection_modes": list(dp.SELECTION_MODES),
+        "deferred_modes": list(dp.DEFERRED_MODES),
+        "resolution_sources": list(dp.RESOLUTION_SOURCES),
+        "provider_modes": list(prov.PROVIDER_MODES),
+        "activation_states": list(we.ACTIVATION_STATES),
+        "running_states": list(we.RUNNING_STATES),
+        "runtime_reasons": list(we.RUNTIME_REASONS),
+        "confined_dispatch_wired": bool(we.CONFINED_DISPATCH_WIRED),
+        "blockers": sorted(set(we.PROTOCOL_BLOCKERS) | set(we.ACTIVATION_BLOCKERS)
+                           | set(we.PROMOTION_APPROVAL_BLOCKERS)),
+        "collection_enabled": bool(td.COLLECTION_ENABLED),
+        "capture_wired": bool(td.CAPTURE_WIRED),
+        "profiles": [{"profile": name, "platform": row["platform"] or "any",
+                      "backend": row["backend"], "implemented": bool(row["implemented"])}
+                     for name, row in sorted(ep.PROTECTED_PROFILES.items())],
+    }
+
+
+def decision_matrix(repo_root=REPO_ROOT, vocabulary=None):
+    """One row per harness: client, OS, adapter, enforcement, decision mode, fallback -- and,
+    separately, the adaptive profile beside the implementation that is actually present.
+
+    EVERY CELL IS DERIVED. The registry answers for the client, the OS its own confinement rows
+    name, the adapter's verification and the adaptive row; `decision_policy` answers for which
+    modes exist; `workflow_eval` answers for whether a running one can be reached and for what a
+    run falls back to. Nothing here is typed into agreement with a wish, and
+    `DECISION_ROW_KEYS` is closed so that a later edit cannot add a column this table has no
+    evidence for.
+    """
+    vocab = vocabulary or decision_vocabulary()
+    matrix = harness_matrix(repo_root, with_binaries=False)
+    running_reachable = vocab["confined_dispatch_wired"]
+    rows = []
+    for harness in HARNESSES:
+        entry = matrix[harness]
+        by_name = {r["name"]: r for r in entry["capabilities"]}
+        confinement = []
+        for name in CONFINEMENT_ROWS:
+            row = by_name.get(name)
+            if row is None:
+                continue
+            confinement.append({
+                "row": name, "effective": row["effective"], "verified": row["verified"],
+                "verified_on": row["verified_on"],
+                "host": row.get("client_version") or row.get("source") or None,
+            })
+        adaptive = by_name.get(ADAPTIVE_ROW)
+        adapter_row = by_name.get("workflow_evaluation")
+        available = list(vocab["selection_modes"])
+        unavailable = list(vocab["deferred_modes"]) if not running_reachable else []
+        row = {
+            "harness": harness,
+            "label": entry["label"],
+            "client": {"mode": entry["client_mode"], "version": entry["client_version"]},
+            "os": confinement,
+            "adapter": {"name": entry["eval_adapter"], "row": "workflow_evaluation",
+                        "effective": adapter_row["effective"] if adapter_row else "no row",
+                        "verified_on": adapter_row["verified_on"] if adapter_row else None},
+            "enforcement": {"rows": {c["row"]: c["effective"] for c in confinement},
+                            "host_wide": ("bin/exec_policy.py; `enforced` refuses rather than "
+                                          "downgrading where no backend exists")},
+            "mode": {"available": available, "unavailable": unavailable,
+                     "blocker": None if running_reachable else "confining-dispatch-unwired"},
+            "adaptive": {"row": ADAPTIVE_ROW,
+                         "effective": adaptive["effective"] if adaptive else "no row",
+                         "verified": adaptive["verified"] if adaptive else "no row",
+                         "note": (adaptive or {}).get("note") or ""},
+            "fallback": {"mode": "legacy", "reason": "no-pointer",
+                         "sources": list(vocab["resolution_sources"])},
+            "implementation_present": [
+                {"capability": r["name"], "verified_on": r["verified_on"],
+                 "client_version": r.get("client_version")}
+                for r in entry["capabilities"] if r["verified"] == "supported"],
+        }
+        unexpected = sorted(set(row) - set(DECISION_ROW_KEYS))
+        missing = sorted(set(DECISION_ROW_KEYS) - set(row))
+        if unexpected or missing:  # pragma: no cover -- a closed shape that is not allowed to drift
+            raise ValueError(
+                f"decision matrix row for {harness!r} carries "
+                + ("; ".join(part for part in (
+                    f"unexpected {', '.join(unexpected)}" if unexpected else "",
+                    f"no {', '.join(missing)}" if missing else "") if part))
+                + f"; the keys are {', '.join(DECISION_ROW_KEYS)}. {NO_PERFORMANCE_CLAIM_LABEL}")
+        rows.append(row)
+    return {
+        "schema": GATE_VERSION,
+        "vocabulary": vocab,
+        "rows": rows,
+        "labels": [NO_PERFORMANCE_CLAIM_LABEL, ADAPTIVE_UNAVAILABLE_LABEL,
+                   CURSOR_ADAPTIVE_SCOPE_LABEL, OPTIONAL_PROVIDER_ABSENT_LABEL,
+                   TRAINING_NOT_AVAILABLE_LABEL],
+    }
+
+
+def decision_conformance(repo_root=REPO_ROOT, run=False, resolver=None, runner=None):
+    """Baseline conformance per adapter, plus the live gates and the fallback, with every test
+    id resolved. Separate per adapter on purpose: a merged line would let three passing adapters
+    carry a fourth."""
+    resolver = resolver or resolve_test_ids
+    runner = runner or run_test_ids
+    adapters = {}
+    for harness in tuple(HARNESSES) + (SHARED,):
+        ids = tuple(DECISION_CONFORMANCE.get(harness, ()))
+        resolved = resolver(ids) if ids else {}
+        adapters[harness] = {
+            "tests": list(ids), "resolved": resolved,
+            "unresolved": [tid for tid, n in resolved.items() if not n],
+            "test_count": sum(resolved.values()),
+            "run": runner(ids) if run and ids else None,
+        }
+    vocab = decision_vocabulary()
+    gates = []
+    for gate in DECISION_LIVE_GATES:
+        resolved = resolver(gate["tests"])
+        gates.append(dict(gate, tests=list(gate["tests"]), resolved=resolved,
+                          unresolved=[tid for tid, n in resolved.items() if not n],
+                          known_blocker=gate["blocker"] in vocab["blockers"]))
+    fallback = resolver(DECISION_FALLBACK_TESTS)
+    report = {
+        "schema": GATE_VERSION,
+        "run": run,
+        "adapters": adapters,
+        "live_gates": gates,
+        "fallback": {"tests": list(DECISION_FALLBACK_TESTS), "resolved": fallback,
+                     "unresolved": [tid for tid, n in fallback.items() if not n],
+                     "run": runner(DECISION_FALLBACK_TESTS) if run else None},
+    }
+    report["unresolved"] = sorted(
+        {tid for cell in adapters.values() for tid in cell["unresolved"]}
+        | {tid for gate in gates for tid in gate["unresolved"]}
+        | set(report["fallback"]["unresolved"]))
+    report["unknown_blockers"] = [g["blocker"] for g in gates if not g["known_blocker"]]
+    report["failed"] = sorted(
+        f"decision/{harness}" for harness, cell in adapters.items()
+        if cell["run"] and not cell["run"]["ok"])
+    if report["fallback"]["run"] and not report["fallback"]["run"]["ok"]:
+        report["failed"].append("decision/fallback")
+    return report
+
 # ---- renderers ---------------------------------------------------------------------------------
 
 def _table(headers, rows):
@@ -1684,6 +2294,126 @@ def render_prepared():
     return "\n".join(out).rstrip()
 
 
+def render_decision(matrix, conformance, jev):
+    """The decision-and-improvement section of the generated block. Deterministic: registry
+    rows, module constants and resolved test ids, and not one thing that depends on the host."""
+    vocab = matrix["vocabulary"]
+    out = ["### Decision and improvement (Release 1): what runs, and with what absent", "",
+           "Release 1 is Jev-free by construction -- the optional provider a separately gated "
+           "Release 2 would add does not exist in this tree. The columns below are read from the "
+           "capability registry and from the constant in the module that owns each word "
+           "(`decision_policy.SELECTION_MODES` and `DEFERRED_MODES`, "
+           "`decision_provider.PROVIDER_MODES`, `workflow_eval.CONFINED_DISPATCH_WIRED` and "
+           "`RUNTIME_REASONS`), never typed here.", ""]
+    for label in matrix["labels"]:
+        out.append(f"- {label}.")
+    out.append("")
+    rows = []
+    for row in matrix["rows"]:
+        os_cell = "; ".join(
+            f"`{c['row']}` {c['verified']}"
+            + (f" on {c['verified_on']}" if c["verified_on"] else "")
+            + (f" ({c['host']})" if c["host"] else "")
+            for c in row["os"]) or "no confinement row; not recorded"
+        enforcement = ", ".join(f"`{name}`={state}" for name, state in row["enforcement"]["rows"].items()) \
+            or "no per-harness row"
+        mode = ", ".join(row["mode"]["available"]) + " -- " + (
+            (", ".join(row["mode"]["unavailable"]) + f" unavailable (`{row['mode']['blocker']}`)")
+            if row["mode"]["unavailable"] else "every state reachable")
+        rows.append((
+            row["label"],
+            f"{row['client']['mode']}; {row['client']['version']}",
+            os_cell,
+            f"`{row['adapter']['name']}` ({row['adapter']['effective']})",
+            enforcement,
+            mode,
+            f"{row['fallback']['mode']} (`{row['fallback']['reason']}`)",
+        ))
+    out.append(_table(("Harness", "Client", "OS", "Adapter", "Enforcement", "Decision mode",
+                       "Fallback"), rows))
+    out.append("")
+    out.append("#### The adaptive profile, beside the implementation that is present")
+    out.append("")
+    out.append("Two different claims about two different things, and the table keeps them apart. "
+               "The left column is whether a run on that harness may take a decision-policy "
+               "bundle in a running state. The right is what the registry says is already "
+               "implemented and verified there -- an unavailable adaptive profile is not an "
+               "absent implementation.")
+    out.append("")
+    out.append(_table(("Harness", f"`{ADAPTIVE_ROW}`", "Verified rows present today"),
+                      [(r["label"], f"{r['adaptive']['effective']} "
+                                    f"(verified: {r['adaptive']['verified']})",
+                        ", ".join(f"`{p['capability']}`"
+                                  + (f" {p['verified_on']}" if p["verified_on"] else "")
+                                  for p in r["implementation_present"]) or "none")
+                       for r in matrix["rows"]]))
+    out.append("")
+    out.append("#### Baseline conformance, per adapter")
+    out.append("")
+    out.append("Separately per adapter, never merged: a single line would let three passing "
+               "adapters carry a fourth. These are D02's frozen legacy goldens, which pinned "
+               "each driver's existing decision path before anything was extracted from it.")
+    out.append("")
+    out.append(_table(("Adapter", "Tests", "Cases"),
+                      [(harness,
+                        "; ".join(f"`{tid}` ({cell['resolved'].get(tid, 0)})"
+                                  for tid in cell["tests"]) or "none mapped",
+                        cell["test_count"])
+                       for harness, cell in conformance["adapters"].items() if cell["tests"]]))
+    out.append("")
+    out.append("#### The live gates a running state would have to pass")
+    out.append("")
+    out.append("Every one of them refuses today, and the last one refuses unconditionally. "
+               "Nothing below is a plan to open them: they are named so that a reader can see "
+               "which owner decides each, and which test proves the refusal.")
+    out.append("")
+    out.append(_table(("Gate", "Owner", "Blocker", "Proof"),
+                      [(g["gate"], g["owner"], _code(g["blocker"]),
+                        "; ".join(f"`{tid}` ({g['resolved'].get(tid, 0)})" for tid in g["tests"]))
+                       for g in conformance["live_gates"]]))
+    out.append("")
+    out.append("#### With every optional provider absent")
+    out.append("")
+    out.append(_table(("Surface", "What answers", "Evidence"), (
+        ("Startup", "the four native drivers and `bin/kit_contract.py`; no optional-provider "
+                    "import, key or SDK anywhere on the path",
+         f"{len(jev['startup'])} modules walked by AST; "
+         f"{len(jev['findings'])} findings"),
+        ("Decision", "`" + "`, `".join(vocab["provider_modes"]) + "` -- `rules` computes locally "
+                     "over the request's own state, `replay` reads a caller-selected local store "
+                     "and abstains on a miss",
+         f"`{PROVIDER_EVIDENCE_TEST}`"),
+        ("Runtime mode", "`" + "`, `".join(vocab["selection_modes"]) + "`; `"
+                         + "`, `".join(vocab["deferred_modes"]) + "` refused by name",
+         "`workflow_eval.CONFINED_DISPATCH_WIRED` is "
+         f"{vocab['confined_dispatch_wired']}"),
+        ("Rollback", "`workflow_eval.rollback_entry` names the fallback "
+                     "`decision_policy.resolve_bundle` chose and contacts nothing; every future "
+                     "run reads legacy",
+         "; ".join(f"`{tid}`" for tid in ROLLBACK_EVIDENCE_TESTS)),
+        ("Training data", "nothing: collection ships off and no harness advertises it",
+         f"`training_data.COLLECTION_ENABLED` is {vocab['collection_enabled']}, "
+         f"`CAPTURE_WIRED` is {vocab['capture_wired']}"),
+    )))
+    out.append("")
+    out.append("The modules walked are "
+               + ", ".join(f"`bin/{name}.py`" for name in DECISION_SURFACE)
+               + " (the decision surface, which reads no environment variable at all) and "
+               + ", ".join(f"`bin/{name}.py`" for name in DECISION_STARTUP)
+               + " (what starts a run). The scan is a statement about source shape; the "
+               "behavioural proof -- the whole surface imported, `rules` and `replay` answered "
+               "and a rollback taken with every network module refused at `sys.meta_path` -- is "
+               f"`{jev['behavioural_proof']}`.")
+    out.append("")
+    out.append("#### Named protected profiles")
+    out.append("")
+    out.append(_table(("Profile", "Platform", "Backend", "Implemented"),
+                      [(_code(p["profile"]), p["platform"], _code(p["backend"]),
+                        "yes" if p["implemented"] else "no")
+                       for p in vocab["profiles"]]))
+    return "\n".join(out)
+
+
 def render_block(repo_root=REPO_ROOT):
     """The deterministic generated block for docs/RELEASE.md."""
     matrix = harness_matrix(repo_root)
@@ -1700,6 +2430,9 @@ def render_block(repo_root=REPO_ROOT):
         render_roles(matrix),
         "",
         render_contracts(contracts_report(repo_root)),
+        "",
+        render_decision(decision_matrix(repo_root), decision_conformance(repo_root),
+                        jev_free_report(repo_root)),
         "",
         render_historical(historical_matrix(repo_root)),
         "",
@@ -1827,6 +2560,14 @@ def run_check(repo_root=REPO_ROOT, run_contracts=False):
     contracts = contracts_report(repo_root, run=run_contracts)
     findings.extend(f"contract test id resolves to no test: {tid}" for tid in contracts["unresolved"])
     findings.extend(f"contract tests failed: {cell}" for cell in contracts["failed"])
+    decision = decision_conformance(repo_root, run=run_contracts)
+    findings.extend(f"decision conformance test id resolves to no test: {tid}"
+                    for tid in decision["unresolved"])
+    findings.extend(f"decision conformance tests failed: {cell}" for cell in decision["failed"])
+    findings.extend(f"live gate names blocker {code!r}, which no owner declares"
+                    for code in decision["unknown_blockers"])
+    jev = jev_free_report(repo_root)
+    findings.extend(jev["findings"])
     packaging = packaging_review(repo_root)
     findings.extend(packaging["findings"])
     findings.extend(command_findings(repo_root))
@@ -1877,6 +2618,10 @@ def build_parser():
     c = sub.add_parser("contracts", help="stub conformance beside installed-client verification")
     c.add_argument("--run", action="store_true", help="run the mapped tests in-process")
     c.add_argument("--json", action="store_true")
+    d = sub.add_parser("decision", help="the decision-and-improvement matrix and the Jev-free "
+                                        "report (decision-improvement D28)")
+    d.add_argument("--run", action="store_true", help="run the mapped tests in-process")
+    d.add_argument("--json", action="store_true")
     pk = sub.add_parser("packaging", help="what the package carries; findings fail")
     pk.add_argument("--json", action="store_true")
     sub.add_parser("checklist", help="the release checklist, migration notes, triggers, and prepared commands")
@@ -1888,7 +2633,7 @@ def build_parser():
     ck.add_argument("--run", action="store_true", help="also run every mapped test in-process")
     ck.add_argument("--json", action="store_true")
     sub.add_parser("build", help="rewrite the marked block of docs/RELEASE.md")
-    for node in (m, c, pk, rv, ck):
+    for node in (m, c, d, pk, rv, ck):
         node.add_argument("--repo-root", default=str(REPO_ROOT))
     return p
 
@@ -1918,6 +2663,24 @@ def main(argv=None):
             if report["failed"]:
                 print("\nFAILED: " + ", ".join(report["failed"]))
         return EXIT_DRIFT if report["unresolved"] or report["failed"] else EXIT_OK
+    if args.cmd == "decision":
+        matrix = decision_matrix(root)
+        conformance = decision_conformance(root, run=args.run)
+        jev = jev_free_report(root)
+        if args.json:
+            print(json.dumps({"schema": GATE_VERSION, "matrix": matrix,
+                              "conformance": conformance, "jev_free": jev},
+                             indent=2, sort_keys=True))
+        else:
+            print(render_decision(matrix, conformance, jev))
+            for finding in jev["findings"]:
+                print(f"\nFINDING: {finding}")
+            if conformance["unresolved"]:
+                print("\nUNRESOLVED: " + ", ".join(conformance["unresolved"]))
+            if conformance["failed"]:
+                print("\nFAILED: " + ", ".join(conformance["failed"]))
+        bad = jev["findings"] or conformance["unresolved"] or conformance["failed"]
+        return EXIT_DRIFT if bad else EXIT_OK
     if args.cmd == "packaging":
         review = packaging_review(root)
         if args.json:

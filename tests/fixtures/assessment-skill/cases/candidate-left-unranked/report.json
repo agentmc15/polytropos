@@ -1,0 +1,109 @@
+{
+  "candidates": [
+    {
+      "confidence_meta": {},
+      "harnesses": [
+        "claude"
+      ],
+      "id": "K1",
+      "kind": "deterministic-guard",
+      "numeric_confidence": null,
+      "recommendation": "prepare brief",
+      "signal": "S1",
+      "surfaces": [
+        "shared-runtime-contracts"
+      ],
+      "tool_use": [
+        {
+          "action": "read the verify module and its suite",
+          "limitation": "",
+          "mutates": false,
+          "target": "read-only"
+        }
+      ]
+    }
+  ],
+  "contradictions": [],
+  "decision": "draft task brief(s)",
+  "ledger": [
+    {
+      "claim": "a verify step that exceeds its ceiling hands the caller no partial output",
+      "counterevidence": "OBS-4 describes a manual recovery that assumes console output the timeout path does not produce",
+      "evidence": [
+        "OBS-1",
+        "OBS-3"
+      ],
+      "id": "C1",
+      "scope": "the verify step of one repository",
+      "status": "observed"
+    },
+    {
+      "claim": "the stated recovery for a timed-out verify is manual",
+      "counterevidence": "no record shows an operator following it",
+      "evidence": [
+        "OBS-4"
+      ],
+      "id": "C2",
+      "scope": "the runbook",
+      "status": "documented"
+    }
+  ],
+  "notes": [
+    "the three cited observations are one category read three ways and are not three independent repositories"
+  ],
+  "ranking": {
+    "basis": [
+      "expected learning value",
+      "reversibility",
+      "evidence quality",
+      "disruption"
+    ],
+    "order": []
+  },
+  "scope": {
+    "evidence_not_available": [],
+    "excluded": [
+      "anything outside the verify step"
+    ],
+    "repository": "synthetic/atlas-orchestrator",
+    "revision": "fixture-revision-atlas-a",
+    "surfaces": [
+      "shared-runtime-contracts",
+      "four-harnesses",
+      "skills-and-context-planning",
+      "evaluation-and-release"
+    ]
+  },
+  "signals": [
+    {
+      "affected_scope": "the verify step",
+      "assessment": "candidate",
+      "category": "verify-step-exceeded-its-ceiling",
+      "id": "S1",
+      "no_fit_scope": "dispatch, admission and the ledger, which the evidence does not touch",
+      "recurrence": [
+        "OBS-1",
+        "OBS-2",
+        "OBS-3"
+      ]
+    }
+  ],
+  "surface_answers": {
+    "evaluation-and-release": {
+      "assessment": "unknown",
+      "reason": "the read was bounded to the verify step, so this surface was not examined"
+    },
+    "four-harnesses": {
+      "assessment": "unknown",
+      "reason": "the read was bounded to the verify step, so this surface was not examined"
+    },
+    "shared-runtime-contracts": {
+      "assessment": "candidate",
+      "reason": "the verify step is owned here and the cited evidence sits inside it"
+    },
+    "skills-and-context-planning": {
+      "assessment": "unknown",
+      "reason": "the read was bounded to the verify step, so this surface was not examined"
+    }
+  }
+}

@@ -1,0 +1,50 @@
+{
+  "access_denied": [],
+  "harness_support": {
+    "claude": "supported",
+    "codex": "supported",
+    "copilot": "supported",
+    "cursor": "supported"
+  },
+  "kind": "agent-orchestrator",
+  "observations": [
+    {
+      "asserts": "single",
+      "category": "admission-is-owned-by-one-component",
+      "id": "OBS-1",
+      "locator": "line 7",
+      "path": "forge-settled/src/admission.py",
+      "provenance": "source",
+      "statement": "one function admits every task and no second caller writes admission state",
+      "subject": "admission:owner"
+    },
+    {
+      "asserts": "closes-unknown",
+      "category": "ledger-round-trips-under-a-crash",
+      "id": "OBS-2",
+      "locator": "ResumeTests",
+      "path": "forge-settled/tests/test_ledger_resume.py",
+      "provenance": "test",
+      "statement": "the suite kills a run between dispatch and verify and asserts the resumed run closes the dead attempt as unknown",
+      "subject": "ledger:resume"
+    },
+    {
+      "asserts": "matches",
+      "category": "release-matrix-matches-the-tree",
+      "id": "OBS-3",
+      "locator": "Supported environments",
+      "path": "forge-settled/docs/RELEASE.md",
+      "provenance": "document",
+      "statement": "the supported-environment table names the same four environments the tree carries",
+      "subject": "release:matrix"
+    }
+  ],
+  "repository": "synthetic/forge-settled",
+  "responsibilities": [
+    "shared-runtime-contracts",
+    "four-harnesses",
+    "skills-and-context-planning",
+    "evaluation-and-release"
+  ],
+  "revision": "fixture-revision-forge-a"
+}

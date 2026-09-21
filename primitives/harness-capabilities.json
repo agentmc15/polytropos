@@ -96,6 +96,14 @@
           "note": "bin/workflow_eval.py claude adapter: repo_bench's claude argv for implement, a restricted-permission dispatch for review, dollars from data/pricing.json. One authorized live run on 2026-09-16 (UTC), run 2026-09-16-1b4c in the default evals store, against the maintainer's own ai-stack-advisor checkout: general-mode mining admitted one XS task (23 of 24 sites green); 16 dispatches of a 16 cap across direct/reviewed/kit x sonnet/haiku x 2 repeats, $1.90 model-reported against a $2.00 ceiling, no overspend, 12/12 trials solved by the tests oracle, every variant BELOW the evidence floor (n=2 < 5) and labelled so -- a pipeline verification, not a routing verdict. Observed in the run and fixed after it: review dispatches carried no --output-format json, so their usage was unreadable and priced as estimates. Still open: the reviewer runs in an empty throwaway directory and reviewed the diff statically (it said so); observed_model is never parsed from Claude's JSON; no proposal was made",
           "verified_on": "2026-09-16",
           "client_version": "Claude Code 2.1.273"
+        },
+        "adaptive_decisions": {
+          "product": "not-applicable",
+          "implemented": "unsupported",
+          "verified": "unknown",
+          "source": "bin/decision_policy.py SELECTION_MODES/DEFERRED_MODES, bin/workflow_eval.py CONFINED_DISPATCH_WIRED (decision-improvement D23)",
+          "verified_on": null,
+          "note": "polytropos capability, not a product one: whether a run on this harness may take a decision-policy bundle in canary or active mode. bin/decision_policy.py implements SELECTION_MODES (legacy, shadow) and refuses DEFERRED_MODES (canary, active) by name, and bin/workflow_eval.py's CONFINED_DISPATCH_WIRED is False, so activation_decision refuses every transition and runtime_activation resolves every run to legacy with a reason code. implemented is therefore unsupported on EVERY harness -- this is one unwired mechanism, not four -- and verified stays unknown because nobody has run an adaptive decision on any client. The row is per harness because the evidence that would move it is per harness. tests/test_decision_activation.py ProtectedActivationGateTests.test_every_named_gate_is_satisfiable_and_the_transition_still_refuses is the control: all four named gates pass over synthetic fixtures and the transition still refuses"
         }
       }
     },
@@ -199,6 +207,14 @@
           "verified": "unknown",
           "source": "bin/workflow_eval.py (step 25)",
           "note": "bin/workflow_eval.py codex adapter: `codex exec --json` for implement, `--sandbox read-only` for review, an API-equivalent proxy from data/pricing.codex.json (never a bill); never run live from this repository"
+        },
+        "adaptive_decisions": {
+          "product": "not-applicable",
+          "implemented": "unsupported",
+          "verified": "unknown",
+          "source": "bin/decision_policy.py SELECTION_MODES/DEFERRED_MODES, bin/workflow_eval.py CONFINED_DISPATCH_WIRED (decision-improvement D23)",
+          "verified_on": null,
+          "note": "polytropos capability, not a product one: whether a run on this harness may take a decision-policy bundle in canary or active mode. bin/decision_policy.py implements SELECTION_MODES (legacy, shadow) and refuses DEFERRED_MODES (canary, active) by name, and bin/workflow_eval.py's CONFINED_DISPATCH_WIRED is False, so activation_decision refuses every transition and runtime_activation resolves every run to legacy with a reason code. implemented is therefore unsupported on EVERY harness -- this is one unwired mechanism, not four -- and verified stays unknown because nobody has run an adaptive decision on any client. The row is per harness because the evidence that would move it is per harness. tests/test_decision_activation.py ProtectedActivationGateTests.test_every_named_gate_is_satisfiable_and_the_transition_still_refuses is the control: all four named gates pass over synthetic fixtures and the transition still refuses"
         }
       }
     },
@@ -272,6 +288,14 @@
           "verified": "unknown",
           "source": "bin/workflow_eval.py (step 25)",
           "note": "bin/workflow_eval.py copilot adapter: the implementer agent for implement, the reviewer agent without --allow-all-tools for review, USD + AIC estimates from data/pricing.copilot.json; never run live from this repository"
+        },
+        "adaptive_decisions": {
+          "product": "not-applicable",
+          "implemented": "unsupported",
+          "verified": "unknown",
+          "source": "bin/decision_policy.py SELECTION_MODES/DEFERRED_MODES, bin/workflow_eval.py CONFINED_DISPATCH_WIRED (decision-improvement D23)",
+          "verified_on": null,
+          "note": "polytropos capability, not a product one: whether a run on this harness may take a decision-policy bundle in canary or active mode. bin/decision_policy.py implements SELECTION_MODES (legacy, shadow) and refuses DEFERRED_MODES (canary, active) by name, and bin/workflow_eval.py's CONFINED_DISPATCH_WIRED is False, so activation_decision refuses every transition and runtime_activation resolves every run to legacy with a reason code. implemented is therefore unsupported on EVERY harness -- this is one unwired mechanism, not four -- and verified stays unknown because nobody has run an adaptive decision on any client. The row is per harness because the evidence that would move it is per harness. tests/test_decision_activation.py ProtectedActivationGateTests.test_every_named_gate_is_satisfiable_and_the_transition_still_refuses is the control: all four named gates pass over synthetic fixtures and the transition still refuses"
         }
       }
     },
@@ -312,6 +336,14 @@
           "source": "bin/workflow_eval.py (step 25)",
           "note": "the evaluator's conformance harness; tests/test_workflow_eval.py drives direct, reviewed, and kit workflows, ceilings, caps, routing, resume, and the policy process through it",
           "verified_on": "2026-09-13"
+        },
+        "adaptive_decisions": {
+          "product": "not-applicable",
+          "implemented": "unsupported",
+          "verified": "unknown",
+          "source": "bin/decision_policy.py SELECTION_MODES/DEFERRED_MODES, bin/workflow_eval.py CONFINED_DISPATCH_WIRED (decision-improvement D23)",
+          "verified_on": null,
+          "note": "polytropos capability, not a product one: whether a run on this harness may take a decision-policy bundle in canary or active mode. bin/decision_policy.py implements SELECTION_MODES (legacy, shadow) and refuses DEFERRED_MODES (canary, active) by name, and bin/workflow_eval.py's CONFINED_DISPATCH_WIRED is False, so activation_decision refuses every transition and runtime_activation resolves every run to legacy with a reason code. implemented is therefore unsupported on EVERY harness -- this is one unwired mechanism, not four -- and verified stays unknown because nobody has run an adaptive decision on any client. The row is per harness because the evidence that would move it is per harness. tests/test_decision_activation.py ProtectedActivationGateTests.test_every_named_gate_is_satisfiable_and_the_transition_still_refuses is the control: all four named gates pass over synthetic fixtures and the transition still refuses. The stub runs nothing, so this row says the conformance target has no adaptive profile either: no fixture here can stand in for one"
         }
       }
     },
@@ -465,6 +497,14 @@
           "verified": "unknown",
           "source": "bin/workflow_eval.py (step 25)",
           "note": "bin/workflow_eval.py cursor adapter: `agent -p --force` for implement, `--mode ask` for review, unpriced; never run live from this repository"
+        },
+        "adaptive_decisions": {
+          "product": "not-applicable",
+          "implemented": "unsupported",
+          "verified": "unknown",
+          "source": "bin/decision_policy.py SELECTION_MODES/DEFERRED_MODES, bin/workflow_eval.py CONFINED_DISPATCH_WIRED (decision-improvement D23)",
+          "verified_on": null,
+          "note": "polytropos capability, not a product one: whether a run on this harness may take a decision-policy bundle in canary or active mode. bin/decision_policy.py implements SELECTION_MODES (legacy, shadow) and refuses DEFERRED_MODES (canary, active) by name, and bin/workflow_eval.py's CONFINED_DISPATCH_WIRED is False, so activation_decision refuses every transition and runtime_activation resolves every run to legacy with a reason code. implemented is therefore unsupported on EVERY harness -- this is one unwired mechanism, not four -- and verified stays unknown because nobody has run an adaptive decision on any client. The row is per harness because the evidence that would move it is per harness. tests/test_decision_activation.py ProtectedActivationGateTests.test_every_named_gate_is_satisfiable_and_the_transition_still_refuses is the control: all four named gates pass over synthetic fixtures and the transition still refuses. PENDING INDEPENDENT PROOF, AND ONLY ABOUT THE ADAPTIVE PROFILE. Cursor's current CLI implementation is present and verified and this row says nothing against it: dispatch, identity_probe, read_only_dispatch, structured_events, durable_attempts and independent_review all read verified: supported on 2026-09-16 against Cursor CLI 2026.09.10-fd3934a, and bin/cursor_adapter.py and bin/cursor_execute.py are untouched by this row. An unavailable adaptive profile is not an absent implementation"
         }
       }
     }

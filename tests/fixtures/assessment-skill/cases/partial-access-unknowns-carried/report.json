@@ -1,0 +1,81 @@
+{
+  "candidates": [],
+  "contradictions": [],
+  "decision": "evidence collection needed",
+  "ledger": [
+    {
+      "claim": "acceptance rules exist as maintained prose",
+      "counterevidence": "no readable test exercises them",
+      "evidence": [
+        "OBS-1"
+      ],
+      "id": "C1",
+      "scope": "one document",
+      "status": "documented"
+    },
+    {
+      "claim": "whether acceptance is enforced at run time could not be checked",
+      "counterevidence": "the component the owners file names is outside the readable tree",
+      "evidence": [
+        "OBS-2"
+      ],
+      "id": "C2",
+      "scope": "one document",
+      "status": "unknown"
+    }
+  ],
+  "notes": [
+    "every withheld evidence class is named in scope rather than treated as absent"
+  ],
+  "ranking": {
+    "basis": [],
+    "order": []
+  },
+  "scope": {
+    "evidence_not_available": [
+      "evaluation records",
+      "operator telemetry",
+      "release history"
+    ],
+    "excluded": [],
+    "repository": "synthetic/cinder-partial",
+    "revision": "fixture-revision-cinder-a",
+    "surfaces": [
+      "shared-runtime-contracts",
+      "four-harnesses",
+      "skills-and-context-planning",
+      "evaluation-and-release"
+    ]
+  },
+  "signals": [
+    {
+      "affected_scope": "the acceptance surface as documented",
+      "assessment": "insufficient-evidence",
+      "category": "acceptance-rules-are-documented-only",
+      "id": "S1",
+      "no_fit_scope": "run-time enforcement, which was not readable",
+      "recurrence": [
+        "OBS-1",
+        "OBS-2"
+      ]
+    }
+  ],
+  "surface_answers": {
+    "evaluation-and-release": {
+      "assessment": "insufficient-evidence",
+      "reason": "three evidence classes were withheld from this read"
+    },
+    "four-harnesses": {
+      "assessment": "insufficient-evidence",
+      "reason": "three evidence classes were withheld from this read"
+    },
+    "shared-runtime-contracts": {
+      "assessment": "insufficient-evidence",
+      "reason": "three evidence classes were withheld from this read"
+    },
+    "skills-and-context-planning": {
+      "assessment": "insufficient-evidence",
+      "reason": "three evidence classes were withheld from this read"
+    }
+  }
+}

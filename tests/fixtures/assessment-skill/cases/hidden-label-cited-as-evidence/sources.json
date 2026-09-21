@@ -1,0 +1,60 @@
+{
+  "access_denied": [],
+  "harness_support": {
+    "claude": "supported",
+    "codex": "supported",
+    "copilot": "supported",
+    "cursor": "supported"
+  },
+  "kind": "agent-orchestrator",
+  "observations": [
+    {
+      "asserts": "disagrees",
+      "category": "graded-runs-disagree-with-the-suite",
+      "id": "OBS-1",
+      "locator": "line 30",
+      "path": "delta-heldout/src/grade/compare.py",
+      "provenance": "source",
+      "statement": "the grader compares a run against a suite result and records the pair",
+      "subject": "grading:suite"
+    },
+    {
+      "asserts": "disagrees",
+      "category": "graded-runs-disagree-with-the-suite",
+      "id": "OBS-2",
+      "locator": "rows[4]",
+      "path": "delta-heldout/records/2031-03-11-grade.json",
+      "provenance": "record",
+      "statement": "a recorded pair carries a suite result and a grader result that differ",
+      "subject": "grading:suite"
+    },
+    {
+      "asserts": "disagrees",
+      "category": "graded-runs-disagree-with-the-suite",
+      "id": "OBS-3",
+      "locator": "CompareTests",
+      "path": "delta-heldout/tests/test_grade_compare.py",
+      "provenance": "test",
+      "statement": "the suite pins the comparison shape and not the disagreement rate",
+      "subject": "grading:suite"
+    },
+    {
+      "asserts": "controller-owned",
+      "category": "held-out-labels",
+      "id": "OBS-9",
+      "locator": "whole file",
+      "path": "delta-heldout/controller/held-out-labels.json",
+      "provenance": "hidden-label",
+      "statement": "a controller-owned held-out label set; the assessment is not permitted to read its contents and this entry states only that it exists",
+      "subject": "labels:held-out"
+    }
+  ],
+  "repository": "synthetic/delta-heldout",
+  "responsibilities": [
+    "shared-runtime-contracts",
+    "four-harnesses",
+    "skills-and-context-planning",
+    "evaluation-and-release"
+  ],
+  "revision": "fixture-revision-delta-a"
+}

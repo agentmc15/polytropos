@@ -1,14 +1,18 @@
 # docs-site — the 39-skill SKILL.md audit (D1 dispositions)
 
 Read against PLAN.md D1 (the three-way content rule) and GUARDRAILS.md. Every one of the
-39 SKILL.md files was read in full. **No skill file is edited by this task** — this is the
+39 SKILL.md files this pass covered was read in full. One later entry —
+`claude/assess-improvement` — was appended when that skill landed and was NOT read by this
+pass; it is labeled as such in place. **No skill file is edited by this task** — this is the
 disposition record that T9–T14 apply.
 
 ## Method
 
 - **Roster re-derived from the live tree**, not from the plan: 14 `skills/*/SKILL.md` +
   13 `copilot/.github/skills/*/SKILL.md` + 12 `codex/skills/*/SKILL.md` = 39.
-  `copilot/goliath` post-dates the plan and gets its own entry below.
+  `copilot/goliath` post-dates the plan and gets its own entry below. `claude/assess-improvement`
+  post-dates this pass as well and is an addendum, not a measurement — re-derive the live count
+  from `bin/docs_build.py`'s `skill_inventory()` rather than trusting the arithmetic above.
 - **Budgets measured on the BODY only** (frontmatter stripped), since D1's "~900 words of
   markdown body" is a body budget. Every entry's word count below is that measurement.
   Bodies over ~900 that are not one of the three orchestration ceilings: `claude/context-weight`
@@ -46,8 +50,10 @@ disposition record that T9–T14 apply.
 
 ## Disposition summary
 
-33 `keep`, 3 `enrich`, 3 `relocate` — the expected shape. The robustness the user asked for
-lands in fragments and reference files, not in fatter skill cards.
+34 `keep`, 3 `enrich`, 3 `relocate` — the expected shape. The robustness the user asked for
+lands in fragments and reference files, not in fatter skill cards. One of those `keep`s
+(`claude/assess-improvement`) is the unreviewed addendum described in Method, so the reviewed
+shape of this pass was 33/3/3.
 
 - `enrich` (a missing ACTING fact, nothing else): `claude/cost-report`, `copilot/journal`,
   `codex/bench-routing`.
@@ -93,6 +99,24 @@ and the sentinel exposure.
   only there; `tests/test_guardrails_layout.py` pins a per-task-dollars kit fence that names
   the same path (kit-scoped, not binding here). CLAUDE.md's architect↔execute sync invariant
   binds any edit to either skill.
+
+### claude/assess-improvement
+- verdict: keep
+- skill-md: unchanged, and unreviewed by this pass. The card post-dates the audit entirely:
+  the decision-improvement kit's D25 staged it from
+  `tasks/kits/decision-improvement/skills/assess-improvement/` into `skills/` and into the
+  Cursor bundle. No D1 three-way reading was ever performed on it, so `keep` here means
+  literally "nothing was changed", not "measured and found within budget". A later task that
+  wants a disposition for this card must read it the way T8 read the other 39.
+- references: `references/assessment-template.md` — the findings-report and task-brief
+  skeleton the card links in its final step. It is a genuine shipped reference, not a
+  pricing mirror or a role template, so the off-limits carve-out above does not cover it.
+- fragment-notes: none written. Inventing an `In practice` section for a card this pass never
+  read would put unreviewed prose on the site under the authority of an audit that did not
+  examine it.
+- sentinels: `tests/test_assessment_skill.py` pins the card's PACKAGING — frontmatter name,
+  the template link, the exact installed destination set — and deliberately pins no sentence
+  of the body. So the body is free to move; the entry points and the template link are not.
 
 ### claude/bench-routing
 - verdict: keep

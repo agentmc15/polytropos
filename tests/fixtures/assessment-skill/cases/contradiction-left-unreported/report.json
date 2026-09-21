@@ -1,0 +1,77 @@
+{
+  "candidates": [],
+  "contradictions": [],
+  "decision": "evidence collection needed",
+  "ledger": [
+    {
+      "claim": "the matrix row for cursor marks confined dispatch supported",
+      "counterevidence": "the capability record for the same harness carries unknown",
+      "evidence": [
+        "OBS-1"
+      ],
+      "id": "C1",
+      "scope": "the matrix document",
+      "status": "documented"
+    },
+    {
+      "claim": "the capability record for cursor carries unknown",
+      "counterevidence": "the matrix document says otherwise",
+      "evidence": [
+        "OBS-2"
+      ],
+      "id": "C2",
+      "scope": "the capability record",
+      "status": "observed"
+    }
+  ],
+  "notes": [
+    "both sides are carried forward; this report does not decide which is right"
+  ],
+  "ranking": {
+    "basis": [],
+    "order": []
+  },
+  "scope": {
+    "evidence_not_available": [],
+    "excluded": [],
+    "repository": "synthetic/beacon-harnesses",
+    "revision": "fixture-revision-beacon-a",
+    "surfaces": [
+      "shared-runtime-contracts",
+      "four-harnesses",
+      "skills-and-context-planning",
+      "evaluation-and-release"
+    ]
+  },
+  "signals": [
+    {
+      "affected_scope": "one capability on one harness",
+      "assessment": "unknown",
+      "category": "capability-claim-and-capability-record-disagree",
+      "id": "S1",
+      "no_fit_scope": "the three harnesses whose records were not read",
+      "recurrence": [
+        "OBS-1",
+        "OBS-2"
+      ]
+    }
+  ],
+  "surface_answers": {
+    "evaluation-and-release": {
+      "assessment": "unknown",
+      "reason": "not examined under this bounded read"
+    },
+    "four-harnesses": {
+      "assessment": "unknown",
+      "reason": "not examined under this bounded read"
+    },
+    "shared-runtime-contracts": {
+      "assessment": "unknown",
+      "reason": "not examined under this bounded read"
+    },
+    "skills-and-context-planning": {
+      "assessment": "unknown",
+      "reason": "not examined under this bounded read"
+    }
+  }
+}

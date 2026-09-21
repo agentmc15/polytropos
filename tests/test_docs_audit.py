@@ -10,7 +10,7 @@ unit test -- the word counts and missing-subcommand facts it records describe
 the PRE-T9 state on purpose, and a test pinning those numbers would go stale
 the moment T9-T14 do their job correctly. What DOES stay true for as long as
 AUDIT.md exists unedited is its own internal bookkeeping: that its roster of
-`### <harness>/<name>` entries is exactly the live 39-skill inventory (so a
+`### <harness>/<name>` entries is exactly the live skill inventory (so a
 skill added/renamed/removed after this kit lands is flagged rather than
 silently leaving AUDIT.md stale -- exactly the drift `copilot/goliath` caused
 mid-plan, per PLAN.md's amendment note), that every entry carries its five
@@ -75,13 +75,13 @@ class AuditFileExistsTests(unittest.TestCase):
 @unittest.skipUnless(AUDIT_PATH.is_file(), "AUDIT.md not yet created")
 class AuditRosterMatchesLiveInventoryTests(unittest.TestCase):
     """The audit's roster must equal the live skill_inventory() roster exactly --
-    not just number 39. bin/docs_build.py's skill_inventory() (T1, done) is the
+    not just match a count. bin/docs_build.py's skill_inventory() (T1, done) is the
     generator's own source of truth for what skills exist; using it here (rather
     than re-walking skills/ by hand) means this test tracks the SAME notion of
     "a skill" the generator and T9-T14 use, including future additions like
     copilot/goliath."""
 
-    def test_roster_is_exactly_the_live_39_skills(self):
+    def test_roster_is_exactly_the_live_skill_inventory(self):
         docs_build = _load("docs_build")
         inventory = docs_build.skill_inventory(repo_root=REPO_ROOT)
         live_roster = {f"{rec['harness']}/{rec['name']}" for rec in inventory}
@@ -105,8 +105,21 @@ class AuditEntryShapeTests(unittest.TestCase):
     def setUp(self):
         self.entries = _entries(_read_audit())
 
-    def test_exactly_39_entries(self):
-        self.assertEqual(len(self.entries), 39)
+    def test_entry_count_matches_the_live_roster_with_no_duplicate_headers(self):
+        """The literal `39` this asserted rotted the moment a skill landed — the
+        decision-improvement kit's D25 added `claude/assess-improvement`. Derive the count
+        from the same `skill_inventory()` the roster test uses, and separately catch what
+        `_entries()`'s dict silently swallows: two `### <harness>/<name>` headers for one
+        skill, which would let a duplicated entry pass the roster test above."""
+        docs_build = _load("docs_build")
+        expected = len(docs_build.skill_inventory(repo_root=REPO_ROOT))
+        self.assertEqual(len(self.entries), expected)
+        headers = re.findall(r"(?m)^### (\S+)", _read_audit())
+        self.assertEqual(
+            len(headers), len(set(headers)),
+            f"duplicate '### ' entry header(s) in AUDIT.md: "
+            f"{sorted(h for h in set(headers) if headers.count(h) > 1)}",
+        )
 
     def test_every_entry_has_five_fields_in_pinned_order(self):
         for header, body in self.entries.items():

@@ -29,6 +29,16 @@ ONE SOURCE OF TRUTH. `TASKS.md` status and the `NOTES.md` outcome line are PROJE
 this ledger, written after it and recorded here as `task.projected` once they have been. A
 resume that finds a finished attempt with no projection re-projects; it does not re-run.
 
+PROVENANCE, AND WHY IT IS A POINTER. An attempt used to record WHAT ran and nothing about the
+decisions it ran under: which acceptance criteria it was judged against, which policy bundle
+the run was pinned to, which decision record chose the model, which budget grant admitted the
+call. `PROVENANCE_REFS` adds those four as OPTIONAL references -- an id, the digest of the
+bytes the referenced object had, and that object's own contract version. The object itself
+stays in the store that owns it; the ledger carries the pointer, because a line here is
+bounded (`MAX_LINE_BYTES`) and a rubric or a state snapshot is not a line. Absent is UNKNOWN,
+read-time, with no back-fill: an attempt recorded before these existed has none, and that is
+recorded as exactly that rather than rounded to a default.
+
 CLASSIFYING FAILURE. An attempt that fails because the CLI is missing, the account is logged
 out, a flag is unknown, or the network is down fails the same way on a more expensive model.
 `classify_dispatch` names those classes so `recovery_for` can say "stop" rather than "escalate",
@@ -98,9 +108,41 @@ RECOVERY = {
 #: The outcome a resuming run assigns to an attempt whose process left no result behind.
 OUTCOME_UNKNOWN = "unknown"
 
+#: PROVENANCE: which decisions an attempt was made under. Each name points at an object that
+#: lives in its OWN store under its OWN contract version -- the acceptance criteria the attempt
+#: was dispatched against, the policy bundle the run is pinned to, the decision record that
+#: produced the selection, and the budget grant that admitted the operation. All four are
+#: optional on every event that accepts them.
+#:
+#: WHY THEY ARE OPTIONAL AND WHY `LEDGER_VERSION` DID NOT MOVE FOR THEM. `events()` skips and
+#: counts as CORRUPT every line whose `v` is not `LEDGER_VERSION`. Bumping the constant for an
+#: additive field would therefore make every historical event in every user's store unreadable,
+#: and silently -- they would surface as a corruption count, not as a migration. So these fields
+#: are additive and absent-means-unknown, the line keeps `polytropos.attempts/1`, and the
+#: migration is READ-TIME ONLY: nothing is back-filled, reconstructed or back-dated. An attempt
+#: recorded before these references existed has none and never acquires one. A genuinely
+#: incompatible shape belongs on the REFERENCED object's own contract version (and in
+#: `release_gate.VERSION_SOURCES`), never on the ledger line that points at it.
+PROVENANCE_REFS = ("acceptance_ref", "policy_ref", "decision_ref", "admission_ref")
+
+#: A reference is an IDENTITY, never a payload: `id` names the object, `sha` names the exact
+#: bytes it had, and `v` is the REFERENCED contract's own version string -- never this ledger's,
+#: which versions the event line rather than what the line points at. `sha` and `v` may be
+#: genuinely unknown to the caller that records the pointer; absent is recorded as absent.
+REF_FIELDS = ("id", "sha", "v")
+
+#: Ceiling on each part of a reference. Generous for a digest or a version string, far too small
+#: for a rubric, a prompt, a diff or a state snapshot -- which is the point: the ledger carries
+#: the pointer and the owning store carries the object.
+REF_PART_CHARS = 200
+
 
 class LedgerError(RuntimeError):
     """The ledger could not record or read what it was asked to."""
+
+
+class RefError(LedgerError):
+    """Something offered as a provenance reference was not an identity."""
 
 
 class ClaimHeld(LedgerError):
@@ -146,6 +188,113 @@ def utc_now():
 def new_attempt_id():
     """Content-free, like run ids: never a pid, path, hostname or timestamp."""
     return secrets.token_hex(4)
+
+
+# ---- provenance references ---------------------------------------------------------------------
+
+def make_ref(ref_id, sha=None, version=None):
+    """One provenance reference -> `{"id", "sha", "v"}`.
+
+    `ref_id` is what the object is called in the store that owns it. `sha` is the digest of the
+    exact bytes that object had when this pointer was taken -- a digest IDENTIFIES content and
+    is not a protection against anything. `version` is the referenced contract's own version,
+    so a reader knows which field names apply to whatever it goes and fetches.
+
+    `sha` and `version` are optional because a caller may honestly not know them; the reference
+    then carries `None` there, and `ref_gaps` names what is missing rather than a reader
+    assuming a default. What is refused is a non-identity: an empty or non-string id, a
+    non-string part, or a part long enough to be a payload rather than a pointer.
+    """
+    parts = {"id": ref_id, "sha": sha, "v": version}
+    if not isinstance(ref_id, str) or not ref_id.strip():
+        raise RefError(
+            f"a provenance reference needs a non-empty string id, got {ref_id!r}"
+        )
+    for name, value in parts.items():
+        if value is None:
+            continue
+        if not isinstance(value, str):
+            raise RefError(
+                f"a provenance reference's {name!r} must be a string, got {type(value).__name__}"
+            )
+        if len(value) > REF_PART_CHARS:
+            raise RefError(
+                f"a provenance reference's {name!r} is {len(value)} chars; the ledger holds a "
+                f"pointer, not a payload (limit {REF_PART_CHARS}) -- the object belongs in the "
+                f"store that owns it"
+            )
+    return {"id": ref_id, "sha": sha, "v": version}
+
+
+def read_ref(value):
+    """A stored reference as this ledger understands it, or None when there is none.
+
+    None is UNKNOWN, and so is anything that is not a reference. A line whose `decision_ref` is
+    a number, a bare string or a dict with no id was not written by `make_ref`; guessing what it
+    meant would INVENT provenance, so it reads exactly like absence. `sha` and `v` are carried
+    when present and left None when not.
+    """
+    if not isinstance(value, dict):
+        return None
+    ref_id = value.get("id")
+    if not isinstance(ref_id, str) or not ref_id.strip():
+        return None
+    out = {"id": ref_id, "sha": None, "v": None}
+    for name in ("sha", "v"):
+        part = value.get(name)
+        if isinstance(part, str) and part:
+            out[name] = part
+    return out
+
+
+def provenance(event):
+    """What one event says about the decisions behind it -> `{name: ref or None}`.
+
+    Every name in `PROVENANCE_REFS` is answered, so a caller never has to ask whether the key
+    exists. `None` means unknown -- never a default, never a zero, and never back-filled. An
+    event written before these references existed answers `None` to all four, which is the
+    honest answer and the same one a caller that recorded nothing gets.
+    """
+    ev = event if isinstance(event, dict) else {}
+    return {name: read_ref(ev.get(name)) for name in PROVENANCE_REFS}
+
+
+def ref_gaps(ref):
+    """Which parts of a reference are unknown -> a sorted list of `REF_FIELDS` names.
+
+    A reference with an id but no digest and no version still points somewhere; it simply
+    cannot say WHICH bytes or under WHICH contract. Naming the gap is the disclosure -- a
+    partially known pointer is neither discarded nor presented as complete.
+    """
+    if ref is None:
+        return sorted(REF_FIELDS)
+    return sorted(name for name in REF_FIELDS if not ref.get(name))
+
+
+def validated_refs(**refs):
+    """The non-None provenance references among `refs`, each checked -> a dict to splat.
+
+    A reference that is None is left OUT rather than written as an explicit null, so an event
+    recorded without one is byte-identical to the events written before these fields existed.
+    Nothing then has to tell "written without a reference" from "written before there were
+    any": both are unknown, which is the same answer to the same question.
+    """
+    out = {}
+    for name, value in refs.items():
+        if name not in PROVENANCE_REFS:
+            raise RefError(
+                f"{name!r} is not a provenance reference; valid: {', '.join(PROVENANCE_REFS)}"
+            )
+        if value is None:
+            continue
+        ref = read_ref(value)
+        if ref is None:
+            raise RefError(
+                f"{name} must be a reference from make_ref -- an id, optionally the content "
+                f"digest and the referenced contract's version -- got {value!r}"
+            )
+        out[name] = ref
+    return out
 
 
 def kit_repo_root(kit_dir):
@@ -334,18 +483,32 @@ class AttemptLedger:
     # -- attempts --
 
     def record_started(self, run, task, op, model, prompt=None, verify_cmd=None,
-                       artifact=None, **extra):
+                       artifact=None, acceptance_ref=None, policy_ref=None,
+                       decision_ref=None, admission_ref=None, **extra):
         """Record an attempt BEFORE it is dispatched -> its attempt id.
 
         The prompt and verify command are stored as digests, so the ledger can say "the same
         prompt" or "the verify command changed" without carrying either text.
+
+        The four `*_ref` arguments are the attempt's PROVENANCE (`PROVENANCE_REFS`): the
+        acceptance criteria it was dispatched against, the policy bundle the run is pinned to,
+        the decision record that produced the selection, and the budget grant that admitted it.
+        Each is a `make_ref` pointer and each is optional -- a caller with none passes none, the
+        field is not written at all, and `provenance` reads that back as unknown. They are
+        correlated by the line they ride on: namespace, `run`, `task` and `attempt` are already
+        there, so a reference needs no correlation key of its own. A grant in particular is
+        minted BEFORE the attempt id exists, which is why it flows admission -> attempt and
+        never the other way.
         """
         if op not in OPERATIONS:
             raise ValueError(f"attempt op must be one of {OPERATIONS}, got {op!r}")
+        refs = validated_refs(acceptance_ref=acceptance_ref, policy_ref=policy_ref,
+                              decision_ref=decision_ref, admission_ref=admission_ref)
         attempt = new_attempt_id()
         self.append(
             "attempt.started", run=run, task=task, attempt=attempt, op=op, model=model,
-            prompt_sha=_sha(prompt), verify_sha=_sha(verify_cmd), artifact=artifact, **extra,
+            prompt_sha=_sha(prompt), verify_sha=_sha(verify_cmd), artifact=artifact,
+            **refs, **extra,
         )
         return attempt
 
@@ -370,7 +533,7 @@ class AttemptLedger:
         return event
 
     def record_projected(self, run, task, status, result=None, outcome_line=False, note="",
-                         artifact=None, upstream=None):
+                         artifact=None, upstream=None, acceptance_ref=None, **extra):
         """Record that TASKS.md/NOTES.md now reflect the ledger (the projection happened).
 
         Step 24: `artifact` is the workspace fingerprint the verdict was reached on (the
@@ -378,10 +541,16 @@ class AttemptLedger:
         the artifact version ITS latest acceptance carried, read at this moment. A later
         acceptance of an upstream task with a different artifact makes this task's evidence
         stale; `kit_contract.evidence_freshness` is the reader.
+
+        `acceptance_ref` is the other half of that pair and answers the question `artifact`
+        cannot: the artifact says which TREE the verdict was reached ON, this says which
+        CRITERIA it was reached AGAINST. Optional and absent-means-unknown like every other
+        reference, so every projection written before it existed still reads.
         """
+        refs = validated_refs(acceptance_ref=acceptance_ref)
         self.append("task.projected", run=run, task=task, status=status, result=result,
                     outcome_line=bool(outcome_line), note=note, artifact=artifact,
-                    upstream=upstream)
+                    upstream=upstream, **refs, **extra)
 
     def latest_acceptance(self, task):
         """The latest `done` projection with an outcome line, or None: the accepted version."""
