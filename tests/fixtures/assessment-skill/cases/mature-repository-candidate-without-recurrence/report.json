@@ -1,0 +1,86 @@
+{
+  "candidates": [],
+  "contradictions": [],
+  "decision": "no supported intervention",
+  "ledger": [
+    {
+      "claim": "one component admits every task",
+      "counterevidence": "none found in the readable tree",
+      "evidence": [
+        "OBS-1"
+      ],
+      "id": "C1",
+      "scope": "admission",
+      "status": "observed"
+    },
+    {
+      "claim": "a resumed run closes a dead attempt as unknown",
+      "counterevidence": "none found in the readable tree",
+      "evidence": [
+        "OBS-2"
+      ],
+      "id": "C2",
+      "scope": "the ledger",
+      "status": "observed"
+    },
+    {
+      "claim": "the supported-environment table matches the tree",
+      "counterevidence": "no run-time check was read that re-derives it",
+      "evidence": [
+        "OBS-3"
+      ],
+      "id": "C3",
+      "scope": "release",
+      "status": "documented"
+    }
+  ],
+  "notes": [
+    "no category in this read occurs twice, so no recurrence was established"
+  ],
+  "ranking": {
+    "basis": [],
+    "order": []
+  },
+  "scope": {
+    "evidence_not_available": [],
+    "excluded": [],
+    "repository": "synthetic/forge-settled",
+    "revision": "fixture-revision-forge-a",
+    "surfaces": [
+      "shared-runtime-contracts",
+      "four-harnesses",
+      "skills-and-context-planning",
+      "evaluation-and-release"
+    ]
+  },
+  "signals": [
+    {
+      "affected_scope": "the release document",
+      "assessment": "candidate",
+      "category": "release-matrix-matches-the-tree",
+      "id": "S1",
+      "no_fit_scope": "run-time enforcement, which was not read",
+      "recurrence": [
+        "OBS-3"
+      ]
+    }
+  ],
+  "surface_answers": {
+    "evaluation-and-release": {
+      "assessment": "defer",
+      "reason": "nothing read here recurs, so nothing is proposed"
+    },
+    "four-harnesses": {
+      "assessment": "defer",
+      "reason": "nothing read here recurs, so nothing is proposed"
+    },
+    "shared-runtime-contracts": {
+      "assessment": "defer",
+      "reason": "nothing read here recurs, so nothing is proposed"
+    },
+    "skills-and-context-planning": {
+      "assessment": "defer",
+      "reason": "nothing read here recurs, so nothing is proposed"
+    }
+  }
+}

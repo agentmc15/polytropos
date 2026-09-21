@@ -1,0 +1,102 @@
+{
+  "candidates": [
+    {
+      "confidence_meta": {},
+      "harnesses": [
+        "claude"
+      ],
+      "id": "K1",
+      "kind": "stronger-evidence-join",
+      "numeric_confidence": null,
+      "recommendation": "prepare brief",
+      "signal": "S1",
+      "surfaces": [
+        "evaluation-and-release"
+      ],
+      "tool_use": [
+        {
+          "action": "read the grader and its suite",
+          "limitation": "",
+          "mutates": false,
+          "target": "read-only"
+        }
+      ]
+    }
+  ],
+  "contradictions": [],
+  "decision": "draft task brief(s)",
+  "ledger": [
+    {
+      "claim": "a grader result and a suite result disagree on recorded pairs",
+      "counterevidence": "OBS-3 shows the suite pins shape and never a rate",
+      "evidence": [
+        "OBS-1",
+        "OBS-2",
+        "OBS-9"
+      ],
+      "id": "C1",
+      "scope": "the grading comparison",
+      "status": "observed"
+    }
+  ],
+  "notes": [
+    "the held-out label set is named as out of scope and none of its contents entered this report"
+  ],
+  "ranking": {
+    "basis": [
+      "expected learning value",
+      "reversibility",
+      "evidence quality",
+      "disruption"
+    ],
+    "order": [
+      "K1"
+    ]
+  },
+  "scope": {
+    "evidence_not_available": [],
+    "excluded": [
+      "the controller-owned label set"
+    ],
+    "repository": "synthetic/delta-heldout",
+    "revision": "fixture-revision-delta-a",
+    "surfaces": [
+      "shared-runtime-contracts",
+      "four-harnesses",
+      "skills-and-context-planning",
+      "evaluation-and-release"
+    ]
+  },
+  "signals": [
+    {
+      "affected_scope": "the grading comparison",
+      "assessment": "candidate",
+      "category": "graded-runs-disagree-with-the-suite",
+      "id": "S1",
+      "no_fit_scope": "the held-out label set, which this assessment may not read",
+      "recurrence": [
+        "OBS-1",
+        "OBS-2",
+        "OBS-3"
+      ]
+    }
+  ],
+  "surface_answers": {
+    "evaluation-and-release": {
+      "assessment": "candidate",
+      "reason": "the grading comparison is owned by this surface"
+    },
+    "four-harnesses": {
+      "assessment": "unknown",
+      "reason": "not examined under this bounded read"
+    },
+    "shared-runtime-contracts": {
+      "assessment": "unknown",
+      "reason": "not examined under this bounded read"
+    },
+    "skills-and-context-planning": {
+      "assessment": "unknown",
+      "reason": "not examined under this bounded read"
+    }
+  }
+}

@@ -1,0 +1,328 @@
+{
+  "schema": "polytropos.decision-improvement.reconciliation/1",
+  "task": "D01",
+  "kit": ".claude/kits/decision-improvement-v1",
+  "reconciled_on": "2026-09-16",
+  "baseline_revision": "aab755378975e9191db6ced16ee07a27a414af21",
+  "observed_revision": "e6cf4bd6c86daac53ac99d4d484c4bb802b84bb5",
+  "observed_branch": "codex/decision-improvement-plan",
+  "observed_commit_date": "2026-09-15 23:58:33 -0500",
+  "observed_is_merge": true,
+  "observed_parents": [
+    "4ba75607a60e94cf1055c6ac4b9e927ec479f70b",
+    "8d1b7be9f0b3781c1bf94e8488c990607b75bb95"
+  ],
+  "roadmap_source": {
+    "historical_attachment_present": false,
+    "note": "The 26-step roadmap file itself lives outside this repository and was not available to this task. Per the D01 brief, the reconciliation source is this kit's own material plus the repository's own record: HANDOFF.md (which carries the per-step 'deliberate limits' sections for 16-26 and the post-roadmap live-verification log), tasks/kits/decision-improvement/PLAN.md, tasks/kits/decision-improvement/REPO-ASSESSMENT.md, tasks/kits/decision-improvement/VALIDATION.md, SECURITY.md, primitives/harness-capabilities.json, and git history between the baseline and observed revisions.",
+    "sources": [
+      "HANDOFF.md",
+      "SECURITY.md",
+      "tasks/kits/decision-improvement/PLAN.md",
+      "tasks/kits/decision-improvement/REPO-ASSESSMENT.md",
+      "tasks/kits/decision-improvement/VALIDATION.md",
+      "primitives/harness-capabilities.json",
+      "docs/RELEASE.md"
+    ]
+  },
+  "state_vocabulary": {
+    "implemented": "The step's mechanism is present at the observed revision, enforced by named tests, and — where the step's claim needs a real client — carries dated installed-client verification in primitives/harness-capabilities.json. Remaining work for this kit is additive extension, never repair.",
+    "partial": "The mechanism is present and test-enforced, but a named sub-scope this kit depends on is deliberately narrower at the observed revision (usually: a production caller that does not exist yet). Not a defect and not a rescheduling of completed work.",
+    "unverified": "Every mechanism the step names is present and test-enforced, but no installed client has ever exercised it; the only 'verified: supported' evidence comes from the stub executor, which is conformance, not a client.",
+    "pending": "Not built at the observed revision. Unused: all eleven steps landed before the baseline."
+  },
+  "rules_applied": [
+    "Existing live evidence is never downgraded. Where the six commits merged into the observed revision raised a capability row from unknown to verified, this record carries the newer state and names the commit.",
+    "A state is assigned from what a production path actually calls, traced by reading the import graph, not from the existence of a passing test.",
+    "No product code, test, pricing file or capability row was changed by this task. Gaps are recorded, not repaired."
+  ],
+  "commits_since_baseline": [
+    {
+      "sha": "b48a2842022baa6afd1ef1f2371f84258b68b4a1",
+      "subject": "fix(claude): find a kit's agents beside the kit, then record what one live run actually verified",
+      "landed": true,
+      "effect": "bin/claude_execute.agent_roots resolves a kit's agents from the workspace, then the project the kit path implies, then this checkout; tests/test_claude_execute.py:444 AgentRootsTests pins it. Claude Code 2.1.273 rows re-dated: dispatch, tool_pin, confined_verify, durable_attempts, independent_review."
+    },
+    {
+      "sha": "1755ead61921ae01d5ad9a6917f7838f3a70463c",
+      "subject": "fix(cursor): identify the real CLI by its `about` schema, since it names itself nowhere",
+      "landed": true,
+      "effect": "bin/cursor_adapter.ABOUT_SCHEMA_KEYS (line 73) accepts the real CLI's schema; cursor identity_probe becomes verified: supported."
+    },
+    {
+      "sha": "fd80734e4b48be2fab9a0a9fdf7df0010d608626",
+      "subject": "docs(cursor): record the first logged-in Cursor run; the CLI reports usage the adapter does not read",
+      "landed": true,
+      "effect": "Cursor dispatch, read_only_dispatch, structured_events, durable_attempts and independent_review verified 2026-09-16 against Cursor CLI 2026.09.10-fd3934a; usage_report product moved to supported while implemented stays unsupported."
+    },
+    {
+      "sha": "ab2a42a41f19b6b54a03bc4bdd1b893ca5ef4bf5",
+      "subject": "fix(codex): a review's own record no longer stales its fingerprint; mine code before prose",
+      "landed": true,
+      "effect": "Codex review_evidence_fingerprint excludes the driver's own records (tests/test_codex_execute_policy.py:195); bin/repo_bench.order_mutation_candidates (line 1246) mines code before data before prose. Codex dispatch, sandbox_read_only, structured_events, durable_attempts, independent_review verified against codex-cli 0.153.3; Copilot dispatch, durable_attempts, independent_review verified against GitHub Copilot CLI 1.0.80."
+    },
+    {
+      "sha": "e23f2ae86296b1fd73e0fa98987b81fcc50a5501",
+      "subject": "docs(handoff): record the first real evaluation plan -- one task in 24 sites, and why",
+      "landed": true,
+      "effect": "HANDOFF.md records the free plan on a real target: issue-replay found 0 usable pairs and general mode admitted ONE task from its full bound of 24 sites."
+    },
+    {
+      "sha": "8d1b7be9f0b3781c1bf94e8488c990607b75bb95",
+      "subject": "feat(eval): the first live workflow evaluation ran; reviews now report usage, and \"never run live\" is the registry's word",
+      "landed": true,
+      "effect": "Run 2026-09-16-1b4c: 16 of 16 dispatches, $1.90 model-reported against a $2.00 ceiling, 12/12 trials solved, every variant below the evidence floor. bin/workflow_eval.untested_claims (line 144) now reads the registry instead of a constant; claude-code workflow_evaluation verified: supported."
+    }
+  ],
+  "prerequisites": {
+    "16": {
+      "title": "Durable attempts",
+      "state": "implemented",
+      "evidence": [
+        "bin/attempt_ledger.py",
+        "bin/kit_contract.py",
+        "tests/test_attempt_ledger.py",
+        "primitives/harness-capabilities.json",
+        "HANDOFF.md"
+      ],
+      "why": "The ledger records before and after every dispatch outside the tree; the drivers reach it only through kit_contract.start_task_lifecycle / reconcile_task / finish_task_projection / record_role_dispatch. durable_attempts is verified: supported on 2026-09-16 for all four installed clients (Claude Code 2.1.273, codex-cli 0.153.3, GitHub Copilot CLI 1.0.80, Cursor CLI 2026.09.10-fd3934a).",
+      "live_evidence": "primitives/harness-capabilities.json: durable_attempts verified 2026-09-16 on claude-code, codex, copilot, cursor.",
+      "remaining_delta": "duration_s is null on every live attempt on every harness: the drivers' (rc, output) runners drop bin/proc_runner.py's timing. No duration fix has landed anywhere — D03 should report that to D05 rather than assume one exists. The dead-run resume path has been exercised with stubs only. The ledger carries no decision, policy, admission or acceptance identity; those are D04's additive versioned fields. The ledger is not exactly-once by design and must stay so."
+    },
+    "17": {
+      "title": "Cross-harness evidence",
+      "state": "implemented",
+      "evidence": [
+        "bin/attempt_history.py",
+        "bin/model_registry.py",
+        "tests/test_attempt_history.py",
+        "tests/test_model_registry.py",
+        "bin/telemetry_snapshot.py",
+        "HANDOFF.md"
+      ],
+      "why": "One record per attempt over the ledger, NOTES.md outcome lines and Codex role-use.jsonl, with unknowns kept and counted and history never collapsed; bin/model_registry.py is the one cross-harness reader of ids and tiers and never a price. Captured daily as telemetry's attempts source.",
+      "live_evidence": "No installed-client row of its own: the history is a reader over records the drivers wrote, and those drivers' dispatch rows are verified 2026-09-16.",
+      "remaining_delta": "billed cost is never populated by the history — pricing a Claude session needs its transcript and stays bin/routing_scorecard.py --history's job. Codex subscription proxies appear in no per-attempt record, so they are absent rather than zero. A chain's attempts count mixes granularities (ledger records count one each; a NOTES.md line without ledger twins counts its own attempts=). The policy, decision, admission and acceptance provenance that F1 needs is absent: D03 names the owner per reference and D04 persists it."
+    },
+    "18": {
+      "title": "Validated execution DAG",
+      "state": "implemented",
+      "evidence": [
+        "bin/kit_contract.py",
+        "tests/test_kit_graph.py",
+        "tests/test_kit_contract.py",
+        ".claude/kits/decision-improvement-v1/TASKS.md"
+      ],
+      "why": "kit_contract.validate_graph / graph_state / readiness / TRANSITIONS refuse duplicate ids, self and unknown dependencies and cycles with zero dispatches and zero writes on every driver; one readiness rule with fresh | retry | resume | rerun; the status machine checked at every write; `python3 bin/kit_contract.py graph --kit DIR` is the command. This kit's own 34-task graph parses and validates under it.",
+      "live_evidence": "Not a host capability and deliberately carries no registry row: graph validation is the coordinator's, and the Cursor seam is the same select_task / readiness call every driver makes.",
+      "remaining_delta": "Two finished legacy kits (aesop-bridge, context-rules) are invalid by this validator because they carry prose in `- depends:` lines; the test pins that the invalid set is a subset of exactly those two, so this kit must not 'fix' them. Plan drift is reported as a plan.drift ledger event and carried in result[\"plan_drift\"], never reverted. Later tasks extending admission references (D04, D11) must keep the historic task-dispatch meaning of max-dispatches and must not add a second graph implementation to a driver."
+    },
+    "19": {
+      "title": "Named routing policies",
+      "state": "partial",
+      "evidence": [
+        "bin/routing_policy.py",
+        "bin/codex_policy.py",
+        "bin/codex_execute.py",
+        "bin/claude_execute.py",
+        "bin/copilot_execute.py",
+        "tests/test_routing_policy.py",
+        "tests/test_codex_execute_policy.py"
+      ],
+      "why": "`reserved` is the legacy behaviour under its own name and the default; `adaptive` is opt-in through --policy or PLAN.md `routing:`. Shape, model, initial effort and assurance are four separate answers, hard filters run before any preference, and pins and unsupported efforts are refused rather than substituted. This is the named legacy bundle D02's goldens must freeze.",
+      "live_evidence": "No installed-client row; the Codex dispatch rows verified 2026-09-16 were dispatched under the reserved policy.",
+      "remaining_delta": "Traced at the observed revision by loader, not by grep: the modules that actually load bin/routing_policy.py are bin/codex_policy.py:279 (_ROUTING = _sibling(\"routing_policy\")), bin/workflow_eval.py:197, and bin/release_gate.py:143, which reads only its CONTRACT_VERSION for the contract-version table. bin/codex_execute.py reaches it transitively: it loads bin/codex_policy.py (line 218), which is why the Codex driver dispatches under a routing decision; its own line 228 is a prose comment saying so. bin/claude_execute.py and bin/copilot_execute.py reach it neither directly nor transitively — neither file contains codex_policy, routing_policy or a _sibling call at all. So only the Codex driver dispatches under a routing decision; the other two resolve models exactly as before, and wiring them is a behaviour change to installed defaults that was deliberately not taken. Correction (phase 1 review, 2026-09-16): an earlier draft said a PLAN.md routing: line is validated against a vocabulary independent of routing_policy's POLICIES/PREFERENCES and the two can drift with nothing failing. That is FALSE — codex_execute.py:1401-1405 validates both against POLICIES/PREFERENCES (bound at codex_execute.py:232-233) and exits 2 before dispatch, exactly as the kit_contract comment cited as evidence states. The real and narrower hazard: kit_contract.parse_plan_routing silently ignores an unrecognised token, so a fourth routing dimension added to routing_policy would be dropped silently."
+    },
+    "20": {
+      "title": "The role contract",
+      "state": "implemented",
+      "evidence": [
+        "bin/kit_contract.py",
+        "tests/test_role_contract.py",
+        "docs/ROLE-EXPERIMENT.md",
+        "primitives/harness-capabilities.json"
+      ],
+      "why": "ROLE_CONTRACTS, WORKFLOWS, the roles:/workflow: grammar, resolve_roster, ROLE_SUPPORT and roster_for_run are one contract shared by the architect skill, the execute skill and every driver; every driver checks the roster before preview or claim and refuses or discloses (--roster-gap) a declared role it cannot sequence, recording roster.checked. independent_review is verified: supported on 2026-09-16 for all four installed clients.",
+      "live_evidence": "primitives/harness-capabilities.json: independent_review verified 2026-09-16 on claude-code, codex, copilot, cursor.",
+      "remaining_delta": "extended_roles is implemented: unsupported and verified: unknown on every harness — no headless driver sequences an optional role, and the interactive execute skill is the only executor that runs them. The per-task verifier is `partial` on every driver by construction: run executes the verify command and dispatches no verifier agent. The trio-versus-direct comparison in docs/ROLE-EXPERIMENT.md is a written test plan, not a run; it needs `direct` kits to exist and none has been run. This kit declares no optional roles, so none of this blocks it — but no task may claim role evidence the registry does not hold."
+    },
+    "21": {
+      "title": "Fresh, bounded code-graph grounding",
+      "state": "partial",
+      "evidence": [
+        "bin/graph_ground.py",
+        "bin/graph_brief.py",
+        "tests/test_graph_ground.py",
+        "skills/architect/SKILL.md",
+        "skills/graphify/SKILL.md",
+        "docs/GRAPH-ENGINEERING.md"
+      ],
+      "why": "stamp writes the one provenance sidecar; freshness, impact, search and ground read. Freshness against the working tree answers fresh | partial | stale | unknown and never manufactures a revision; the impact walk is bounded by depth, node limit and named hubs it never expands through; a bounded code-search fallback covers an absent, stale, unknown, silent or weakly covering graph. graphify itself stays an external, user-installed CLI this repository never invokes.",
+      "live_evidence": "None required — the module reads a graph.json and reaches git only read-only through bin/proc_runner.py.",
+      "remaining_delta": "Traced at the observed revision: bin/graph_ground.py is imported by bin/release_gate.py (for the contract map) and named in skills/architect/SKILL.md and skills/graphify/SKILL.md — by NO driver. grounding() and render_grounding() exist and any adapter could attach them, but no driver has a --grounding flag, so nothing in production composes a grounded prompt. That missing seam is exactly what this kit's F3 arm C ('one bounded package of previously missing contract context') would have to build on, and D16/D17 must build the seam rather than assume it. generated_at is not knowable; the sidecar carries stamped_at and the graph file's mtime, each labelled."
+    },
+    "22": {
+      "title": "Lean entry points and scoped lessons",
+      "state": "implemented",
+      "evidence": [
+        "bin/lessons_store.py",
+        "bin/lessons_promote.py",
+        "tests/test_lessons_store.py",
+        "tests/test_skill_entrypoints.py",
+        "tests/test_docs_skill_dispositions.py",
+        "skills/architect/references"
+      ],
+      "why": "The architect, execute and repo-bench skills are a mandatory core plus verbatim references with a read-when trigger each; ceilings and contract checks replaced the exact word-count guard. bin/lessons_store.py replaced automatic lessons with observations carrying provenance, scope and expiry; a rule exists only by recurrence across distinct sources or by explicit --by user; contests withhold a rule; recall is eligibility-gated through memory_recall._eligible, expiry- and contest-gated, and budgeted.",
+      "live_evidence": "None required — the store is a tracked project file and the recall gate is the reused step-13 rule.",
+      "remaining_delta": "The size numbers are measured, not outcomes: loaded-context and task-outcome effects were never measured, so the word counts say what moved and not what improved. Lessons stay a tracked, project-scoped file (tasks/lessons.md), not a per-user store — this kit's guardrail against automatic global lesson or skill edits binds any later proposal path. Legacy entries are demoted to candidates, never deleted or promoted without --by user. Baseline limitation recorded separately as BL1 and since REPAIRED: test_lessons_promote.NoScaffoldingWritesTests.test_real_run_touches_only_gitignored_path hardcoded the legacy in-tree journal path while bin/lessons_promote.py:93 resolves it through bin/runtime_data.py, so it failed in any worktree with no in-tree journal/ directory; it now resolves the same store through the product's own runtime_data.store_path under a temp POLYTROPOS_DATA_HOME. bin/lessons_promote.py itself is unchanged and byte-identical to HEAD."
+    },
+    "23": {
+      "title": "The Cursor adapter",
+      "state": "implemented",
+      "evidence": [
+        "bin/cursor_adapter.py",
+        "bin/cursor_execute.py",
+        "tests/test_cursor_adapter.py",
+        "tests/test_cursor_execute.py",
+        "data/pricing.cursor.json",
+        "docs/CURSOR-HARNESS.md",
+        "primitives/harness-capabilities.json"
+      ],
+      "why": "THE UPGRADE THIS TASK EXISTS TO RECORD. At the baseline revision nothing had ever been run against Cursor and every cursor row was verified: unknown. At the observed revision, after 1755ead and fd80734, cursor_adapter.identify accepts the real CLI's nameless `about` schema (ABOUT_SCHEMA_KEYS, bin/cursor_adapter.py:73) and six rows are verified: supported on 2026-09-16 against Cursor CLI 2026.09.10-fd3934a: identity_probe, dispatch, read_only_dispatch, structured_events, durable_attempts, independent_review. Runs 2026-09-16-765a (auth refusal, spent nothing), 2026-09-16-f427 (one dispatch, confined verify passed) and 2026-09-16-fb01 (read-only review, tree byte-identical).",
+      "live_evidence": "primitives/harness-capabilities.json, cursor: six rows verified 2026-09-16 with client_version 'Cursor CLI 2026.09.10-fd3934a'. This state must never be rolled back to the baseline snapshot.",
+      "remaining_delta": "Still unknown and to be treated as no: model_selection (no --model was ever passed), cli_sandbox, skill_files, subagent_files, ide_mode, cloud_mode, ambient_diagnosis, concurrent_dispatch, workflow_evaluation. usage_report is product: supported / implemented: unsupported — the CLI's JSON result carries a usage block that bin/cursor_adapter.py's parse_output does not read (HANDOFF.md records that from the live run; a duration_ms claim in an earlier draft was withdrawn in D03 as unverifiable in this tree), so the driver's NOTES line 'the harness reports no usage' is now false (it is unpriced, not unreported). data/pricing.cursor.json still has an empty roster, so every block is usd: null and a failed verification blocks after one attempt. D29 must not reimplement or mislabel this adapter merely because its adaptive profile is unavailable."
+    },
+    "24": {
+      "title": "Artifact-aware scheduling and opt-in bounded concurrency",
+      "state": "unverified",
+      "evidence": [
+        "bin/kit_scheduler.py",
+        "bin/kit_contract.py",
+        "bin/attempt_ledger.py",
+        "tests/test_kit_scheduler.py",
+        "docs/KIT-SCHEDULER.md",
+        "primitives/harness-capabilities.json",
+        "SECURITY.md"
+      ],
+      "why": "Every mechanism the step names is present and test-enforced — acceptance records the artifact version accepted and the upstream versions it rested on, evidence_freshness names a done task stale when a dependency was re-accepted with a different artifact, the frontier keeps dependents of a stale acceptance out, and the scheduler claims a batch atomically, admits it in ONE budget decision, runs each task in its own copy under the store, measures write sets and keeps conflicts without applying or resetting. But nothing real has run it.",
+      "live_evidence": "The only concurrent_dispatch row that is verified: supported belongs to the stub executor (2026-09-13), which is conformance, not a client. cursor is implemented: supported / verified: unknown; claude-code, codex and copilot are implemented: unsupported. HANDOFF.md states plainly: no live model ran in parallel.",
+      "remaining_delta": "Traced at the observed revision: bin/kit_scheduler.py defines exactly two dispatchers, StubDispatcher (line 375) and CursorDispatcher (line 399). The Claude Code, Copilot and Codex drivers keep their sequential loops until their argument builders are lifted into harness_adapter subclasses. Isolation is of FILES only: a worker's copy shares the machine, the network and the dispatch environment's credentials, and SECURITY.md says so under 'What is NOT a boundary' — so a scheduler copy can never satisfy this kit's F2 protected profile. Copies are history-free tree extractions, so a verify command needing git history fails in one. Merging is never attempted. This kit's guardrail keeps sequential execution the default and forbids parallel mutations in one checkout; nothing here changes that."
+    },
+    "25": {
+      "title": "Workflow evaluation and the reviewed policy process",
+      "state": "partial",
+      "evidence": [
+        "bin/workflow_eval.py",
+        "bin/repo_bench.py",
+        "tests/test_workflow_eval.py",
+        "tests/test_repo_bench.py",
+        "docs/WORKFLOW-EVAL.md",
+        "primitives/harness-capabilities.json",
+        "HANDOFF.md"
+      ],
+      "why": "The one place workflows are compared and routing defaults are changed: five adapters on the repo-bench seam, counterbalanced trials, solved from the tests oracle alone, Wilson intervals, usage per basis never summed, and prefs/routing-policy.json changed only through propose (refused below the evidence floor, on a single repeat, or on reserved tasks) then a named review then apply (refused unreviewed or stale), with every version kept and rollback. It forks none of repo_bench's oracles, sandboxes or ceilings.",
+      "live_evidence": "workflow_evaluation is verified: supported for claude-code on 2026-09-16 (Claude Code 2.1.273, run 2026-09-16-1b4c) after 8d1b7be, and for the stub. codex, copilot and cursor stay verified: unknown, and bin/workflow_eval.untested_claims (line 144) now reads those rows instead of asserting a constant.",
+      "remaining_delta": "The one live run verified the PIPELINE and produced no applicable verdict: mining admitted a single task from its full bound of 24 sites, 12/12 trials solved, every variant below the evidence floor of 5 per variant and labelled so, and propose would refuse it by design. Two known miner limits are recorded and unfixed: the line scanner matches operator text anywhere in a source line (so ' and ' and '==' inside docstrings and click decorators are counted as sites), and tree order within code reaches cli/ before the tested core under a small --limit. Traced at the observed revision: prefs/routing-policy.json is read ONLY by bin/workflow_eval.py — no driver consumes it, so apply_proposal is pull-only and F4/D21 must keep it that way until D23's explicit, versioned opt-in. Grounding and lesson versions are not variant axes and are listed as untested on every card. Judge opinion is recorded beside solved, never in it."
+    },
+    "26": {
+      "title": "The release gate",
+      "state": "implemented",
+      "evidence": [
+        "bin/release_gate.py",
+        "tests/test_release_gate.py",
+        "docs/RELEASE.md",
+        "primitives/harness-capabilities.json",
+        "tests/test_privacy_layout.py"
+      ],
+      "why": "The supported matrix is computed from the evidence and never typed: contract versions from their owning modules, package and toolchain versions from the manifests, cached_date and roster size per pricing file, every registry row's three states with its date and client version, ROLE_SUPPORT per harness. STUB CONFORMANCE and INSTALLED-CLIENT VERIFICATION are never merged. `python3 bin/release_gate.py check` exits 0 at the observed revision: 'findings: none', verdict OK. tests/test_privacy_layout.py derives its store list from runtime_data.STORES rather than a hand-kept tuple.",
+      "live_evidence": "The gate itself runs nothing live; it reads primitives/harness-capabilities.json. A verified: supported row dated on or after 2026-09-13 must carry client_version or check fails.",
+      "remaining_delta": "The contract map is a curated table, not a discovery: a new test proving a contract joins it only when someone adds it, and check does not run the map by default (--run is the opt-in). Packaging is reviewed, not built. The Codex package version 0.5.0+codex.20260906003447 does not start with the plugin version 0.6.0 and is reported as a note, because rewriting it changes the ownership keys of every installed Codex copy. SECURITY.md's prose has drifted from the registry in three places (recorded under stale_claims) while the generated docs/RELEASE.md block is current — the gate checks the generated block, not the prose around it. D28-D30 depend on D34, and no release claim may exceed what the registry holds."
+    }
+  },
+  "baseline_limitations": [
+    {
+      "id": "BL1",
+      "summary": "REPAIRED. test_lessons_promote.NoScaffoldingWritesTests.test_real_run_touches_only_gitignored_path hardcoded the legacy in-tree journal path and failed in this worktree; it now resolves the store through the product's own resolver.",
+      "state": "repaired",
+      "observed_at_d01_handback": "python3 -m unittest discover -s tests on the observed revision: 4214 tests, 1 failure, 2 skipped. The single failure was test_lessons_promote.NoScaffoldingWritesTests.test_real_run_touches_only_gitignored_path, asserting written_path.is_file().",
+      "observed_after_repair": "python3 -m unittest discover -s tests: 4214 tests, 0 failures, 2 skipped. All five drift gates (docs_build check, copilot_docs check, sync_codex_surfaces check, sync_pricing_refs --check, release_gate check) exit 0.",
+      "mechanism": "The test built its expected path as REPO_ROOT / 'journal' / 'promotions', while bin/lessons_promote.py:93 sets DEFAULT_OUTPUT_DIR = _store_default('journal') / 'promotions'. bin/runtime_data.py:113-117 returns the legacy in-tree path only when that directory exists AND has content; this worktree has no journal/ directory at all, so the store correctly resolved to the per-user application-data root for this checkout's own namespace. Cited by test name rather than line number: the repair moved the lines, and a symbol does not rot.",
+      "verdict": "A test assumption about checkout shape, not a product defect. The product is obeying the invariant that a store lives outside the plugin tree, and runtime_data keys the store per checkout, so a fresh worktree never inherits the original checkout's in-tree journal/.",
+      "predicted_by": "tasks/kits/decision-improvement/PLAN.md and tasks/kits/decision-improvement/REPO-ASSESSMENT.md both predicted exactly this before execution began.",
+      "repair": "Made by the executor after D01's hand-back, not by D01, which changed no test. The test now pins POLYTROPOS_DATA_HOME to a tempfile.TemporaryDirectory() and resolves the expected directory through runtime_data.store_path('journal', REPO_ROOT, env=env) / 'promotions' — the product's own resolver — instead of assuming an in-tree journal/. That is the same seam tests/test_attempt_ledger.py already uses, so the test can never reach a real store. The module docstring's SAFETY CONTRACT paragraph was updated to describe it. bin/lessons_promote.py is untouched and byte-identical to HEAD, confirmed here by `git diff --stat bin/lessons_promote.py` returning empty rather than by assertion. The executor reports the repair mutation-proven: with DEFAULT_OUTPUT_DIR mutated to 'promotions-MUTANT' the test fails, and restored it passes.",
+      "disposition": "Closed. The earlier planning validation had obtained a pass by creating an empty in-tree journal/promotions/ fixture; that accommodation hides the defect rather than fixing it and writes into a real store, so it was deliberately not repeated — the resolver-based repair is why it never needs to be."
+    },
+    {
+      "id": "BL2",
+      "summary": "A scheduler snapshot can race an atomic TASKS temporary file.",
+      "observed": "NOT reproduced on the observed revision, in D01's hand-back run or in the green run after BL1's repair: test_kit_scheduler.ManifestTests.test_a_refused_manifest_stops_integration_and_keeps_the_copies has passed every time here.",
+      "mechanism": "Reported during planning validation: snapshot_tree in bin/kit_scheduler.py can stat an atomic TASKS.md temporary file after another thread removes it.",
+      "verdict": "A latent, intermittent baseline finding. A passing run does not prove the race fixed; neither does this one. It is recorded so a future flake is recognised rather than chased as a regression of this kit.",
+      "predicted_by": "tasks/kits/decision-improvement/REPO-ASSESSMENT.md, 'Additional validation findings'.",
+      "disposition": "Recorded, not repaired. Separate scope, owned by bin/kit_scheduler.py."
+    },
+    {
+      "id": "BL3",
+      "summary": "Adding docs/DECISION-IMPROVEMENT-RECONCILIATION.md moves census pins this task is not permitted to edit.",
+      "observed": "docs/ held exactly 29 top-level *.md files at the observed revision. bin/docs_build.py:613 derives the deep-dive mirror set from a live docs/*.md glob, so a thirtieth source auto-joins and several hardcoded census assertions trip.",
+      "mechanism": "tests/test_docs_build_adversarial.py pins 29 (line 750), 31 (line 780) and 73/74 (lines 956, 961); tests/test_primitives_doc_adversarial.py:CensusBumpTripwireTests pins 29/31/73 and their +1 forms; tests/test_docs_build_cli.py carries a matching pin. HANDOFF.md states the expected maintenance directly: 'A new docs/*.md still moves the census pins (now 29 / 31 / 73 and 30 / 32 / 74).'",
+      "verdict": "A genuine conflict between the D01 brief's mandated file path and the repository's own tripwire design. The tripwires are working as intended; they exist so a new doc cannot land unnoticed.",
+      "disposition": "RESOLVED. The brief and its verify command name docs/DECISION-IMPROVEMENT-RECONCILIATION.md explicitly, so the file was written where the brief says; bin/docs_build.py build was run (the sanctioned generator) and mkdocs.yml gained the one nav entry its own NavCoverageTests requires. D01 did not touch the pins, because they are edits under tests/ it was not authorised to make; it reported them instead. The executor then applied them at this HEAD across tests/test_docs_build_adversarial.py, tests/test_docs_build_cli.py and tests/test_primitives_doc_adversarial.py — 29/31/73 became 30/32/74 and the 'one more doc' targets became 31/33/75 — and recorded the move in HANDOFF.md as entry 28, following the precedent of entry 14. The tripwires are therefore intact and re-armed at the new counts, not disabled."
+    }
+  ],
+  "stale_claims": [
+    {
+      "where": "tasks/kits/decision-improvement/PLAN.md",
+      "claim": "'At preparation, a separate working branch had newer Claude/Cursor verification commits (b48a284, 1755ead, fd80734) and unrelated uncommitted work. They were preserved, not incorporated into this main-based plan.'",
+      "status": "stale as a present-tense claim",
+      "reality": "All three landed, plus ab2a42a, e23f2ae and 8d1b7be, and all six are reachable from the observed revision e6cf4bd through its second parent 8d1b7be.",
+      "action": "Revised by D01 as a documented plan revision. The preparation-basis sentence naming aab7553 is history and was left exactly as written."
+    },
+    {
+      "where": "tasks/kits/decision-improvement/REPO-ASSESSMENT.md, F6",
+      "claim": "'Later work on the other local branch records Claude/Cursor and further in-progress checks. D01 must reconcile those changes before scheduling fixes.'",
+      "status": "stale as an instruction",
+      "reality": "The reconciliation is this document. All four harnesses now carry dated installed-client verification; no previously observed support was downgraded.",
+      "action": "Revised by D01 as a documented plan revision."
+    },
+    {
+      "where": "SECURITY.md line 183",
+      "claim": "'No workflow has been run live from here.'",
+      "status": "stale",
+      "reality": "Falsified by 8d1b7be: run 2026-09-16-1b4c dispatched 16 times live on Claude Code 2.1.273 for $1.90 against a $2.00 ceiling, and claude-code workflow_evaluation is verified: supported. That commit updated HANDOFF.md, docs/RELEASE.md, docs/WORKFLOW-EVAL.md and the registry but not this sentence.",
+      "action": "REPORTED ONLY. SECURITY.md is not D01's to edit and this task changes no product source. The correction belongs to the release/security owner, in the same edit as its generated mirror."
+    },
+    {
+      "where": "SECURITY.md line 219",
+      "claim": "Cursor: 'only the CLI is dispatched from here, and none of the three has been run live from this repository.'",
+      "status": "stale",
+      "reality": "Falsified by fd80734: the CLI mode ran live on 2026-09-16 (runs 2026-09-16-f427 and 2026-09-16-fb01) and six cursor rows are verified: supported. The IDE and cloud modes remain unrun and unknown, so only the 'none of the three' clause is wrong.",
+      "action": "REPORTED ONLY, as above."
+    },
+    {
+      "where": "SECURITY.md line 283",
+      "claim": "'every unrun live check -- escalation, resume, the workflow evaluation -- is listed there as prepared, not done.'",
+      "status": "partly stale",
+      "reality": "The workflow evaluation has now run live once on one harness. Escalation and the dead-run resume path remain genuinely unrun (every live first attempt passed; resume was exercised with stubs only).",
+      "action": "REPORTED ONLY, as above."
+    }
+  ],
+  "design_posture": {
+    "jev_free": "V1 must start, work and roll back with every optional provider absent. No Jev endpoint, SDK, model, key or pricing figure is assumed anywhere, and Release 2 is a separate, gated kit. Nothing in this reconciliation depends on an unpublished API.",
+    "human_gated": "A prediction is advice, never authority. A provider cannot execute a tool, grant a permission, raise a budget, modify the DAG, remove mandatory review, accept an artifact, alter controller logic or approve a candidate. Eligibility, capability, privacy and atomic admission are rechecked immediately before action, and invalid or unavailable advice takes an approved fallback or stops — it never routes around a denial. A proposer cannot approve itself; canary and active transitions machine-refuse without a verified protected profile, complete predeclared trial inputs and exact approval evidence.",
+    "data_only": "Candidates are bounded, allowlisted data diffs. No candidate edits arbitrary Python, shell, module paths, acceptance criteria, permissions, pricing, skills, lessons, the improvement procedure or hidden evaluation rules. Policy bundles are immutable data with hashes that identify content and protect nothing.",
+    "legacy_preserved": "The current deterministic behaviour is wrapped as a named legacy bundle and remains the default. An absent active pointer means existing behaviour continues. prefs/routing-policy.json stays pull-only: no existing preference file may silently become an executable policy bundle."
+  },
+  "not_changed_by_this_task": [
+    "bin/",
+    "tests/",
+    "data/",
+    "primitives/",
+    "SECURITY.md",
+    "HANDOFF.md",
+    ".claude/kits/decision-improvement-v1/TASKS.md",
+    ".claude/kits/decision-improvement-v1/NOTES.md",
+    "tasks/kits/decision-improvement/VALIDATION.md",
+    "docs/plans/polytropos-decision-and-improvement-execution.md"
+  ]
+}

@@ -1220,6 +1220,87 @@ def _int_or_na(value):
     return str(value) if value is not None else "n/a"
 
 
+def render_policy_evidence_markdown(report):
+    """Render a ``workflow_eval.policy_evidence_report()`` document as markdown (decision-
+    improvement D24) — the same "H1 + labelled sections" shape every other card in this file
+    uses, extending this module's rendering conventions rather than adding a new store or a new
+    CLI verb.
+
+    ADDITIVE ONLY, AND COMPUTES NOTHING OF ITS OWN. Every number below was already decided by
+    ``workflow_eval`` (lineage, scope, interventions, resource bases, quality, monitoring, and
+    delayed/censored defects); this function reads that document and renders it, the same way
+    ``render_markdown`` reads a scorecard rather than deriving one. It reuses ``_int_or_na`` so
+    a count nobody measured renders ``n/a`` here exactly as it does on every other card, never a
+    fabricated ``0``.
+    """
+    lineage = report.get("lineage") or {}
+    scope = report.get("scope") or {}
+    interventions = report.get("interventions") or {}
+    resources = report.get("resources") or {}
+    quality = report.get("quality") or {}
+    monitoring = report.get("monitoring") or {}
+    readout = monitoring.get("readout") or {}
+    proposal = monitoring.get("proposal") or {}
+    defects = report.get("defects") or {}
+
+    lines = [f"# Policy evidence report — {report.get('v', 'unknown version')}\n"]
+
+    lines.append("## Lineage (approval → evaluation → profile → manifest → partition)")
+    for link in lineage.get("links") or []:
+        state = "present" if link.get("present") else "ABSENT"
+        lines.append(f"- **{link.get('link')}**: {state}")
+    lines.append("")
+
+    lines.append("## Scope")
+    present = scope.get("present") or {}
+    lines.append(f"- approver scope: {'present' if present.get('approver') else 'unknown'}")
+    lines.append(f"- candidate scope: {'present' if present.get('candidate') else 'unknown'}")
+    lines.append(f"- activation scope: {'present' if present.get('activation') else 'unknown'}")
+    lines.append(f"- approver/candidate agree: {scope.get('agrees')}")
+    lines.append("")
+
+    lines.append("## Interventions (human label sources)")
+    counts = interventions.get("counts") or {}
+    if not counts:
+        lines.append("- n/a — no coverage was supplied")
+    for source in interventions.get("human_sources") or []:
+        lines.append(f"- {source}: {_int_or_na(counts.get(source))}")
+    lines.append("")
+
+    lines.append("## Resource bases")
+    lines.append(f"- bases tracked separately: {', '.join(resources.get('bases') or [])}")
+    lines.append(f"- evidence present: {bool(resources.get('present'))}")
+    lines.append("")
+
+    lines.append("## Quality")
+    lines.append(f"- status: {quality.get('status', 'unknown')}")
+    for field in ("raw", "calibrated"):
+        block = quality.get(field) or {}
+        if block:
+            lines.append(f"- {field}: resolved={_int_or_na(block.get('resolved'))} "
+                         f"scoreable={_int_or_na(block.get('scoreable'))} "
+                         f"abstained={_int_or_na(block.get('abstained'))} "
+                         f"classification_status={block.get('classification_status')}")
+    lines.append("")
+
+    lines.append("## Monitoring (a proposal only — never an action)")
+    lines.append(f"- monitors declared: {', '.join(readout.get('declared') or []) or 'none'}")
+    lines.append(f"- proposal: {proposal.get('proposal', 'unknown')}")
+    if proposal.get("reason"):
+        lines.append(f"- reason: {proposal['reason']}")
+    lines.append("")
+
+    lines.append("## Delayed / censored escaped defects")
+    for placement, count in (defects.get("counts") or {}).items():
+        lines.append(f"- {placement}: {_int_or_na(count)}")
+    lines.append("")
+
+    for label in report.get("labels") or []:
+        lines.append(f"> {label}")
+        lines.append("")
+    return "\n".join(lines).rstrip() + "\n"
+
+
 def render_markdown(card):
     """Render the scorecard dict as human markdown: H1 + the five pinned H2s in order.
 

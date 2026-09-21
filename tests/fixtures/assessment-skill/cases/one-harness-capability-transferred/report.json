@@ -1,0 +1,103 @@
+{
+  "candidates": [
+    {
+      "confidence_meta": {},
+      "harnesses": [
+        "claude",
+        "codex",
+        "copilot",
+        "cursor"
+      ],
+      "id": "K1",
+      "kind": "unsupported-state-handling",
+      "numeric_confidence": null,
+      "recommendation": "prepare brief",
+      "signal": "S1",
+      "surfaces": [
+        "four-harnesses"
+      ],
+      "tool_use": [
+        {
+          "action": "read the capability record and the boundary suite",
+          "limitation": "",
+          "mutates": false,
+          "target": "read-only"
+        }
+      ]
+    }
+  ],
+  "contradictions": [],
+  "decision": "draft task brief(s)",
+  "ledger": [
+    {
+      "claim": "confined dispatch is verified on exactly one harness",
+      "counterevidence": "the other three records carry unknown, which is not a denial and not a confirmation",
+      "evidence": [
+        "OBS-1",
+        "OBS-2",
+        "OBS-3"
+      ],
+      "id": "C1",
+      "scope": "one harness",
+      "status": "observed"
+    }
+  ],
+  "notes": [
+    "unknown on the other three harnesses is carried as unknown and never read as a denial"
+  ],
+  "ranking": {
+    "basis": [
+      "expected learning value",
+      "reversibility",
+      "evidence quality",
+      "disruption"
+    ],
+    "order": [
+      "K1"
+    ]
+  },
+  "scope": {
+    "evidence_not_available": [],
+    "excluded": [],
+    "repository": "synthetic/gale-asymmetry",
+    "revision": "fixture-revision-gale-a",
+    "surfaces": [
+      "shared-runtime-contracts",
+      "four-harnesses",
+      "skills-and-context-planning",
+      "evaluation-and-release"
+    ]
+  },
+  "signals": [
+    {
+      "affected_scope": "the one harness whose record says verified",
+      "assessment": "candidate",
+      "category": "confined-dispatch-verified-on-one-harness",
+      "id": "S1",
+      "no_fit_scope": "the three harnesses whose records say unknown",
+      "recurrence": [
+        "OBS-1",
+        "OBS-2",
+        "OBS-3"
+      ]
+    }
+  ],
+  "surface_answers": {
+    "evaluation-and-release": {
+      "assessment": "unknown",
+      "reason": "not examined under this bounded read"
+    },
+    "four-harnesses": {
+      "assessment": "candidate",
+      "reason": "the capability record and the boundary suite both sit on this surface"
+    },
+    "shared-runtime-contracts": {
+      "assessment": "unknown",
+      "reason": "not examined under this bounded read"
+    },
+    "skills-and-context-planning": {
+      "assessment": "unknown",
+      "reason": "not examined under this bounded read"
+    }
+  }
+}

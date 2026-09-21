@@ -33,7 +33,7 @@ from pathlib import Path
 #: The stores this repo writes. Named here so `where` can report all of them at once and no
 #: caller has to know the list.
 STORES = ("memory", "telemetry", "journal", "benchruns", "prefs", "trends", "attempts",
-          "evals")
+          "evals", "training")
 
 #: Overrides everything except an explicit per-command directory flag.
 DATA_HOME_VAR = "POLYTROPOS_DATA_HOME"

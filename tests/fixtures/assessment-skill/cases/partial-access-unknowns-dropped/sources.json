@@ -1,0 +1,44 @@
+{
+  "access_denied": [
+    "evaluation records",
+    "operator telemetry",
+    "release history"
+  ],
+  "harness_support": {
+    "claude": "unknown",
+    "codex": "unknown",
+    "copilot": "unknown",
+    "cursor": "unknown"
+  },
+  "kind": "agent-orchestrator",
+  "observations": [
+    {
+      "asserts": "documented",
+      "category": "acceptance-rules-are-documented-only",
+      "id": "OBS-1",
+      "locator": "Acceptance rules",
+      "path": "cinder-partial/docs/ACCEPTANCE.md",
+      "provenance": "document",
+      "statement": "acceptance rules are written down and no test in the readable tree exercises them",
+      "subject": "acceptance:rules"
+    },
+    {
+      "asserts": "documented",
+      "category": "acceptance-rules-are-documented-only",
+      "id": "OBS-2",
+      "locator": "Acceptance",
+      "path": "cinder-partial/docs/OWNERS.md",
+      "provenance": "document",
+      "statement": "the owners file names a component that the readable tree does not contain",
+      "subject": "acceptance:owner"
+    }
+  ],
+  "repository": "synthetic/cinder-partial",
+  "responsibilities": [
+    "shared-runtime-contracts",
+    "four-harnesses",
+    "skills-and-context-planning",
+    "evaluation-and-release"
+  ],
+  "revision": "fixture-revision-cinder-a"
+}

@@ -296,14 +296,20 @@ class RealTreeIdempotenceTests(unittest.TestCase):
     with 26 deep-dive pages (25 docs/*.md mirrors + 1 index), for 69 total;
     2026-09-13: 70 once step 23 added docs/CURSOR-HARNESS.md, 71 once step 24
     added docs/KIT-SCHEDULER.md, 72 once step 25 added docs/WORKFLOW-EVAL.md, 73
-    once step 26 added docs/RELEASE.md -- this test derives the count dynamically
-    so it stays meaningful if that changes again."""
+    once step 26 added docs/RELEASE.md, 74/75 once D01 and D03 added their two
+    docs/DECISION-IMPROVEMENT-*.md sources, 76 once D25 added the
+    skills/assess-improvement card, 77 once D34 added docs/TRAINING-DATA-READINESS.md
+    and 78 once D29 added docs/DECISION-IMPROVEMENT-CONFORMANCE.md
+    (both 2026-09-20), 79 once D30 added docs/DECISION-IMPROVEMENT-V1-HANDOFF.md
+    (2026-09-21) -- this test derives the count dynamically for the
+    build assertions, and the literal below is only the tripwire that makes a change in
+    the page set announce itself."""
 
     def test_build_twice_on_the_full_real_roster(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = _copy_real_dirs(tmp, ("skills", "copilot", "codex", "docs"))
             expected_count = len(db.expected_pages(root))
-            self.assertEqual(expected_count, 73, "the pinned page-set size (73 total)")
+            self.assertEqual(expected_count, 79, "the pinned page-set size (79 total)")
 
             code1, out1, err1 = _run_main(["build", "--repo-root", str(root)])
             self.assertEqual(code1, 0, f"stderr={err1!r}")

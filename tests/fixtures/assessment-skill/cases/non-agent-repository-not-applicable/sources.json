@@ -1,0 +1,35 @@
+{
+  "access_denied": [],
+  "harness_support": {
+    "claude": "absent",
+    "codex": "absent",
+    "copilot": "absent",
+    "cursor": "absent"
+  },
+  "kind": "unit-conversion-library",
+  "observations": [
+    {
+      "asserts": "pure",
+      "category": "pure-conversion-table",
+      "id": "OBS-1",
+      "locator": "line 12",
+      "path": "ember-units/ember/tables.py",
+      "provenance": "source",
+      "statement": "the library is a table of conversion factors and two pure functions over it, with no process, no task and no dispatch",
+      "subject": "library:tables"
+    },
+    {
+      "asserts": "pure",
+      "category": "pure-conversion-table",
+      "id": "OBS-2",
+      "locator": "TableTests",
+      "path": "ember-units/tests/test_tables.py",
+      "provenance": "test",
+      "statement": "the suite enumerates the table and compares each factor to a literal",
+      "subject": "library:tests"
+    }
+  ],
+  "repository": "synthetic/ember-units",
+  "responsibilities": [],
+  "revision": "fixture-revision-ember-a"
+}

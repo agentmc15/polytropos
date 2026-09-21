@@ -1,0 +1,56 @@
+{
+  "candidates": [],
+  "contradictions": [],
+  "decision": "no supported intervention",
+  "ledger": [
+    {
+      "claim": "the tree is a conversion table and two pure functions over it",
+      "counterevidence": "none found; the suite enumerates the same table",
+      "evidence": [
+        "OBS-1",
+        "OBS-2"
+      ],
+      "id": "C1",
+      "scope": "the whole repository",
+      "status": "observed"
+    }
+  ],
+  "notes": [
+    "the questions were asked and none of them landed on anything this tree owns"
+  ],
+  "ranking": {
+    "basis": [],
+    "order": []
+  },
+  "scope": {
+    "evidence_not_available": [],
+    "excluded": [],
+    "repository": "synthetic/ember-units",
+    "revision": "fixture-revision-ember-a",
+    "surfaces": [
+      "shared-runtime-contracts",
+      "four-harnesses",
+      "skills-and-context-planning",
+      "evaluation-and-release"
+    ]
+  },
+  "signals": [],
+  "surface_answers": {
+    "evaluation-and-release": {
+      "assessment": "not-applicable",
+      "reason": "this repository has no component with an analogous responsibility"
+    },
+    "four-harnesses": {
+      "assessment": "not-applicable",
+      "reason": "this repository has no component with an analogous responsibility"
+    },
+    "shared-runtime-contracts": {
+      "assessment": "not-applicable",
+      "reason": "this repository has no component with an analogous responsibility"
+    },
+    "skills-and-context-planning": {
+      "assessment": "not-applicable",
+      "reason": "this repository has no component with an analogous responsibility"
+    }
+  }
+}

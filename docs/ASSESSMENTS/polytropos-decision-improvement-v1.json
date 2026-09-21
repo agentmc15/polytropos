@@ -1,0 +1,598 @@
+{
+  "assessed_revision": "fd41902a7d0185a0681c23293d72bdc34baf2fcd",
+  "generated_at": "2026-09-20T03:40:14Z",
+  "assessment_kind": "authored assessment",
+  "not_a_record": "This document is an authored assessment written by reading the tree. It is not an attempt record, a telemetry envelope, an evaluation result or a ledger line, and nothing in it was captured by a running engine. Where a claim came from running a command, the provenance says which command and what it exited.",
+  "revision_posture": {
+    "branch": "codex/decision-improvement-plan",
+    "head": "fd41902a7d0185a0681c23293d72bdc34baf2fcd",
+    "main": "8d1b7be9f0b3781c1bf94e8488c990607b75bb95",
+    "commits_ahead_of_main": 39,
+    "working_tree_modified": [
+      "M .claude/kits/decision-improvement-v1/TASKS.md"
+    ],
+    "working_tree_this_reports_own_output": [
+      "?? docs/ASSESSMENTS/"
+    ],
+    "note": "Every finding below is a statement about HEAD on this branch unless its own text says otherwise. HEAD is not merged to main, so no finding here describes a released artifact. The modified entry outside this report's own output is the kit's execution status document, owned by the executor; no finding depends on its uncommitted content. This report's own files are listed separately so they are never read as pre-existing working-tree state."
+  },
+  "scope": {
+    "included": [
+      "claude",
+      "codex",
+      "copilot",
+      "cursor",
+      "evaluation_release",
+      "runtime",
+      "skills_context"
+    ],
+    "excluded": [
+      "docs-site/ and any generated page -- human-facing published output, never model-loaded, and not cited as evidence anywhere in this report",
+      "any live, paid or networked probe; no model was dispatched and no provider CLI was invoked",
+      "the full test suite, which this assessment did not run and does not report on",
+      "any host other than the one these commands ran on"
+    ],
+    "evidence_allowed": "read-only inspection of the tracked tree, plus offline commands that spend nothing: exec_policy check, release_gate check, harness_update check, docs_build/copilot_docs/sync_codex_surfaces check, workflow_eval activation/policy/approvals/list/demo against temporary directories, and improvement_loop demo.",
+    "evidence_not_available": [
+      "whether any model follows the assessment card's prose -- no assertion in this repository is about a model, and none was made here",
+      "whether a confining, ledgered dispatch would work -- there is no such path to run",
+      "whether the Cursor, Codex or Copilot hosts discover what the bundles install -- those registry rows are verified-unknown and stay unknown",
+      "any quality, resource or defect figure for a canary -- none has run"
+    ],
+    "decision_requested": "defer activation; prioritise the two smallest evidence-gathering briefs named in the report."
+  },
+  "readiness_and_gain": {
+    "separation": "Readiness is what could be tried next. Gain is what a trial measured. This report contains readiness statements only.",
+    "readiness_observed": "The activation transition is reachable in code, machine-refuses, and states its own blocker. One bounded command exercises three public symbols of the decision modules. An OS execution boundary is enforced on this host.",
+    "gain_observed": null,
+    "gain_note": "No gain figure exists to report, and none is inferred. No canary has run, no model was dispatched under any of this work, and every quality or resource figure any of these functions could assemble today is synthetic-fixture input or an explicit unknown. A mechanism that refuses correctly is not a result."
+  },
+  "activation_state": {
+    "activated": false,
+    "re_derived_from": "bin/workflow_eval.py CONFINED_DISPATCH_WIRED",
+    "observed_how": "python3 bin/workflow_eval.py activation --prefs-dir <temp> exited 0 and reported no pointer for any scope, every run resolving to legacy",
+    "cli_verb_that_activates": null,
+    "note": "This report changes nothing. It activates nothing, proposes no activation, and records no approval."
+  },
+  "surfaces": {
+    "runtime": {
+      "question": "Which component is authoritative for task lifecycle, admission, budgets, policy identity, evidence, readiness and acceptance?",
+      "authority": "bin/kit_contract.py for the task contract; bin/attempt_ledger.py and bin/attempt_history.py for attempt evidence; bin/safe_paths.py, bin/exec_policy.py and bin/proc_runner.py for the path, boundary and process seams; bin/runtime_data.py for store location.",
+      "posture": "unchanged and intact. The kit added library modules beside these owners and created no competing authority.",
+      "findings": [
+        "F01",
+        "F02",
+        "F03",
+        "F04",
+        "F05",
+        "F06"
+      ]
+    },
+    "claude": {
+      "question": "Which behaviour is native, adapted, documented-only, runtime-verified or unsupported here?",
+      "authority": "the skills/ tree is the roster; .claude-plugin/plugin.json declares none.",
+      "posture": "the card is native. Confined dispatch is recorded verified-unsupported on this harness.",
+      "findings": [
+        "F07",
+        "F08"
+      ]
+    },
+    "codex": {
+      "question": "Same question, asked separately; no claim transfers from another harness.",
+      "authority": ".codex-plugin/plugin.json points at a directory; the roster is frozen in tests/test_codex_bundle.py.",
+      "posture": "the card is absent. The manifest cannot disagree with the tree, so manifest validity is not coverage.",
+      "findings": [
+        "F09"
+      ]
+    },
+    "copilot": {
+      "question": "Same question, asked separately; no claim transfers from another harness.",
+      "authority": "copilot/aesop.toml primitives.skills, pinned equal to the bundle tree.",
+      "posture": "the card is absent, by a recorded scope decision rather than a measurement.",
+      "findings": [
+        "F10"
+      ]
+    },
+    "cursor": {
+      "question": "Same question, asked separately; no claim transfers from another harness.",
+      "authority": "bin/cursor_adapter.py BUNDLE, applied by bin/harness_select.py.",
+      "posture": "the card ships. The host-side discovery it depends on is verified-unknown, and Cursor carries the most unknown rows in the registry.",
+      "findings": [
+        "F11",
+        "F12"
+      ]
+    },
+    "skills_context": {
+      "question": "Is applicability explicit? Can a card be withheld for contradiction, staleness or no-fit? Are graph and context outputs advisory evidence rather than permission?",
+      "authority": "skills/assess-improvement/SKILL.md and its template for the card's own rules; bin/graph_ground.py for the graph seam; bin/docs_build.py for published pages.",
+      "posture": "the card's vocabulary is closed and parsed from the shipped prose at call time. Graph output stays advisory. The publication surface understates the card's reach.",
+      "findings": [
+        "F13",
+        "F14",
+        "F15"
+      ]
+    },
+    "evaluation_release": {
+      "question": "Are baseline, control, candidate, partitions, labels, release claims, rollback and the supported-environment matrix separately evidenced?",
+      "authority": "bin/workflow_eval.py owns evaluation persistence, proposals, approvals and activation pointers; bin/release_gate.py owns the release surface.",
+      "posture": "the arms, partitions and approval lifecycle exist as mechanism. No live outcome has been observed, promotion eligibility can never be true at this revision, and the release gate reads the new modules only for version strings.",
+      "findings": [
+        "F16",
+        "F17",
+        "F18",
+        "F19",
+        "F20",
+        "F21"
+      ]
+    }
+  },
+  "findings": [
+    {
+      "id": "F01",
+      "surface": "runtime",
+      "status": "observed",
+      "claim": "The canary/active transition refuses, and the refusal is re-derived from this repository's own code at each point that matters rather than read out of a stored verdict.",
+      "scope": "bin/workflow_eval.py at fd41902; no harness, no host",
+      "counterevidence": "A fixture can make every named gate pass, and the kit's tests do exactly that to show each gate is individually reachable. That shows a gate reads what it claims to read; it certifies no host isolation and no model quality. The refusal survives such a fixture only because one row reads the flag directly.",
+      "evidence": [
+        {
+          "path": "bin/workflow_eval.py",
+          "provenance": "read at this revision, and exercised: `python3 bin/workflow_eval.py activation --prefs-dir <temp>` exited 0 and printed 'confining, ledgered dispatch wired: False' with no pointer for any scope",
+          "symbol": "CONFINED_DISPATCH_WIRED"
+        },
+        {
+          "path": "bin/workflow_eval.py",
+          "provenance": "read at this revision; the eligibility verdict is a conjunction over rows and one row's re_derived_by names the flag, so no supplied document can make it True",
+          "symbol": "promotion_eligibility"
+        },
+        {
+          "path": "tests/test_decision_activation.py",
+          "provenance": "the kit's own positive control: it asserts each named gate is satisfiable and that the transition still refuses. Read, not run, by this assessment",
+          "symbol": "ProtectedActivationGateTests"
+        }
+      ]
+    },
+    {
+      "id": "F02",
+      "surface": "runtime",
+      "status": "observed",
+      "claim": "The context-repair policy admits exactly one failure class, and the repository's dispatch classifier cannot emit it. The only route to that class is a driver's NOTES prose projection, not a trusted ledger event.",
+      "scope": "bin/decision_policy.py, bin/attempt_ledger.py, bin/attempt_history.py",
+      "counterevidence": "`attempt_ledger.CLASSES` declares both `model` and `verification`, so the vocabulary looks complete when read on its own. The gap is visible only by reading the classifier's returns.",
+      "evidence": [
+        {
+          "path": "bin/decision_policy.py",
+          "provenance": "read at fd41902; the tuple is one element, `verification`",
+          "symbol": "REPAIRABLE_FAILURE_CLASSES"
+        },
+        {
+          "path": "bin/attempt_ledger.py",
+          "provenance": "read at fd41902; its returns are infrastructure, None, auth, config, permission, unknown -- never `verification`, never `model`",
+          "symbol": "classify_dispatch"
+        },
+        {
+          "path": "bin/attempt_history.py",
+          "provenance": "line verified at this revision: it reads `failure_class=failure_class or pairs.get(\"failure\")`, where pairs['failure'] is the driver's NOTES outcome-line string",
+          "symbol": "observe",
+          "line": 296
+        }
+      ]
+    },
+    {
+      "id": "F03",
+      "surface": "runtime",
+      "status": "observed",
+      "claim": "The field whose whole job is to name how trustworthy a failure class is reports `trusted-event` for a class that arrived through the NOTES prose projection.",
+      "scope": "bin/decision_eval.py, one expression",
+      "counterevidence": "Nothing in production calls this function, so no operator reads the label today. It is a latent defect, not an active one.",
+      "evidence": [
+        {
+          "path": "bin/decision_eval.py",
+          "provenance": "line verified at this revision: `\"failure_class_basis\": \"trusted-event\" if cls else None`, set unconditionally on the presence of a class rather than on its origin",
+          "line": 528
+        },
+        {
+          "path": ".claude/kits/decision-improvement-v1/NOTES.md",
+          "provenance": "the kit's Phase 5 review recorded this adjacent overclaim and left it to whichever task takes the trigger question; still open at this revision",
+          "symbol": "Phase 5 review -- adjudications"
+        }
+      ]
+    },
+    {
+      "id": "F04",
+      "surface": "runtime",
+      "status": "observed",
+      "claim": "The decision replay store has no registered home. It is absent from the store registry and from .gitignore, so a caller passing a repository-relative directory would create a tracked store inside the distributed tree.",
+      "scope": "bin/runtime_data.py, .gitignore, bin/decision_provider.py",
+      "counterevidence": "Not reachable today: every storage function takes an explicit caller-supplied store_dir, the module resolves no location and imports no store helper, and nothing in bin/ calls it. The hazard is latent and arrives with the first real caller.",
+      "evidence": [
+        {
+          "path": "bin/runtime_data.py",
+          "provenance": "read at fd41902; eight names -- memory, telemetry, journal, benchruns, prefs, trends, attempts, evals -- and no `replay`",
+          "symbol": "STORES"
+        },
+        {
+          "path": ".gitignore",
+          "provenance": "searched at this revision for `replay`: zero matches, so a repository-root replay/ directory would be tracked",
+          "symbol": "(no /replay/ entry)"
+        },
+        {
+          "path": "bin/decision_provider.py",
+          "provenance": "read at fd41902; the signature's first parameter is the caller's store_dir and the module never resolves a default",
+          "symbol": "record_result"
+        }
+      ]
+    },
+    {
+      "id": "F05",
+      "surface": "runtime",
+      "status": "observed",
+      "claim": "Strength. The repository's single-authority invariants hold across the new work: one path helper, one execution boundary, one process runner, one attempt ledger, and this host enforces a real OS boundary.",
+      "scope": "bin/safe_paths.py, bin/exec_policy.py, bin/proc_runner.py, bin/attempt_ledger.py",
+      "counterevidence": "An enforced boundary is not a confined dispatch. The sentinel battery's own non-guarantee list says the model dispatch is not confined at all, stat on a denied path still succeeds, and nothing is claimed about any other host.",
+      "evidence": [
+        {
+          "path": "bin/exec_policy.py",
+          "provenance": "exercised: `python3 bin/exec_policy.py check` exited 0 on this host at this revision, so an OS execution boundary is enforced here",
+          "symbol": "DEFAULT_PROTECTED_PROFILE"
+        },
+        {
+          "path": "bin/exec_policy.py",
+          "provenance": "read at fd41902; five named non-guarantees ride in every sentinel report, including that the model dispatch is not confined",
+          "symbol": "SENTINEL_NOT_PROVEN"
+        },
+        {
+          "path": "bin/safe_paths.py",
+          "provenance": "read at fd41902; the identifier validator the Phase 5 review's traversal finding added to the proposal/approval writers",
+          "symbol": "validate_id"
+        }
+      ]
+    },
+    {
+      "id": "F06",
+      "surface": "runtime",
+      "status": "observed",
+      "claim": "Every cross-module edge the kit adds is a lazy file-path module load, not an import. A static import audit of bin/ sees no edges at all, so a renamed symbol inside a kit module fails at run time or in tests, never at import.",
+      "scope": "bin/decision_*.py, bin/improvement_loop.py, bin/workflow_eval.py, bin/release_gate.py",
+      "counterevidence": "This is the repository's pre-existing sibling-load idiom, not something the kit invented; bin/ is not a package. The kit's own tests pin several of these reads by patching the owner, which is a stronger check than an import would give.",
+      "evidence": [
+        {
+          "path": "bin/workflow_eval.py",
+          "provenance": "derived: searched bin/ for `^\\s*(import|from)\\s+(decision|improvement)` at this revision and found zero static imports; the edges are accessor functions calling _sibling(...)",
+          "symbol": "_dc"
+        },
+        {
+          "path": "bin/decision_policy.py",
+          "provenance": "read at fd41902; loads bin/decision_context.py by file path through the same idiom",
+          "symbol": "_sibling"
+        }
+      ]
+    },
+    {
+      "id": "F07",
+      "surface": "claude",
+      "status": "observed",
+      "claim": "The assess-improvement card ships on the Claude surface, and the Claude plugin manifest carries no skill roster -- the skills/ tree is the roster.",
+      "scope": "skills/, .claude-plugin/plugin.json",
+      "counterevidence": "Everything asserted about this card is structural. No test in the repository asserts that a model follows its prose, and the kit's own record says so.",
+      "evidence": [
+        {
+          "path": "skills/assess-improvement/SKILL.md",
+          "provenance": "read at this revision; one of 15 directories under skills/, counted directly",
+          "symbol": "name: assess-improvement"
+        },
+        {
+          "path": ".claude-plugin/plugin.json",
+          "provenance": "parsed at this revision; its key set is exactly name, description, version, author -- no `skills` key",
+          "symbol": "(key set)"
+        },
+        {
+          "path": "tests/test_assessment_skill.py",
+          "provenance": "read, not run, by this assessment; the roster equality guard that pins the card to exactly the harnesses whose roster lists it",
+          "symbol": "SkillPackagingTests"
+        }
+      ]
+    },
+    {
+      "id": "F08",
+      "surface": "claude",
+      "status": "observed",
+      "claim": "The single blocker holding the activation transition shut has an independently recorded reason on this harness, not merely unfinished wiring: confined dispatch is recorded verified-unsupported for Claude, measured on macOS, because subscription credentials live in a keychain the profile blocks.",
+      "scope": "primitives/harness-capabilities.json, claude-code only",
+      "counterevidence": "The two facts are about different things and must not be merged. The registry row is about dispatching a model under the boundary; the kit's flag is about whether any confining, ledgered dispatch path exists in this repository. Neither implies the other, and the row's date precedes this kit.",
+      "evidence": [
+        {
+          "path": "primitives/harness-capabilities.json",
+          "provenance": "parsed at this revision; product/implemented/verified all `unsupported`, source 'measured on macOS', verified_on 2026-09-06",
+          "symbol": "harnesses.claude-code.capabilities.confined_dispatch"
+        },
+        {
+          "path": "primitives/harness-capabilities.json",
+          "provenance": "parsed at this revision; the file's own instruction that a caller needing certainty treats unknown as no",
+          "symbol": "unknown_is_valid"
+        }
+      ]
+    },
+    {
+      "id": "F09",
+      "surface": "codex",
+      "status": "observed",
+      "claim": "The card is absent from the Codex surface. Its roster lives in a test constant rather than in the plugin manifest, which points at a directory, so adding a card there is a test edit in a file the staging task did not own.",
+      "scope": "codex/skills/, .codex-plugin/plugin.json, tests/test_codex_bundle.py",
+      "counterevidence": "The manifest side cannot disagree with the tree, because it names a directory rather than a list. So `Codex plugin valid` is satisfied while the card is absent -- the manifest is not evidence of coverage either way.",
+      "evidence": [
+        {
+          "path": ".codex-plugin/plugin.json",
+          "provenance": "parsed at this revision; `skills` is the string './codex/skills/', a directory pointer, so discovery grows with the tree",
+          "symbol": "skills"
+        },
+        {
+          "path": "tests/test_codex_bundle.py",
+          "provenance": "read, not run; the frozen roster set, which does not contain assess-improvement. Directory listing of codex/skills/ at this revision: 12 entries, none of them the card",
+          "symbol": "EXPECTED_SKILL_STEMS"
+        }
+      ]
+    },
+    {
+      "id": "F10",
+      "surface": "copilot",
+      "status": "observed",
+      "claim": "The card is absent from the Copilot surface, whose roster is pinned by an exact set equality between the bundle manifest and the skills tree.",
+      "scope": "copilot/aesop.toml, copilot/.github/skills/, tests/test_copilot_bundle.py",
+      "counterevidence": "Absence here is a scope decision the staging task recorded, not an oversight and not a capability judgement. Nothing was measured about whether the card would work on Copilot.",
+      "evidence": [
+        {
+          "path": "copilot/aesop.toml",
+          "provenance": "read at this revision; 13 skill names, none of them assess-improvement, and the tree under copilot/.github/skills/ has the same 13",
+          "symbol": "primitives.skills"
+        },
+        {
+          "path": "tests/test_copilot_bundle.py",
+          "provenance": "read, not run; the manifest-equals-tree guard that makes a one-sided addition fail",
+          "symbol": "ManifestSkillsMatchBundleTests"
+        }
+      ]
+    },
+    {
+      "id": "F11",
+      "surface": "cursor",
+      "status": "observed",
+      "claim": "The card ships on the Cursor surface through the ownership-aware installer, and the very product capability it relies on -- Cursor reading an installed skill file -- is recorded verified-unknown.",
+      "scope": "cursor/skills/, bin/cursor_adapter.py, primitives/harness-capabilities.json",
+      "counterevidence": "Unknown is not unsupported. The row's product and implemented axes both read supported, and the installer's behaviour is well covered; what is unverified is the host's own discovery of the file.",
+      "evidence": [
+        {
+          "path": "cursor/skills/assess-improvement/SKILL.md",
+          "provenance": "read at this revision; one of exactly 2 directories under cursor/skills/",
+          "symbol": "name: assess-improvement"
+        },
+        {
+          "path": "bin/cursor_adapter.py",
+          "provenance": "read at fd41902; a 5-tuple of (source, destination) pairs, two of which are the card and its template",
+          "symbol": "BUNDLE"
+        },
+        {
+          "path": "primitives/harness-capabilities.json",
+          "provenance": "parsed at this revision; product supported, implemented supported, verified unknown, with the note that discovery by the product is not verified here",
+          "symbol": "harnesses.cursor.capabilities.skill_files"
+        }
+      ]
+    },
+    {
+      "id": "F12",
+      "surface": "cursor",
+      "status": "observed",
+      "claim": "Cursor carries the most unknown capability rows of any harness in the registry: 13 of its 19 are verified-unknown, against 4 of 11 for Claude.",
+      "scope": "primitives/harness-capabilities.json",
+      "counterevidence": "A larger unknown count partly reflects a larger declared surface, not a worse one -- Cursor declares 19 capabilities where Copilot declares 9. A ratio across unequal vocabularies is not a ranking.",
+      "evidence": [
+        {
+          "path": "primitives/harness-capabilities.json",
+          "provenance": "parsed and tallied at this revision across all five harness entries",
+          "symbol": "harnesses.cursor.capabilities"
+        }
+      ]
+    },
+    {
+      "id": "F13",
+      "surface": "skills_context",
+      "status": "observed",
+      "claim": "The card's report vocabulary is enforced by a checker that parses the shipped card and template at call time, so the rules cannot drift from the prose. The checker lives in a test module and has no production caller.",
+      "scope": "tests/test_assessment_skill.py, skills/assess-improvement/",
+      "counterevidence": "This is a structural guard over an authored corpus and an authored oracle. It proves a report's shape against the card's own stated vocabulary; it observes no model and makes no claim about one.",
+      "evidence": [
+        {
+          "path": "tests/test_assessment_skill.py",
+          "provenance": "read at this revision; defined in a test module, not under bin/, so nothing an engine runs reaches it",
+          "symbol": "review_assessment",
+          "line": 773
+        },
+        {
+          "path": "skills/assess-improvement/references/assessment-template.md",
+          "provenance": "read at this revision; the statuses, permitted assessments and ranking basis the checker parses out rather than copying",
+          "symbol": "Evidence ledger"
+        }
+      ]
+    },
+    {
+      "id": "F14",
+      "surface": "skills_context",
+      "status": "observed",
+      "claim": "The documentation generator knows three harnesses, not four. Cursor has no generated pages, so the card is published as a Claude-only capability although it ships on two harnesses.",
+      "scope": "bin/docs_build.py",
+      "counterevidence": "This is a publication gap, not a packaging gap: the installed bundle and the roster guards both carry the two-harness fact correctly. It misleads a reader of the published pages, not a caller of the installer.",
+      "evidence": [
+        {
+          "path": "bin/docs_build.py",
+          "provenance": "read at fd41902; the mapping has exactly three keys -- claude, copilot, codex -- and no cursor entry",
+          "symbol": "_HARNESS_SKILL_ROOTS"
+        },
+        {
+          "path": "bin/cursor_adapter.py",
+          "provenance": "read at fd41902; the bundle that does ship the card to Cursor, which the generator does not read",
+          "symbol": "BUNDLE"
+        }
+      ]
+    },
+    {
+      "id": "F15",
+      "surface": "skills_context",
+      "status": "observed",
+      "claim": "The context-candidate module reads the graph seam rather than becoming a second graph reader, and no path in it invokes the external graph CLI.",
+      "scope": "bin/decision_context.py, bin/graph_ground.py",
+      "counterevidence": "The module's own privacy prevention layer covers path prefixes only, so a credential-shaped suffix is read before its path is judged. What is guaranteed is that neither the path nor its bytes reach the manifest.",
+      "evidence": [
+        {
+          "path": "bin/decision_context.py",
+          "provenance": "read at fd41902; loads bin/graph_ground.py by file path and states in its own header that the seam owns provenance, freshness, impact and search fallback",
+          "symbol": "_sibling"
+        },
+        {
+          "path": "bin/decision_context.py",
+          "provenance": "read at fd41902; the keys-only dependency fence, whose tokens include the parallel-safety spellings",
+          "symbol": "DEPENDENCY_TOKENS"
+        }
+      ]
+    },
+    {
+      "id": "F16",
+      "surface": "evaluation_release",
+      "status": "observed",
+      "claim": "The release gate couples to the new modules through one version string each. It executes four of them and calls no function in any, so the gate would still pass with every function in one of them deleted, provided its version constant survived.",
+      "scope": "bin/release_gate.py",
+      "counterevidence": "The coupling is real in one direction the kit proved: bumping a registered constant moves `release_gate check` from 0 to 3, and an import-time error in an executed module breaks the gate. That is genuine coupling to the modules' loadability, just not to their behaviour.",
+      "evidence": [
+        {
+          "path": "bin/release_gate.py",
+          "provenance": "read at fd41902; eight rows name decision_contract, decision_provider, decision_eval and decision_context, each for one constant. decision_policy and improvement_loop have no row",
+          "symbol": "VERSION_SOURCES"
+        },
+        {
+          "path": "bin/release_gate.py",
+          "provenance": "exercised: `python3 bin/release_gate.py check` exited 0 at this revision and reported findings: none",
+          "symbol": "run_check"
+        }
+      ]
+    },
+    {
+      "id": "F17",
+      "surface": "evaluation_release",
+      "status": "observed",
+      "claim": "Exactly three public symbols of the five decision modules are reached by a runnable command in this repository. That is readiness to try, and it is not a measured outcome of any kind.",
+      "scope": "bin/improvement_loop.py, bin/workflow_eval.py, the five decision modules",
+      "counterevidence": "The kit's Phase 4 review measured this island as having zero in-edges from the running system. That is no longer accurate: the bounded-draft command reaches two modules. But three exercised symbols out of roughly seventy public ones is a small fraction, and the reached path spends nothing and dispatches nothing.",
+      "evidence": [
+        {
+          "path": "bin/improvement_loop.py",
+          "provenance": "exercised and traced: `improvement_loop demo` exits 0, and instrumenting the module loader shows it reaching decision_contract.parse_bundle, decision_contract.parse_proposal and decision_policy.bundle_ref, plus four contract constants -- three functions in total",
+          "symbol": "main"
+        },
+        {
+          "path": "bin/workflow_eval.py",
+          "provenance": "traced: none of the five offline verbs demo, activation, policy, approvals or list loads any decision module; the contract is reached only through the bounded-draft path",
+          "symbol": "build_parser"
+        },
+        {
+          "path": "bin/decision_provider.py",
+          "provenance": "read at fd41902; its three public symbols are reached by nothing in bin/ except the release gate's read of one constant",
+          "symbol": "evaluate"
+        }
+      ]
+    },
+    {
+      "id": "F18",
+      "surface": "evaluation_release",
+      "status": "observed",
+      "claim": "Two gates disagree on this same tree: the release gate exits 0 while the harness freshness card exits 3. The release gate does not consult installed harness freshness.",
+      "scope": "bin/release_gate.py, bin/harness_update.py",
+      "counterevidence": "This is not a contradiction. They answer different questions, and the exit 3 is pre-existing installed-home staleness the kit's own record attributes to state outside the repository, reproduced against a clean extract of a committed tree.",
+      "evidence": [
+        {
+          "path": "bin/harness_update.py",
+          "provenance": "exercised: `python3 bin/harness_update.py check` exited 3 at this revision, reporting drift for claude, copilot and codex installs with pricing and generated mirrors up to date",
+          "symbol": "main"
+        },
+        {
+          "path": ".claude/kits/decision-improvement-v1/NOTES.md",
+          "provenance": "the kit's D07 entry records the exit 3 as pre-existing, proven against a clean archive extract of the committed tree",
+          "symbol": "D07 -- Protected profile sentinels"
+        }
+      ]
+    },
+    {
+      "id": "F19",
+      "surface": "evaluation_release",
+      "status": "documented",
+      "claim": "Whether a whole-task study gates a move to `active` is an open architect decision. The live-run requirement list carries it; the activation gate's own requirements do not.",
+      "scope": "bin/workflow_eval.py",
+      "counterevidence": "Recorded as `documented` rather than `observed` because the gap is plain in the two vocabularies but the resolution is a scope decision nobody has taken. Note also that whichever task takes it, the row stays a caller's assertion: nothing offline can re-derive that a study ran.",
+      "evidence": [
+        {
+          "path": "bin/workflow_eval.py",
+          "provenance": "read at fd41902; two requirements, current-evaluation-manifest and predeclared-trial-plan, with no whole-task-study row",
+          "symbol": "ACTIVATION_OWN_REQUIREMENTS"
+        },
+        {
+          "path": "bin/workflow_eval.py",
+          "provenance": "line verified at this revision: the live-requirement row whose owner reads 'a prospective study, separately run'",
+          "symbol": "live_requirements",
+          "line": 2692
+        }
+      ]
+    },
+    {
+      "id": "F20",
+      "surface": "evaluation_release",
+      "status": "observed",
+      "claim": "No policy-bundle store exists. Every seam that takes a bundle reference accepts a well-formed pointer whose target nothing opens, so bundle references carry no origin evidence anywhere.",
+      "scope": "bin/workflow_eval.py, bin/decision_policy.py",
+      "counterevidence": "One neighbouring path does re-derive its digest at the moment the pointer is taken -- the manifest reference read through the command line refuses a rewritten file. So the absence is specific to bundles, not general to references.",
+      "evidence": [
+        {
+          "path": "bin/workflow_eval.py",
+          "provenance": "read at fd41902; the proposal builder's bundle_ref parameter, which the kit's record states has no caller because there is no bundle store",
+          "symbol": "build_proposal"
+        },
+        {
+          "path": "bin/workflow_eval.py",
+          "provenance": "read at fd41902; the activation minting function requires a bundle_ref and opens nothing to check it",
+          "symbol": "activation_entry"
+        },
+        {
+          "path": "bin/decision_policy.py",
+          "provenance": "read at fd41902; builds the reference; proves shape, never origin",
+          "symbol": "bundle_ref"
+        }
+      ]
+    },
+    {
+      "id": "F21",
+      "surface": "evaluation_release",
+      "status": "observed",
+      "claim": "The repository's own no-gain-claim authority refuses this assessment. Exactly one token spelling is responsible, it is the one this kit is named for, and no occurrence of it anywhere in either artifact is a statement about performance. The authority's docstring predicts exactly this outcome.",
+      "scope": "this report and its JSON, swept through bin/workflow_eval.py",
+      "counterevidence": "A returning sweep would not have meant this report claims no gain, and a refusing sweep does not mean it claims one. The check is a token match over spellings and cannot establish absence; it names the spellings it misses, including outperform, uplift, lift, beat the baseline and better than. Those were avoided by authoring, which is a weaker guarantee than a check. Note also that the checkout directory this tree sits in is itself named for the token, so any absolute path quoted in this worktree carries it -- the collision is wider than the kit's own naming.",
+      "evidence": [
+        {
+          "path": "bin/workflow_eval.py",
+          "provenance": "exercised against this report's own text and JSON at this revision; it raised, naming one token. A per-string pass through the same public function then classified every carrying string, each read in context: most carry it only inside an identifier, and the handful that carry it as a bare word either name the body of work assessed or quote a search pattern given as provenance. The figures are in the report's closing section",
+          "symbol": "assert_no_gain_claim"
+        },
+        {
+          "path": "bin/workflow_eval.py",
+          "provenance": "read at fd41902; the constant that states what a returning sweep does not prove and lists the spellings it does not catch",
+          "symbol": "NO_GAIN_CLAIM"
+        }
+      ]
+    }
+  ],
+  "gain_claim_sweep": {
+    "authority": "bin/workflow_eval.py assert_no_gain_claim",
+    "whole_document_verdict": "refused",
+    "responsible_token_spellings": 1,
+    "every_occurrence_is_a_performance_claim": false,
+    "figures": "counted in the report's own closing section, measured on the finished document; not duplicated here, because a figure about this file cannot be stored inside this file without changing what it counts",
+    "method": "the public function decided every string; the offending spelling was read back out of its own refusal message, so the checking script kept no copy of the token list",
+    "what_it_does_not_prove": "a token match over spellings cannot establish absence, and the spellings it misses are named in the authority's own NO_GAIN_CLAIM constant"
+  }
+}

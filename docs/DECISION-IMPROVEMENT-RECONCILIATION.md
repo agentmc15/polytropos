@@ -1,0 +1,279 @@
+# Decision and improvement — reconciliation against HEAD
+
+This is task D01 of the `decision-improvement-v1` kit: the prose half of the reconciliation whose
+machine-readable twin is `docs/DECISION-IMPROVEMENT-RECONCILIATION.json`. It compares what the kit
+was planned against with what the repository actually holds now, classifies original roadmap steps
+16 through 26, and records what this kit may and may not assume. It changes no product code, no
+test, no pricing file and no capability row.
+
+## The two revisions
+
+- **Baseline (what the kit was prepared against):** `aab755378975e9191db6ced16ee07a27a414af21`.
+  At preparation, `main` and a freshly fetched `origin/main` both resolved there.
+- **Observed HEAD (what this reconciliation examined):** `e6cf4bd6c86daac53ac99d4d484c4bb802b84bb5`,
+  on branch `codex/decision-improvement-plan`, committed 2026-09-15 23:58:33 -0500. It is a merge
+  with parents `4ba75607a60e94cf1055c6ac4b9e927ec479f70b` (the planning branch) and
+  `8d1b7be9f0b3781c1bf94e8488c990607b75bb95` (the verification work).
+
+The kit's baseline label stays `aab7553` on purpose — it is the preparation basis, and D01's verify
+command pins it. Nothing below re-dates that history; what changes is the present-tense picture.
+
+## Which source this reconciliation used
+
+The original 26-step roadmap is the user's own file and lives outside this repository; it was not
+available to this task. Per the D01 brief, the substitute source is this kit's own material plus the
+repository's own record: `HANDOFF.md`, which carries a "deliberate limits" section for each of steps
+16 through 26 and the post-roadmap live-verification log; `tasks/kits/decision-improvement/PLAN.md`;
+`tasks/kits/decision-improvement/REPO-ASSESSMENT.md`;
+`tasks/kits/decision-improvement/VALIDATION.md`; `SECURITY.md`;
+`primitives/harness-capabilities.json`; `docs/RELEASE.md`; and git history between the two revisions
+above. Where this document makes a claim about what calls what, that claim was traced by reading the
+import graph, not inferred from a passing test.
+
+## What landed between the two revisions
+
+The kit's plan recorded three Claude and Cursor verification commits as work on a separate branch
+that had *not* been incorporated. All three have landed, and three more with them. All six are
+reachable from the observed HEAD through its second parent:
+
+| Commit | What it changed that this kit depends on |
+| --- | --- |
+| `b48a284` | `claude_execute.agent_roots` finds a kit's agents beside the kit; `tests/test_claude_execute.py` `AgentRootsTests` pins it. Claude Code 2.1.273 rows re-dated. |
+| `1755ead` | `cursor_adapter.ABOUT_SCHEMA_KEYS` identifies the real Cursor CLI, which names itself nowhere. |
+| `fd80734` | The first logged-in Cursor run. Six cursor rows become verified; the CLI reports usage the adapter still does not read. |
+| `ab2a42a` | A Codex review's own typed record no longer stales its fingerprint; `repo_bench.order_mutation_candidates` mines code before data before prose. Codex and Copilot rows verified. |
+| `e23f2ae` | The first real evaluation plan on a target repository: zero usable issue pairs, one admitted task out of a full bound of 24 sites. |
+| `8d1b7be` | The first live workflow evaluation. `workflow_eval.untested_claims` reads the registry instead of asserting a constant. |
+
+The consequence that matters most: at the baseline, installed-client verification existed for Claude
+Code alone and every Cursor row was `unknown`. At the observed HEAD, all four clients carry dated
+`verified: supported` rows from 2026-09-16 with their client versions recorded. **No previously
+observed support is downgraded anywhere in this document.** Where a later task's brief and this
+record disagree about what has been verified, this record is the newer evidence and wins.
+
+## How each step is classified
+
+Four states are available. They describe readiness *for this kit*, never the quality of the delivered
+step, and nothing here reschedules completed work.
+
+- **implemented** — the mechanism is present, test-enforced, and where the step's claim needs a real
+  client it carries dated installed-client verification. Remaining work is additive extension.
+- **partial** — present and test-enforced, but a named sub-scope this kit depends on is deliberately
+  narrower at this revision; usually a production caller that does not exist yet.
+- **unverified** — every named mechanism is present and test-enforced, but no installed client has
+  ever exercised it. The only supporting row belongs to the stub executor, which is conformance, not
+  a client.
+- **pending** — not built. Unused: all eleven steps landed before the baseline.
+
+| Step | State | The short reason |
+| --- | --- | --- |
+| 16 Durable attempts | implemented | `bin/attempt_ledger.py` reached only through `kit_contract`; `durable_attempts` verified on all four clients. |
+| 17 Cross-harness evidence | implemented | `bin/attempt_history.py` plus `bin/model_registry.py`; unknowns kept, history never collapsed. |
+| 18 Validated execution DAG | implemented | `kit_contract.validate_graph` / `graph_state` / `readiness` / `TRANSITIONS`; this kit's own graph validates under it. |
+| 19 Named routing policies | partial | `reserved` is the default legacy bundle, but only the Codex driver dispatches under a routing decision. |
+| 20 The role contract | implemented | One roster grammar shared by both skills and every driver; `independent_review` verified on all four clients. |
+| 21 Code-graph grounding | partial | `bin/graph_ground.py` is complete and has no driver caller; no prompt is grounded in production. |
+| 22 Lean entry points, scoped lessons | implemented | `bin/lessons_store.py` gates recall and promotes only by recurrence or explicit ask. |
+| 23 The Cursor adapter | implemented | Upgraded by `1755ead` and `fd80734`: six rows verified against Cursor CLI 2026.09.10-fd3934a. |
+| 24 Artifact-aware scheduling | unverified | Every mechanism exists; no live model has ever run in parallel. The stub is the only verified row. |
+| 25 Workflow evaluation | partial | One live run verified the pipeline and produced no applicable verdict; the policy file has no reader. |
+| 26 The release gate | implemented | `python3 bin/release_gate.py check` exits 0 at this HEAD with no findings. |
+
+The per-step evidence paths and the exact remaining delta for each are in the JSON twin under
+`prerequisites`. The three cases worth reading in prose:
+
+**Step 19 is partial because of a traced fact, not a suspicion.** The modules that actually load
+`bin/routing_policy.py` are `bin/codex_policy.py` (line 279), `bin/workflow_eval.py` (line 197) and
+`bin/release_gate.py` (line 143, which reads only its `CONTRACT_VERSION` for the contract-version
+table). `bin/codex_execute.py` reaches it transitively, by loading `bin/codex_policy.py` — that is
+why the Codex driver dispatches under a routing decision. `bin/claude_execute.py` and
+`bin/copilot_execute.py` reach it neither directly nor transitively: neither file contains
+`codex_policy`, `routing_policy` or a `_sibling` call at all. The router can rank a Claude- or
+Copilot-shaped catalog and is tested doing so, but those two drivers still resolve models exactly as
+they always did.
+
+A drift hazard sits beside that, and it is worth naming on its own. `bin/kit_contract.py` does not
+load `routing_policy` either; its only mention is a prose comment at line 831, and
+`parse_plan_routing` is a self-contained regex over its own
+`PLAN_ROUTING_KEYS = ("policy", "preference", "profile")` (cited by symbol; the line moved).
+
+**Correction, phase 1 review, 2026-09-16.** The sentence that stood here said the two vocabularies
+"can drift apart with nothing failing". That is false. `bin/codex_execute.py:1401-1405` checks the
+resolved `policy` and `preference` against `POLICIES`/`PREFERENCES`, bound from `routing_policy` at
+`bin/codex_execute.py:232-233`, and `sys.exit(2)`s with the valid list before anything is
+dispatched. The comment this document cited as evidence says so in as many words — it was cited for
+its existence, not read, which is the same defect that produced the false import list corrected
+above. The real hazard is narrower: `parse_plan_routing` silently IGNORES an unrecognised token, so
+a FOURTH routing dimension added to `routing_policy` would be dropped without a word. That is a
+gap in the parser's coverage, not a validation gap in the three keys it does know.
+
+A second consequence bears directly on this kit's first hypothesis: unknown-class dispatch failures
+still climb the ladder on Codex, while Claude's driver stops on any failed dispatch. The two are not
+yet the same rule, and only `auth`, `config`, `permission` and `infrastructure` stop the Codex
+ladder. Any experiment arm that claims infrastructure failures never trigger escalation must state
+which driver it means.
+
+**Step 21 is partial for the same kind of reason.** `bin/graph_ground.py` is imported by
+`bin/release_gate.py` for the contract map and named in `skills/architect/SKILL.md` and
+`skills/graphify/SKILL.md` as prose instruction. No driver imports it; no driver has a `--grounding`
+flag. So `grounding()` and `render_grounding()` work, and nothing in production calls them. That
+missing seam is exactly what this kit's "bounded package of previously missing contract context"
+would have to be built on — it must be built, not assumed.
+
+**Step 24 is unverified rather than partial.** `bin/kit_scheduler.py` defines exactly two
+dispatchers, `StubDispatcher` and `CursorDispatcher`. `concurrent_dispatch` is `verified: supported`
+only for the stub; Cursor is implemented but unverified; Claude Code, Copilot and Codex are
+`implemented: unsupported`. Separately, and permanently: a scheduler copy separates *files*. It
+shares the machine, the network and the dispatch environment's credentials, `SECURITY.md` says so
+under "What is NOT a boundary", and therefore no scheduler copy can ever satisfy this kit's protected
+experiment profile.
+
+## Legacy is preserved, and stays the default
+
+Nothing in this kit changes what runs today. `reserved` remains the named legacy routing bundle and
+the default. `prefs/routing-policy.json` is read by `bin/workflow_eval.py` and by nothing else — no
+driver consumes it — so `apply_proposal` is pull-only, and that is the behaviour D02's goldens freeze
+before any extraction. An absent active pointer means existing behaviour continues. No existing
+preference file may silently become an executable policy bundle; runtime activation has to be an
+explicit, versioned opt-in, and until that lands the honest answer to "is a new policy in force" is
+no.
+
+## Advisory prediction is not authority
+
+A model's judgment enters this system as bounded, typed advice and never as permission. A provider
+cannot execute a tool, grant a permission, raise a budget, modify the task graph, remove mandatory
+review, accept an artifact, alter controller logic or approve a candidate. Eligibility, capability,
+privacy and atomic admission are rechecked immediately before the action they gate, not at the time
+advice was produced. Invalid or unavailable advice takes an approved fallback or stops; it may never
+route around a denial. A score, a distribution shape, or a vendor's stated confidence is not a
+probability that a task will succeed, and a judge's opinion is recorded beside `solved`, never inside
+it. Rules may abstain and leave probability fields null; replay predicts no counterfactual and incurs
+no new inference.
+
+Deterministic things stay deterministic. Admission, readiness, path validation, process bounds,
+required assurance and release conditions get no model call, because adding one to a stable wrapper
+with no recurring pain signal is how a control becomes a guess.
+
+## Jev-free, human-gated, data-only
+
+- **Jev-free.** V1 must start, work and roll back with every optional provider absent. No endpoint,
+  SDK, model id, key or pricing figure for an unpublished provider is assumed anywhere in this kit,
+  and Release 2 is a separate, gated kit rather than a later phase of this one.
+- **Human-gated.** A proposer cannot approve itself. Canary and active transitions machine-refuse
+  without a verified named protected profile, immutable grouped partitions with exposure history,
+  complete predeclared trial inputs, and exact approval and evaluation evidence bound to hashes. An
+  unavailable profile never silently selects `trusted-host`; it stays an offline, advisory edition
+  and says so. Approval is authority checked at the execution boundary — an actor string in JSON, or
+  a content hash, authenticates nobody.
+- **Data-only.** Candidates are bounded, allowlisted data diffs. No candidate edits arbitrary Python,
+  shell, module paths, acceptance criteria, permissions, pricing, skills, lessons, the improvement
+  procedure or hidden evaluation rules. Hashes identify content; they do not restrain a worker.
+
+## Baseline limitations of this worktree
+
+D01 is a documentation task and changed no test. One of the two limitations it recorded has since
+been repaired by the executor; the other stands.
+
+**The lessons-promotion test — diagnosed by D01, repaired by the executor.** At D01's hand-back the
+full suite reported 4214 tests, 1 failure, 2 skipped, and the single failure was
+`test_lessons_promote.NoScaffoldingWritesTests.test_real_run_touches_only_gitignored_path`. The cause
+was exact: the test built its expected path as the repository root plus `journal/promotions`, while
+`bin/lessons_promote.py:93` sets its default output through `bin/runtime_data.py`, which returns the
+legacy in-tree location only when that directory exists and has content. This worktree has no
+in-tree `journal/` at all, so the store correctly resolved to the per-user application-data root for
+this checkout's own namespace and the file the test looked for was never written there. The product
+was obeying the invariant that a store lives outside the plugin tree; the test was asserting a
+checkout shape. Both the kit plan and the repository assessment predicted this before execution
+started.
+
+The repair rewrites that one test to pin `POLYTROPOS_DATA_HOME` to a temporary directory and resolve
+the expected location through the product's own resolver, `runtime_data.store_path("journal", ...)`,
+instead of assuming an in-tree `journal/` — the same seam `tests/test_attempt_ledger.py` already
+uses, so the test can never reach a real store. The module docstring's safety contract was updated to
+describe it. `bin/lessons_promote.py` is untouched and byte-identical to HEAD, which this document
+confirmed by diff rather than by assertion; the executor reports the test mutation-proven, failing
+when `DEFAULT_OUTPUT_DIR` is mutated to `promotions-MUTANT` and passing when it is restored. The test
+is cited here by name rather than by line number, because the line numbers moved with the repair and
+a symbol does not rot.
+
+Worth keeping on the record: an earlier planning validation had obtained a green suite by creating an
+empty in-tree `journal/promotions/` fixture. That accommodation hides the defect rather than fixing
+it, and writes into a real store. It was deliberately not repeated, and the repair above is why it
+never needs to be.
+
+**A latent scheduler race — still open.** Planning validation once saw `snapshot_tree` in
+`bin/kit_scheduler.py` stat an atomic `TASKS.md` temporary file after another thread removed it. It
+has not reproduced on this HEAD, in the hand-back run or since. A passing run does not prove a race
+fixed. It is recorded so a future flake is recognised rather than chased as a regression of this kit.
+
+**A conflict between this brief and the repository's own tripwires.** `docs/` held exactly 29
+top-level Markdown sources at this HEAD, and `bin/docs_build.py` derives the deep-dive mirror set
+from a live glob, so a thirtieth source auto-joins and several deliberately hardcoded census
+assertions trip — in `tests/test_docs_build_adversarial.py`, in
+`tests/test_primitives_doc_adversarial.py` under `CensusBumpTripwireTests`, and in
+`tests/test_docs_build_cli.py`. `HANDOFF.md` names the expected maintenance in as many words: a new
+doc moves the pins. The tripwires are working exactly as designed. The D01 brief and its verify
+command name this file's path explicitly, so it was written where the brief says; the sanctioned
+generator was re-run and `mkdocs.yml` gained the single nav entry its own coverage test requires. D01
+did not touch the pins, because they are edits under `tests/` it was not authorised to make; it
+reported them instead. **Resolved:** the executor then applied them at this HEAD — 29 / 31 / 73
+became 30 / 32 / 74 and the "one more doc" targets became 31 / 33 / 75, across
+`tests/test_docs_build_adversarial.py`, `tests/test_docs_build_cli.py` and
+`tests/test_primitives_doc_adversarial.py` — and recorded the move in `HANDOFF.md` as entry 28,
+following the precedent of entry 14. The tripwires are intact and re-armed at the new counts, not
+disabled.
+
+## Documented plan revisions
+
+Two pieces of planning text were genuinely stale as present-tense claims and were revised by D01.
+Neither is product code and neither changes a task's scope, status or acceptance.
+
+1. `tasks/kits/decision-improvement/PLAN.md` said the three verification commits "were preserved, not
+   incorporated into this main-based plan" and instructed D01 to correct affected briefs if they had
+   since landed. They landed. The paragraph now records that, names the observed HEAD, and points
+   here. The preparation-basis sentence naming `aab7553` is history and was left exactly as written.
+2. `tasks/kits/decision-improvement/REPO-ASSESSMENT.md` opportunity F6 instructed D01 to reconcile
+   that branch's work before scheduling fixes, and the validation-findings paragraph asked for the
+   two baseline findings to be recorded in D01. Both instructions are now discharged, and the text
+   says so and points here.
+
+Deliberately **not** revised: `tasks/kits/decision-improvement/VALIDATION.md` and
+`docs/plans/polytropos-decision-and-improvement-execution.md` are dated delivery receipts of what was
+done at preparation time. Rewriting a receipt to match a later world is exactly the kind of
+back-dating this repository forbids. The active authority is the kit plan plus this document. Also
+not revised: the `aab7553` baseline label in either copy of `TASKS.md`, which is the pinned
+preparation basis the D01 verify command asserts, and the task statuses, which the executor owns.
+
+## Stale claims reported, not fixed
+
+Three present-tense sentences in `SECURITY.md` have drifted from the registry they describe. They are
+recorded here and left alone: `SECURITY.md` is a product source with a generated mirror, it is not
+D01's to edit, and correcting it is a change for its own owner in a single edit with its mirror.
+
+- Line 183 states that no workflow has been run live from here. `8d1b7be` falsifies it: one live run
+  on Claude Code 2.1.273 dispatched 16 times for a model-reported 1.90 USD against a 2.00 USD ceiling,
+  and `workflow_evaluation` is `verified: supported` for `claude-code`.
+- Line 219 states that none of Cursor's three modes has been run live from this repository.
+  `fd80734` falsifies the clause: the CLI mode ran, twice, on 2026-09-16. The IDE and cloud modes
+  genuinely remain unrun, so only that one clause is wrong.
+- Line 283 lists the workflow evaluation among the unrun live checks. Escalation and the dead-run
+  resume path are still genuinely unrun; the workflow evaluation is not.
+
+The generated block of `docs/RELEASE.md` is **not** affected: `bin/release_gate.py` computes it from
+the registry, and `check` exits 0 at this HEAD with no findings. What drifted is prose beside the
+evidence, which is precisely the failure mode the generated matrix exists to prevent.
+
+## What later tasks should take from this
+
+- D02's goldens freeze `reserved` and the pull-only preference file as they are at this HEAD, not as
+  the baseline described them.
+- D03 should report to D05 that **no** duration fix has landed anywhere: `duration_s` is null on
+  every live attempt on every harness, because the drivers' runners drop `bin/proc_runner.py`'s
+  timing. (An earlier draft added that Cursor's JSON reports a `duration_ms` the adapter never
+  reads; that half was withdrawn in D03 as unverifiable — the only `duration_ms` anywhere in this
+  tree is in `bin/copilot_statusline.py`, which is Copilot's, not Cursor's.)
+- D16 and D17 must build the grounding-to-prompt seam rather than assume it exists.
+- D29 must not reimplement or relabel the Cursor adapter merely because an adaptive profile is
+  unavailable; six of its rows are verified and that evidence stands.
+- No task may claim a capability the registry records as `unknown`. `unknown` means no, and stays
+  `unknown` until someone runs it.
