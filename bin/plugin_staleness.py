@@ -33,9 +33,11 @@ DRIFTED:
   - IN SYNC     -- version matches, every compared file is identical, and (when comparable) the
                    recorded git HEAD matches too.
   - SHA STALE   -- version matches and every compared file is identical, but the manifest's
-                   recorded git commit differs from this repo's HEAD. This is what a squash-merge
-                   or rebase does to an otherwise-unchanged tree -- the content is current, only
-                   the recorded commit id is stale -- so it is NOT actionable.
+                   recorded git commit differs from this repo's HEAD. A squash-merge or rebase
+                   does this to an unchanged tree, and so does any commit touching only files
+                   outside the compared set (a docs-only change). The compared content is
+                   current, so it is NOT actionable -- but it is a statement about the compared
+                   files only, never about the whole tree.
   - DRIFTED     -- any compared file differs or is missing, or the version string differs: an
                    actual install difference.
 Only a DRIFTED result PRINTS the two-step remedy text (bump the version, then re-run the
@@ -78,13 +80,24 @@ _REMEDY_CLI_B = " update {name}@{marketplace} (restart to apply)"
 
 # Printed only for a SHA-STALE result. Deliberately carries no CLI invocation and no mention of
 # a version "bump" as an action to take -- printing the DRIFTED remedy here would be the false
-# alarm this status exists to remove: nothing needs copying, so nothing should look actionable.
+# alarm this status exists to remove: nothing that is compared needs copying, so nothing should
+# look actionable.
+#
+# IT CLAIMS ONLY WHAT WAS COMPARED. The check reads COMPARE_GLOBS and nothing else, so the note
+# names that set (derived from the constant, never retyped) and says the rest of the tree was
+# not looked at. It used to say the install was "byte-identical to this repo's tracked files"
+# and that a squash-merge or rebase "is exactly what happened here". Neither was something this
+# script could know: on 2026-09-21 a docs-only commit produced SHA STALE while two tracked files
+# under `docs/` genuinely differed from the installed copy. The status was right and the
+# sentence was not. A differing recorded commit says the history moved, never why.
 SHA_STALE_NOTE = (
-    "installed content is current and byte-identical to this repo's tracked files -- only the "
-    "git commit id recorded at install time is stale. A squash-merge or rebase rewrites commit "
-    "ids for an otherwise-unchanged tree, which is exactly what happened here: the tree matches, "
-    "the recorded id does not. No action is required -- the recorded id will refresh on its own "
-    "the next time the plugin version changes."
+    "every file this check compares (" + ", ".join(COMPARE_GLOBS) + ") is identical between "
+    "this repo and the installed copy -- only the git commit id recorded at install time "
+    "differs. Files outside that set are not compared and may differ. A commit that touches "
+    "only uncompared files (documentation, for instance) produces this result, and so does a "
+    "squash-merge or rebase that rewrites commit ids for an unchanged tree; this check cannot "
+    "tell which happened. No action is required for the compared files -- the recorded id "
+    "will refresh on its own the next time the plugin version changes."
 )
 
 
