@@ -580,7 +580,7 @@ PYTHONPATH=tests python3 -m unittest test_decision_release_matrix.JevFreeConform
 ### D30 — V1 handoff
 - id: D30
 - title: V1 handoff
-- status: pending
+- status: done
 - model: opus
 - depends: D29
 **Brief.** Own `docs/DECISION-IMPROVEMENT-V1-HANDOFF.md`; state supported facts, rollback and gaps; defer R08 families, shadow/calibration, concurrency, Cursor adaptive and Jev. Source roadmap never authorizes V2.

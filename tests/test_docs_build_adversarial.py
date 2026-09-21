@@ -748,7 +748,7 @@ class DeepDivePageMapRealTreeTests(unittest.TestCase):
     def test_every_real_docs_md_source_is_mapped_with_lowercased_slug(self):
         page_map = db.deep_dive_page_map(REPO_ROOT)
         md_sources = sorted((REPO_ROOT / "docs").glob("*.md"))
-        self.assertEqual(len(md_sources), 33)  # 2026-09-16: D03 added docs/DECISION-IMPROVEMENT-AUTHORITY-INVENTORY.md (30 -> 31 sources); 2026-09-20: D34 added docs/TRAINING-DATA-READINESS.md (31 -> 32), then D29 added docs/DECISION-IMPROVEMENT-CONFORMANCE.md (32 -> 33)
+        self.assertEqual(len(md_sources), 34)  # 2026-09-16: D03 added docs/DECISION-IMPROVEMENT-AUTHORITY-INVENTORY.md (30 -> 31 sources); 2026-09-20: D34 added docs/TRAINING-DATA-READINESS.md (31 -> 32), then D29 added docs/DECISION-IMPROVEMENT-CONFORMANCE.md (32 -> 33); 2026-09-21: D30 added docs/DECISION-IMPROVEMENT-V1-HANDOFF.md (33 -> 34)
         for path in md_sources:
             key = f"docs/{path.name}"
             expected_value = f"deep-dives/{path.stem.lower()}.md"
@@ -780,9 +780,10 @@ class DeepDivePageMapRealTreeTests(unittest.TestCase):
     when D01 added docs/DECISION-IMPROVEMENT-RECONCILIATION.md, 32 -> 33 when D03 added
     docs/DECISION-IMPROVEMENT-AUTHORITY-INVENTORY.md, 33 -> 34 when D34 added
     docs/TRAINING-DATA-READINESS.md (2026-09-20), 34 -> 35 when D29 added
-    docs/DECISION-IMPROVEMENT-CONFORMANCE.md (2026-09-20)."""
+    docs/DECISION-IMPROVEMENT-CONFORMANCE.md (2026-09-20), 35 -> 36 when D30 added
+    docs/DECISION-IMPROVEMENT-V1-HANDOFF.md (2026-09-21)."""
         page_map = db.deep_dive_page_map(REPO_ROOT)
-        self.assertEqual(len(page_map), 35)
+        self.assertEqual(len(page_map), 36)
 
 
 class DeepDivesNeverMirrorHtmlFilesLiveTreeTests(unittest.TestCase):

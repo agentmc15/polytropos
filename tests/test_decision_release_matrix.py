@@ -1799,5 +1799,355 @@ class JevFreeConformanceTests(unittest.TestCase):
                       self.env.dc.CONTRACT_VERSION, self.env.al.LEDGER_VERSION):
             self.assertNotEqual(CONFORMANCE_VERSION, other)
 
+
+
+# ==================================================================================================
+#  D30 -- THE V1 HANDOFF, CHECKED AGAINST THE TREE IT DESCRIBES
+# ==================================================================================================
+#
+# The task's own declared check is `assert 'deferred' in t and 'not authorization' in t and
+# 'rollback' in t` -- a bare substring scan over the document. This kit has already shipped two
+# defects of exactly that shape: prose describing a guard satisfied a scan looking for the guard,
+# and a search for a call inside a function body matched the DOCSTRING explaining the check. So
+# the declared check is treated here as a floor, and the class below is the enforcement.
+#
+# WHAT IT ASSERTS. Not that the handoff contains words -- that its CLAIMS still hold against the
+# tree: every repository path, command and test id it names resolves; the constants it quotes are
+# still those values; its conformance figures and its six unavailable checks are the conformance
+# DOCUMENT's own, so the two cannot drift; the readiness codes it prints are the ten the module
+# emits; the redaction scope is the module's; the task inventory is the kit's, with nothing listed
+# that the kit still calls pending or blocked; every deferred item is still `pending` where its own
+# kit records it; and the release checklist points a reader at both documents.
+#
+# WHAT IT DOES NOT ASSERT. That any sentence of the handoff is TRUE. A document can be wrong in
+# ways no test reaches; this class stops it rotting silently, which is a smaller claim.
+#
+# Every assertion is paired with an anti-vacuity floor. A scan over "every path the document names"
+# passes trivially over a document that names none, so each collector asserts it found a plausible
+# number of things before it checks them.
+
+HANDOFF_DOC = "docs/DECISION-IMPROVEMENT-V1-HANDOFF.md"
+KIT_TASKS = ".claude/kits/decision-improvement-v1/TASKS.md"
+OPTIONAL_TASKS = "tasks/kits/decision-improvement/OPTIONAL-TASKS.md"
+V2_TASKS = ".claude/kits/decision-improvement-v2/TASKS.md"
+
+#: The statuses a kit task may carry. `kit_contract` owns the vocabulary; it is re-spelled here
+#: only to assert that a ledger this class reads has not grown a sixth word.
+TASK_STATUSES = ("pending", "in-progress", "done", "blocked")
+
+_BACKTICKED = re.compile(r"`([^`\n]+)`")
+_REPO_PATH = re.compile(
+    r"^(?:bin|tests|docs|docs-src|docs-site|primitives|skills|data|tasks|\.claude)"
+    r"/[A-Za-z0-9._/\-]+$")
+_TEST_ID = re.compile(r"\btest_[a-z0-9_]+(?:\.[A-Za-z_][A-Za-z0-9_]*)+")
+_HANDOFF_CMD = re.compile(r"python3 (bin/[a-z_]+\.py)(?: ([a-z][a-z-]*))?")
+_HANDOFF_TASK_ROW = re.compile(r"^\| (D\d+) \|", re.M)
+_INDENTED_CODE_TOKEN = re.compile(r"^    ([a-z][a-z0-9-]+)$", re.M)
+_TABLE_ID = re.compile(r"^\| `([a-z0-9.\-]+)` \|", re.M)
+_WORD_NUMBER = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6,
+                "seven": 7, "eight": 8, "nine": 9, "ten": 10, "eleven": 11, "twelve": 12}
+
+
+def task_statuses(text):
+    """A kit TASKS.md -> `{id: status}`, read off the two fields the contract defines."""
+    out, current = {}, None
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("- id: "):
+            current = stripped[len("- id: "):].strip()
+        elif stripped.startswith("- status: ") and current:
+            out[current] = stripped[len("- status: "):].strip()
+            current = None
+    return out
+
+
+def _section(text, heading):
+    """The body between `heading` and the next heading of the same or higher level."""
+    start = text.find(heading)
+    if start < 0:
+        return ""
+    body = text[start + len(heading):]
+    end = len(body)
+    for marker in ("\n## ", "\n### "):
+        found = body.find(marker)
+        if 0 <= found < end:
+            end = found
+    return body[:end]
+
+
+class V1HandoffTests(unittest.TestCase):
+    """D30 -- the Release 1 handoff, asserted against the tree rather than scanned for words."""
+
+    maxDiff = None
+
+    @classmethod
+    def setUpClass(cls):
+        cls.path = ROOT / HANDOFF_DOC
+        cls.doc = cls.path.read_text(encoding="utf-8")
+        cls.flat = " ".join(cls.doc.split())
+        cls.lowered = cls.doc.lower()
+        cls.conformance = (ROOT / CONFORMANCE_DOC).read_text(encoding="utf-8")
+        cls.we = _load("workflow_eval", alias="workflow_eval_d30")
+        cls.td = _load("training_data", alias="training_data_d30")
+
+    # ----------------------------------------------------------------------------------------
+    #  EVERYTHING IT NAMES HAS TO EXIST
+    # ----------------------------------------------------------------------------------------
+
+    def test_every_repository_path_the_handoff_names_resolves_on_disk(self):
+        """A handoff whose file names have rotted is worse than no handoff: it sends the next
+        reader to a path that no longer exists and reads as authoritative while doing it."""
+        named = sorted({token for token in _BACKTICKED.findall(self.doc)
+                        if _REPO_PATH.match(token)})
+        self.assertGreaterEqual(len(named), 15,
+                                "the handoff names almost no repository path -- either it was "
+                                "gutted or this collector stopped matching")
+        missing = [name for name in named if not (ROOT / name).exists()]
+        self.assertEqual(missing, [], f"the handoff names path(s) that do not exist: {missing}")
+
+    def test_every_test_id_the_handoff_names_resolves_to_real_cases(self):
+        """THE DEFECT THIS CLASS EXISTS FOR. Naming a test is the cheapest way to make a
+        document look enforced, and a renamed or deleted class leaves the sentence standing.
+        `resolve_test_ids` returns 0 for an id that loads nothing, so a zero here is a rotten
+        citation rather than an exception."""
+        ids = sorted({tid.rstrip(".") for tid in _TEST_ID.findall(self.doc)
+                      if "." in tid.rstrip(".")})
+        self.assertGreaterEqual(len(ids), 5, "the handoff cites almost no test")
+        counts = rg.resolve_test_ids(ids)
+        rotten = sorted(tid for tid, count in counts.items() if count == 0)
+        self.assertEqual(rotten, [], f"the handoff names test id(s) that resolve to nothing: "
+                                     f"{rotten}")
+
+    def test_every_command_the_handoff_names_exists_with_the_subcommand_it_names(self):
+        """The same rot, one surface over: a subcommand renamed out from under a runbook."""
+        named = sorted(set(_HANDOFF_CMD.findall(self.doc)))
+        self.assertGreaterEqual(len(named), 10, "the handoff names almost no command")
+        findings = []
+        for script, sub in named:
+            if not (ROOT / script).is_file():
+                findings.append(f"{script} does not exist")
+                continue
+            if not sub:
+                continue
+            subs = rg._subcommands(rg._sibling(Path(script).stem))
+            if subs and sub not in subs:
+                findings.append(f"`{script} {sub}` is not one of {sorted(subs)}")
+        self.assertEqual(findings, [], f"the handoff names command(s) that have rotted: {findings}")
+
+    # ----------------------------------------------------------------------------------------
+    #  THE CONSTANTS IT QUOTES
+    # ----------------------------------------------------------------------------------------
+
+    def test_the_constants_the_handoff_quotes_still_hold_the_values_it_quotes(self):
+        """Both halves, because either one alone is satisfiable by a lie: the module still holds
+        the value, AND the document still says so. A flipped constant with an unchanged handoff
+        fails here rather than shipping as a document that describes a different repository."""
+        self.assertIs(self.we.CONFINED_DISPATCH_WIRED, False)
+        self.assertIs(self.td.COLLECTION_ENABLED, False)
+        self.assertIs(self.td.CAPTURE_WIRED, False)
+        for sentence in (
+                "`workflow_eval.CONFINED_DISPATCH_WIRED` is `False`",
+                "| `training_data.COLLECTION_ENABLED` | `False` |",
+                "| `training_data.CAPTURE_WIRED` | `False` |",
+                "`build_dataset` | requires an explicit `store_dir`",
+        ):
+            with self.subTest(sentence=sentence):
+                self.assertIn(sentence, self.flat)
+
+    def test_the_handoff_reports_the_capture_hook_as_uncalled_and_the_tree_agrees(self):
+        """`CAPTURE_WIRED` is a LABEL, not the lock -- the handoff says so, and what actually
+        keeps the hook uncalled is the structural test it cites. Asserted here by resolving that
+        test id, so the sentence cannot outlive the check it leans on."""
+        self.assertIn("there is no call site anywhere in the tree", self.flat)
+        self.assertIn("not \"three locks\"", self.flat)
+        structural = ("test_training_data.SnapshotTests"
+                      ".test_no_production_path_calls_the_capture_hook")
+        self.assertIn(structural, self.doc)
+        self.assertGreater(rg.resolve_test_ids([structural])[structural], 0)
+
+    # ----------------------------------------------------------------------------------------
+    #  AGREEMENT WITH THE CONFORMANCE DOCUMENT
+    # ----------------------------------------------------------------------------------------
+
+    def test_the_conformance_figures_the_handoff_states_are_the_conformance_documents_own(self):
+        """Cross-document, in the direction that matters. D29's class already pins its document
+        against a live run; this pins the handoff against that document, so the chain from the
+        run to the sentence a person reads has no unchecked link in it."""
+        rows = document_rows(self.conformance)
+        self.assertGreaterEqual(len(rows), 20, "the conformance table did not parse")
+        tally = {outcome: sum(1 for _, (_, o) in rows.items() if o == outcome)
+                 for outcome in CONFORMANCE_OUTCOMES}
+        match = re.search(r"\*\*(\d+) pass, (\d+) fail, (\d+) unavailable across (\d+) checks\*\*",
+                          self.flat)
+        self.assertIsNotNone(match, "the handoff no longer states the conformance figures")
+        stated = [int(group) for group in match.groups()]
+        self.assertEqual(stated, [tally[PASS], tally[FAIL], tally[UNAVAILABLE], len(rows)])
+
+    def test_the_unavailable_checks_the_handoff_lists_are_exactly_the_documents(self):
+        """Set equality in both directions. Dropping one would let the handoff read cleaner than
+        the run was; inventing one would name a gap nobody found."""
+        expected = {cid for cid, (_, outcome) in document_rows(self.conformance).items()
+                    if outcome == UNAVAILABLE}
+        self.assertEqual(len(expected), 6, "the conformance document no longer has six gaps")
+        section = _section(self.doc, "The six checks that produced no evidence")
+        listed = set(_TABLE_ID.findall(section))
+        self.assertEqual(listed, expected)
+
+    def test_the_handoff_states_that_conformance_covers_this_checkout_only(self):
+        for sentence in ("this checkout only", "one platform, one Python, no installed copy"):
+            with self.subTest(sentence=sentence):
+                self.assertIn(sentence, self.flat)
+
+    # ----------------------------------------------------------------------------------------
+    #  TRAINING DATA: THE CODES, NOT THE TALLY
+    # ----------------------------------------------------------------------------------------
+
+    def test_the_readiness_codes_the_handoff_prints_are_the_ten_the_module_emits(self):
+        """The handoff's own argument is that the GATE TALLY is a property of the input shape and
+        the CODES are the unconditional statement. That argument is only worth anything while the
+        printed codes are the module's, so they are compared as a set."""
+        listed = set(_INDENTED_CODE_TOKEN.findall(self.doc))
+        self.assertEqual(listed, set(self.td.readiness_codes()))
+
+    def test_the_handoff_cites_the_codes_rather_than_the_tally_as_what_denies_readiness(self):
+        self.assertIn("Cite the codes; never cite the tally.", self.flat)
+        self.assertIn("The tally is a property of the input shape, not of the mechanism",
+                      self.flat)
+        # The one tally it does state is labelled with the input shape it describes.
+        self.assertIn("The standing report \u2014 no records, an empty store \u2014 reads 0 met, "
+                      "4 unmet, 7 unknown.", self.flat)
+
+    def test_the_redaction_scope_the_handoff_states_is_the_modules(self):
+        """Two covered fields and ten uncovered ones, read from the owner. A handoff that
+        widened the covered set on paper would be claiming a privacy property nobody built."""
+        covered = re.search(r"`training_data\.REDACTED_FIELDS` names \*\*(\w+)\*\*", self.flat)
+        uncovered = re.search(r"`training_data\.NOT_REDACTED_FIELDS` names \*\*(\w+)\*\*",
+                              self.flat)
+        self.assertIsNotNone(covered)
+        self.assertIsNotNone(uncovered)
+        self.assertEqual(_WORD_NUMBER[covered.group(1)], len(self.td.REDACTED_FIELDS))
+        self.assertEqual(_WORD_NUMBER[uncovered.group(1)], len(self.td.NOT_REDACTED_FIELDS))
+        self.assertEqual(self.td.NOT_REDACTED_FIELDS[:2],
+                         ("question.spec.question", "question.spec.rubric"))
+        self.assertIn("No sentence here says that no secret can get through", self.flat)
+
+    def test_revocation_reach_is_the_owners_and_the_handoff_never_claims_removal(self):
+        """`identified-only` is the whole point of this row and the easiest thing in the document
+        to soften by accident."""
+        for artifact, reach in self.td.REVOCATION_REACH.items():
+            with self.subTest(artifact=artifact):
+                self.assertIn(f"| `{artifact}` | `{reach}` |", self.doc)
+        self.assertEqual(self.td.REVOCATION_REACH["trained-checkpoint"], "identified-only")
+        self.assertIn("Revocation removes nothing from a model", self.flat)
+        for claim in ("removes it from the model", "removed from the model",
+                      "erased from the model", "deleted from the model"):
+            with self.subTest(claim=claim):
+                self.assertNotIn(claim, self.lowered)
+
+    def test_the_operator_exposure_obligation_is_open_and_its_code_still_exists(self):
+        """The residual hazard is asymmetric and the handoff states it as an obligation rather
+        than a gate. The code that carries the remedy is the module's, so it is checked."""
+        self.assertIn("exposure-not-recorded-in-the-eval-store", self.td.readiness_codes())
+        self.assertIn("**This is an open operator obligation, not a closed gate.**", self.flat)
+
+    # ----------------------------------------------------------------------------------------
+    #  THE INVENTORY AND THE DEFERRED REGISTER
+    # ----------------------------------------------------------------------------------------
+
+    def test_the_task_inventory_is_the_kits_and_lists_nothing_still_pending_or_blocked(self):
+        """Both directions. A task added to the kit and absent from the handoff fails here, and
+        so does a handoff row for a task the kit has not finished."""
+        statuses = task_statuses((ROOT / KIT_TASKS).read_text(encoding="utf-8"))
+        self.assertGreaterEqual(len(statuses), 30)
+        for task_id, status in statuses.items():
+            with self.subTest(task=task_id):
+                self.assertIn(status, TASK_STATUSES)
+        listed = set(_HANDOFF_TASK_ROW.findall(self.doc))
+        self.assertEqual(listed, set(statuses))
+        unfinished = sorted(tid for tid in listed
+                            if statuses[tid] in ("pending", "blocked"))
+        self.assertEqual(unfinished, [], f"the handoff lists unfinished task(s): {unfinished}")
+
+    def test_every_deferred_item_is_still_pending_where_its_own_kit_records_it(self):
+        """The defer register is only honest while the thing it defers has not quietly started.
+        Both source kits are read; a status that moved fails here rather than in a reader's
+        expectations."""
+        sources = {OPTIONAL_TASKS: ("O01", "O02", "O03", "O04"),
+                   V2_TASKS: ("J01", "J02", "J03", "J04")}
+        for source, ids in sources.items():
+            statuses = task_statuses((ROOT / source).read_text(encoding="utf-8"))
+            for task_id in ids:
+                with self.subTest(task=task_id):
+                    self.assertIn(task_id, statuses, f"{source} no longer records {task_id}")
+                    self.assertEqual(statuses[task_id], "pending")
+                    self.assertIn(task_id, self.doc)
+        self.assertIn("**R08 families**", self.doc)
+        self.assertIn("**M01**", self.doc)
+        self.assertIn("Entry gate", self.doc)
+        self.assertIn("never authorizes Release 2", self.flat)
+
+    def test_the_deferred_register_names_what_is_not_deferred_beside_what_is(self):
+        """Cursor's shipped implementation and existing concurrency are intact; only new adaptive
+        extension is deferred. Reporting them as absent would be a second, different untruth, and
+        the registry rows that say so are checked rather than trusted."""
+        registry = json.loads((ROOT / "primitives" / "harness-capabilities.json")
+                              .read_text(encoding="utf-8"))
+        rows = registry["harnesses"]["cursor"]["capabilities"]
+        verified = sorted(name for name, row in rows.items()
+                          if row.get("verified") == "supported")
+        self.assertGreaterEqual(len(verified), 6, "Cursor's verified rows have gone")
+        self.assertEqual(rows["adaptive_decisions"]["verified"], "unknown")
+        self.assertIn("Cursor's current CLI implementation is present and verified", self.flat)
+        self.assertIn("existing concurrency, Cursor's shipped CLI implementation, and the four "
+                      "drivers' native loops", self.flat)
+
+    # ----------------------------------------------------------------------------------------
+    #  WHAT THE DOCUMENT IS NOT
+    # ----------------------------------------------------------------------------------------
+
+    def test_the_release_checklist_now_points_a_reader_at_both_release_documents(self):
+        """D29's named gap, closed here. `release_gate check` resolves every command the
+        checklist names, so this also proves the new row did not name a rotten one."""
+        evidence = " ".join(row["evidence"] for row in rg.CHECKLIST)
+        self.assertIn(CONFORMANCE_DOC, evidence)
+        self.assertIn(HANDOFF_DOC, evidence)
+        self.assertEqual(rg.command_findings(ROOT), [])
+        self.assertIsNone(rg.check_release_doc(ROOT),
+                          "the generated block of docs/RELEASE.md is stale; "
+                          "run `python3 bin/release_gate.py build`")
+
+    def test_the_handoff_makes_no_performance_claim_and_takes_no_release_action(self):
+        """A token scan, and it is labelled as one. The whole-document sweep
+        `workflow_eval.assert_no_gain_claim` is deliberately NOT applied: one of its spellings is
+        a word in the name of the work, so it would refuse an honest document. That limitation is
+        disclosed in the handoff rather than patched around by widening an exemption."""
+        for word in ("speedup", "win rate", "winrate", "faster than", "cheaper than",
+                     "% better", "outperform", "roi"):
+            with self.subTest(word=word):
+                self.assertNotIn(word, self.lowered)
+        for sentence in ("not authorization", "no release action", "activates nothing",
+                         "moves no capability row"):
+            with self.subTest(sentence=sentence):
+                self.assertIn(sentence, self.lowered)
+        self.assertIn("`unknown` in the registry means no", self.flat)
+        self.assertIn("No trial has run under any of this work.", self.flat)
+
+    def test_the_accepted_commit_is_reported_as_a_branch_fact_and_not_as_a_release(self):
+        """A handoff that read as though its commit were released would be the one untruth that
+        costs the most, because every other statement here is scoped to it."""
+        self.assertIn("812a76e0f6caa712c15124a8a0ba4bd3872a4ca3", self.doc)
+        self.assertIn("**not merged and not pushed**", self.doc)
+        self.assertIn("None of it is a property of `main`", self.flat)
+
+    def test_the_declared_task_check_passes_and_is_named_as_a_floor(self):
+        """The task's own check, run here so it cannot be the only place it was run -- beside the
+        sentence saying what it is worth."""
+        for needle in ("deferred", "not authorization", "rollback"):
+            with self.subTest(needle=needle):
+                self.assertIn(needle, self.lowered)
+        self.assertIn("The declared task check is a text scan and is worth exactly what a text "
+                      "scan is worth.", self.flat)
+        self.assertIn("test_decision_release_matrix.V1HandoffTests", self.doc)
+
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()

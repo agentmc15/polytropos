@@ -1026,6 +1026,26 @@ CHECKLIST = (
                  "verified and dated; and no cell anywhere carries a gain, a ratio or a latency",
     },
     {
+        # D30 registered this row. D29 left the conformance report uncited on purpose -- D28 owned
+        # this surface and its bytes were pinned -- so `check` pointed no reader at it. The handoff
+        # owns the pointer, and names both documents rather than one.
+        "guarantee": "The decision work's conformance and its handoff are written down, and both "
+                     "say what they did not establish",
+        "evidence": "docs/DECISION-IMPROVEMENT-CONFORMANCE.md reports 23 offline checks in three "
+                    "outcomes -- pass, fail, and `unavailable` for a check whose evidence this "
+                    "host cannot produce; docs/DECISION-IMPROVEMENT-V1-HANDOFF.md carries the "
+                    "accepted commit, the rollback procedure, the steps that stay the operator's "
+                    "own, and the deferred register. `PYTHONPATH=tests python3 -m unittest "
+                    "test_decision_release_matrix` runs both documents' enforcement: the "
+                    "conformance class re-runs every check and refuses a report in which nothing "
+                    "passed, and the handoff class resolves every path, command and test id the "
+                    "handoff names",
+        "limit": "conformance is established for this checkout only -- one platform, one Python, "
+                 "no installed copy -- and six of the 23 checks are unavailable rather than "
+                 "passed. Neither document authorizes anything or moves a capability row: both "
+                 "are reports",
+    },
+    {
         "guarantee": "Nothing here ran a paid call, wrote a home directory, or pushed",
         "evidence": "the invariants in CLAUDE.md, the no-real-CLI tests named below, and this "
                     "gate's own process list (read-only git, in-process unittest)",

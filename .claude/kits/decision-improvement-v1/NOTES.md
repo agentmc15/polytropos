@@ -2104,7 +2104,7 @@ me from the wrong fix. Regenerated through the owning generator, never hand-edit
 authority label. Nothing fails — `describe_legacy_preferences` ignores unknown keys and
 `parse_bundle` still refuses the shape by name — and it remains an accurate HISTORICAL file, which
 is exactly what D20's migration test uses it as. Left as is.
-outcome: D20 model=opus attempts=1 result=pass review=pending run=2026-09-16-aa6e
+outcome: D20 model=opus attempts=1 result=pass review=pass run=2026-09-16-aa6e
 
 ## D21 — Bounded drafts (opus) — Phase 5 task 2 of 5
 
@@ -2168,7 +2168,7 @@ it** — no skill, no driver, no generated doc.
 
 Nothing in my brief was wrong this time; the agent confirmed each stated fact independently
 (including that `read_ref` does silently drop unknown keys) rather than building on it.
-outcome: D21 model=opus attempts=1 result=pass review=pending run=2026-09-16-aa6e
+outcome: D21 model=opus attempts=1 result=pass review=revised run=2026-09-16-aa6e
 
 ## D22 — Exact approval (opus) — Phase 5 task 3 of 5
 
@@ -2249,7 +2249,7 @@ The no-bundle-store gap is now load-bearing in a THIRD place.
 `APPROVAL_VERSION` new; all five existing constants verified still at `/1`. No new store —
 approvals live under the prefs directory D20 already owns. `approval_holds` and
 `promotion_eligibility` have NO production caller; they are library seams for D23.
-outcome: D22 model=opus attempts=1 result=pass review=pending run=2026-09-16-aa6e
+outcome: D22 model=opus attempts=1 result=pass review=pass run=2026-09-16-aa6e
 
 ## D23 — Protected activation (opus) — Phase 5 task 4 of 5
 
@@ -2330,7 +2330,7 @@ supplied — D22's `origin-not-dereferenced` applies one layer up. Several tests
 `True` inside a `wired()` context manager, because otherwise the pointer mechanics are unreachable
 and would be code nobody has shown to work; every such test restores it and then asserts the same
 pointer reads as legacy in the world as it is.
-outcome: D23 model=opus attempts=1 result=pass review=pending run=2026-09-16-aa6e
+outcome: D23 model=opus attempts=1 result=pass review=pass run=2026-09-16-aa6e
 
 ## D24 — Policy evidence report (sonnet) — Phase 5 task 5 of 5, phase COMPLETE
 
@@ -2513,8 +2513,12 @@ edited — all killed.
 **ARCHITECT-VISIBLE SCOPE DECISION: the card ships on Claude and Cursor ONLY, not Copilot or
 Codex.** Reasoning verified and sound: adding it to those two means editing FROZEN ROSTERS in test
 files D25 does not own — `ORIGINAL_SKILLS` in `test_copilot_bundle_adversarial.py` pins 13 names
-in exact order; `EXPECTED_SKILL_STEMS` in `test_codex_bundle.py` pins an exact set — and neither
-file is in D25's verify command, which says the task author did not expect them to move. The
+in exact order; `EXPECTED_SKILL_STEMS` in `test_codex_bundle.py` pins an exact set. [CORRECTED at Phase 8
+verification: I wrote "neither file is in D25's verify command." That is wrong. `test_codex_bundle`
+IS one of the modules D25's verify command runs; the file genuinely absent from it is
+`test_copilot_bundle_adversarial.py`. The substantive point survives — both rosters were left
+unedited and neither lists `assess-improvement`, re-verified independently — but the reason I gave
+for it was half false.] The
 acceptance is satisfied literally: it says **"Codex plugin valid"**, not "Codex includes skill".
 **D27's assessment and D30's release matrix must describe this as a TWO-harness capability**, and
 `primitives/harness-capabilities.json` records a capability as relied-on only when verified.
@@ -2646,7 +2650,7 @@ differentials (8 source documents, every multi-case group containing both an acc
 refusal), and the two-directional code partition. The fixture path guard would fail benignly if
 someone later created a top-level dir colliding with a synthetic tree name (it already hit and
 fixed one real collision: `docs/RELEASE.md`).
-outcome: D26 model=opus attempts=1 result=pass review=pending run=2026-09-16-aa6e
+outcome: D26 model=opus attempts=1 result=pass review=pass run=2026-09-16-aa6e
 
 ## D27 — Whole-repo assessment (opus) — Phase 6 task 3 of 3, phase COMPLETE
 
@@ -2714,7 +2718,7 @@ assertion); whether a confined dispatch would work (no such path exists to run);
 hosts discover what the bundles install (those rows are `unknown` and stay `unknown`); and whether
 the 3-of-70 fraction is stable, since it was measured on one command path and a verb behind absent
 state may reach further once that state exists.
-outcome: D27 model=opus attempts=1 result=pass review=pending run=2026-09-16-aa6e
+outcome: D27 model=opus attempts=1 result=pass review=revised run=2026-09-16-aa6e
 
 ## D31 — Decision-time snapshots (opus) — Phase 7 task 1 of 4
 
@@ -3539,3 +3543,375 @@ generated and `NavCoverageTests` requires it.
 - Conformance is checked against **this checkout only**: one platform, one Python, no installed copy.
 - The document's census (23/3/36) and training-data status are **dated observations with their
   re-deriving commands, asserted by nothing** — deliberate, so no rotting number sits inside a gate.
+
+## D30 dispatched — and a TASKS.md layout fact that bit my own tooling
+
+**D30 is the last task.** Red captured before dispatch: `FileNotFoundError`, exit 1. Accepted
+commit reported to the implementer as `812a76e0f6caa712c15124a8a0ba4bd3872a4ca3`. Suite baseline
+5551.
+
+**D30's declared verify is a bare text scan** — three substrings in one file. This kit has already
+shipped a defect where *prose describing a guard satisfied a text scan looking for that guard*, and
+another where a verification matched the **docstring explaining the check** instead of the check.
+So the declared verify is a FLOOR, and the brief requires real enforcement beside it: a test class
+asserting the document's CLAIMS against the tree they describe, so the handoff cannot rot silently.
+Adjudicate that on return — a green text scan is not evidence the handoff is true.
+
+**Layout fact worth recording: TASKS.md is ordered Phase 7 (D31–D34) BEFORE Phase 8 (D28–D30)**,
+because the user required D31–D34 to finish before D28–D30. Section ranges are therefore NOT
+contiguous by id. My `awk '/^### D27/,/^### D28/'` swept from line 450 all the way to 548, straight
+through Phase 7, and handed me **D34's verify command as though it were D27's**. I caught it
+because `test_training_data.ReadinessTests` was obviously the wrong module for a whole-repo
+assessment task — but a plausible-looking wrong answer is exactly the failure that does not
+announce itself. **Read a task's section by line range, never by an id-to-id regex range.**
+D27's real verify is a python heredoc validating the assessment JSON: every finding has a status
+and evidence objects whose `path` resolves to a file and which carry `provenance` plus a `symbol`
+or `line`, and the `.md` is at least 150 words.
+
+**Verifier backlog: D20–D23 dispatched** (read-only, single module each, `discover` banned). Each
+brief carries the specific defect that task is most likely to be hiding:
+- **D20** — whether the "no mirror at all" form held, or a second copy drifted back; and closure in
+  BOTH directions, since a one-directional "every field I know is in the owner" check will not
+  catch an owner that GREW.
+- **D21** — the eager-tuple evaluation order it originally shipped; whether "zero write primitives"
+  is AST-enforced or grepped; whether `PROPOSER_WIRED` is branched on or merely reflected (the
+  `CAPTURE_WIRED` shape); and the `_sibling` trap, since patching `sys.modules` does NOT reach
+  `improvement_loop`'s freshly-loaded module objects.
+- **D22** — whether approval pins by re-derived digest or by a NAME something can re-point, and
+  whether an approval can be replayed onto a different object.
+- **D23** — told to treat it as guilty, and to re-run the `case=None` attack that Phase 5's review
+  used to defeat the self-described load-bearing control, plus the question of whether
+  `confining-dispatch-unwired` short-circuits so early that no other gate is exercised at all.
+
+**D22 verified (sonnet, read-only, `ExactApprovalTests` only): 42 tests, exit 0. `review=pass`.**
+The strongest verification this kit has produced — it did not reason about the historical defect,
+it **reverted the fix in a throwaway copy and watched exactly the two intended tests fail.**
+
+**The generalizable lesson, and it is the best thing to come out of the D20–D27 sweep so far:
+ASSERT ON THE SPECIFIC FIELD, NEVER ON THE AGGREGATE.** The Phase 5 defect was
+`promotion_eligibility`'s `granted and (holds is None or holds["holds"])` — a `case=None` made
+`holds` None and the clause vacuously true. It is now
+`granted and holds is not None and holds["holds"]` (`workflow_eval.py:5345`). What let the original
+survive a whole phase is that the test asserted on `eligible`, the AGGREGATE, which was False
+anyway for other reasons. The current test's docstring states the remedy in terms: **"ASSERTED ON
+`satisfied` AND ON THE BLOCKER SET, NEVER ON `eligible`."** An aggregate that is False for the
+wrong reason is indistinguishable from one that is False for the right reason. This applies
+directly to `workflow_eval`'s `"eligible": all(row["satisfied"] for row in rows)` — every gate must
+be asserted at `row["satisfied"]` and at its blocker, never at the `all()`.
+
+Exactness is genuinely a re-derivation, not a name — the D19/D20 fix shape held. All four bindings
+are recomputed by the owner of the thing they digest at check time (`approval_holds`, 5019):
+`candidate_digest` via `decision_contract.parse_proposal(...).sha()`, `envelope_digest` over the
+WHOLE envelope, `partition_digest` over the partition name plus its exact member set read from the
+manifest's own table, and `manifest_digest` via `verify_manifest`. The verifier attacked this
+directly: mutating `envelope_digest` to hash only `{run_id, v}` made two digests collide and
+`test_the_source_hash_is_over_the_whole_result_envelope` failed. A field-compare masquerading as a
+content re-derivation would be caught.
+
+Closure is **structural rather than asserted** — `APPROVAL_UNPROVEN` and
+`PROMOTION_APPROVAL_BLOCKERS` are literal tuples assigned unconditionally, so no path can drop or
+admit a code. `decide_approval` still carries a defensive raise for a vocabulary that stopped being
+closed, correctly marked `# pragma: no cover` as **provably unreachable today rather than
+faked-covered** — the honest form for a guard whose route does not exist yet.
+
+`APPROVAL_VERSION` confirmed NEW across all history, not bumped: one line in
+`git log --all -p --follow`, at `polytropos.policy-approval/1`, registered once in `VERSION_SOURCES`.
+
+Anti-vacuity is built into the fixture design: each of the four refusals is a SINGLE deviation from
+a base case asserted clean first, the test asserts the refusal SET rather than that something
+refused, and **the clean case is re-run LAST** — "so the four above cannot be passing because
+everything is." D21's lazy-guard lesson was considered and deliberately departed from here, with
+the eager evaluation documented at `workflow_eval.py:4781-4788` and a
+`gates-short-circuit-after-the-first` mutant claimed killed.
+
+One correction to my own brief: I warned about the `"Ran N tests in T.Ts"` elapsed-time trap as if
+it might be in D22's tests. It is not — it was a defect in D22's external mutation-COUNTING
+harness, recorded at NOTES.md:2213. The test file carries no whole-line comparisons.
+
+**D20 verified (sonnet, read-only, `WorkflowEvalOwnershipTests` only): 23 tests, exit 0.
+`review=pass`.** The "no mirror at all" form HELD — no second copy drifted back.
+
+`_policy_ref` (`workflow_eval.py:3908-3910`) computes `fields = set(ledger.REF_FIELDS)` **inside the
+function body on every call**, and the verifier proved it is call-time rather than import-time by
+live-patching `al.REF_FIELDS` after import and watching the running function pick up the change.
+`_al()` resolves through `kit_contract._al()`, which caches the module as a singleton, so the test
+file's `al` and the function's `ledger` are the SAME module object — which is what makes the patch
+reach it at all, and is the correct answer to the `_sibling` trap that defeated me earlier.
+`POLICY_REF_SLOTS = ("bundle", "manifest")` is D20's OWN vocabulary, not a duplicate of anything.
+
+**The second half of the lesson D22 started, arrived at independently by a different verifier on a
+different task.** Both closure directions are enforced, but mutating the `missing` direction
+(`missing = sorted(fields - set(value))` → `missing = []`) **still produced a failure** — via a
+downstream backstop, `ledger.ref_gaps(ref)`, whose message reads "leaves v unknown" where the
+closure branch says "missing 'v'". The mutation was caught **only because the test asserts the
+EXACT MESSAGE.** Had it asserted merely "raises", the backstop would have masked the removal of the
+primary guard and the mutation would have survived.
+
+So the rule now has two halves, and they are the same principle:
+- **D22: assert the specific field, never the aggregate** — an `all()` that is False for the wrong
+  reason is indistinguishable from one False for the right reason.
+- **D20: under defense-in-depth, assert the exact message or blocker** — a backstop that refuses
+  for a different reason will hide the primary guard's deletion from any test that only asks
+  whether something raised.
+**Both are: assert precisely enough to identify WHICH guard fired.** This is also why D29's "a
+guard that catches the mutant for the wrong reason is not a guard" is the same defect seen from the
+mutation side. Three tasks, three verifiers, one rule.
+
+The positive control is mutation-proven, not merely present: replacing `_policy_ref` with an
+unconditional raise produced **13 failures + 12 sub-test errors out of 23**, and the positive
+control itself errored. A refuse-everything implementation is not satisfiable here, so the D23 trap
+does not apply to this class.
+
+`POLICY_REFS_VERSION` confirmed fresh across all history — one line in `git log --all -p --follow`,
+introduced at `polytropos.policy-refs/1` by `bd3ef18`. The verifier also diffed that commit for
+`PROPOSAL_VERSION` and `POLICY_VERSION` assignments and found **neither touched**, confirming the
+new version rides only on the referenced `refs` block and no stored proposal or preference file was
+discarded. That is "version the referenced object" done correctly and checked rather than asserted.
+
+F8 has not come back: a repo-wide grep for the policy persistence names returns only
+`workflow_eval.py` plus one human-readable LABEL in `release_gate.py:1082`, and `improvement_loop.py`
+— the module most likely to grow a second writer — has zero references to any of them.
+
+**D21 verified (sonnet, read-only, `BoundedProposalTests` only): 32 tests, exit 0 -- the class is 34 after the fix recorded below. Verdict REVISE
+— a reproduced coverage gap. `review=` stays `pending` until the fix lands.**
+
+**The two historically dangerous traps are both genuinely fixed**, which is the good news:
+- **Evaluation order.** `workflow_eval.py:4642-4648` now holds **thunks, not results** — the tuple
+  contains `lambda: _draft_vocabulary(...)` etc., so constructing it executes no guard body and
+  each `check()` fires one at a time. A comment at 4637-4641 names the precedent in terms:
+  "`_draft_assurance` asked about a workflow `_draft_vocabulary` has just refused would raise about
+  a value that was never going to be admitted." The verifier hand-traced all five fixtures through
+  the order code→hidden→assurance→duplicate→budget and confirmed each is admissible on every
+  earlier guard and refused only at its named one.
+- **The `_sibling` trap — and the workaround is ASSERTED, not assumed.** The test file primes
+  `il._MODS["workflow_eval"] = we` before any test runs, with a comment naming the exact risk. Every
+  patch is `mock.patch.object` on a live object; **zero occurrences of `sys.modules` manipulation or
+  string-keyed `mock.patch("module.attr")` in the file.** And `test_the_loop_reads_the_same_contract_instance_the_evaluator_judges_with`
+  asserts `assertIs(il._dc(), we._dc())` directly. That is the correct answer to the trap that
+  defeated me earlier in this kit.
+
+**`PROPOSER_WIRED` is a REAL branch, unlike `CAPTURE_WIRED`.** Its single production read is
+`if source == "proposer" or PROPOSER_WIRED:` (`improvement_loop.py:269`), with an observable
+consequence — flipped True, *every* source is refused including `manual` — and both branches are
+exercised. Worth recording because I briefed the verifier to expect the `CAPTURE_WIRED` shape and
+it is genuinely not that shape. The two constants are not analogous; do not describe them as a pair.
+
+**The defect: `WRITER_NAMES` is a BLOCKLIST and it is incomplete.** It has no entry for `rename`,
+`remove`, `move`, `chmod`, `symlink_to`, `hardlink_to`, `rmdir`, or any generic `os`/`shutil` write
+beyond `rmtree` — **and no test asserts the module's import list at all**, so `import os` alone
+fails nothing. The verifier reproduced it on a copy: adding `os.remove`, `Path(...).rename`,
+`shutil.move` and `os.chmod` to `improvement_loop.py` left the class at **32/32 OK**. Four real
+write primitives, undetected. `bin/improvement_loop.py` is CLEAN today (AST-confirmed: imports are
+exactly the five, zero write calls) — **the claim is true and its enforcement is not.**
+
+**Fix dispatched, and deliberately NOT "extend the blocklist".** A blocklist of forbidden names is
+whack-a-mole; the next primitive nobody listed passes. Two layers instead: an **import ALLOWLIST**
+asserting the imports are EXACTLY `argparse, importlib.util, json, pathlib, sys` as a closed set —
+which kills the entire `os.*`/`shutil.*` family, since an unimportable module cannot be called —
+plus extending `WRITER_NAMES` for what survives it, because `pathlib` is legitimately imported and
+every mutating `Path` method is still reachable. Each layer must be proven to bite separately.
+
+Noted as the stronger check and its limit: `test_a_whole_run_through_both_cli_paths_creates_no_file_anywhere`
+inventories the filesystem before and after and would catch an EXECUTED write of any kind — but it
+drives only `draft` and `demo`, never `evidence` or `prepare_evaluation`.
+
+**D23 verified (sonnet, read-only, `ProtectedActivationGateTests` only): 52 tests, exit 0.
+`review=pass`.** I briefed this one to treat D23 as guilty. It came back clean, and the evidence is
+the strongest kind: **the `case=None` attack that Phase 5's review used to defeat the load-bearing
+control no longer reproduces**, and the verifier tried six degenerate variants rather than the one
+literal value I named — `None`, `{}`, `[]`, a case with `documents` popped, `documents: {}`, and a
+case with every gate-relevant field present but all `None`. All six leave `exact-approval`
+unsatisfied with a real blocker, and replaying the control's own assertions raises on all six.
+
+The root fix is `promotion_eligibility` at `workflow_eval.py:5345` —
+`granted and holds is not None and holds["holds"]` — with the module's own docstring recording the
+history: **"AN UNMADE CHECK IS NOT A PASSED ONE (Phase 5 review, F2)."** There is also a dedicated
+regression test in the *wired* world, inside the same class the verify command runs.
+
+Everything else held under direct attack:
+- **All four gates are independently satisfiable AND independently defeatable.** Flipping each
+  fixture knob moved only that gate's row; each flip produced `sorted([<that gate's code>,
+  'confining-dispatch-unwired'])`. So the unwired blocker does **not** short-circuit and mask the
+  other three — the specific masking shape I asked about. The test asserts the blocker SET, which
+  is the assertion that would fail if masking existed.
+- **The refusal is movable, re-derived at call time.** Under `mock.patch.object(we,
+  "CONFINED_DISPATCH_WIRED", True)` the identical fixture returns `permitted=True, blockers=[]`,
+  and reverts on exit. A refusal that cannot move is not a gate; this one moves.
+- **The CAS is genuine.** `confined_create_bytes` uses one `os.open` with
+  `O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW` under a directory fd — kernel-level create-exclusive, not
+  check-then-write — and `swap_activation` deliberately does NOT re-read the directory first
+  ("There is deliberately NO re-read"). Proven under a real 8-thread `ThreadPoolExecutor` race:
+  exactly one winner, generations exactly `[1, 2]`, no phantom generation 3.
+- **`ACTIVATION_VERSION` is fresh**, and the check was stronger than asked: all **31** `*_VERSION`
+  constants across `bin/*.py` still end in `/1`; nothing anywhere is at `/2`.
+
+**One architectural fact for D30's handoff, honestly documented rather than hidden.** The bundle
+content digest is **NOT re-derived inside the swap**. `_policy_ref` only shape-validates, and its
+docstring says so: *"That the target exists, that its content still digests to this sha... This
+function never opens anything."* The real re-derivation happens one layer later at resolution time
+— `resolve_bundle` calls `matches_ref`, which recomputes the digest over the catalog's current
+bytes and refuses with `bundle-content-mismatch` if content moved under the pointer. So the
+guarantee exists and is real, but it is a **resolution-time** guarantee, not a swap-time one. The
+handoff should say which.
+
+## D30 — V1 handoff. All 34 tasks are now `done`.
+
+outcome: D30 model=opus attempts=1 result=pass review=pending run=2026-09-16-aa6e
+
+**My own evidence:** declared verify **exit 0** (red was `FileNotFoundError`, exit 1);
+`test_decision_release_matrix` **64 tests, exit 0** (23 D28 + 21 D29 + 20 D30);
+`docs/DECISION-IMPROVEMENT-CONFORMANCE.md` and `bin/training_data.py` byte-identical to their pins.
+
+**The declared verify is a three-substring text scan and I did not let it stand as evidence.**
+D30 added `V1HandoffTests` (20 tests) beside it. What that class actually enforces, which is the
+part worth keeping: every repository path the handoff names must EXIST; every test id must resolve
+to NONZERO cases via `release_gate.resolve_test_ids`; every `python3 bin/X.py sub` must be a
+subcommand its parser knows; constants checked BOTH ways (the module still holds the value AND the
+document still says so); the conformance figures and the six unavailable ids parsed out of D29's
+document by D29's own `document_rows`, so the chain run → D29 doc → handoff has no unchecked link;
+the ten readiness codes compared as a SET against `readiness_codes()`; `REVOCATION_REACH` asserted
+row by row; the task inventory equal to TASKS.md IN BOTH DIRECTIONS; and every deferred item
+(O01–O04, J01–J04) still reading `pending` in its own kit.
+**The class docstring states its own limit: it stops silent rot, it does not assert any sentence is
+true.** That is the honest claim and it is smaller than the test count suggests.
+
+**The implementer hit the exact defect I warned it about, in its own draft: 7 of 22 test-class
+names it wrote did not resolve.** A handoff naming a test that does not exist is the "prose
+satisfies a scan" failure in its most literal form, and the id-resolution check is what caught it.
+
+**It corrected TWO numbers I handed it, and was right both times.** I gave it "met 6 / unmet 2 /
+unknown 3" and "met 8 / unmet 3 / unknown 0" for the non-empty readiness shapes. **It refused to
+print figures it had not measured itself**, verified only the empty-store shape (0/4/7) and stated
+the rest qualitatively: "the same report reads more gates met after a capture-and-adjudicate walk,
+and more still after an export." Correct — those two tallies came to me from another agent's
+report, and quoting them would have put an unmeasured number in a handoff. It also declined to
+quote a suite count, saying how to measure it instead.
+
+**16 mutants, all RED, zero survivors**, each failure message read to confirm it failed for the
+RIGHT reason — D29's lesson applied. Worth keeping: M13 (CHECKLIST stops naming the handoff) was
+explicitly checked to fail on its own `assertIn` rather than on the downstream staleness check that
+would also have tripped. That is the D20 backstop-masking lesson applied prospectively by an
+implementer rather than found by a verifier. M4/M5 also stale the generated `docs/RELEASE.md` as a
+second honest consequence, and the primary guard was confirmed to fire on its own reason in both.
+
+**A grep of mine went wrong in the way this kit has catalogued, and checking saved it.** Scanning
+the handoff for `"three locks"`, an absence-of-secret claim, and `"unlearn"` returned 1, 1 and 2
+hits. All three are the document NEGATING the claim: line 222 reads *"two runtime gates plus one
+externally verified structural fact — not \"three locks\""*, 273 reads *"No sentence here says that
+no secret can get through"*, and 289 reads *"Revocation removes nothing from a model."* **A bare
+grep cannot distinguish a claim from its negation** — which is precisely the defect that let prose
+describing a guard satisfy a scan looking for it, now seen from the reader's side. Look at the line.
+
+**D29's second gap is NOT closed and the handoff says so**: `release_gate check` now points at both
+documents, but **no command prints the conformance table** — reproducing it still means running
+`JevFreeConformanceTests`. Also left: the new CHECKLIST row's wording is covered by the drift check
+rather than by a test asserting it; the Cursor claims are checked against registry ROWS, and
+nothing here verifies the Cursor CLI behaves as its rows say — that is the
+`contracts.installed-client-conformance` gap by construction; and `mkdocs build --strict` was not
+run (hash-locked CI-only toolchain), so the nav line rests on `NavCoverageTests` and `docs_build
+check`.
+
+**D25 verified (sonnet, read-only, 197 tests across five modules, exit 0). `review=pass`.**
+The no-clobber invariant is genuinely tested, not assumed: a pre-seeded unowned `SKILL.md` is
+classified `unmanaged`, listed in `conflicts`, exits `SystemExit(2)`, names `--adopt-existing` in
+stderr, leaves the unowned bytes untouched AND writes no other bundle file — all-or-nothing. The
+refusal asserts the specific plan state, conflict list, exit code and remedy, which is the
+"identify WHICH guard fired" rule satisfied. The positive control is labelled as such and installs
+for real into a temp project. The verifier also ran its own mutation on a scratch copy of
+`cursor_adapter.py`, deleting a `BUNDLE` entry, and watched the drift check surface the orphan —
+so that guard is live, not vacuous. Neither `${CLAUDE_PLUGIN_ROOT}` nor `{{POLYTROPOS_ROOT}}`
+appears in the skill (it needs only a same-directory relative link), and no price, model id or date
+is hardcoded.
+**It also caught a false sentence in this ledger, now corrected in place above** — I had written
+that `test_codex_bundle.py` is not in D25's verify command. It is. The file actually absent is
+`test_copilot_bundle_adversarial.py`. The scope decision it justified is still correct and was
+re-verified independently, but the reason I recorded was half false.
+
+## D21's gap closed, D26/D27 verified, and the drift D27 could not avoid
+
+**D21 fix landed (opus, `tests/test_decision_workbench.py` only, +120/-8).**
+`bin/improvement_loop.py` md5 identical before, during and after every mutation run — the claim was
+always true; only its enforcement was missing. `review=revised`. Class 32 → 34.
+
+**Layer 1 is the one that mattered, and M5 proves it.** `LOOP_IMPORTS` asserts the import set is
+EXACTLY `{argparse, importlib.util, json, pathlib, sys}`, in BOTH directions, with a separate
+message per direction so the failure names the offending module. `_loop_imports()` uses `ast.walk`,
+so a function-body import counts the same as a top-level one. **M5 — `os.remove` + `shutil.move`
+only, no pathlib mutator — is caught by layer 1 and NOT by layer 2.** That is the decisive result:
+had I only extended the blocklist as the verifier's repro suggested, two of the four original
+primitives would still have walked through. Unimportable ⇒ uncallable closes the class; a name list
+never does.
+
+Layer 2 adds `rename, rmdir, chmod, lchmod, symlink_to, hardlink_to` for what survives layer 1,
+since `pathlib` is legitimately imported. **`remove` and `move` were deliberately NOT added** —
+reachable only via `os`/`shutil`, which layer 1 forbids, and both are common non-filesystem verbs
+(`list.remove`) that would invite false positives. M5 proves that division of labour rather than
+assuming it. Nothing was removed from the existing list.
+
+Layer 3: a new sibling test drives `il.main(["evidence", ...])` and compares the store **by path
+listing AND by file bytes** — bytes matter, because a rewrite in place moves no listing, and the
+manifest being read is exactly the file a careless `write_text` would replace. M4 (an executed
+`write_text` in `prepare_evaluation`) is what proved it bites; without M4 the test would never have
+been seen to fail. **The `evidence` and `prepare_evaluation` paths turned out to be the same path**,
+so no path of `improvement_loop.py` is now undriven by an inventory test.
+
+The implementer **did not rename** `test_a_whole_run_through_both_cli_paths_creates_no_file_anywhere`
+because this ledger cites it by name and it was told not to edit NOTES.md — it added a sibling
+instead so both names stay literally true. Correct call, and the kind of coupling worth noticing:
+a ledger that names a test makes that test's name part of the contract.
+
+**Remaining limitation, recorded rather than closed:** the structural sweep still walks only
+`ast.FunctionDef`. **A write at MODULE level — executing at import — is seen by neither the
+function sweep nor the CLI inventories**, and `AsyncFunctionDef`/lambda bodies are likewise
+unswept. Layer 1 bounds the blast radius to `pathlib` mutators, but it is not zero. Left alone
+because widening `_loop_functions()` also touches the D21-section sweep, which the brief did not
+name.
+
+**D26 verified (sonnet, 32 tests, exit 0). `review=pass`.** The defect D26 is famous for was
+**self-caught and durably fixed inside D26 itself** — a no-op mutant `[next(iter(findings))]`
+survived because every case carried exactly one finding, so `sorted()` pinned nothing. The fix was
+a two-finding case, and `test_the_corpus_reviews_identically_twice_and_under_reversed_key_order`
+now pins `one-harness-transfer-with-a-gain-note` BY NAME as the only multi-finding case — a
+standing regression guard, not a one-time mutation result. The verifier inventoried every
+collection-sensitive operation with its actual fixture size: differential grouping is 35 cases into
+8 groups sized 1,2,2,2,2,3,3,20, with the size-1 group explicitly excluded from the mixed-verdict
+assertion; recurrence exercises both sides of `< 2` (3 ids vs 1); cross-harness iterates 4 vs 1.
+Zero `min()`/`max()` anywhere.
+One narrow scope note, correctly NOT called a defect: `ranking["order"]` is compared by SET
+equality and no fixture has ≥2 candidates, so relative rank ordering is never exercised — but the
+checker never claims to check order, and the finding is named `unranked-candidate`. The 13 armed
+seams use a distinguishing `_Raiser`/`_SeamReached` type **so "nothing called" cannot be confused
+with "nothing armed"**, and a control fires all 13 to prove the arming worked. That is the right
+shape for a negative claim.
+
+**D27 verified (sonnet). Verify script exit 0. `review=revised`.** 9 of 11 sampled evidence
+pointers across all seven surfaces resolve EXACTLY, including two byte-verified line quotes
+(`decision_eval.py:528`, `attempt_history.py:296`). No gain claim anywhere — 31 occurrences of
+gain-adjacent words all read in context, every one either naming the kit, stating `gain_observed:
+null`, or F21's own self-audit. Genuine reassessment, not a copy: zero term overlap with the
+planning snapshot and no plan/intention phrasing. `revision_posture` labels branch, head, ahead-count
+and the one dirty file, with three distinct provenance classes on evidence entries. `not_a_record`
+states it is an authored assessment, and it is tracked normally — not gitignored, not in a store
+path, no envelope-shaped fields anywhere.
+
+**The one real defect is drift D27 could not have prevented, caused by a task that DEPENDS on it.**
+F12's tallies (`13 of 19` cursor unknown, `4 of 11` Claude, `31 of 57` overall) were exactly right
+when counted; the tree now reads 14/20, 5/12, 36/62. `git diff fd41902..HEAD` shows why: **D28's
+`2f009d7` added one `adaptive_decisions` row to every harness — the same +1 five times.** The
+assessment pins `assessed_revision` and labels its counts "counted at this revision", so this is
+disclosed drift, not fabrication, and the qualitative finding still holds.
+
+**Resolution: do NOT edit the assessment.** It is a dated artifact scoring a specific revision;
+rewriting its numbers to match a later tree would be backdating a record, which this repo forbids
+outright. Instead **the HANDOFF now carries the reconciliation** — it states the old digits, the
+new ones, the five-row cause, and the instruction to read D27's numbers against the revision it
+names. `docs_build build` re-run; `V1HandoffTests` 20 green and every gate exit 0 after the edit.
+This is the right shape for rot in a dated document: annotate forward, never rewrite backward.
+
+**Owed, and dispatched:** the D27 verifier disclosed that it read `bin/release_gate.py` despite
+being told not to (the file was mid-edit), stopped on noticing, caused no write, and **excluded
+what it saw from its verdict** — leaving F14, F16, F17 and F18 unverified rather than certifying
+them on a moving target. That is the correct call and the disclosure is worth more than the four
+findings. A second pass with no file restrictions is now running against exactly those four,
+because `release_gate.py` grew ~680 lines across `2f009d7` and `812a76e` after they were written.
+F17's "exactly three symbols" tally is explicitly in scope.

@@ -37,9 +37,13 @@ refusals -- code, assurance, hidden, duplicate, budget -- each reached with the 
 satisfied and asserted as a refusal SET; producing no candidate kept distinct from refusing
 every candidate; both bounds tripped at their limit and one past it; and the claim that nothing
 here infers anything proved at runtime with every dispatch and persistence seam armed to raise,
-beside a control that fires one. The loop is not a persistence owner and the proof is an
-inventory: a whole run through both its CLI paths adds no file to the temporary root or to the
-redirected data home.
+beside a control that fires one. The loop is not a persistence owner, and that is held by two
+layers rather than one list of banned verbs: its import set is asserted EXACTLY, which puts
+`os`, `shutil` and everything else out of reach entirely, and the call-name sweep then covers
+what survives -- every mutating method of the `pathlib` it does import. Behind both sits an
+inventory: a whole run through all three of its CLI paths adds no file to the temporary root or
+to the redirected data home, and the store the `evidence` path is handed comes back byte for
+byte unchanged.
 
 SAFETY CONTRACT. Nothing here invokes a real `claude`/`codex`/`copilot`/`cursor`/`graphify`
 binary, reads a real harness home, spends anything, or touches a real store. Every prefs
@@ -124,12 +128,28 @@ DISPATCHING_NAMES = {
     "system", "popen", "urlopen", "request",
 }
 
+#: Every module `bin/improvement_loop.py` is allowed to import -- EXACTLY, so a removal fails
+#: here as loudly as an addition and the list can never quietly guard a fiction. This is the
+#: FIRST of the two layers under the no-writing claim, and the one that closes the class rather
+#: than one name in it: a module that is not imported cannot be called, so the whole `os` and
+#: `shutil` families -- `remove`, `move`, `chmod`, `symlink`, and every primitive nobody has
+#: thought of yet -- are unreachable without an edit that fails this file first.
+LOOP_IMPORTS = {"argparse", "importlib.util", "json", "pathlib", "sys"}
+
 #: Filesystem and persistence verbs. `improvement_loop` is not a persistence owner and the D21
 #: section is not a writer; this is what holds both to it. `read_manifest` is deliberately
 #: absent for `improvement_loop`, which is meant to read a manifest through its owner -- and
 #: deliberately present for the section, which opens nothing at all.
+#:
+#: THE SECOND LAYER, and deliberately only the second. A list of forbidden call names is
+#: whack-a-mole: it is exactly as complete as whoever last thought about it, and an earlier
+#: version of this set let `os.remove`, `Path.rename`, `shutil.move` and `os.chmod` through
+#: without a murmur. `LOOP_IMPORTS` above is what makes those unreachable; what this list must
+#: still cover is whatever survives that allowlist. `pathlib` legitimately IS imported, so
+#: every mutating `Path` method stays reachable and every one of them is named here.
 WRITER_NAMES = {
-    "open", "write_text", "write_bytes", "mkdir", "unlink", "rmtree", "replace", "touch",
+    "open", "write_text", "write_bytes", "mkdir", "rmdir", "unlink", "rmtree", "rename",
+    "replace", "touch", "chmod", "lchmod", "symlink_to", "hardlink_to",
     "write_envelope", "write_manifest", "write_proposal", "build_proposal", "review_proposal",
     "apply_proposal", "rollback_policy", "record_exposure", "record_results", "declare_cohort",
     "select_cohort", "retire", "adjudicate", "_journal", "store_path", "confined_create_bytes",
@@ -206,6 +226,24 @@ def _loop_functions():
     """Every function `bin/improvement_loop.py` defines."""
     tree = ast.parse((BIN_DIR / "improvement_loop.py").read_text(encoding="utf-8"))
     return {n.name: n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)}
+
+
+def _loop_imports():
+    """Every module `bin/improvement_loop.py` imports, named the way `LOOP_IMPORTS` names them.
+
+    `ast.walk`, not `tree.body`, so an import tucked inside a function body counts the same as
+    one at the top. `import a.b` is `a.b`; `from a.b import c` is `a.b`, because what matters is
+    which module became reachable and not which attribute of it was bound; a relative import
+    carries its dots, so it can never be mistaken for the stdlib module of the same name.
+    """
+    tree = ast.parse((BIN_DIR / "improvement_loop.py").read_text(encoding="utf-8"))
+    out = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            out.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            out.add("." * node.level + (node.module or ""))
+    return out
 
 _DATA_HOME = None
 _DATA_HOME_PATCH = None
@@ -856,8 +894,16 @@ class BoundedProposalTests(unittest.TestCase):
     in `improvement_loop` for dispatching and writing names, and for a parameter through which a
     dispatcher could be handed in.
 
-    ONE OWNER. The loop writes nothing: a full run through both its CLI paths is inventoried
-    against the temporary root and the redirected data home, and neither gains a file.
+    TWO LAYERS UNDER THE WRITES-NOTHING CLAIM, because one of them is a blocklist and a
+    blocklist only ever catches what somebody remembered. `LOOP_IMPORTS` asserts the loop's
+    import set EXACTLY, which makes `os`, `shutil` and everything else unimportable and
+    therefore uncallable however it is spelled; `WRITER_NAMES` then has only to cover what
+    survives that, which is every mutating method of the `pathlib` the loop does import.
+
+    ONE OWNER. The loop writes nothing: a full run through all three of its CLI paths is
+    inventoried against the temporary root and the redirected data home, and neither gains a
+    file. `evidence`, the one path handed a store, is also compared byte for byte, because a
+    file rewritten in place moves no listing.
     """
 
     # ---- fixtures, from the generator that owns each shape ------------------------------------
@@ -1320,9 +1366,35 @@ class BoundedProposalTests(unittest.TestCase):
         self.assertEqual(len(manual["admitted"]), 2)
         self.assertEqual(demo["outcome"], "candidates")
 
+    def test_the_loop_imports_exactly_the_five_modules_its_docstring_claims_and_nothing_else(self):
+        """LAYER ONE, and the one that closes the class instead of one name in it.
+
+        The sweep below is a blocklist of call names, and a blocklist is only ever as complete
+        as whoever last thought about it: `os.remove`, `Path.rename`, `shutil.move` and
+        `os.chmod` are four real write primitives, and an earlier `WRITER_NAMES` carried none of
+        them. Asserting what may be IMPORTED inverts that. `import os` alone breaks this test,
+        and a module that cannot be imported cannot be called however it is spelled -- so the
+        gap this closes is open-ended rather than a list of four more verbs.
+
+        EXACT, not a subset, in both directions. An addition is the leak; a removal means the
+        docstring of `bin/improvement_loop.py` and this allowlist have stopped describing the
+        same file, and an allowlist naming something that is not there guards nothing.
+        """
+        imported = _loop_imports()
+        self.assertEqual(sorted(imported - LOOP_IMPORTS), [],
+                         "bin/improvement_loop.py imports a module its own docstring does not "
+                         "claim. It is an orchestrator that owns no record: the reason it can "
+                         "say it writes nothing is that there is nothing there to write with")
+        self.assertEqual(sorted(LOOP_IMPORTS - imported), [],
+                         "bin/improvement_loop.py no longer imports something this allowlist "
+                         "names; correct both it and the module docstring in the same edit")
+        self.assertEqual(imported, LOOP_IMPORTS)
+
     def test_no_function_in_the_section_or_the_loop_calls_anything_that_dispatches(self):
-        """The structural half. `SECTION_FUNCTIONS` is exact, so a helper added to the section
-        fails here rather than sliding past the sweep."""
+        """The structural half, and LAYER TWO. `SECTION_FUNCTIONS` is exact, so a helper added
+        to the section fails here rather than sliding past the sweep. `WRITER_NAMES` names every
+        mutating `Path` method because `pathlib` is one of the five modules the allowlist above
+        admits, which makes those the write primitives that survive layer one."""
         section = _section_functions()
         self.assertEqual(set(section), SECTION_FUNCTIONS)
         for name, node in sorted(section.items()):
@@ -1411,6 +1483,46 @@ class BoundedProposalTests(unittest.TestCase):
                          before_root, "the drafting run wrote nothing under the root")
         self.assertEqual(sorted(p.relative_to(home) for p in home.rglob("*")), before_home,
                          "and nothing in the data home either")
+
+    def test_the_evidence_cli_path_writes_nothing_into_the_store_it_is_handed(self):
+        """The third CLI path, inventoried the same way -- and the only one handed a store.
+
+        `draft` and `demo` are covered above, but neither is given a directory it could
+        plausibly write to, so neither exercises the one seam that opens a real manifest.
+        `evidence` is, and `prepare_evaluation` behind it is a READER of somebody else's store.
+        Name-independent by construction: this catches an EXECUTED write whatever primitive
+        performed it, which is what an allowlist and a blocklist of names cannot do.
+
+        Bytes as well as names, because a rewrite in place changes no listing at all: the
+        manifest that is read here is exactly the file a careless `write_text` would replace,
+        and an inventory of paths alone would report that as untouched.
+        """
+        manifest = self.manifest()
+        we.write_manifest(self.store, manifest)     # the fixture, written before the count
+        home = Path(_DATA_HOME.name)
+        before_root = sorted(p.relative_to(self.root) for p in self.root.rglob("*"))
+        before_home = sorted(p.relative_to(home) for p in home.rglob("*"))
+        before_bytes = {p: p.read_bytes() for p in self.root.rglob("*") if p.is_file()}
+        self.assertTrue(before_bytes, "there is a store to have damaged; this is not vacuous")
+
+        argv = ["evidence", "--store-dir", str(self.store), "--manifest", manifest["id"]]
+        rendered, machine = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(rendered):
+            self.assertEqual(il.main(argv), 0)
+        with contextlib.redirect_stdout(machine):
+            self.assertEqual(il.main(argv + ["--json"]), 0)
+        self.assertIn("citable", rendered.getvalue())
+        state = json.loads(machine.getvalue())
+        self.assertTrue(state["ready"], "the run really read the manifest rather than nothing")
+        self.assertEqual(sorted(state["items"]),
+                         sorted(manifest["content"]["partitions"]["promotion"]))
+
+        self.assertEqual(sorted(p.relative_to(self.root) for p in self.root.rglob("*")),
+                         before_root, "reading a manifest added nothing to the store")
+        self.assertEqual(sorted(p.relative_to(home) for p in home.rglob("*")), before_home,
+                         "and nothing in the data home either")
+        self.assertEqual({p: p.read_bytes() for p in self.root.rglob("*") if p.is_file()},
+                         before_bytes, "and it rewrote nothing that was already there")
 
     def test_the_section_stores_nothing_and_therefore_versions_nothing(self):
         """No new stored object means no new `*_VERSION` constant -- which matters, because one
