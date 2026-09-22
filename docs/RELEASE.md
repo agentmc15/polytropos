@@ -189,9 +189,9 @@ Contract versions are read from the module that owns each one; package versions 
 
 | Harness | Pricing file | cached_date | Models |
 |---|---|---|---|
-| claude-code | `data/pricing.json` | 2026-07-24 | 7 |
+| claude-code | `data/pricing.json` | 2026-09-21 | 8 |
 | codex | `data/pricing.codex.json` | 2026-09-05 | 7 |
-| copilot | `data/pricing.copilot.json` | 2026-09-05 | 26 |
+| copilot | `data/pricing.copilot.json` | 2026-09-21 | 35 |
 | cursor | `data/pricing.cursor.json` | 2026-09-13 | 0 |
 
 ### Operational support by harness
@@ -211,7 +211,7 @@ Three answers per capability, never collapsed: does the product support it, has 
 - Install: `claude plugin install polytropos@polytropos-local`
 - Bundle: `skills/ (the plugin itself)`
 - Review form: restricted `--allowedTools` profile (never the blanket grant)
-- Pricing: `data/pricing.json` (`cached_date` 2026-07-24, 7 models)
+- Pricing: `data/pricing.json` (`cached_date` 2026-09-21, 8 models)
 - Evaluation adapter: `workflow_eval.claude_adapter`
 
 | Capability | Product | Implemented | Verified | On | Client | Effective |
@@ -259,7 +259,7 @@ Three answers per capability, never collapsed: does the product support it, has 
 - Install: `python3 bin/harness_select.py install --harness copilot`
 - Bundle: `copilot/.github/`
 - Review form: the reviewer agent without `--allow-all-tools` (no narrower pin exists)
-- Pricing: `data/pricing.copilot.json` (`cached_date` 2026-09-05, 26 models)
+- Pricing: `data/pricing.copilot.json` (`cached_date` 2026-09-21, 35 models)
 - Evaluation adapter: `workflow_eval.copilot_adapter`
 
 | Capability | Product | Implemented | Verified | On | Client | Effective |

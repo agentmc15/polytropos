@@ -15,13 +15,14 @@ Claude Code sessions run on one model at a time, and the price spread across the
 
 | Model | Input $/MTok | Output $/MTok | Relative cost |
 |---|---:|---:|---|
-| Fable 5 | $10 | $50 | 2× Opus, ~3.3× Sonnet, 10× Haiku |
+| Fable 5.1 | $10 | $50 | 2× Opus, 5× Sonnet, 10× Haiku |
+| Fable 5 | $10 | $50 | same rate as Fable 5.1, which supersedes it |
 | Opus 5 | $5 | $25 | baseline daily driver |
 | Opus 4.8 | $5 | $25 | superseded by Opus 5 at the same rate |
-| Sonnet 5 | $3 ($2 intro until 2026-08-31) | $15 ($10 intro) | near Opus-tier at high effort |
+| Sonnet 5 | $2 | $10 | near Opus-tier at high effort |
 | Haiku 4.5 | $1 | $5 | bulk/simple API work |
 
-*(Prices cached 2026-07-24 in `data/pricing.json` — the single source of truth; nothing else hard-codes a price.)*
+*(Prices cached 2026-09-21 in `data/pricing.json` — the single source of truth; nothing else hard-codes a price.)*
 
 Running Fable 5 as a standing default is harmless on a subscription (dollars don't change) but becomes a 2×–10× overpayment the day Fable moves to pay-per-token — a real 30-day baseline measured on this machine showed **~$614 API-equivalent with 87% of it on Fable 5**, mostly from cache reads in long agentic sessions. That is one dated observation on one machine, not a standing figure — `python3 bin/cost_report.py --days 30` re-measures it on yours.
 
@@ -35,7 +36,7 @@ The plugin solves three problems:
 
 The same routing question gets opposite answers depending on how tokens are paid for. Every skill reads the mode from `data/pricing.json → billing_mode` (overridable per invocation with `--api` / `--sub`).
 
-**`api` mode — optimize dollars.** Any pay-per-token usage: an application you're building, or Claude Code on API-key billing. The cheapest *sufficient* model wins. Haiku 4.5 earns its keep for classification, extraction, and bulk calls. Cache discounts (reads at 0.1×), batch processing (50% off), and Sonnet 5's introductory pricing all factor into the estimate.
+**`api` mode — optimize dollars.** Any pay-per-token usage: an application you're building, or Claude Code on API-key billing. The cheapest *sufficient* model wins. Haiku 4.5 earns its keep for classification, extraction, and bulk calls. Cache discounts (reads at 0.1×) and batch processing (50% off) factor into the estimate; an `intro_pricing` window would too, but no model in the file carries one today.
 
 **`subscription` mode — optimize rate-limit burn.** Claude Code / Claude UI on a plan: the marginal dollar cost of any request is zero, and the only scarce resource is the 5-hour and 7-day rate-limit windows. Consequences:
 
@@ -44,9 +45,10 @@ The same routing question gets opposite answers depending on how tokens are paid
   concrete model that tier means is derived, never typed: `python3 bin/aesop_bridge.py tiers`
   resolves each tier to the model `data/pricing.json` currently carries for it, and that file
   marks Opus 4.8 superseded at the same rate (kept for costing historical transcripts, and as
-  the standard fallback target for a Fable or Opus refusal). `skills/route/SKILL.md` and
-  `skills/fable-check/SKILL.md` still name Opus 4.8 in their own ladder text; read the tier, and
-  ask the command which model it is today.
+  the standard fallback target for a Fable or Opus refusal). The daily-driver sentences in
+  `skills/route/SKILL.md` and `skills/fable-check/SKILL.md` now name the Opus *tier* and point at
+  that command; Opus 4.8 still appears in both as the refusal-fallback target and the
+  Sonnet-comparison rung, which is what the file says it is.
 - Burn is managed with **effort levels** (`low`/`medium` for routine work), not model downgrades.
 - Dollar figures are still shown, but labeled *API-equivalent burn* — a proxy for how hard a task hits the windows.
 
@@ -151,7 +153,7 @@ harnesses and the journal get §7.
 
 ### 4.1 `data/pricing.json`
 
-Everything numeric lives here: per-model input/output rates, `intro_pricing` windows (Sonnet 5's $2/$10 until 2026-08-31 is applied automatically by date), cache multipliers (reads 0.1×, 5-minute-TTL writes 1.25×), the 50% batch discount, per-model context windows and notes, the default `billing_mode`, and the task-size token profiles used for estimation. When Claude prices change, this file is the only edit; bump `cached_date`.
+Everything numeric lives here: per-model input/output rates, optional `intro_pricing` windows (applied automatically by date — no model carries one today, Sonnet 5's launch rate having become its base rate, but the mechanism stays for the next one), cache multipliers (reads 0.1×, 5-minute-TTL writes 1.25×), the 50% batch discount, per-model context windows and notes, the default `billing_mode`, and the task-size token profiles used for estimation. The multipliers are global, so a model that prices cache reads differently from the file-wide `cache_read_multiplier` is over- or under-estimated until a per-model override exists — Fable 5.1's notes say so in as many words. When Claude prices change, this file is the only edit; bump `cached_date`.
 
 It has **three siblings, one per harness (§7), and they never merge** — no harness's config reads another's file. `data/pricing.copilot.json` is the same kind of single source of truth for Copilot, where the AI-Credit unit itself is data rather than a constant in code. `data/pricing.codex.json` carries the Codex roster and burn index, with a `model_ids_note` saying that its model ids are best-effort — corrections land in that file and nowhere else. `data/pricing.cursor.json` carries **no rates at all**, because Cursor publishes no per-model CLI price table this repo could mirror; that absence is the honest state, and it is why a Cursor dispatch is unpriced rather than estimated from someone else's numbers. The one cross-file reader is `bin/model_registry.py`, and it reads model ids and tiers only — never a price — and reports an ambiguity rather than picking when one id sits in two files under two tier names.
 
@@ -392,7 +394,7 @@ harness's config reads another's pricing file, and none of them is invoked by a 
 command, or kit execution; `--dry-run` and `--demo` are the sanctioned smoke paths and spawn
 nothing.
 
-**The Copilot harness (`copilot/`).** The same per-task routing and cost discipline ported to GitHub Copilot CLI. A cross-vendor `route` agent classifies a task into a tier (cheap / mid / strong / frontier) and prices 2–3 candidate models across vendors; an architect→execute→verify→escalate port (`bin/copilot_execute.py` plus model-pinned agents) mirrors the kit loop; and a budget-capped **Ralph** goal loop (`bin/copilot_ralph.py`) drives a self-directed objective under a spend ceiling. Copilot meters everything in **AI Credits** (the AIC's dollar value is data — `billing_unit.usd_per_credit` in `data/pricing.copilot.json` — never a literal in a doc or skill), priced by `bin/copilot_pricing.py` from the separate `data/pricing.copilot.json` (where Claude Fable 5 is the sole frontier-tier model on the roster). Because Copilot has no `${CLAUDE_PLUGIN_ROOT}`-style runtime variable, the bundle's config carries a `{{POLYTROPOS_ROOT}}` placeholder that `bin/harness_select.py` resolves to an absolute path at install time. Beside those: `bin/copilot_usage.py` reads `~/.copilot`'s session logs strictly read-only for a usage report, `bin/copilot_prefs.py` is the single home for the user's own model pins and excludes, `bin/copilot_statusline.py` is the Copilot-side twin of the statusline, and `copilot-docs/` is a generated doc center written only by `bin/copilot_docs.py`. Full guides: `docs/COPILOT-HARNESS.md`, `docs/COPILOT-WORKFLOW.md`, `docs/COPILOT-COSTVIZ.md`.
+**The Copilot harness (`copilot/`).** The same per-task routing and cost discipline ported to GitHub Copilot CLI. A cross-vendor `route` agent classifies a task into a tier (cheap / mid / strong / frontier) and prices 2–3 candidate models across vendors; an architect→execute→verify→escalate port (`bin/copilot_execute.py` plus model-pinned agents) mirrors the kit loop; and a budget-capped **Ralph** goal loop (`bin/copilot_ralph.py`) drives a self-directed objective under a spend ceiling. Copilot meters everything in **AI Credits** (the AIC's dollar value is data — `billing_unit.usd_per_credit` in `data/pricing.copilot.json` — never a literal in a doc or skill), priced by `bin/copilot_pricing.py` from the separate `data/pricing.copilot.json` (which ids sit in which tier is data read from that file, never a list memorised in a doc — `python3 bin/copilot_pricing.py models` prints every row with the tier it carries, and more than one of them currently reads `frontier`). Because Copilot has no `${CLAUDE_PLUGIN_ROOT}`-style runtime variable, the bundle's config carries a `{{POLYTROPOS_ROOT}}` placeholder that `bin/harness_select.py` resolves to an absolute path at install time. Beside those: `bin/copilot_usage.py` reads `~/.copilot`'s session logs strictly read-only for a usage report, `bin/copilot_prefs.py` is the single home for the user's own model pins and excludes, `bin/copilot_statusline.py` is the Copilot-side twin of the statusline, and `copilot-docs/` is a generated doc center written only by `bin/copilot_docs.py`. Full guides: `docs/COPILOT-HARNESS.md`, `docs/COPILOT-WORKFLOW.md`, `docs/COPILOT-COSTVIZ.md`.
 
 **The Codex harness (`codex/`).** Native `$skill` workflows packaged as a Codex plugin, with routing data in `data/pricing.codex.json`. Its distinguishing feature is **central application policy** (`bin/codex_policy.py`, `bin/codex_app_policy.py`): Astra owns planning, dependency coordination, bounded recovery and final acceptance, while Luna, Terra and Sol implement — cheap mechanical, routine, and hard/security/integration work respectively — and model identity, availability, effort support and pricing are all derived from the pricing file at run time rather than written into the policy. The kit-dispatch driver is `bin/codex_execute.py` (`status` / `run` / `review` / `accept` / `prepare`), which instantiates no warm pool and whose recovery path requires driver-recorded lower-tier attempts plus a real failure signal before it climbs; a dispatch that failed for an `auth`, `config`, `permission` or `infrastructure` reason stops the ladder and names the class instead. Two routing policies are selectable by name — `reserved` (the default) and an opt-in `adaptive` one — and which is in force is an explicit selection written into the run's NOTES.md, never learned from observations. `bin/codex_usage.py` reads `~/.codex` read-only with an honest unpriced fallback, and `bin/codex_legacy_migration.py` retires proven legacy copies reversibly. **A ChatGPT-plan Codex run is usage-limited, not token-billed**, so every dollar figure for one is a labeled API-equivalent relative-burn proxy and never a bill: `billed_usd` stays null and proxy dollars never enter a priced total. Full guide: `docs/CODEX-HARNESS.md`.
 

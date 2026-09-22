@@ -62,14 +62,15 @@ A Claude Code plugin that picks the right model per task, estimates the cost bef
 
 ## Why
 
-Model lineup and API pricing (per million tokens, cached 2026-07-24):
+Model lineup and API pricing (per million tokens, cached 2026-09-21):
 
 | Model | Input | Output | Best for |
 |---|---:|---:|---|
-| Fable 5 | $10 | $50 | Long-horizon autonomous work, hardest reasoning |
+| Fable 5.1 | $10 | $50 | Long-horizon autonomous work, hardest reasoning — same rate as Fable 5 |
+| Fable 5 | $10 | $50 | Still served; superseded by Fable 5.1 at the same rate |
 | Opus 5 | $5 | $25 | Multi-file features, hard debugging, review — same rate as Opus 4.8 |
 | Opus 4.8 | $5 | $25 | Superseded by Opus 5; kept for costing historical transcripts |
-| Sonnet 5 | $3 ($2 intro until 2026-08-31) | $15 ($10 intro) | Day-to-day workhorse; near Opus-tier at high effort |
+| Sonnet 5 | $2 | $10 | Day-to-day workhorse; near Opus-tier at high effort |
 | Haiku 4.5 | $1 | $5 | Classification, extraction, bulk API calls |
 
 Two billing modes with **opposite** optimization goals:

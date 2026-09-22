@@ -35,7 +35,7 @@ Do NOT route to Fable for: routine coding, tasks with well-known solutions, anyt
 
 ## Standing recommendation for this setup
 
-The user's working posture: **Opus 4.8 as daily driver; Fable 5 escalated per-portion, then back down.**
+The user's working posture: **the Opus tier as daily driver — today that tier is Opus 5, with Opus 4.8 marked superseded at the same rate in pricing.json (`python3 bin/aesop_bridge.py tiers` names the current model per tier, so ask it rather than trusting this line); the frontier tier escalated per-portion, then back down.** The frontier tier's current model is Fable 5.1, Fable 5's successor at the same per-token price — everything below about running Fable well applies to it unchanged, with one addition: read that entry's `notes`, which record that its cache reads bill at a lower fraction of input than this file's global `cache_read_multiplier` applies and by how much any cache-heavy estimate for it is therefore overstated. Quote that caveat with a cache-discounted figure for this model; take the fraction from the notes, never from memory.
 
 - **The default escalation path is `/polytropos:architect`**, not a session switch: Fable does the planning/meta-work once and emits an execution kit (task briefs, model-pinned subagents, guardrails, verification loops); `/polytropos:execute` then runs it on Opus/Sonnet at near-Fable quality. Blocked tasks escalate back to Fable one at a time. Use `/model fable` for a whole session only when the *entire* session is Fable-class work.
 - Global default in `~/.claude/settings.json` should be `opus`; if it is still pinned to a Fable model with a standing `xhigh` effort, offer to change it. Set effort per task, not globally.

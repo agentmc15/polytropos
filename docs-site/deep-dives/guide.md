@@ -19,7 +19,7 @@ tasks, greenfield builds, brownfield work, backlog burndown, security, and measu
 > test counts are read out of the tree by the command named beside them. An earlier revision of this
 > guide quoted a track record that had gone badly stale; the fix was to stop quoting it (§6).
 
-> Prices in this document are a **labeled snapshot** (cached `2026-07-24`) of
+> Prices in this document are a **labeled snapshot** (cached `2026-09-21`) of
 > `data/pricing.json` — the single source of truth. Nothing else hard-codes a price; when
 > `pricing.json` changes, these tables are updated together with its `cached_date`.
 
@@ -60,14 +60,15 @@ Three moves make that real:
 
 ## 2. The model lineup and the two billing modes
 
-Labeled snapshot (cached `2026-07-24`, from `data/pricing.json`):
+Labeled snapshot (cached `2026-09-21`, from `data/pricing.json`):
 
 | Model | Input $/MTok | Output $/MTok | Best for |
 |---|--:|--:|---|
-| **Fable 5** | 10 | 50 | Long-horizon autonomous work, hardest reasoning, planning |
+| **Fable 5.1** | 10 | 50 | Long-horizon autonomous work, hardest reasoning, planning — the current frontier model, at Fable 5's rate |
+| **Fable 5** | 10 | 50 | Still served; superseded by Fable 5.1 at the same rate |
 | **Opus 5** | 5 | 25 | Multi-file features, hard debugging, review — the daily driver |
 | **Opus 4.8** | 5 | 25 | Superseded by Opus 5 at the same rate; costing historical transcripts |
-| **Sonnet 5** | 3 (2 intro until 2026-08-31) | 15 (10 intro) | Day-to-day workhorse; near Opus-tier at high effort |
+| **Sonnet 5** | 2 | 10 | Day-to-day workhorse; near Opus-tier at high effort |
 | **Haiku 4.5** | 1 | 5 | Classification, extraction, bulk API calls |
 
 The same routing question gets **opposite answers** depending on how tokens are paid for. Every
@@ -76,7 +77,9 @@ per invocation with `--api` / `--sub`.
 
 - **`api` mode — optimize dollars.** Any pay-per-token usage (an app you're building, or Claude
   Code on API-key billing). The cheapest *sufficient* model wins; Haiku earns its keep; cache
-  reads (0.1×), the 50% batch discount, and Sonnet's intro pricing all factor in.
+  reads (`cache_read_multiplier`, 0.1×) and the 50% `batch_discount` factor in. No model in the
+  file carries an `intro_pricing` window today — Sonnet 5's launch rate became its base rate —
+  but `rates_for` still honours one by date if a future entry adds it.
 - **`subscription` mode — optimize rate-limit burn.** On a plan, marginal dollar cost is zero; the
   scarce resource is the 5-hour and 7-day windows. Haiku is pointless (you'd only lose
   capability), the daily driver is the best sustainable model, and burn is managed with **effort
@@ -965,6 +968,6 @@ counts against the revision it names in `assessed_revision`, not against the tre
 
 ---
 
-*polytropos · guide generated 2026-07-01, refreshed 2026-07-24 · prices are a labeled
-snapshot cached `2026-07-24` in `data/pricing.json` (single source of truth) · aesop claims pinned
+*polytropos · guide generated 2026-07-01, refreshed 2026-09-21 · prices are a labeled
+snapshot cached `2026-09-21` in `data/pricing.json` (single source of truth) · aesop claims pinned
 to commit `5506617`.*

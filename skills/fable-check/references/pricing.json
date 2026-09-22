@@ -1,5 +1,5 @@
 {
-  "cached_date": "2026-07-24",
+  "cached_date": "2026-09-21",
   "update_from": "https://platform.claude.com/docs/en/pricing.md — or re-run the /claude-api skill and copy the Current Models table",
   "billing_mode": "subscription",
   "cache_read_multiplier": 0.1,
@@ -7,6 +7,15 @@
   "cache_write_multiplier_1h": 2.0,
   "batch_discount": 0.5,
   "models": {
+    "claude-fable-5-1": {
+      "display": "Fable 5.1",
+      "tier": "frontier",
+      "input_per_mtok": 10.0,
+      "output_per_mtok": 50.0,
+      "context_window": 1000000,
+      "max_output": 128000,
+      "notes": "Successor to Fable 5 in the same tier at the same per-token price. Thinking always on — omit the thinking param entirely (an explicit budget_tokens or disabled 400s). Cache reads cost 2.5% of the input price on this model, not the 10% this file's global cache_read_multiplier (0.1) applies, and there is no per-model override, so every reader in this repo OVER-estimates Fable 5.1 cache-read cost by 4× until one exists. Forced tool_choice (any or tool) 400s — leave it auto. Thinking blocks are bound to the model that produced them; do not replay them to another model. Requires 30-day data retention (no ZDR). Refusal classifiers on cyber/bio-adjacent work — handle stop_reason 'refusal'. Same tokenizer as Fable 5 / Opus 4.8. Retirement not sooner than 2027-09-01."
+    },
     "claude-fable-5": {
       "display": "Fable 5",
       "tier": "frontier",
@@ -14,7 +23,7 @@
       "output_per_mtok": 50.0,
       "context_window": 1000000,
       "max_output": 128000,
-      "notes": "Most capable model. Thinking always on (omit thinking param). Refusal classifiers on cyber/bio-adjacent work. Requires 30-day data retention (no ZDR). Turns can run many minutes at high effort. Same tokenizer as Opus 4.8."
+      "notes": "Still served; superseded by Fable 5.1 at the same rate. Thinking always on (omit thinking param). Refusal classifiers on cyber/bio-adjacent work. Requires 30-day data retention (no ZDR). Turns can run many minutes at high effort. Same tokenizer as Opus 4.8."
     },
     "claude-opus-5": {
       "display": "Opus 5",
@@ -46,16 +55,11 @@
     "claude-sonnet-5": {
       "display": "Sonnet 5",
       "tier": "sonnet",
-      "input_per_mtok": 3.0,
-      "output_per_mtok": 15.0,
-      "intro_pricing": {
-        "input_per_mtok": 2.0,
-        "output_per_mtok": 10.0,
-        "until": "2026-08-31"
-      },
+      "input_per_mtok": 2.0,
+      "output_per_mtok": 10.0,
       "context_window": 1000000,
-      "max_output": 64000,
-      "notes": "Substantial improvement over Sonnet 4.6; near Opus 4.8 at higher effort levels. Default model on Free/Pro plans. New tokenizer: ~1.0-1.35x token counts vs Sonnet 4.6 — re-baseline with count_tokens. Weaker than Opus 4.8 on cybersecurity analysis."
+      "max_output": 128000,
+      "notes": "The launch intro rate became the base rate on the live page — 2 in / 10 out with no intro window, so a transcript dated inside the old window costs exactly what it costs today and no intro_pricing block is needed. Substantial improvement over Sonnet 4.6; near Opus 4.8 at higher effort levels. Default model on Free/Pro plans. New tokenizer: ~1.0-1.35x token counts vs Sonnet 4.6 — re-baseline with count_tokens. Weaker than Opus 4.8 on cybersecurity analysis."
     },
     "claude-sonnet-4-6": {
       "display": "Sonnet 4.6",
