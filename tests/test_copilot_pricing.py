@@ -477,7 +477,16 @@ class LiveDataStructureTests(unittest.TestCase):
         pricing = cp.load_pricing()
         self.assertEqual(set(pricing["task_profiles"]), {"XS", "S", "M", "L", "XL"})
 
-    def test_user_supplied_gpt56_rates_are_recorded_for_existing_copilot_rows(self):
+    def test_gpt56_rates_are_recorded_and_page_verified_for_existing_copilot_rows(self):
+        """The three GPT-5.6 rows' rates, plus the provenance the file claims for them.
+
+        The rate tuples are unchanged from when they arrived via a user-supplied Codex
+        screenshot: the 2026-09-21 cell-by-cell re-verification against GitHub's own
+        models-and-pricing page matched every one of them, base and long-context. What
+        changed is the claim the file makes about them, so this pins the new claim --
+        the capture date, that it was a full cell-by-cell re-verification, and that the
+        screenshot-only provenance is explicitly superseded rather than quietly dropped.
+        """
         pricing = cp.load_pricing()
         expected = {
             "gpt-5.6-sol": ((4.0, 0.4, 5.0, 20.0), (8.0, 0.8, 10.0, 30.0), 272000),
@@ -499,8 +508,34 @@ class LiveDataStructureTests(unittest.TestCase):
             self.assertEqual(long_rates, long_expected, model_id)
             self.assertEqual(long_context["threshold_tokens"], threshold, model_id)
 
-        self.assertIn("user-supplied", pricing["pricing_refresh_note"])
-        self.assertIn("not an independent validation", pricing["pricing_refresh_note"])
+        note = pricing["pricing_refresh_note"]
+        self.assertIn("user-supplied", note)
+        self.assertIn("SUPERSEDED", note)
+        self.assertIn("cell-by-cell", note)
+        self.assertIn(pricing["cached_date"], note)
+
+    def test_no_promo_block_is_shipped_already_expired(self):
+        """A `promo` block whose window closed before the file's own `cached_date` is a
+        promotional rate held past its stated end -- exactly the defect the 2026-09-21
+        refresh cleared out of `claude-sonnet-5` (its 2026-08-31 window had closed while
+        the file's cached_date was already 2026-09-05, and the page had since made that
+        rate the base rate). Every promo block must also carry the two fields
+        `cp.est_cost` reads, or the stale-rate warning it exists to emit never fires.
+        """
+        pricing = cp.load_pricing()
+        cached = date.fromisoformat(pricing["cached_date"])
+        promos = {mid: info["promo"] for mid, info in pricing["models"].items()
+                  if "promo" in info}
+        for model_id, promo in promos.items():
+            self.assertIn("until", promo, model_id)
+            self.assertIn("note", promo, model_id)
+            until = date.fromisoformat(promo["until"])
+            self.assertGreaterEqual(
+                until, cached,
+                f"{model_id}: promo window closed {promo['until']}, before this file's own "
+                f"cached_date {pricing['cached_date']} -- either the promo rate became the "
+                f"published rate (drop the block) or the window was extended (restate it)",
+            )
 
 
 class CliSmokeTests(unittest.TestCase):

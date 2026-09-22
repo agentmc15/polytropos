@@ -2,9 +2,9 @@
   "schema": "copilot-docs/aic-report/v1",
   "pricing_snapshot": {
     "path": "data/pricing.copilot.json",
-    "cached_date": "2026-09-05",
-    "pricing_sha256": "a3fc378864600d41ccb4eb53c8f2e2a087a3b675cb4517d60836c85ffef9ec93",
-    "roster_sha256": "0f44f13e673165f0253d4ed6f005a3b28ef1e62afe6d6fbf8fad678ab7049610"
+    "cached_date": "2026-09-21",
+    "pricing_sha256": "541644755f987e7ef8ee8455881047077173d65ef0e84e55956674df58fe29ed",
+    "roster_sha256": "891106cc6a8ff89be13f7c01de118cce3d54c7df855e71ac0b570f0444dec4d5"
   },
   "prefs_snapshot": {
     "source": null,
@@ -32,7 +32,7 @@
       "kind": "markdown",
       "title": "GitHub Copilot CLI Documentation Center",
       "authoring_mode": "estimated",
-      "sources_sha256": "7b55840762c970dcb3e6e960f962a960e2d00de61fc6e1bcd200860a5e78996d",
+      "sources_sha256": "f0ff621eef50360bb7d82c8a9bfe41d9120139c02b8e2f32e68b368f6715328a",
       "measurement": {
         "bytes": 3586,
         "words": 564,
@@ -50,9 +50,7 @@
         "assumed_input_tokens": 40000,
         "cache_hit_assumed": 0.8,
         "rates_used": "base",
-        "warnings": [
-          "promo pricing ended 2026-08-31 \u2014 rates may be stale; re-check update_from"
-        ],
+        "warnings": [],
         "usd": 0.030979999999999997,
         "aic": 3.098,
         "uncertainty": "Prospective estimate: assumes the manifest's declared input-token convention and treats this document's own measured lexeme count as a stand-in for model output tokens \u2014 not a historical usage measurement."
@@ -79,7 +77,7 @@
       "kind": "markdown",
       "title": "Installing the Copilot CLI bundle",
       "authoring_mode": "estimated",
-      "sources_sha256": "c05e17bcdc92ce47d9c5337bd78f5f798ed3594802fc03a2022632921427032d",
+      "sources_sha256": "eaa4d13ba05008cc2ad33a8316513cb5e2727fa55de54b505a9d5e36be1c3450",
       "measurement": {
         "bytes": 3516,
         "words": 551,
@@ -97,9 +95,7 @@
         "assumed_input_tokens": 40000,
         "cache_hit_assumed": 0.8,
         "rates_used": "base",
-        "warnings": [
-          "promo pricing ended 2026-08-31 \u2014 rates may be stale; re-check update_from"
-        ],
+        "warnings": [],
         "usd": 0.030399999999999996,
         "aic": 3.0399999999999996,
         "uncertainty": "Prospective estimate: assumes the manifest's declared input-token convention and treats this document's own measured lexeme count as a stand-in for model output tokens \u2014 not a historical usage measurement."
@@ -126,7 +122,7 @@
       "kind": "markdown",
       "title": "Safety and cost boundaries",
       "authoring_mode": "estimated",
-      "sources_sha256": "6e369425c8773099476f5a6496b4041efaf5fe421d0e5820216c4aefea8ede61",
+      "sources_sha256": "ab3679bb5ed584501f95200f3040201eaf36c8dcd47424bcf46bfddbce290363",
       "measurement": {
         "bytes": 4945,
         "words": 762,
@@ -144,9 +140,7 @@
         "assumed_input_tokens": 40000,
         "cache_hit_assumed": 0.8,
         "rates_used": "base",
-        "warnings": [
-          "promo pricing ended 2026-08-31 \u2014 rates may be stale; re-check update_from"
-        ],
+        "warnings": [],
         "usd": 0.03358,
         "aic": 3.3579999999999997,
         "uncertainty": "Prospective estimate: assumes the manifest's declared input-token convention and treats this document's own measured lexeme count as a stand-in for model output tokens \u2014 not a historical usage measurement."
@@ -173,7 +167,7 @@
       "kind": "markdown",
       "title": "Skills reference",
       "authoring_mode": "estimated",
-      "sources_sha256": "39be58738e8a6ba4a98bab027ed538b552068f49a6983352133ecde7dc627661",
+      "sources_sha256": "82a48b5ffa859009a89a452ad702b3a120e8b9a649080bea245ed3166bfcd81a",
       "measurement": {
         "bytes": 22631,
         "words": 3728,
@@ -218,7 +212,7 @@
       "kind": "markdown",
       "title": "Agents reference",
       "authoring_mode": "estimated",
-      "sources_sha256": "4b83d2b2a848a41ca4d9effd2f55e291878ed4f0e7deec107ed7867a28930ea2",
+      "sources_sha256": "24b5a1988b4ef4e2bbb21496f7bf0624459ded5e6fde367829051b0c04462cc1",
       "measurement": {
         "bytes": 16474,
         "words": 2659,
@@ -263,11 +257,11 @@
       "kind": "markdown",
       "title": "Models and preferences",
       "authoring_mode": "estimated",
-      "sources_sha256": "3ba526efa903d5f9d6e99855570661aa7de3098d2b399870d514e2c99b7701d5",
+      "sources_sha256": "a273c005b09f3beef5b2210cd9cd8b61195811e78303a7f58a0c3d032e376537",
       "measurement": {
-        "bytes": 16351,
-        "words": 2628,
-        "lexemes": 4102,
+        "bytes": 24853,
+        "words": 4172,
+        "lexemes": 6336,
         "ai_output_lexemes": 1577
       },
       "cost": {
@@ -295,7 +289,7 @@
       "authoring_mode": "estimated",
       "markdown_source": "MODELS.md",
       "measurement": {
-        "bytes": 20193
+        "bytes": 29515
       },
       "cost": {
         "usd": 0.0,
@@ -308,7 +302,7 @@
       "kind": "markdown",
       "title": "Costs and AIC accounting",
       "authoring_mode": "estimated",
-      "sources_sha256": "ba959312b09b5e45021d9abe48528e33444256fa7a08195458f123439203145d",
+      "sources_sha256": "8ad3678c0641e6bd2fd6dde852e8731be897c8f3d3c0dbbf73ffb6d38ef7bb2b",
       "measurement": {
         "bytes": 8430,
         "words": 1350,
@@ -353,7 +347,7 @@
       "kind": "markdown",
       "title": "Practical workflows",
       "authoring_mode": "estimated",
-      "sources_sha256": "bbe7448fdb67bb3796d202aaf9b4582815398e3d8db5a0ee177c6c22df8405ec",
+      "sources_sha256": "c97b6cfc9f08f845e83c7d2a65253ed4ae73b3d28878dd2077e57f13fafb577c",
       "measurement": {
         "bytes": 12380,
         "words": 1997,
@@ -371,9 +365,7 @@
         "assumed_input_tokens": 150000,
         "cache_hit_assumed": 0.8,
         "rates_used": "base",
-        "warnings": [
-          "promo pricing ended 2026-08-31 \u2014 rates may be stale; re-check update_from"
-        ],
+        "warnings": [],
         "usd": 0.11112999999999999,
         "aic": 11.113,
         "uncertainty": "Prospective estimate: assumes the manifest's declared input-token convention and treats this document's own measured lexeme count as a stand-in for model output tokens \u2014 not a historical usage measurement."

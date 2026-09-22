@@ -38,10 +38,11 @@ Tiers use the data file's four-value vocabulary:
 - **mid** — the workhorse lane: day-to-day coding, tests, docs, routine refactors.
 - **strong** — multi-file features, hard debugging, architecture, code review.
 - **frontier** — long-horizon agentic runs, large migrations, or work a strong-tier model failed on.
-  Claude Fable 5 is the **sole** frontier model: it is the best on the roster and not close, and
-  also the most AIC-expensive tier. Reach for it deliberately — only when a strong-tier model
-  would genuinely fail — and say what makes the task frontier-worthy. Everything a strong model
-  can do, route to strong.
+  This is the most AIC-expensive tier, and **which ids carry it is data, not memory** — more than
+  one model can hold `frontier` at a time, so read the current holders from the engine
+  (`models`) and never name one from recall. Reach for the tier deliberately — only when a
+  strong-tier model would genuinely fail — and say what makes the task frontier-worthy.
+  Everything a strong model can do, route to strong.
 
 When you are between two tiers, pick the cheaper one and name the failure signal that would
 justify upgrading (e.g. "if it can't hold the whole module in context, go strong"). Within a

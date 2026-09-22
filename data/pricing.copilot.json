@@ -1,8 +1,8 @@
 {
-  "cached_date": "2026-09-05",
+  "cached_date": "2026-09-21",
   "update_from": "https://docs.github.com/en/copilot/reference/copilot-billing/models-and-pricing",
-  "pricing_refresh_note": "The GPT-5.6 Sol, Terra, and Luna rows were refreshed from a user-supplied Codex pricing screenshot captured 2026-09-05. This records provenance for the supplied values and is not an independent validation against GitHub's Copilot pricing page. Only models already present in the Copilot roster were updated; the screenshot alone is not evidence that additional models are selectable in Copilot.",
-  "model_ids_note": "PRICE re-verify 2026-07-25 against the full models-and-pricing doc (see update_from): every rate already in this file matched the doc exactly — no existing figure changed. What the re-verify ADDED: long-context step-up blocks for all three GPT-5.6 rows (Sol and Terra at >272K, Luna at >200K — a LOWER threshold than its siblings), which the 2026-07-18 partial refresh had missed entirely; plus two models the doc prices that this file did not carry, `claude-opus-5` and `gemini-3.6-flash`. ROSTER caveat, deliberately unresolved: this file's roster rule is what Copilot CLI's `/model` picker actually offers, and the picker was NOT re-checked on 2026-07-25 — only the price doc was. So those two new rows are PRICE-confirmed but NOT picker-confirmed; if `/model` does not list them, delete them here. Models GitHub prices but the picker did not list as of the 2026-07-01 check (Gemini 2.5 Pro, Gemini 3 Flash, GPT-5.4 nano, Raptor mini) stay intentionally excluded, and the doc also prices a plain `Claude Sonnet 4` that is deliberately NOT added for the same reason — picker presence unverified. Ids follow the lowercase-dot-version pattern (claude-sonnet-5, gpt-5.4-mini); the three gpt-5.6-* ids remain best-effort. If `/model` ever disagrees on ids or presence, correct HERE (only here).",
+  "pricing_refresh_note": "Full cell-by-cell re-verification 2026-09-21 against GitHub Docs \"Models and pricing for GitHub Copilot\" (see update_from), captured 2026-09-21 22:00 as a PDF print of the live page: every rate already in this file was compared against that page's own row, not spot-checked. CORRECTED four rows — gemini-3.6-flash (input, cached input, and output were all carrying Gemini 3.5 Flash-era figures; the page prices it in the Gemini Flash promotional band instead), grok-4.6 (cached input was wrong, and the >200K single-request step-up block the page publishes was missing entirely), gemini-3.7-flash (rates matched; the page's promotional window was missing), and claude-sonnet-5 (no rate moved, but its `promo` block was stale — the 2026-08-31 window closed and the page now carries that same rate as this model's BASE rate, so the block is dropped). ADDED nine rows the page prices and this file did not carry: gpt-5.4-nano, claude-sonnet-4, claude-fable-5.1, gemini-3.8-flash, mai-code-1.1-flash, grok-4.5, grok-4.7, kimi-k3, gpt-6-astra — all nine PRICE-confirmed from this page and picker-UNCONFIRMED (see model_ids_note). DELISTED five ids the page no longer lists: claude-opus-4.6, claude-opus-4.5, claude-sonnet-4.5, gemini-3.1-pro, mai-code-1-flash. They are KEPT, with their last published rates, so historical sessions can still be costed; each says DELISTED in its own notes. That exclusion is by note only — this file has no cost-only/non-routing tier (unlike data/pricing.codex.json) and every row's tier must remain one of frontier/strong/mid/cheap, so nothing mechanically stops a caller from picking a delisted id. The earlier user-supplied Codex screenshot provenance for the three GPT-5.6 rows is now SUPERSEDED: Sol, Terra, and Luna match this page exactly, base and long-context, cache writes included, so those rates are verified against GitHub's own doc rather than only recorded from a screenshot. billing_unit.usd_per_credit (0.01) is confirmed by the page, as is the fact that code completions and next edit suggestions are not billed in AI credits.",
+  "model_ids_note": "PRICE re-verify 2026-09-21 against the full models-and-pricing doc (see update_from), cell by cell; the four corrections, nine additions, and five delistings are itemized in pricing_refresh_note. ROSTER caveat, unchanged and deliberate: this file's roster rule is what Copilot CLI's `/model` picker actually offers, and the picker was NOT re-checked on 2026-09-21 — only the price doc was. So every row added on 2026-09-21 is PRICE-confirmed and NOT picker-confirmed, exactly as claude-opus-5 and gemini-3.6-flash have been since 2026-07-25; if `/model` does not list one, delete it here. Two additions reverse an earlier deliberate exclusion: GPT-5.4 nano and a plain Claude Sonnet 4 were held out of the 2026-07-25 refresh for unverified picker presence, and are carried now because the page prices them — with the same picker caveat, not because the picker was seen. The 2026-07-01 exclusions that still have no page row (Gemini 2.5 Pro, Gemini 3 Flash, Raptor mini) stay out. Cross-harness note: gpt-6-astra now sits in this file as `strong` (this file reserves `frontier` for the Fable rows) and in data/pricing.codex.json as `frontier`, so bin/model_registry.py reports that id as ambiguous unless a harness is named — the same shape claude-opus-5 already had. Ids follow the lowercase-dot-version pattern (claude-sonnet-5, gpt-5.4-mini); the three gpt-5.6-* ids and gpt-6-astra remain best-effort. If `/model` ever disagrees on ids or presence, correct HERE (only here).",
   "billing_unit": {
     "name": "AIC",
     "usd_per_credit": 0.01,
@@ -49,7 +49,7 @@
     ],
     "reasoning_efforts_note": "Display-form ladder, ascending. Ground truth: the GPT-5.6 announcement (2026-07-18 capture) confirms the token ladder minimal|low|medium|high|xhigh|max ('max' is the new deepest — even more reasoning time than 'xhigh'); Copilot CLI's /model picker renders Title-Case display forms, of which 'Medium' and 'Extra High' were directly observed (2026-07-18 screenshots), mapping to medium and xhigh. The other four display renderings are Title-Case mappings of the confirmed token ladder, not yet observed in the picker — if the picker renders any differently, correct the list HERE (only here). Mechanism: reasoning effort is set INTERACTIVELY in the /model picker with the left/right arrow keys on the selected model row (picker footer: '←/→ reasoning effort'); it is a per-model property — rows showing '—' have no reasoning control (observed: Auto, Claude Sonnet 4.5, Claude Haiku 4.5, Claude Opus 4.5, Kimi K2.7 Code), while every other observed row (GPT-5.6 Sol/Terra/Luna, GPT-5.5, GPT-5.4, GPT-5.3-Codex, GPT-5.4 mini, GPT-5 mini, Gemini 3.1 Pro, Gemini 3.5 Flash, MAI-Code-1-Flash, Claude Sonnet 5/4.6, Claude Opus 4.8/4.7/4.6 incl. fast mode, Claude Fable 5) defaults to 'Medium'; GPT-5.6 Sol was observed cycled up to 'Extra High'. A headless surface is UNCONFIRMED — no copilot -p flag or settings key for reasoning effort is known to exist; do not invent one. If one ships, record it here (only here)."
   },
-  "long_context_note": "GPT-5.6 long-context rates are modeled on each GPT-5.6 row. Sol, Terra, and Luna were refreshed from the user-supplied Codex pricing screenshot captured 2026-09-05; this is provenance for the supplied values, not an independent official-source validation. Long-context rates apply when a single request exceeds the model-specific input threshold; cumulative session totals must not be used to infer that threshold crossing.",
+  "long_context_note": "GPT-5.6 long-context rates are modeled on each GPT-5.6 row, and as of the 2026-09-21 re-verify so are GPT-6 Astra's and the three xai rows' own >200K blocks. Sol, Terra, and Luna were first refreshed from a user-supplied Codex pricing screenshot captured 2026-09-05; the 2026-09-21 capture of the models-and-pricing page (see update_from) matches those base and long-context rates exactly, so they are now verified against GitHub's own doc rather than only recorded from a screenshot. Long-context rates apply when a single request exceeds the model-specific input threshold; cumulative session totals must not be used to infer that threshold crossing.",
   "models": {
     "claude-fable-5": {
       "display": "Claude Fable 5",
@@ -59,7 +59,7 @@
       "cached_input_per_mtok": 1.0,
       "cache_write_per_mtok": 12.5,
       "output_per_mtok": 50.0,
-      "notes": "The standout model on this roster — the best available, and not close. Sole frontier tier. Reserve it for the hardest work: long-horizon agentic runs, large migrations, and problems a strong-tier model already failed on. Worth its AIC precisely when a strong-tier model would fail."
+      "notes": "Frontier tier, shared with claude-fable-5.1 since the 2026-09-21 re-verify: 5.1 carries the same input, cache-write, and output rates and a cheaper cached-input rate, so it supersedes this row for new work at equal or lower cost. Page category: Powerful. Reserve the frontier tier for the hardest work: long-horizon agentic runs, large migrations, and problems a strong-tier model already failed on. Worth its AIC precisely when a strong-tier model would fail. Rates re-verified cell by cell against the 2026-09-21 models-and-pricing capture."
     },
     "claude-opus-4.8": {
       "display": "Claude Opus 4.8",
@@ -69,7 +69,7 @@
       "cached_input_per_mtok": 0.5,
       "cache_write_per_mtok": 6.25,
       "output_per_mtok": 25.0,
-      "notes": "Strongest non-Fable Anthropic model; the default strong-tier pick for multi-file features, hard debugging, architecture, and review."
+      "notes": "Strongest non-Fable Anthropic row on this roster by published rate; the default strong-tier pick for multi-file features, hard debugging, architecture, and review. Page category: Powerful. Rates re-verified cell by cell against the 2026-09-21 models-and-pricing capture."
     },
     "claude-opus-4.7": {
       "display": "Claude Opus 4.7",
@@ -79,7 +79,7 @@
       "cached_input_per_mtok": 0.5,
       "cache_write_per_mtok": 6.25,
       "output_per_mtok": 25.0,
-      "notes": "Same published rate as Opus 4.8; kept selectable because /model lists it. Prefer 4.8 for new work."
+      "notes": "Same published rate as Opus 4.8; kept selectable because /model lists it. Prefer 4.8 for new work. Page category: Powerful. Rates re-verified cell by cell against the 2026-09-21 models-and-pricing capture."
     },
     "claude-opus-4.6": {
       "display": "Claude Opus 4.6",
@@ -89,7 +89,7 @@
       "cached_input_per_mtok": 0.5,
       "cache_write_per_mtok": 6.25,
       "output_per_mtok": 25.0,
-      "notes": "Same published rate as Opus 4.8; kept selectable because /model lists it. Prefer 4.8 for new work."
+      "notes": "DELISTED: no row on the 2026-09-21 models-and-pricing page. Kept, at its last published rates, so historical sessions can still be costed — not for new routing. This file has no cost-only tier, so the exclusion is by this note only. Rates as last published (the same figures Opus 4.7 and 4.8 still carry)."
     },
     "claude-opus-4.5": {
       "display": "Claude Opus 4.5",
@@ -99,7 +99,7 @@
       "cached_input_per_mtok": 0.5,
       "cache_write_per_mtok": 6.25,
       "output_per_mtok": 25.0,
-      "notes": "Same published rate as Opus 4.8; kept selectable because /model lists it. Prefer 4.8 for new work."
+      "notes": "DELISTED: no row on the 2026-09-21 models-and-pricing page. Kept, at its last published rates, so historical sessions can still be costed — not for new routing. This file has no cost-only tier, so the exclusion is by this note only. Rates as last published (the same figures Opus 4.7 and 4.8 still carry)."
     },
     "gpt-5.5": {
       "display": "GPT-5.5",
@@ -114,7 +114,7 @@
         "cached_input_per_mtok": 1.0,
         "output_per_mtok": 45.0
       },
-      "notes": "OpenAI flagship (Powerful); step-up rates above 272K input tokens. Strong tier — Fable 5 is the sole frontier pick."
+      "notes": "OpenAI flagship (Powerful); step-up rates above 272K input tokens. The page carries no cache-write rate for this row. Strong tier — the frontier picks are Fable 5 and Fable 5.1. Rates re-verified cell by cell against the 2026-09-21 models-and-pricing capture."
     },
     "gpt-5.3-codex": {
       "display": "GPT-5.3-Codex",
@@ -123,7 +123,7 @@
       "input_per_mtok": 1.75,
       "cached_input_per_mtok": 0.175,
       "output_per_mtok": 14.0,
-      "notes": "Coding-focused reasoning model; id doc-confirmed. Best value in the strong tier for code work."
+      "notes": "Coding-focused reasoning model; id doc-confirmed. Page category: Powerful. Lowest published input rate in the strong tier. Rates re-verified cell by cell against the 2026-09-21 models-and-pricing capture."
     },
     "gemini-3.1-pro": {
       "display": "Gemini 3.1 Pro",
@@ -138,7 +138,7 @@
         "cached_input_per_mtok": 0.4,
         "output_per_mtok": 18.0
       },
-      "notes": "Public preview; step-up rates above 200K input tokens."
+      "notes": "DELISTED: no row on the 2026-09-21 models-and-pricing page. Kept, at its last published rates, so historical sessions can still be costed — not for new routing. This file has no cost-only tier, so the exclusion is by this note only. Was public preview; step-up rates above 200K input tokens as last published."
     },
     "claude-opus-4.8-fast": {
       "display": "Claude Opus 4.8 (fast mode)",
@@ -148,7 +148,7 @@
       "cached_input_per_mtok": 1.0,
       "cache_write_per_mtok": 12.5,
       "output_per_mtok": 50.0,
-      "notes": "Preview fast mode: Opus capability at Fable-level prices — you pay 2x for speed, not capability. Pick plain Opus 4.8 unless latency is the constraint."
+      "notes": "Preview fast mode (the page labels the row \"(preview)\"): Opus capability at the Fable 5 published rate — you pay 2x for speed, not capability. Pick plain Opus 4.8 unless latency is the constraint. Page category: Powerful. Rates re-verified cell by cell against the 2026-09-21 models-and-pricing capture."
     },
     "claude-sonnet-5": {
       "display": "Claude Sonnet 5",
@@ -158,11 +158,7 @@
       "cached_input_per_mtok": 0.2,
       "cache_write_per_mtok": 2.5,
       "output_per_mtok": 10.0,
-      "promo": {
-        "until": "2026-08-31",
-        "note": "Promotional pricing; the post-promo rate is not yet published — re-check update_from after this date."
-      },
-      "notes": "The default mid-tier workhorse and best value on the roster at promo pricing: day-to-day coding, tests, docs, refactors."
+      "notes": "The default mid-tier workhorse: day-to-day coding, tests, docs, refactors. Its promotional window closed on 2026-08-31 and the 2026-09-21 page carries the rates in this row as this model's BASE rate, so the `promo` block is gone and no rate moved with it — the promo rate became the published rate. Page category: Versatile. Rates re-verified cell by cell against the 2026-09-21 models-and-pricing capture."
     },
     "claude-sonnet-4.6": {
       "display": "Claude Sonnet 4.6",
@@ -172,7 +168,7 @@
       "cached_input_per_mtok": 0.3,
       "cache_write_per_mtok": 3.75,
       "output_per_mtok": 15.0,
-      "notes": "Same published rate as Sonnet 4.5. Superseded by promo-priced Sonnet 5 for new work."
+      "notes": "Same published rate as claude-sonnet-4 (and as the delisted claude-sonnet-4.5). Sonnet 5 is cheaper on every metered figure at its now-base rate — prefer it for new work. Page category: Versatile. Rates re-verified cell by cell against the 2026-09-21 models-and-pricing capture."
     },
     "claude-sonnet-4.5": {
       "display": "Claude Sonnet 4.5",
@@ -182,7 +178,7 @@
       "cached_input_per_mtok": 0.3,
       "cache_write_per_mtok": 3.75,
       "output_per_mtok": 15.0,
-      "notes": "Same published rate as Sonnet 4.6. Superseded by promo-priced Sonnet 5 for new work."
+      "notes": "DELISTED: no row on the 2026-09-21 models-and-pricing page. Kept, at its last published rates, so historical sessions can still be costed — not for new routing. This file has no cost-only tier, so the exclusion is by this note only. Rates as last published (the same figures Sonnet 4 and 4.6 carry)."
     },
     "gpt-5.4": {
       "display": "GPT-5.4",
@@ -197,7 +193,7 @@
         "cached_input_per_mtok": 0.5,
         "output_per_mtok": 22.5
       },
-      "notes": "OpenAI workhorse; step-up rates above 272K input tokens."
+      "notes": "OpenAI workhorse; step-up rates above 272K input tokens. The page carries no cache-write rate for this row. Page category: Versatile. Rates re-verified cell by cell against the 2026-09-21 models-and-pricing capture."
     },
     "gemini-3.5-flash": {
       "display": "Gemini 3.5 Flash",
@@ -206,7 +202,7 @@
       "input_per_mtok": 1.5,
       "cached_input_per_mtok": 0.15,
       "output_per_mtok": 9.0,
-      "notes": "Lightweight-class but priced above the cheap lane; routed as mid."
+      "notes": "Page category Lightweight, but priced above the cheap lane and above every Gemini Flash row in the promotional band; routed as mid. Rates re-verified cell by cell against the 2026-09-21 models-and-pricing capture."
     },
     "kimi-k2.7-code": {
       "display": "Kimi K2.7 Code",
@@ -215,7 +211,7 @@
       "input_per_mtok": 0.95,
       "cached_input_per_mtok": 0.19,
       "output_per_mtok": 4.0,
-      "notes": "Budget coding model; mid capability at near-cheap prices."
+      "notes": "Budget coding model; page category Versatile, priced near the cheap lane. Rates re-verified cell by cell against the 2026-09-21 models-and-pricing capture."
     },
     "claude-haiku-4.5": {
       "display": "Claude Haiku 4.5",
@@ -225,7 +221,7 @@
       "cached_input_per_mtok": 0.1,
       "cache_write_per_mtok": 1.25,
       "output_per_mtok": 5.0,
-      "notes": "id doc-confirmed. Cheapest Anthropic model; classification, extraction, formatting, bulk."
+      "notes": "id doc-confirmed. Cheapest Anthropic row on this roster; classification, extraction, formatting, bulk. Page category: Versatile — tiered cheap here on price. Rates re-verified cell by cell against the 2026-09-21 models-and-pricing capture."
     },
     "gpt-5-mini": {
       "display": "GPT-5 mini",
@@ -234,7 +230,7 @@
       "input_per_mtok": 0.25,
       "cached_input_per_mtok": 0.025,
       "output_per_mtok": 2.0,
-      "notes": "Cheapest input rate on the roster; lightweight lookups and bulk."
+      "notes": "Lowest input rate on the roster; lightweight lookups and bulk. Page category: Lightweight. Rates re-verified cell by cell against the 2026-09-21 models-and-pricing capture."
     },
     "gpt-5.4-mini": {
       "display": "GPT-5.4 mini",
@@ -243,7 +239,7 @@
       "input_per_mtok": 0.75,
       "cached_input_per_mtok": 0.075,
       "output_per_mtok": 4.5,
-      "notes": "Lightweight OpenAI model."
+      "notes": "Lightweight OpenAI model (page category: Lightweight). Rates re-verified cell by cell against the 2026-09-21 models-and-pricing capture."
     },
     "mai-code-1-flash": {
       "display": "MAI-Code-1-Flash",
@@ -252,7 +248,7 @@
       "input_per_mtok": 0.75,
       "cached_input_per_mtok": 0.075,
       "output_per_mtok": 4.5,
-      "notes": "Microsoft lightweight coding model."
+      "notes": "DELISTED: no row on the 2026-09-21 models-and-pricing page. Kept, at its last published rates, so historical sessions can still be costed — not for new routing. This file has no cost-only tier, so the exclusion is by this note only. The page prices MAI-Code-1.1-Flash instead — a distinct, cheaper row carried here as mai-code-1.1-flash. Rates as last published."
     },
     "gpt-5.6-sol": {
       "display": "GPT-5.6 Sol",
@@ -269,7 +265,7 @@
         "output_per_mtok": 30.0,
         "cache_write_per_mtok": 10.0
       },
-      "notes": "OpenAI flagship durable tier (Powerful), GA. Base and >272K single-request rates refreshed from the user-supplied Codex pricing screenshot captured 2026-09-05; the screenshot is recorded provenance, not an independent official-source validation. Reasoning and context-window capability facts do not alter these prices."
+      "notes": "OpenAI flagship durable tier (Powerful), GA. Base and >272K single-request rates were first taken from a user-supplied Codex pricing screenshot (2026-09-05) and are now verified cell by cell against the models-and-pricing page captured 2026-09-21 — cache writes included, which the page carries for the GPT-5.6 family and GPT-6 Astra and for no earlier OpenAI row. Reasoning and context-window capability facts do not alter these prices."
     },
     "gpt-5.6-terra": {
       "display": "GPT-5.6 Terra",
@@ -285,7 +281,7 @@
         "output_per_mtok": 18.0,
         "cache_write_per_mtok": 5.0
       },
-      "notes": "Balanced everyday tier (Versatile), GA; confirmed present in /model 2026-07-18. Base and >272K single-request rates refreshed from the user-supplied Codex pricing screenshot captured 2026-09-05; the screenshot is recorded provenance, not an independent Copilot pricing validation.",
+      "notes": "Balanced everyday tier (Versatile), GA; confirmed present in /model 2026-07-18. Base and >272K single-request rates were first taken from a user-supplied Codex pricing screenshot (2026-09-05) and are now verified cell by cell against the models-and-pricing page captured 2026-09-21 — cache writes included, which the page carries for the GPT-5.6 family and GPT-6 Astra and for no earlier OpenAI row.",
       "cache_write_per_mtok": 2.5
     },
     "gpt-5.6-luna": {
@@ -302,7 +298,7 @@
         "output_per_mtok": 1.8,
         "cache_write_per_mtok": 0.5
       },
-      "notes": "Fast & affordable tier (Lightweight), GA; confirmed present in /model 2026-07-18. Base and >200K single-request rates refreshed from the user-supplied Codex pricing screenshot captured 2026-09-05; the screenshot is recorded provenance, not an independent Copilot pricing validation. The lower threshold applies to one request, not cumulative session totals.",
+      "notes": "Fast & affordable tier (Lightweight), GA; confirmed present in /model 2026-07-18. Base and >200K single-request rates were first taken from a user-supplied Codex pricing screenshot (2026-09-05) and are now verified cell by cell against the models-and-pricing page captured 2026-09-21 — cache writes included, which the page carries for the GPT-5.6 family and GPT-6 Astra and for no earlier OpenAI row. The lower threshold applies to one request, not cumulative session totals.",
       "cache_write_per_mtok": 0.25
     },
     "claude-opus-5": {
@@ -313,25 +309,35 @@
       "cached_input_per_mtok": 0.5,
       "cache_write_per_mtok": 6.25,
       "output_per_mtok": 25.0,
-      "notes": "Added 2026-07-25 from the models-and-pricing doc (GA, Powerful). Same published rates as Opus 4.5/4.6/4.7/4.8, so it is a strong-tier peer on price. NOT yet confirmed present in the /model picker — if the picker does not list it, remove it here (this file's roster rule is what /model actually offers)."
+      "notes": "Added 2026-07-25 from the models-and-pricing doc (GA, Powerful) and re-verified against the 2026-09-21 capture. Same published rates as Opus 4.7 and 4.8, so it is a strong-tier peer on price. Still NOT confirmed present in the /model picker — if the picker does not list it, remove it here (this file's roster rule is what /model actually offers)."
     },
     "gemini-3.6-flash": {
       "display": "Gemini 3.6 Flash",
       "vendor": "google",
       "tier": "mid",
-      "input_per_mtok": 1.5,
-      "cached_input_per_mtok": 0.15,
-      "output_per_mtok": 7.5,
-      "notes": "Added 2026-07-25 from the models-and-pricing doc (GA, Versatile). Same input/cached rates as Gemini 3.5 Flash but cheaper output, so it strictly dominates 3.5 Flash on price — prefer it where both are available. NOT yet confirmed present in the /model picker; remove here if the picker does not list it."
+      "input_per_mtok": 0.75,
+      "cached_input_per_mtok": 0.075,
+      "output_per_mtok": 3.75,
+      "promo": {
+        "until": "2026-12-31",
+        "note": "Promotional pricing per the page's footnote 1 (Gemini 3.6/3.7/3.8 Flash share this band); the post-promo rate is not published — re-check update_from after this date."
+      },
+      "notes": "Added 2026-07-25 from the models-and-pricing doc (GA, Versatile); rates CORRECTED 2026-09-21 — this file had carried Gemini 3.5 Flash's input and cached-input figures with a lower output rate, while the page prices this row in the Gemini Flash promotional band (footnote 1) alongside 3.7 and 3.8 Flash. Still NOT confirmed present in the /model picker; remove here if the picker does not list it."
     },
     "grok-4.6": {
       "display": "Grok 4.6",
       "vendor": "xai",
       "tier": "strong",
       "input_per_mtok": 2.0,
-      "cached_input_per_mtok": 0.2,
+      "cached_input_per_mtok": 0.5,
       "output_per_mtok": 6.0,
-      "notes": "Added for the Goliath Copilot skill from the user's confirmed /model availability. Pricing requires re-verification against GitHub's current models-and-pricing source."
+      "long_context": {
+        "threshold_tokens": 200000,
+        "input_per_mtok": 4.0,
+        "cached_input_per_mtok": 1.0,
+        "output_per_mtok": 12.0
+      },
+      "notes": "Added for the Goliath Copilot skill from the user's confirmed /model availability. Pricing VERIFIED 2026-09-21 against the models-and-pricing page (GA, Versatile), which closes the re-verification this row's notes used to ask for: the cached-input rate this file carried was wrong and is corrected, and the >200K single-request step-up block the page publishes is now modeled. Same published rates as grok-4.5 and grok-4.7."
     },
     "gemini-3.7-flash": {
       "display": "Gemini 3.7 Flash",
@@ -340,7 +346,118 @@
       "input_per_mtok": 0.75,
       "cached_input_per_mtok": 0.075,
       "output_per_mtok": 3.75,
-      "notes": "Added for the Goliath Copilot skill from the user's confirmed /model availability. Pricing requires re-verification against GitHub's current models-and-pricing source."
+      "promo": {
+        "until": "2026-12-31",
+        "note": "Promotional pricing per the page's footnote 1 (Gemini 3.6/3.7/3.8 Flash share this band); the post-promo rate is not published — re-check update_from after this date."
+      },
+      "notes": "Added for the Goliath Copilot skill from the user's confirmed /model availability. Pricing VERIFIED 2026-09-21 against the models-and-pricing page (GA, Versatile), which closes the re-verification this row's notes used to ask for: every rate matched, and the page's promotional window (footnote 1) is now recorded."
+    },
+    "gpt-5.4-nano": {
+      "display": "GPT-5.4 nano",
+      "vendor": "openai",
+      "tier": "cheap",
+      "input_per_mtok": 0.2,
+      "cached_input_per_mtok": 0.02,
+      "output_per_mtok": 1.25,
+      "notes": "Added 2026-09-21 from the models-and-pricing page (GA, Lightweight) — PRICE-confirmed from that page and picker-UNCONFIRMED (the /model picker was not re-checked; see model_ids_note). Held out of the 2026-07-25 refresh for unverified picker presence; carried now because the page prices it. Lowest published output rate among the cheap rows that carry no cache-write rate."
+    },
+    "claude-sonnet-4": {
+      "display": "Claude Sonnet 4",
+      "vendor": "anthropic",
+      "tier": "mid",
+      "input_per_mtok": 3.0,
+      "cached_input_per_mtok": 0.3,
+      "cache_write_per_mtok": 3.75,
+      "output_per_mtok": 15.0,
+      "notes": "Added 2026-09-21 from the models-and-pricing page (GA, Versatile) — PRICE-confirmed from that page and picker-UNCONFIRMED (the /model picker was not re-checked; see model_ids_note). Deliberately excluded on 2026-07-25 for the same unverified picker presence. Same published rate as claude-sonnet-4.6; Sonnet 5 is cheaper for new work."
+    },
+    "claude-fable-5.1": {
+      "display": "Claude Fable 5.1",
+      "vendor": "anthropic",
+      "tier": "frontier",
+      "input_per_mtok": 10.0,
+      "cached_input_per_mtok": 0.25,
+      "cache_write_per_mtok": 12.5,
+      "output_per_mtok": 50.0,
+      "notes": "Added 2026-09-21 from the models-and-pricing page (GA, Powerful) — PRICE-confirmed from that page and picker-UNCONFIRMED (the /model picker was not re-checked; see model_ids_note). Frontier tier alongside claude-fable-5, which it supersedes for new work: the page gives it the same input, cache-write, and output rates and a cheaper cached-input rate — that lower cached rate is the page's own figure for this row, not Fable 5's. bin/copilot_prefs.py resolve_tier scans file order, so the `frontier` default still resolves to claude-fable-5 until a caller pins this id."
+    },
+    "gemini-3.8-flash": {
+      "display": "Gemini 3.8 Flash",
+      "vendor": "google",
+      "tier": "mid",
+      "input_per_mtok": 0.75,
+      "cached_input_per_mtok": 0.075,
+      "output_per_mtok": 3.75,
+      "promo": {
+        "until": "2026-12-31",
+        "note": "Promotional pricing per the page's footnote 1 (Gemini 3.6/3.7/3.8 Flash share this band); the post-promo rate is not published — re-check update_from after this date."
+      },
+      "notes": "Added 2026-09-21 from the models-and-pricing page (GA, Versatile) — PRICE-confirmed from that page and picker-UNCONFIRMED (the /model picker was not re-checked; see model_ids_note). Same promotional band as Gemini 3.6 and 3.7 Flash (footnote 1); the post-promo rate is not published."
+    },
+    "mai-code-1.1-flash": {
+      "display": "MAI-Code-1.1-Flash",
+      "vendor": "microsoft",
+      "tier": "cheap",
+      "input_per_mtok": 0.2,
+      "cached_input_per_mtok": 0.02,
+      "output_per_mtok": 1.2,
+      "notes": "Added 2026-09-21 from the models-and-pricing page (GA, Lightweight) — PRICE-confirmed from that page and picker-UNCONFIRMED (the /model picker was not re-checked; see model_ids_note). Supersedes mai-code-1-flash, which the page no longer lists and which is kept here only to cost historical sessions; this row is cheaper on all three metered figures. The page carries no cache-write rate for it."
+    },
+    "grok-4.5": {
+      "display": "Grok 4.5",
+      "vendor": "xai",
+      "tier": "strong",
+      "input_per_mtok": 2.0,
+      "cached_input_per_mtok": 0.5,
+      "output_per_mtok": 6.0,
+      "long_context": {
+        "threshold_tokens": 200000,
+        "input_per_mtok": 4.0,
+        "cached_input_per_mtok": 1.0,
+        "output_per_mtok": 12.0
+      },
+      "notes": "Added 2026-09-21 from the models-and-pricing page (GA, Versatile) — PRICE-confirmed from that page and picker-UNCONFIRMED (the /model picker was not re-checked; see model_ids_note). Same published rates and >200K single-request step-up block as grok-4.6 and grok-4.7; tiered with them."
+    },
+    "grok-4.7": {
+      "display": "Grok 4.7",
+      "vendor": "xai",
+      "tier": "strong",
+      "input_per_mtok": 2.0,
+      "cached_input_per_mtok": 0.5,
+      "output_per_mtok": 6.0,
+      "long_context": {
+        "threshold_tokens": 200000,
+        "input_per_mtok": 4.0,
+        "cached_input_per_mtok": 1.0,
+        "output_per_mtok": 12.0
+      },
+      "notes": "Added 2026-09-21 from the models-and-pricing page (GA, Versatile) — PRICE-confirmed from that page and picker-UNCONFIRMED (the /model picker was not re-checked; see model_ids_note). Same published rates and >200K single-request step-up block as grok-4.5 and grok-4.6, so prefer the newest of the three for new work."
+    },
+    "kimi-k3": {
+      "display": "Kimi K3",
+      "vendor": "moonshot",
+      "tier": "strong",
+      "input_per_mtok": 3.0,
+      "cached_input_per_mtok": 0.3,
+      "output_per_mtok": 15.0,
+      "notes": "Added 2026-09-21 from the models-and-pricing page (GA, Powerful) — PRICE-confirmed from that page and picker-UNCONFIRMED (the /model picker was not re-checked; see model_ids_note). Powerful on the page, unlike kimi-k2.7-code (Versatile), and priced above it on every metered figure. The page carries no cache-write rate for it."
+    },
+    "gpt-6-astra": {
+      "display": "GPT-6 Astra",
+      "vendor": "openai",
+      "tier": "strong",
+      "input_per_mtok": 10.0,
+      "cached_input_per_mtok": 1.0,
+      "cache_write_per_mtok": 12.5,
+      "output_per_mtok": 50.0,
+      "long_context": {
+        "threshold_tokens": 272000,
+        "input_per_mtok": 20.0,
+        "cached_input_per_mtok": 2.0,
+        "output_per_mtok": 75.0,
+        "cache_write_per_mtok": 25.0
+      },
+      "notes": "Added 2026-09-21 from the models-and-pricing page (GA, Powerful) — PRICE-confirmed from that page and picker-UNCONFIRMED (the /model picker was not re-checked; see model_ids_note). The page prices a cache write for it, as it does for the GPT-5.6 family, plus a >272K single-request step-up block. Tiered `strong` because this file reserves `frontier` for the Fable rows; data/pricing.codex.json tiers this same id `frontier` for the Codex roster, so bin/model_registry.py reports the id as ambiguous unless a harness is named."
     }
   },
   "task_profiles": {

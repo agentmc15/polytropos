@@ -23,7 +23,9 @@ python3 bin/copilot_pricing.py knobs    # Copilot: Title-Case display forms
 ```
 
 The two vocabularies never mix. As a labeled snapshot of each file at its own `cached_date`
-**2026-09-05** — run the two commands above for the live lists — Codex's
+(`data/pricing.codex.json` **2026-09-05**, `data/pricing.copilot.json` **2026-09-21**) — run the
+two commands above for the live lists; neither file's `knobs` block changed in the 2026-09-21
+Copilot price re-verify — Codex's
 `knobs.reasoning_efforts` in `data/pricing.codex.json` is
 `["low","medium","high","xhigh","max","ultra"]`, the literal tokens passed to
 `-c model_reasoning_effort=<level>`; Copilot's `knobs.reasoning_efforts` in
@@ -91,14 +93,22 @@ fabrication. Codex's flag is already live in `bin/codex_execute.py` and needed n
   known CLI surface — nothing in this repo sets it, and nothing here should invent a flag for it.
 - **Copilot `/model` picker screenshots (user-supplied).** The Reasoning column is the
   mechanism — footer literally reads "←/→ reasoning effort". Two display words were directly
-  observed: "Medium" (default) and "Extra High" (Sol cycled up). Sol's picker cost panel shows
-  500 / 3,000 / 50 / 625 credits per 1M tokens (input / output / cached input / cache write) —
-  matching `gpt-5.6-sol`'s rates in `data/pricing.copilot.json` exactly.
+  observed: "Medium" (default) and "Extra High" (Sol cycled up). Sol's picker cost panel showed
+  500 / 3,000 / 50 / 625 credits per 1M tokens (input / output / cached input / cache write) at that
+  capture, and matched `gpt-5.6-sol`'s rates in `data/pricing.copilot.json` as the file then stood.
+  It no longer does: the 2026-09-05 refresh moved Sol's rates and the 2026-09-21 capture of GitHub's
+  own models-and-pricing page confirms the lower figures, so read Sol's credits from the file (or
+  `python3 bin/copilot_pricing.py est`) rather than from this July panel.
 - **API pricing table (GA, captured 2026-07-18).** Default-tier USD/1M for Sol/Terra/Luna
   matches `data/pricing.codex.json`'s existing rates exactly — no rate value changed in that
-  file this kit. Long-context step-up tiers are recorded as a note only in both pricing files'
-  `long_context_note` (re-captured 2026-08-11 after OpenAI's 2026-07-30 cut, Terra -20% / Luna -80%:
-  Sol >272K → $10/$1/$45, Terra >272K → $4/$0.40/$18, Luna >200K → $0.40/$0.04/$1.80) — never modeled as schema.
+  file this kit. Long-context step-up tiers were re-captured 2026-08-11 after OpenAI's 2026-07-30
+  cut (Terra -20% / Luna -80%). Where they live now differs per file: `data/pricing.codex.json`
+  keeps them as a note only — its `long_context_note` states the per-request rule and carries no
+  figures — while `data/pricing.copilot.json` models them as schema, one `long_context` block per
+  row, and the 2026-09-21 page capture re-verified every one of those blocks cell by cell (Sol and
+  Terra step up above 272K, Luna above 200K). Read the step-up rates from that file: the per-model
+  figures this bullet used to quote disagreed with it for Sol, and a prose copy of a rate is exactly
+  the thing that rots.
 
 The pricing files are the live source of truth for all of the above; this section names the
 provenance as a labeled 2026-07-18 snapshot, not a substitute for reading the data.
@@ -111,7 +121,7 @@ provenance as a labeled 2026-07-18 snapshot, not a substitute for reading the da
 | The four unobserved Copilot display renderings (Minimal/Low/High/Max) | `pricing.copilot.json` → `knobs.reasoning_efforts_note` |
 | GPT-5.6 long-context threshold-tier schema modeling (both harnesses) | each file's `long_context_note` |
 | `fast` mode's CLI surface and pricing impact (both unpublished); and, now that `ultra` is a ladder rung, how its automatic task delegation is invoked or configured — the note records the behavior, not a control | `pricing.codex.json` → `knobs.modes` notes |
-| Copilot full roster refresh (picker lists models `pricing.copilot.json` doesn't yet carry) + the `cached_date` bump that comes with a full re-verify | `pricing.copilot.json` → `model_ids_note` |
+| Copilot roster refresh — the price half is DONE (full cell-by-cell re-verify against the models-and-pricing page, `cached_date` bumped to 2026-09-21, nine rows added and five delisted); what stays open is the PICKER half, since `/model` has not been re-checked since 2026-07-01 and every row added since is price-confirmed only | `pricing.copilot.json` → `model_ids_note` |
 | Exact GPT-5.6 id strings on both harnesses (best-effort lowercase-dot pattern) | each file's `model_ids_note` |
 
 A Claude-side `effort` skill is out of scope: Claude Code manages effort in-model, not through a
