@@ -94,9 +94,10 @@ These are properties with code behind them, not conventions:
   exists, a private store without its root-anchored ignore rule, a tracked file under one, an
   unpinned workflow action, or a renamed command the checklist cites. `reverify` lists what a
   client release invalidates and edits nothing.
-- **Personal data stays local and gitignored.** The memory, telemetry, journal, and benchmark
-  stores are gitignored, written only by their own engines, and never bulk-injected into a
-  session's context. Journal and usage collection read home directories strictly read-only.
+- **Personal data stays local and gitignored.** The memory, telemetry, journal, benchmark, and
+  training stores are gitignored, written only by their own engines, and never bulk-injected
+  into a session's context. Journal and usage collection read home directories strictly
+  read-only.
 
 - **Installation does not overwrite what it does not own.** Every Copilot, Codex, and Cursor destination
   is classified before a byte is written — absent, already identical, written by this installer
@@ -242,6 +243,16 @@ Do not rely on any of the following. Each is a known gap, not a subtlety:
   strings that look like published credential formats and secret-named assignments. A password
   that reads as an ordinary word, a customer name, an address — none of those have a shape and
   none are caught. Treat the inbox as text you are choosing to send to a model.
+- **The decision-training seam applies a narrower, explicit redaction contract, not the inbox's
+  best-effort one.** `bin/training_data.py` passes exactly two fields through `bin/redact.py`
+  (`REDACTED_FIELDS`: an input entry's text, a revocation's reason) and names ten more, including
+  the question's wording and its rubric, as `NOT_REDACTED_FIELDS` — those two are stored
+  byte-exact by design because `decision_contract.QuestionSpec.digest()` is taken over them, so a
+  credential shape typed into either one reaches the model's own input file unredacted and the
+  record names the field in `not_redacted` rather than silently passing it (see
+  `docs/TRAINING-DATA-READINESS.md`). This is a documented dormant limit, not an active exposure:
+  `training_data.COLLECTION_ENABLED` and `CAPTURE_WIRED` are both `False`, with no production
+  call site — only the module's own offline `demo` and its tests invoke it.
 - **Isolating the summary is not proof the model had no tools.** What is enforced is that it
   ran outside the project, with a reduced environment, and demonstrably did not write where it
   was placed. No tool-restricting flag is passed: this repo pins CLI flags as best-effort and

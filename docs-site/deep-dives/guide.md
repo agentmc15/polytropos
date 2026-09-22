@@ -6,13 +6,18 @@
     Mirrored from `docs/GUIDE.md` — edit the source, then run `python3 bin/docs_build.py build`.
 
 The full reference for the plugin: what every skill does, how the iterative workflows chain, how
-the **routing scorecard** proves the cheap models held, how **aesop** fits alongside it, and
-**11 worked examples** spanning one-off tasks, greenfield builds, brownfield work, backlog
-burndown, and security.
+the **routing scorecard** proves the cheap models held, how **aesop** fits alongside it, how the
+same kit contract runs on **Copilot CLI, Codex CLI and Cursor**, what the
+**decision-and-improvement** work does and does not do, and **11 worked examples** spanning one-off
+tasks, greenfield builds, brownfield work, backlog burndown, security, and measurement.
 
 - Companion architecture deep-dive: [HOW-IT-WORKS.md](how-it-works.md) · [how-it-works.html](how-it-works.md)
 - Aesop integration reference: [AESOP-INTEGRATION.md](aesop-integration.md)
 - Styled version of this guide: guide.html
+
+> **Figures in this document are commands, not numbers.** Kit counts, task tallies, pass rates and
+> test counts are read out of the tree by the command named beside them. An earlier revision of this
+> guide quoted a track record that had gone badly stale; the fix was to stop quoting it (§6).
 
 > Prices in this document are a **labeled snapshot** (cached `2026-07-24`) of
 > `data/pricing.json` — the single source of truth. Nothing else hard-codes a price; when
@@ -28,8 +33,10 @@ burndown, and security.
 4. [What each skill does](#4-what-each-skill-does)
 5. [The iterative workflows](#5-the-iterative-workflows)
 6. [The routing scorecard — proving the cheap models held](#6-the-routing-scorecard-proving-the-cheap-models-held)
-7. [What aesop is, and how it fits](#7-what-aesop-is-and-how-it-fits)
+7. [What aesop is, and how it fits](#7-what-aesop-is-and-how-it-fits) — including
+   [the other three harnesses](#the-other-three-harnesses): Copilot CLI, Codex CLI, Cursor
 8. [The 11 examples](#8-the-11-examples)
+9. [Decision, improvement, and training-data preparation](#9-decision-improvement-and-training-data-preparation)
 
 ---
 
@@ -123,11 +130,36 @@ dispatches a **Fable subagent** (the session never changes model); or run native
 - `.claude/kits/<slug>/TASKS.md` — ordered tasks, each a self-contained brief (files, conventions,
   exact contracts, gotchas, acceptance criteria, a shell **verify command**, a suggested `model`),
   grouped under `## Phase N` headings, marked `depends:` / `independent:`.
+- `.claude/kits/<slug>/GUARDRAILS.md` — the kit's own fences: task-scoped conventions, forbidden
+  shortcuts, "always run X before claiming done". **Always written, one per kit, no exceptions** —
+  if a kit genuinely needs no fences beyond PLAN.md's out-of-scope section, it says that and points
+  at PLAN.md, because an absent file is indistinguishable from a forgotten one. Execute reads it at
+  setup and re-reads it at every phase start, so the fences load only while this kit runs and never
+  tax other sessions. Only a genuinely permanent, project-wide invariant goes in the target's own
+  `CLAUDE.md`, and sparingly — that file is loaded everywhere, forever.
 - `.claude/agents/<slug>-{implementer,verifier,reviewer}.md` — model-pinned (sonnet / haiku / opus)
   so the model mix self-enforces.
-- Guardrails in `CLAUDE.md` or a project skill. **Aesop-managed target?** If the project has an
-  `aesop.yaml` or an `<!-- aesop:begin` fence, those files are compiled output — the architect puts
-  guardrails in `aesop.yaml` under `primitives.instructions.blocks` + `aesop compile` instead.
+
+Two optional PLAN.md lines, in the same family as `autonomy:` and `budget:` and never task fields:
+a **`roles:`** line naming extra pipeline roles beyond the standing trio (tokens from exactly
+seven: `scout`, `test-author`, `second-verifier`, `red-team`, `security-auditor`, `docs-editor`,
+`synthesizer`; each instantiated from a generic template under
+`skills/architect/references/roles/`), and a **`workflow:`** line naming the assurance level
+(`reviewed` — the trio, the default; `extended`; or `direct`, which drops independent review and
+must be said by name). Absent means the trio, unchanged — no kit written before these dials existed
+became invalid, and nothing auto-declares a role. Declare one for a stated purpose from the task's
+risk, never because the name exists. See [ROLE-EXPERIMENT.md](role-experiment.md).
+
+Before dispatching wide exploratory reads over an unfamiliar repo, the skill checks for an existing
+`graphify-out/graph.json` and grounds itself through `bin/graph_ground.py ground` and
+`bin/graph_brief.py brief` at near-zero context cost — reading the **freshness verdict first**,
+because a `stale` or `unknown` graph is navigation hints, not evidence, and because dynamic loaders
+are invisible to AST extraction, so the absence of an edge is never evidence of the absence of a
+dependency.
+
+**Aesop-managed target?** If the project has an `aesop.yaml` or an `<!-- aesop:begin` fence, those
+files are compiled output — the architect puts guardrails in `aesop.yaml` under
+`primitives.instructions.blocks` + `aesop compile` instead.
 
 ### `/polytropos:execute <slug>`
 The kit orchestration loop, run on the daily driver — faithful dispatch, verification, and
@@ -140,6 +172,69 @@ failure output, then mark `blocked`. Independent tasks dispatch in parallel; pha
 trigger the Opus reviewer. **Escalation valve:** a blocked task goes back to Fable as a
 single-task consult (one brief + failure evidence + plan excerpt). In an aesop-managed project,
 compiled/fenced files are treated as read-only.
+
+**One kit contract, in one place: `bin/kit_contract.py`.** What a task id is, how `TASKS.md`
+parses, when a task may be dispatched, what a budget refusal means, how a run id is minted, what
+evidence a completed task carries, and the status vocabulary — exactly
+`pending | in-progress | done | blocked` — are defined there once and re-exported by every driver,
+so the same rule is never checked two ways. What stays per-harness is what must: each CLI's
+argument vector, each host's own loop, its escalation ladder, and its pricing file. The skill calls
+the contract before its first dispatch:
+
+```bash
+python3 bin/kit_contract.py graph --kit .claude/kits/<slug>      # validate the DAG; exit 2 if invalid
+python3 bin/kit_contract.py roster --kit .claude/kits/<slug>     # workflow, roles, assurance
+python3 bin/kit_contract.py freshness --kit .claude/kits/<slug>  # acceptances vs upstream versions
+python3 bin/kit_contract.py refresh --kit .claude/kits/<slug> --task <id>   # re-verify stale evidence
+python3 bin/kit_contract.py demo                                 # synthetic graphs; spends nothing
+```
+
+`graph` exits 2 on a duplicate id, an unknown or self dependency, or a cycle, each named with its
+fix — fix `TASKS.md` and report the defect; never route around an invalid plan. `roster` exits 2 on
+an out-of-grammar `roles:` or `workflow:` line and otherwise prints the roles to sequence and the
+assurance level the kit declares. `freshness` binds each `done` task's acceptance to the upstream
+artifact versions it rested on, so a re-accepted dependency makes downstream evidence stale rather
+than silently authoritative; `refresh` re-verifies one such task and dispatches nothing.
+
+**Every dispatch lands in `bin/attempt_ledger.py` before and after it runs.** `TASKS.md` status and
+the `NOTES.md` outcome line are *projections* of that ledger, not the record: an append-only JSONL
+stream per kit, written through `bin/safe_paths.py` into the per-user data root
+(`bin/runtime_data.py`), outside the workspace — so a verify command, a git operation, or a synced
+tree never touches it. `attempt.started` is written before dispatch and `attempt.finished` after; a
+crash between them leaves a started attempt with no finish, which a resuming run **closes as
+`unknown`** and never replays. It is deliberately not exactly-once execution: a process killed
+after the call was made has still made the call. `classify_dispatch` separates the failures that
+would fail identically on a costlier model — missing CLI, logged out, unknown flag, network down —
+so the ladder stops and names the class instead of climbing, and an infrastructure failure never
+enters the routing history as a verdict on a model that never ran. `bin/attempt_ledger.py demo` and
+`bin/attempt_history.py demo` walk the crash/resume and cross-source-join stories in a temp dir.
+
+**`bin/kit_scheduler.py` adds opt-in bounded concurrency**, sequential by default. Above one
+parallel slot it runs ready independent tasks in isolated copies of the workspace, admits the whole
+batch against one budget, measures each task's write set, integrates them, keeps and names
+conflicts rather than resolving them silently, and verifies the merged tree again. `plan` reads
+only; `demo` walks two integrated tasks, a conflict and a sized manifest and spawns nothing. Full
+detail: [KIT-SCHEDULER.md](kit-scheduler.md).
+
+### `/polytropos:assess-improvement`
+The read-only question that comes *before* "plan this": is there a small, evidence-backed
+improvement in this repository worth testing at all? It produces a scoped findings report plus zero
+or more self-contained handoff briefs — usable by a later implementer with no access to the
+assessment conversation — and it **never implements, activates, enables a provider, or promotes a
+policy change.** The discipline is in the evidence standard: one ledger row per material claim with
+a *categorical* status (`observed` / `documented` / `inferred` / `unknown` / `unverified` /
+`insufficient-evidence`) and no invented numeric probability; a defect is never inferred from
+absence, a plan, a stale document, a schema, or a single anecdote; and advertised capability and
+demonstrated runtime enforcement are treated as different evidence classes. It looks for a *small
+recurring pain signal* rather than one failure, tests each candidate for no-fit and prerequisites
+(a new permission, private data, a paid provider, clean partitions, defined labels), and prefers
+the smallest deterministic intervention that could falsify the hypothesis. **"There is no supported
+intervention" is a good report**, and so are `no-fit` and `insufficient-evidence`. A
+whole-system mode assesses the shared runtime and each harness independently before synthesising,
+and refuses to transfer a pricing, capability, or enforcement claim across harnesses. Ships on
+Claude Code and Cursor (`cursor/skills/assess-improvement/`); its report template is
+`skills/assess-improvement/references/assessment-template.md`. Worked output:
+[ASSESSMENTS/polytropos-decision-improvement-v1.md](https://github.com/agentmc15/polytropos/blob/main/docs/ASSESSMENTS/polytropos-decision-improvement-v1.md).
 
 **Fusion-era loop.** The orchestrator runs **lean** — it reads only kit state and verify output,
 delegating exploration to cheap **haiku scouts** rather than pulling files into its own context.
@@ -192,7 +287,15 @@ injectable and `--dry-run` prints the prompts and spawns nothing. `bin/journal_s
 a macOS launchd job for a nightly run. Codex activity is counted, and may additionally carry a
 clearly-labeled API-equivalent relative-burn proxy priced from `data/pricing.codex.json` at run
 time — never presented as a bill (`billed_usd` stays null and proxy dollars never enter the
-digest's priced totals). `allowed-tools: Bash, Read, Write`.
+digest's priced totals). Three companions the skill also sequences: `bin/telemetry_snapshot.py`
+right after collecting, because the transcript dirs the digest reads from **rotate** and the dated
+envelope under the gitignored `telemetry/` is what survives; `bin/journal_plan.py`
+(`build` / `check` / `done` / `defer` / `prompt`), which writes a dated, checkable next-day runbook
+from open kit tasks, WIP repos, the inbox and a seed file, carrying unchecked cards forward and
+spawning no harness, model, or process at all; and `bin/journal_askpack.py`, an offline
+ask-the-tools prompt pack that is pure text generation. Free-text inbox lines go through
+`bin/redact.py`, which reports findings by kind and count and never by value.
+`allowed-tools: Bash, Read, Write`.
 
 ### `/polytropos:setup`
 Installs the statusline into `~/.claude/settings.json` with confirmation. `bin/statusline.py`
@@ -224,11 +327,17 @@ evidence get `no_role_evidence`, never a borrowed number.
 ### `/polytropos:context-weight`
 What fills your context window, measured. `bin/context_weight.py session` renders per-call weight
 curves and ranked contributors (with the sidechain-vs-main split that shows delegation paying);
-`overview` compares sessions; `audit` sizes resident config surfaces against a budget; `watch` is
+`overview` compares sessions; `audit` sizes resident config surfaces against a budget (tokens only, never dollars); `constraints --kit <dir>`
+measures whether that kit's `GUARDRAILS.md` is still resident in the reconstructed window (Claude
+only; Codex and Copilot print their existing fidelity-limit lines verbatim rather than guessing);
+`watch` is
 the live Claude-only check whose recommendation line flips to "checkpoint decisions to disk, then
-compact" past ~60% of the window. Each harness reports at its own honest fidelity — Copilot never
-gets a fabricated growth curve, Codex never gets invented content attribution. Estimates are
-labeled `est.` and never priced.
+compact" past ~60% of the window; `demo` runs the lot offline. Each harness reports at its own honest
+fidelity — Copilot never gets a fabricated growth curve, Codex never gets invented content
+attribution. Estimates are labeled `est.` and never priced. The skill's own first section says what
+it **cannot** do: a skill is text loaded *into* the window and has no mechanism to remove anything
+from it, so the levers are prevent, prune, and measure — in that order. Full detail:
+[CONTEXT-WEIGHT.md](context-weight.md).
 
 ### `/polytropos:repo-bench`
 Measures models on a **target repo's own real work** instead of a generic benchmark. `plan` mines
@@ -238,8 +347,11 @@ sandbox trees (no answer key to find), reference patches and fix-tests kept out 
 surface, grading on a whitelist-constructed substrate where `solved` comes from the tests oracle
 alone, plus structural, blind-judge, and cost/latency oracles. Verdicts are interval-honest
 (`solved lies in [lower, upper]` under a cost ceiling), below-evidence-floor verdicts are never
-applied, and routing changes only via the explicit `apply` step writing gitignored
-`prefs/repo-bench.json`. `demo` runs the full pipeline on a fixture repo with stub dispatch.
+applied, and routing changes only via the explicit `apply` step writing a gitignored
+`prefs/repo-bench.json`. Beside those: `regrade` finishes judge grades a cost ceiling stranded
+(and needs `--live --max-usd` for exactly the same reason `run` does), `verdict` re-renders a
+finished run's conclusion, `list` enumerates runs in the store, and `demo` runs the full pipeline on
+a fixture repo with stub dispatch and spends nothing.
 
 ### `/polytropos:update`
 The all-harness freshness custodian. `bin/harness_update.py check` renders one read-only card —
@@ -257,20 +369,77 @@ no-clobber, repo mirrors regenerate — and the Claude side is **print-only**: t
 Repo analysis through a local knowledge graph. The external, user-installed graphify CLI
 (availability-gated; the skill prescribes its offline subcommand set only — the LLM extractor,
 network fetchers, and home-writing surfaces need explicit opt-in) turns a codebase into
-`graphify-out/graph.json` in seconds of pure AST parsing. `bin/graph_brief.py brief` compresses
-that multi-megabyte graph into a one-screen architect-grounding card — hubs with and without test
-fixtures, confidence mix, and a low-cross-file-visibility warning that names what AST extraction
-cannot see (dynamic loaders; absence of an edge is never evidence of absence of a dependency).
-The architect skill checks for a graph before dispatching wide exploratory reads; the
-context-weight skill names it as a PREVENT-lever technique.
+`graphify-out/graph.json` in seconds of pure AST parsing. Two readers sit on top of it, and
+**neither ever invokes graphify**:
 
-### Companion scripts (the aesop bridge)
+- **`bin/graph_brief.py brief --graph <path>`** compresses that multi-megabyte graph into a
+  one-screen architect-grounding card — hubs with and without test fixtures, confidence mix, and a
+  low-cross-file-visibility warning that names what AST extraction cannot see (dynamic loaders;
+  absence of an edge is never evidence of absence of a dependency). `demo` builds throwaway graphs
+  in a temp tree and briefs them.
+- **`bin/graph_ground.py`** answers the question to ask *before* the brief when the task touches
+  known files: `stamp` writes one provenance sidecar beside the graph (the only write it ever makes);
+  `freshness` compares that sidecar's per-file fingerprints against the working tree and reports
+  `fresh` / `partial` with the changed and deleted files named / `stale` / `unknown` — a graph with
+  no sidecar is `unknown`, and nothing manufactures a revision for it; `impact` walks bounded
+  neighbours of seeds under a depth, node and hub-degree cap, listing a hub rather than expanding
+  through it; `search` is the bounded code-search fallback on its own; `ground` combines them; `demo`
+  walks all of it offline. **Read the freshness verdict first** — `stale` or `unknown` means the edges
+  are navigation hints, not evidence, and the result says so.
+
+The architect skill checks for a graph before dispatching wide exploratory reads; the
+context-weight skill names it as a PREVENT-lever technique. graphify itself is installed by the user
+(`uv tool install graphifyy`), never vendored, never auto-installed, and never invoked by a test, a
+verify command, or kit execution; the skill prescribes its offline subcommand set only, and
+`/graphify-out/` stays gitignored.
+
+### Companion scripts no skill wraps
+
+`bin/` is stdlib-only, and nearly every script with a CLI answers `--help` (the exceptions and the
+eleven pure library modules are named in
+[HOW-IT-WORKS.md §4](how-it-works.md#4-component-architecture), which also groups all of them by
+family). The ones a reader of this guide is most likely to reach for directly:
+
 - `bin/sync_pricing_refs.py` — writes byte-identical mirrors of `pricing.json` into
   `skills/{route,fable-check}/references/` so those skills stay self-contained when vendored into
   another repo by aesop. Rerun it whenever `pricing.json` changes (a test fails on drift).
 - `bin/aesop_bridge.py` — turns `pricing.json` into the concrete numbers aesop's abstract dials
   need: `tiers` (which model each aesop tier maps to now), `est-tick` (estimated cost per goal-loop
   iteration), `check-budget` (how many iterations a `budget_usd` buys).
+- `bin/exec_policy.py check` — what OS execution boundary this host actually enforces (exit 3 if
+  none). On macOS the backend is `sandbox-exec`, it is the default for every verify command, and it
+  **refuses rather than downgrading**; Linux and Windows have no backend, so verification there needs
+  the explicit `--exec-mode trusted-host`, which enforces nothing and says so. Dispatch is not
+  confined. [SECURITY.md](https://github.com/agentmc15/polytropos/blob/main/SECURITY.md) is the authority on what that does and does not promise —
+  read it there rather than inferring it from a summary. Beside it: `bin/proc_runner.py` (the one
+  place an external process starts — validated cwd, bounded wall time and output, its own process
+  group), `bin/safe_paths.py` (the one place a path is judged safe to write, read, or delete) and
+  `bin/redact.py` (the one place this repo decides what must not leave a machine in plain text —
+  findings by kind and count, never by value).
+- `bin/runtime_data.py where` — where each personal store resolves: `memory`, `telemetry`,
+  `journal`, `benchruns`, `prefs`, `trends`, `attempts`, `evals`, `training`. All live **outside the
+  plugin tree**, in a per-user application-data dir, per checkout, `0700`/`0600`, because this tree is
+  distributed, cached and often cloud-synced. `migrate --store NAME --apply` copies an in-tree store
+  out without relocating or deleting the original; `export` and `forget` list before they act.
+- `bin/model_registry.py` — the ONE cross-harness reader of model ids and tiers. It reads the three
+  pricing files, never a price, never merges them, and when one id sits in two files with two tier
+  names it **reports the ambiguity rather than picking**.
+- `bin/routing_policy.py` — workflow shape, model, initial effort and assurance as four separate
+  decisions (`decide --harness … --policy reserved|adaptive`, or `demo` for synthetic rosters).
+- `bin/telemetry_snapshot.py` / `bin/lessons_store.py` / `bin/lessons_promote.py` — dated telemetry
+  envelopes, and scoped lessons that become rules only by recurrence or explicit ask. `lessons_promote`
+  is **draft-only**: gate 2 is a person.
+- `bin/harness_select.py` (`install` / `doctor`) — installs each harness bundle, classifying every
+  destination before it writes and never overwriting what it does not own; it is also the only place
+  `{{POLYTROPOS_ROOT}}` is ever substituted. `bin/harness_adapter.py` prints the capability census.
+- `bin/release_gate.py` (`check` / `matrix` / `contracts` / `decision` / `packaging` / `checklist` /
+  `reverify`) — what this repository may claim per harness, computed from the records that carry it
+  rather than typed. A green gate establishes that version constants agree with the registry; it does
+  **not** establish that any module works, and the handoff (§9) records proving exactly that by
+  mutation.
+- `bin/docs_build.py` / `bin/copilot_docs.py` / `bin/sync_codex_surfaces.py` — the sole writers of
+  `docs-site/`, `copilot-docs/` and the Codex prompt mirrors. Each has a `check` that fails on drift.
+  Edit the source and rebuild; never hand-edit generated output.
 
 ---
 
@@ -294,10 +463,15 @@ daily driver ── /architect ──► Fable runs ONCE ──► execution kit
                                  └─ phase end → Opus reviewer checks against PLAN.md
 ```
 Fable spend = the one planning pass plus the occasional consult. Execution quality is bounded below
-by the kit, not by the executor's unaided judgment. This guide's own existence is an example:
-**11 kits have shipped this way** — each architected once by Fable, then executed on Sonnet/Opus
-with adversarial verifiers and phase reviews. The routing scorecard (§6) audits the result:
-**32/32 first-try task passes, zero escalations, zero execution work on Fable.**
+by the kit, not by the executor's unaided judgment. This guide's own existence is an example: it is
+the output of a kit architected once by Fable and then executed on Sonnet/Opus with adversarial
+verifiers and phase reviews, and every kit this repository has run left a ledger behind. The
+routing scorecard (§6) is what audits the result — and it is a command, not a figure written down
+here:
+
+```bash
+python3 bin/routing_scorecard.py --history --kits-dir .claude/kits
+```
 
 **The aesop goal loop (recurring, verifiable work).** A portable "Ralph" runner: a fresh agent
 invocation per tick against a fixed prompt, `self_verify()` after every tick, and **three hard
@@ -319,7 +493,10 @@ layer**: `bin/routing_scorecard.py`, fed by ledger lines the executor writes as 
 is **read-only** except two clearly-marked writes, every mode has a `--demo`, and nothing is ever
 fabricated — missing data renders `null`/`n/a`, never a guessed or zeroed figure.
 
-**Four execute-owned ledger lines** (appended to a kit's `NOTES.md`) feed it:
+**The execute-owned ledger lines** (appended to a kit's `NOTES.md`) feed it. `skills/execute/SKILL.md`
+names six machine-read tokens, and requires every one of them to be **backticked** when quoted in
+NOTES.md prose — a line that merely *starts* with one parses as real data whether it is plain,
+bulleted, or indented:
 
 | Line | Written | Carries |
 |---|---|---|
@@ -327,8 +504,11 @@ fabricated — missing data renders `null`/`n/a`, never a guessed or zeroed figu
 | `reroute:` | when a live upgrade fires | from-tier → to-tier, advisory/applied, the rate that triggered it |
 | `session:` | optional, once per run | the run's session id — attaches real transcript dollars |
 | `agent:` | optional, per dispatch | the subagent id + role — enables per-task dollar attribution |
+| `reviewer:` | one per phase review | the phase, the model, findings raised and confirmed, optional `result=accepted\|revised\|blocked` |
+| `defect:` | when a defect is reported rather than fixed | the task id (or `-`) and a `kind=` token — the loop stops and reports; it never widens scope or acceptance to pass |
 
-**Five additive modes** (all off one script):
+**Additive modes, all off one script.** `python3 bin/routing_scorecard.py --help` is the current
+flag set; the list grows, so read it there rather than counting modes here:
 
 - **`routing_scorecard.py <kit>`** (plain) — parses `TASKS.md` + the `outcome:` ledger into a
   verdict: per-task outcomes, model mix, and the **cheap-model review-survival rate**. Add
@@ -347,16 +527,46 @@ fabricated — missing data renders `null`/`n/a`, never a guessed or zeroed figu
 - **`--snapshot` / `--trend`** (both ride `--history`) — `--snapshot` writes the history card as a
   dated JSON into the gitignored `trends/` store (**the one sanctioned write**); `--trend` renders
   per-tier first-try rate across stored snapshots as a **text table** (needs ≥2 snapshots, else it
-  says so).
+  says so) and an escalation-rate alarm whose trip value is derived from those same snapshots as a
+  trailing per-kit baseline — never a hardcoded threshold, and an honest insufficient-history line
+  when there is not enough to derive one.
+- **`--envelope`** (rides `--history`) — per-class ladder-walk cost against the best two-model
+  cascade, priced from `pricing.json`. Read-only; changes no dispatch, pin, or escalation behavior.
+- **`--roles`** — the per-role value view for kits that declared roles beyond the trio: dispatches,
+  findings, confirmed findings, precision and marginal catches per role, cross-kit and per-kit. Its
+  own card; it never rides `--history`. See [ROLE-EXPERIMENT.md](role-experiment.md).
 
 `bin/session_cost.py` is the single-session companion: it prices **one** session — the main
 transcript plus each subagent's `*.output` — against an **all-one-model counterfactual**, so you
 see what a run cost and what defaulting to Fable *would* have cost.
 
-*Real track record:* **11 kits** have now shipped through architect → execute — harden-plugin,
-aesop-bridge, copilot-harness, copilot-workflow, copilot-costviz, daily-journal, fusion-tier1,
-fusion-tier2, routing-history, per-task-dollars, crossrepo-trend — for **32/32 first-try task
-passes, zero escalations, and zero execution work on Fable**. This guide is one of their outputs.
+**`bin/attempt_history.py`** is the other reader over the same ground, one level lower: it joins the
+attempt ledger, the `NOTES.md` outcome lines and Codex role-use records into one record shape per
+dispatch, keeping unknowns as unknown (`show --kits-dir DIR`, or `demo` for a synthetic walkthrough).
+The scorecard answers "did the cheap tiers hold quality"; the history answers "what was actually
+dispatched, by which driver, and how did it end".
+
+### The track record is a command, not a number
+
+This repository is built by the loop it documents, and every kit it has executed left a ledger
+behind. That is exactly why no tally belongs on this page — a count written here is wrong by the
+next kit, and an earlier revision of this guide carried one that had gone badly stale. Read it from
+the ledger instead:
+
+```bash
+python3 bin/routing_scorecard.py --history --kits-dir .claude/kits   # the cross-kit card
+python3 bin/attempt_history.py show --kits-dir .claude/kits          # the dispatch-level join
+```
+
+The card's own columns are the answer. Per tier: how many tasks were pinned to it, how many carry an
+outcome, and how those outcomes split across **first-try / retry / escalated / blocked**, with a
+first-try rate and an escalation rate beside them — plus per-role findings-and-confirmed counts, the
+re-route history, and per-kit dollars for the kits carrying a `session:` line (the aggregate labels
+itself `partial` when only some do). What is safe to say qualitatively, and all this page will say:
+the great majority of execution work passes verify on the first attempt at the tier it was pinned
+to, retries are a real recorded minority rather than a theoretical one, and the escalated and
+frontier columns exist precisely so that "the cheap tiers held" is something you check rather than
+something you assume.
 
 ## 7. What aesop is, and how it fits
 
@@ -399,16 +609,101 @@ Integration goes one way — **aesop consumes this repo; nothing here imports ae
 
 Full detail: [AESOP-INTEGRATION.md](aesop-integration.md).
 
-### The second harness — GitHub Copilot CLI
-The same per-task routing/cost discipline is ported to **GitHub Copilot CLI** under `copilot/`: a
-cross-vendor `route` agent plus an architect → execute → verify → escalate port and a
-budget-capped **Ralph** goal loop. Copilot usage settles in **AI Credits** (1 AIC = $0.01), priced
-by `bin/copilot_pricing.py` (`est` / `models` / `runway`) from a **separate**
-`data/pricing.copilot.json` — the two harnesses never share a pricing file. The bundle under
-`copilot/.github/` carries a `{{POLYTROPOS_ROOT}}` placeholder that `bin/harness_select.py`
-resolves to an absolute path at install time. `bin/copilot_usage.py` reads Copilot's local session
-events read-only for a usage report; `bin/copilot_ralph.py --demo` mocks the goal loop with no
-model, network, or AI Credits spent.
+### The other three harnesses
+
+Claude Code is where this plugin lives, but it is not the only harness that runs its kits. Copilot
+CLI, Codex CLI and Cursor's command-line agent each have a real driver, their own pricing file, and
+their own reference document. **Everything that must mean the same thing on every harness comes from
+`bin/kit_contract.py`** — task parsing, graph validation, readiness, status transitions, budget
+admission, run ids, the outcome vocabulary. What each harness adds is only what it makes different:
+its argument vector, its own loop, its escalation ladder, and its pricing file. **No harness's
+config reads another's pricing file**, and none of these CLIs is ever invoked by a test, a verify
+command, or kit execution — `--dry-run` and `--demo` are the sanctioned smoke paths and spawn
+nothing. A capability is relied on only when `primitives/harness-capabilities.json` records it
+verified; `unknown` there means **no**, and stays `unknown` until a person runs the client and
+records `verified_on` and `client_version` by hand.
+
+#### GitHub Copilot CLI
+The per-task routing/cost discipline ported to **GitHub Copilot CLI** under `copilot/`: a
+cross-vendor `route` agent plus an architect → execute → verify → escalate port
+(`bin/copilot_execute.py`) and a budget-capped **Ralph** goal loop. Copilot usage settles in
+**AI Credits**, priced by `bin/copilot_pricing.py` (`est` / `models` / `runway` / `knobs` / `prefs`)
+from a **separate** `data/pricing.copilot.json` whose credit unit is itself data — the harnesses
+never share a pricing file. The bundle under `copilot/.github/` carries a `{{POLYTROPOS_ROOT}}`
+placeholder that `bin/harness_select.py` resolves to an absolute path at install time, the one place
+that substitution ever happens. `bin/copilot_usage.py` reads Copilot's local session events strictly
+read-only for a usage report; `bin/copilot_prefs.py` is the single home for the user's own model pins
+and excludes; `bin/copilot_statusline.py` is the Copilot-side statusline twin; and
+`bin/copilot_ralph.py --demo` mocks the goal loop with no model, network, or AI Credits spent.
+Generated doc center: `copilot-docs/` (written only by `bin/copilot_docs.py`). Full detail:
+[COPILOT-HARNESS.md](copilot-harness.md), [COPILOT-WORKFLOW.md](copilot-workflow.md),
+[COPILOT-COSTVIZ.md](copilot-costviz.md).
+
+#### OpenAI Codex CLI
+Native `$skill` workflows packaged as a Codex plugin under `codex/`, with routing data in
+`data/pricing.codex.json` (whose model ids are best-effort and carry a `model_ids_note` saying so).
+Its distinguishing feature is **central application policy** (`bin/codex_policy.py`,
+`bin/codex_app_policy.py`): Astra owns planning, dependency coordination, bounded recovery and final
+acceptance, while Luna, Terra and Sol implement cheap-mechanical, routine, and
+hard/security/integration work respectively — and model identity, availability, effort support and
+pricing are all derived from the pricing file at run time rather than written into the policy. The
+driver is `bin/codex_execute.py`:
+
+```bash
+python3 bin/codex_execute.py status  --kit tasks/kits/<slug> --json
+python3 bin/codex_execute.py run     --kit tasks/kits/<slug> --task <id> --dry-run   # spawns nothing
+python3 bin/codex_execute.py review  --kit tasks/kits/<slug> --phase <N>
+python3 bin/codex_execute.py accept  --kit tasks/kits/<slug> --phase <N>             # Astra, acceptance only
+python3 bin/codex_execute.py prepare --role implementer                              # argv preview
+python3 bin/codex_pricing.py models --profile M                                      # roster + burn index
+python3 bin/codex_usage.py --days 30                                                 # reads ~/.codex read-only
+```
+
+It instantiates no warm pool, and its recovery path requires driver-recorded lower-tier attempts
+plus a real failure signal before it climbs; a dispatch that failed for an `auth`, `config`,
+`permission` or `infrastructure` reason **stops the ladder and names the class** instead of escalating
+into the same wall. Two routing policies are selectable **by name** — `reserved` (the default) and an
+opt-in `adaptive` one — and which is in force is an explicit selection recorded in the run's NOTES.md
+`- routing:` line, never learned from observations. `bin/codex_legacy_migration.py` retires proven
+legacy copies reversibly. One rule overrides every dollar figure here: **a ChatGPT-plan Codex run is
+usage-limited, not token-billed**, so its cost is a labeled API-equivalent relative-burn proxy and
+never a bill — `billed_usd` stays null and a proxy dollar never enters a priced total. Full detail:
+[CODEX-HARNESS.md](codex-harness.md).
+
+#### Cursor's command-line agent
+The same kit contract driven through Cursor's headless CLI (`agent -p`) by `bin/cursor_execute.py` on
+`bin/cursor_adapter.py`. What Cursor makes different is **identity before trust**. Its CLI installs
+as a binary named `agent`, a name any tool might carry, so the driver refuses to dispatch until the
+binary has said what it is — either `agent --version` names Cursor, or `agent about --format json`
+answers with Cursor's own schema. A binary matching neither is `unknown` and is refused *before* a
+claim is taken, before the ledger is opened, and before any file is written; an absent one is
+`absent`. Only the version is kept from the `about` payload — its account fields are read for
+nothing.
+
+```bash
+python3 bin/cursor_execute.py probe                     # exit 3 unless --cursor-bin is Cursor
+python3 bin/cursor_execute.py status --kit <dir>
+python3 bin/cursor_execute.py run    --kit <dir> --task <id> --dry-run   # spawns nothing
+python3 bin/cursor_adapter.py doctor                    # identity, modes, install state, ambient files
+python3 bin/cursor_adapter.py install --project <dir>   # project-scoped .cursor/, ownership-aware
+python3 bin/cursor_adapter.py smoke                     # prints the live smoke; never runs it
+python3 bin/cursor_adapter.py demo                      # fake binaries, temp project; spends nothing
+```
+
+Cursor ships three products — an IDE agent, a command-line agent, and cloud agents — and they are
+**reported separately** (`cursor_adapter.MODES`), because files-only support for the IDE and cloud is
+not a claim about driving them. `data/pricing.cursor.json` carries **no rates at all**: Cursor
+publishes no per-model CLI price table this repo could mirror, so a Cursor dispatch is unpriced,
+`billed_usd` stays null, and no proxy dollar is invented from another harness's numbers.
+
+Two facts about Cursor are true at once and must not be merged. Its **current CLI implementation is
+present and verified** — six dated `verified: supported` rows in
+`primitives/harness-capabilities.json` against a named client version, covering the identity probe,
+dispatch, the read-only dispatch form, structured events, durable attempts, and independent review.
+Its **adaptive-decision profile is not**: that row is `implemented: unsupported` with
+`verified: unknown`, pending independent proof that a Cursor run can take a decision bundle in a
+running state (§9). The second says nothing about the first. Full detail:
+[CURSOR-HARNESS.md](cursor-harness.md).
 
 ---
 
@@ -467,8 +762,9 @@ python3 bin/aesop_bridge.py check-budget 25 M claude-sonnet-5   # does budget_us
 /polytropos:execute <slug>
 ```
 **Happens:** aesop compiles a correct, drift-checked environment for every harness you selected.
-The bridge tells you `strong→claude-opus-4-8, mid→claude-sonnet-5, cheap→claude-haiku-4-5` to pin
-in profiles, and sizes the goal-loop budget from real prices. `/architect`, seeing the
+The bridge prints the concrete model each aesop tier (`frontier` / `strong` / `mid` / `cheap`)
+currently resolves to, read from `data/pricing.json` at run time, so you paste today's ids into your
+profiles rather than ids copied out of a document; and it sizes the goal-loop budget from real prices. `/architect`, seeing the
 `<!-- aesop:begin` fence, writes its guardrails into `aesop.yaml` (`primitives.instructions.blocks`)
 and recompiles rather than hand-editing the compiled `CLAUDE.md`.
 **Why:** aesop builds the static rails once; the optimizer decides the model economics inside them.
@@ -533,20 +829,139 @@ verifier agent re-runs every check adversarially in fresh context and the review
 at each phase boundary. Execution runs on Sonnet/Opus; only genuinely blocked tasks consult Fable.
 **Why:** hardening is a review (Fable-worthy, once) plus disciplined, individually-verified fixes
 (cheap). This is a real worked precedent — the plugin's own `harden-plugin` kit did exactly this,
-finishing 8 tasks with every phase reviewer-approved. For the *security-analysis* portions of such
-work, pin Opus rather than Fable (Example 9).
+and its ledger is still readable (`python3 bin/routing_scorecard.py harden-plugin`). For the
+*security-analysis* portions of such work, pin Opus rather than Fable (Example 9).
 
 ### Example 11 — Measurement · Prove the cheap tiers actually held
 **Command:** `python3 bin/routing_scorecard.py harden-plugin --session <id>` (after `/execute`
 finishes and has recorded its `outcome:` / `session:` lines)
 **Happens:** the scorecard parses `TASKS.md` + the `outcome:` ledger into a verdict — per-task
 outcomes, the model mix, and the **cheap-model review-survival rate** — then, from the `session:`
-line, folds in the run's real transcript dollars beside an **all-Fable counterfactual**. Across the
-plugin's own 11 kits it reads 32/32 first-try passes with zero escalations. `--history` widens the
-lens to the per-tier track record across every kit; `--by-task` (with `--session`) splits the
-dollars per task by role; `--snapshot` / `--trend` chart first-try rate over time.
+line, folds in the run's real transcript dollars beside an **all-Fable counterfactual**.
+`--history --kits-dir .claude/kits` widens the lens to the per-tier track record across every kit
+(see §6 — read that card rather than any figure printed in this guide); `--by-task` (with
+`--session`) splits the dollars per task by role; `--snapshot` / `--trend` chart first-try rate over
+time; `--roles` scores any roles a kit declared beyond the trio.
 **Why:** routing cheap is only a saving if quality held — this closes the loop with evidence, not
-faith. Nothing is fabricated: a missing transcript reads `null`, never a guess.
+faith. Nothing is fabricated: a missing transcript reads `null`, never a guess. And the verdict is
+whatever the ledger says today, which is exactly why this guide points at the command instead of
+quoting its output.
+
+---
+
+## 9. Decision, improvement, and training-data preparation
+
+Release 1 of the decision-and-improvement work is a **mechanism release**, and reading it as anything
+else is the one mistake this section exists to prevent. It ships code and refusals. It ships **no
+performance claim**, and there is nothing it could make one from: no trial has been declared, no data
+has been collected, no vendor client has been run by any test, verify command or gate, and the
+whole-repository assessment records `gain_observed` as `null`.
+
+Three documents are the authority, and they should be read before acting on any of this:
+
+| Document | What it is |
+|---|---|
+| [DECISION-IMPROVEMENT-V1-HANDOFF.md](decision-improvement-v1-handoff.md) | the handoff: what the release contains, what is mechanical, what is **not live-ready** and why, the operator inputs no code here can supply, and a register of what was deliberately left undone. It states plainly that it is a report and not authorization |
+| [DECISION-IMPROVEMENT-CONFORMANCE.md](decision-improvement-conformance.md) | the offline conformance report: does each claim hold *here*, on this host — with **`unavailable` as a third outcome**, counted and named for every claim this host could not put to the test, rather than quietly omitted |
+| [TRAINING-DATA-READINESS.md](training-data-readiness.md) | the operator runbook for the collection and export seam, opening with what is **not** ready |
+
+Two more sit behind them: [DECISION-IMPROVEMENT-RECONCILIATION.md](decision-improvement-reconciliation.md)
+(the roadmap reconciled against the tree, plus the ADR) and
+[DECISION-IMPROVEMENT-AUTHORITY-INVENTORY.md](decision-improvement-authority-inventory.md) (which
+component already owns each decision, so nothing here creates a competing authority).
+
+### What exists
+
+Six library modules — no CLI of their own — plus one evaluator and one collection seam:
+
+| Module | What it decides |
+|---|---|
+| `bin/decision_contract.py` | what may be asked of a decision, answered, and recorded. Strict: no invalid value is normalised into validity |
+| `bin/decision_policy.py` | which policy bundle a run is entitled to read, and what it falls back to. `SELECTION_MODES` holds `legacy` and `shadow`; `DEFERRED_MODES` holds `canary` and `active`, refused **by name** |
+| `bin/decision_provider.py` | one bounded request-to-result interface with two providers: a deterministic `rules` path, and `replay`, which incurs no new inference |
+| `bin/decision_eval.py` | the read-only prediction-time join — what was knowable when a decision was taken against what was observed after — reporting `insufficient-evidence` for thin or mismatched data rather than a weaker fit |
+| `bin/decision_context.py` | which files a failed attempt was *not* shown, as a bounded versioned manifest, under a policy of at most one approved repair, never changing model and context at once |
+| `bin/improvement_loop.py` | bounded, falsifiable, **data-only** candidate drafts, validated through `workflow_eval`. It stores nothing and calls no model (`evidence` / `draft` / `demo`) |
+| `bin/workflow_eval.py` | complete workflows compared on held-out tasks across the adapters, and the only path by which routing policy changes (`plan` / `run` / `propose` / `review` / `apply` / `rollback` / `activation` / `demo`) |
+| `bin/training_data.py` | decision-time snapshots and the label lifecycle beside them (`status` / `taxonomy` / `readiness` / `demo`) |
+
+```bash
+python3 bin/improvement_loop.py demo     # a synthetic offline batch; spends nothing
+python3 bin/workflow_eval.py demo        # workflows compared offline; propose/apply/rollback
+python3 bin/workflow_eval.py activation  # what decision activation is in force right now
+python3 bin/training_data.py status      # is collection on, where would it write, what is wired
+python3 bin/training_data.py readiness   # the standing gates, their remedies, and what is NOT established
+python3 bin/release_gate.py decision     # the generated decision-and-improvement matrix
+```
+
+### What refuses, and why it is derived
+
+Four constants are the reason none of it is live, and the refusals are **derived from them** rather
+than written down separately — which matters, because a guard whose only enforcement is a rendered
+document is not a guard at all (the handoff records finding exactly that by mutation):
+
+| Constant | Value |
+|---|---|
+| `workflow_eval.CONFINED_DISPATCH_WIRED` | `False` |
+| `training_data.COLLECTION_ENABLED` | `False` |
+| `training_data.CAPTURE_WIRED` | `False` |
+| `improvement_loop.PROPOSER_WIRED` | `False` |
+
+Because the first is `False`, the activation gate **refuses every transition to `canary` and
+`active`** and every run resolves to the legacy bundle — on every harness, with no partially
+available canary. Routing policy still changes only the way it always did: a reviewed, versioned,
+reversible proposal (`propose` → `review` → `apply`), where `rollback` **appends a generation and
+deletes nothing** and an absent pointer means legacy rather than an error.
+
+Two facts about confinement are linked and never merged. `claude-code.confined_dispatch` is a
+**measured host limitation**, dated, on macOS: subscription credentials live in the Keychain, which a
+sandboxed process cannot reach, so a confined dispatch reports "Not logged in". A different host
+could change that. `CONFINED_DISPATCH_WIRED` is a **design decision** recorded once and reaching
+every harness; only a change in this repository changes it. Likewise the two Cursor facts kept apart
+in §7: the shipped CLI implementation is verified, the adaptive profile is not.
+
+### Training data: three different things
+
+**What shipped** is the code in `bin/training_data.py` — decision-time snapshots, the cause taxonomy,
+reviewed labels, eligibility and retention, revocation, grouped dataset splits, reproducible local
+export, and the readiness report. **What was not authorized** is collection: no scope has been
+declared and no eligible run has been collected from. **What has not happened** is training: there is
+no trainer in this repository, nothing downloads, uploads, fine-tunes or evaluates a model, and no
+checkpoint exists. Keep the three apart — "zero examples collected" is the **absence of a production
+call site**, not a gate met and not a privacy achievement.
+
+Four properties worth knowing before turning anything on:
+
+- **Cite the codes, never the tally.** `python3 bin/training_data.py readiness` prints gates, and the
+  gate tally is a property of the *material handed in* — gates read `met` over fixture records
+  because the fixtures opened them. What denies readiness unconditionally is
+  `training_data.readiness_codes()`, which rides on every report shape: `synthetic-fixtures-are-not-readiness`,
+  `training-sufficiency-not-established`, `readiness-is-a-report-not-an-authorization`,
+  `sampling-bias-not-estimable`, `access-not-enforced`, and the rest. No branch can discharge one.
+- **Redaction has a named gap, and it is demonstrated rather than described.**
+  `training_data.REDACTED_FIELDS` names the two fields that go through `bin/redact.py`;
+  `NOT_REDACTED_FIELDS` names ten that do not, and the first two of those are a question's **wording
+  and its rubric**, copied verbatim into the model's input file because the stored digest is taken
+  over the complete wording. Findings ride on every record by **kind and count, never by value**. No
+  sentence anywhere says a secret cannot get through: shape-matching cannot prove absence.
+- **Revocation removes nothing from a model.** `training_data.REVOCATION_REACH` marks an export
+  manifest, a derived dataset and a readiness report `invalidated`, and a trained checkpoint
+  `identified-only` — the checkpoint is *named*. Weights are not unlearned, exported copies are not
+  recalled, and byte erasure is not proven in a tree that is distributed, cached and often backed up.
+- **The open operator obligation is asymmetric, and it is where the money goes.** The training side is
+  protected: `build_dataset` reads `workflow_eval`'s exposure log and emits `item-exposed-elsewhere`.
+  The evaluation side has nothing to read, because nobody wrote the entry — and `training_data.py`
+  must not write it, since the evals store has exactly one writer. So every export manifest carries
+  `exposure-not-recorded-in-the-eval-store` and names the remedy. Skip it and the next held-out draw
+  may silently overlap material a training export already spent.
+
+### What `/polytropos:assess-improvement` has to do with it
+
+The assessment skill (§4) is the reusable part of this work: the evidence discipline that produced
+the release, packaged so it can be pointed at another repository. Its own worked output on this
+repository is [ASSESSMENTS/polytropos-decision-improvement-v1.md](https://github.com/agentmc15/polytropos/blob/main/docs/ASSESSMENTS/polytropos-decision-improvement-v1.md)
+— and that document is dated and deliberately **not** edited to match a later tree, so read its
+counts against the revision it names in `assessed_revision`, not against the tree in front of you.
 
 ---
 

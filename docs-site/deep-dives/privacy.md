@@ -179,18 +179,57 @@ claude plugin update polytropos@polytropos-local
 
 # 3. LOOK at what the copy pulled in, before deleting (this is the exposure)
 C=~/.claude/plugins/cache/polytropos-local/polytropos
-for d in journal telemetry memory prefs trends benchruns attempts evals; do
+for d in journal telemetry memory prefs trends benchruns attempts evals training; do
   test -e "$C/<new>/$d" && echo "!! $d ($(find "$C/<new>/$d" -type f | wc -l) files)"
 done
 
 # 4. prune the fresh copy AND the superseded version directory
-rm -rf "$C/<new>"/{journal,telemetry,memory,prefs,trends,benchruns,attempts,evals} "$C/<new>"/value-report*.html
+rm -rf "$C/<new>"/{journal,telemetry,memory,prefs,trends,benchruns,attempts,evals,training} "$C/<new>"/value-report*.html
 rm -rf "$C/<old>"
 
 # 5. verify BOTH properties — clean, and actually current
-find "$C" \( -path '*/journal/*' -o -path '*/telemetry/*' -o -path '*/prefs/*' -o -path '*/benchruns/*' -o -path '*/evals/*' \) -type f
+find "$C" \( -path '*/memory/*' -o -path '*/telemetry/*' -o -path '*/journal/*' -o -path '*/benchruns/*' -o -path '*/prefs/*' -o -path '*/trends/*' -o -path '*/attempts/*' -o -path '*/evals/*' -o -path '*/training/*' \) -type f
 ls "$C"                                    # only the new version should remain
 ```
+
+### The fixed list is not exhaustive (2026-09-21)
+
+Step 4's list names what has TURNED OUT to be in the cache before, not a closed set. The plugin
+copy ignores `.gitignore` entirely: **whatever sits in the checkout and is not a tracked file
+gets copied**, regardless of what generated it.
+
+Two refreshes since the 0.5.0 run made the point concretely:
+
+- On the 0.6.2 → 0.6.3 refresh, the copy also carried `.claude/settings.local.json`, all four
+  `.codex/agents/*.toml` files, a top-level `.DS_Store`, and 191 `.pyc` files split across
+  `bin/__pycache__/` (66) and `tests/__pycache__/` (125) — verified 2026-09-21 against the live
+  cache at `~/.claude/plugins/cache/polytropos-local/polytropos/0.6.3/`.
+- On the earlier 0.6.1 → 0.6.2 refresh it pulled `outputs/`, `site-build/` (mkdocs's own
+  `site_dir`, gitignored at `/site-build/`), and an untracked kit directory; `site-build/` is
+  still sitting in that cache's now-orphaned `0.6.2/` copy today.
+
+Before a bump, check what git does not track — confirmed working today: on this tree it reports
+exactly the two gitignored `__pycache__/` directories and nothing else:
+
+```bash
+git status --porcelain --ignored
+```
+
+After the copy, compare the cache against what git actually tracks. This check, run today
+against the live `0.6.3` cache, reproduced the count above exactly — 197 files, exactly the 191
+`.pyc`, `.DS_Store`, `settings.local.json`, and four `.codex/agents/*.toml` named above:
+
+```bash
+C=~/.claude/plugins/cache/polytropos-local/polytropos/<new>
+(cd "$C" && find . -type f | sed 's|^\./||' | sort) > /tmp/cache-files.txt
+(cd /path/to/polytropos && git ls-files | sort) > /tmp/tracked-files.txt
+comm -23 /tmp/cache-files.txt /tmp/tracked-files.txt   # in the cache, not tracked by git
+```
+
+None of these extra categories get an `rm` added to the fixed list in step 4 — decide per item.
+`.claude/settings.local.json` is the installer's own local config, not personal-data store
+output; a stray `.codex/agents/*.toml`, a leftover build directory, or compiled bytecode is a
+different judgment call each time a bump surfaces one.
 
 Notes earned on the 0.5.0 run:
 

@@ -1,5 +1,18 @@
 # Handoff — roadmap implementation, steps 01–26 (complete)
 
+> **Since this handoff (note added 2026-09-21).** This document is a historical record of the
+> 26-step roadmap and the 2026-09-16 addendum below it. It is accurate about what it describes and
+> is deliberately not being rewritten — but it is no longer the current state of the repository.
+> **For everything after step 26, the authority is
+> [docs/DECISION-IMPROVEMENT-V1-HANDOFF.md](docs/DECISION-IMPROVEMENT-V1-HANDOFF.md)**, with its
+> companions [docs/DECISION-IMPROVEMENT-CONFORMANCE.md](docs/DECISION-IMPROVEMENT-CONFORMANCE.md)
+> and [docs/TRAINING-DATA-READINESS.md](docs/TRAINING-DATA-READINESS.md). Read that handoff before
+> acting on any decision, improvement, or training-data work: it is a mechanism release with every
+> live switch off and it makes no performance claim. The plugin version is now **0.6.3**
+> (`.claude-plugin/plugin.json` is the source of truth; `python3 bin/harness_update.py check`
+> reports what is installed against this checkout). Every figure in the body below is dated to when
+> it was written and should be re-derived, never quoted forward.
+
 **As of 2026-09-07.** Steps 01–15 are committed as a single change set on top of `fb40925`:
 66 files modified, 17 added, +5,485 / −1,860 lines. Full suite green: **3,727 tests, OK
 (2 skipped)**, ~3 minutes.
@@ -171,6 +184,13 @@ prepared live commands in `docs/RELEASE.md` — and that is a person's, not a se
 
 ## Next: nothing in the roadmap — what remains is external validation
 
+> **Historical.** This section states what was next *for the 26-step roadmap*, and it was true of
+> that roadmap on 2026-09-16. It is not the current backlog: work has landed since, and the
+> forward-looking authority is `docs/DECISION-IMPROVEMENT-V1-HANDOFF.md` (see the note at the top of
+> this file), whose own "Remaining operator inputs" and "Deferred, with entry gates" sections
+> supersede the list below. The external validations named here are still unrun, which is the one
+> part of it that has not moved.
+
 The 26 steps are implemented. What a session cannot do is in `docs/RELEASE.md` under "Prepared,
 not run": the Cursor identity smoke, one authorised live `run` per driver, the bounded workflow
 evaluation, the bounded benchmark. Each records into a registry row by hand (`verified`,
@@ -179,8 +199,12 @@ which rows a client release invalidates and writes nothing. If a later session p
 
 - `python3 bin/release_gate.py check` first; then `check --run` if there is time (it runs the
   whole contract map in-process, several minutes).
-- A new `docs/*.md` still moves the census pins (now 31 / 33 / 75 and 32 / 34 / 76).
-- `CLAUDE.md` has 8 bytes of headroom under its 16,000-byte ceiling; trim before adding.
+- A new `docs/*.md` still moves the census pins in `tests/test_docs_build_adversarial.py`. Do not
+  reuse a number from this file: the pins recorded here were the values on 2026-09-16 and have
+  moved since. Read the current ones out of that test, or let it fail and take the count from the
+  failure.
+- `CLAUDE.md` was 8 bytes under its 16,000-byte ceiling when this was written; measure it before
+  adding, rather than trusting that figure.
 
 ### Live verification on 2026-09-16 (after the roadmap)
 

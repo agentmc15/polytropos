@@ -4,7 +4,7 @@
 
 | Deep dive |
 | --- |
-| [aesop compile round-trip — a proposal](aesop-compile-proposal.md) |
+| [aesop compile round-trip — a proposal (ARCHIVED, kept as history)](aesop-compile-proposal.md) |
 | [polytropos × aesop integration](aesop-integration.md) |
 | [The Codex harness](codex-harness.md) |
 | [Context weight](context-weight.md) |
