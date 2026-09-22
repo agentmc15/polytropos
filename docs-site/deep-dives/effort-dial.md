@@ -5,10 +5,11 @@
 !!! note
     Mirrored from `docs/EFFORT-DIAL.md` — edit the source, then run `python3 bin/docs_build.py build`.
 
-The effort dial is the GPT-5.6 reasoning-effort ladder (`minimal → … → max`), surfaced honestly
-on each non-Claude harness to the extent its CLI actually supports it. This doc records the
-contract, the mechanism per harness, house guidance, where the facts came from, and the open
-items still deferred — so none of it depends on this kit's conversation history.
+The effort dial is each non-Claude harness's reasoning-effort ladder, surfaced honestly to the
+extent its CLI actually supports it. This doc records the contract, the mechanism per harness,
+house guidance, where the facts came from, and the open items still deferred — so none of it
+depends on this kit's conversation history. The ladders are not the same list on both harnesses,
+and neither is frozen: read them from the data, never from this sentence.
 
 ## 1. The contract
 
@@ -21,12 +22,24 @@ python3 bin/codex_pricing.py knobs      # Codex: lowercase API tokens
 python3 bin/copilot_pricing.py knobs    # Copilot: Title-Case display forms
 ```
 
-The two vocabularies never mix. Codex's `knobs.reasoning_efforts` in `data/pricing.codex.json`
-is `["minimal","low","medium","high","xhigh","max"]` — the literal tokens passed to
-`-c model_reasoning_effort=<level>`. Copilot's `knobs.reasoning_efforts` in
-`data/pricing.copilot.json` is `["Minimal","Low","Medium","High","Extra High","Max"]` — what the
+The two vocabularies never mix. As a labeled snapshot of each file at its own `cached_date`
+**2026-09-05** — run the two commands above for the live lists — Codex's
+`knobs.reasoning_efforts` in `data/pricing.codex.json` is
+`["low","medium","high","xhigh","max","ultra"]`, the literal tokens passed to
+`-c model_reasoning_effort=<level>`; Copilot's `knobs.reasoning_efforts` in
+`data/pricing.copilot.json` is `["Minimal","Low","Medium","High","Extra High","Max"]`, what the
 `/model` picker renders on screen. A Codex token never appears in a Copilot file or bundle body,
 and a Copilot display word never stands in for a Codex flag value.
+
+The two lists are not the same ladder with different casing, and it is worth naming how they
+differ at both ends. The Codex list is a **union across the roster**, not a per-model menu: its
+`reasoning_efforts_note` records it as what the local Codex runtime's `model/list` probe reported
+on 2026-09-05, and says supported levels vary by model — consult a model's own
+`supported_reasoning_efforts` before assuming a level is available to it. That probe's union has
+no `minimal` and does have `ultra`; the Copilot display list still carries `Minimal` and has no
+`Ultra`. Where the earlier GPT-5.6 announcement ladder (§4) and the Codex file disagree, the file
+governs what `-c model_reasoning_effort=` may actually be set to on this machine, because it is
+what the runtime itself reported.
 
 ## 2. Per-harness mechanism table
 
@@ -47,19 +60,35 @@ fabrication. Codex's flag is already live in `bin/codex_execute.py` and needed n
 - Step up ONE level at a time, only on failure evidence — never start at the top.
 - Reach for the low end of the ladder for bulk or latency-sensitive work.
 - Effort is orthogonal to model choice: a deeper effort level does not substitute for a tier
-  jump. If a model fails at `max`/`Max`, that is a capability gap, not an effort problem.
+  jump. When a model has failed at the top of the ladder it actually supports — the last level in
+  its own `supported_reasoning_efforts` on Codex, `Max` in the Copilot picker — that is a
+  capability gap, not an effort problem.
 - Burn honesty differs by harness. Codex under a ChatGPT subscription draws down opaque
   usage/rate limits, not dollars — any dollar figure shown for a subscription run is a labeled
   API-equivalent relative-burn proxy, never a bill (`billed_usd` stays null). Copilot AI Credits
   are real money, settled at `billing_unit.usd_per_credit` ($0.01/credit).
 
-## 4. Data provenance (2026-07-18 captures)
+## 4. Data provenance (2026-07-18 captures, plus the 2026-09-05 Codex runtime probe)
 
-- **GPT-5.6 announcement PDF (authoritative).** Confirms the ascending token ladder
-  `minimal | low | medium | high | xhigh | max` — `max` is the new deepest level, giving more
-  reasoning time than `xhigh`. `ultra` is a MODE, not a rung on the ladder: it coordinates four
-  agents in parallel by default (the API's multi-agent beta), CLI surface unpublished. GPT-5.6
-  (Sol/Terra/Luna) is GA across ChatGPT, Codex, and the API.
+- **GPT-5.6 announcement PDF (2026-07-18, authoritative for the announced ladder).** Confirms the
+  ascending token ladder `minimal | low | medium | high | xhigh | max` — `max` is the deepest of
+  those, giving more reasoning time than `xhigh`. GPT-5.6 (Sol/Terra/Luna) is GA across ChatGPT,
+  Codex, and the API. This is a July snapshot of an announcement, superseded on both ends by the
+  next bullet for what Codex actually accepts.
+- **Codex runtime `model/list` probe (2026-09-05), the standing Codex source.** As of
+  `data/pricing.codex.json`'s own `cached_date` **2026-09-05**, `ultra` is **in**
+  `knobs.reasoning_efforts` — a rung on the ladder this file publishes, not only a mode — and
+  `minimal` is not. The file keeps a `knobs.modes.ultra` entry for the behavior that comes with
+  it; quoting its note: "Reported by the local Codex runtime as a supported reasoning effort for
+  Astra, Sol, and Terra, with automatic task delegation; Luna does not report support. No pricing
+  multiplier is inferred." Read that literally, and note what it does not say: it does not name a
+  fan-out count, it does not say how the delegation is invoked or configured, and it explicitly
+  declines to infer a price effect. It is also per-model, so a level in the union is not a level
+  every model takes.
+- **`knobs.modes.fast` (same file, unchanged).** Its note: "Codex fast mode: priority processing
+  for time-sensitive work — the published speed lever. CLI surface and pricing impact unpublished
+  as of cached_date — no flag or multiplier invented." So `fast` remains a published mode with no
+  known CLI surface — nothing in this repo sets it, and nothing here should invent a flag for it.
 - **Copilot `/model` picker screenshots (user-supplied).** The Reasoning column is the
   mechanism — footer literally reads "←/→ reasoning effort". Two display words were directly
   observed: "Medium" (default) and "Extra High" (Sol cycled up). Sol's picker cost panel shows
@@ -81,7 +110,7 @@ provenance as a labeled 2026-07-18 snapshot, not a substitute for reading the da
 | Copilot headless effort surface (no confirmed `copilot -p` flag or settings key) | `pricing.copilot.json` → `knobs.reasoning_efforts_note` |
 | The four unobserved Copilot display renderings (Minimal/Low/High/Max) | `pricing.copilot.json` → `knobs.reasoning_efforts_note` |
 | GPT-5.6 long-context threshold-tier schema modeling (both harnesses) | each file's `long_context_note` |
-| `ultra` (multi-agent mode) and `fast` mode CLI surfaces | `pricing.codex.json` → `knobs.modes` notes |
+| `fast` mode's CLI surface and pricing impact (both unpublished); and, now that `ultra` is a ladder rung, how its automatic task delegation is invoked or configured — the note records the behavior, not a control | `pricing.codex.json` → `knobs.modes` notes |
 | Copilot full roster refresh (picker lists models `pricing.copilot.json` doesn't yet carry) + the `cached_date` bump that comes with a full re-verify | `pricing.copilot.json` → `model_ids_note` |
 | Exact GPT-5.6 id strings on both harnesses (best-effort lowercase-dot pattern) | each file's `model_ids_note` |
 

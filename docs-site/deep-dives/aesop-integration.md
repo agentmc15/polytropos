@@ -5,7 +5,15 @@
 !!! note
     Mirrored from `docs/AESOP-INTEGRATION.md` — edit the source, then run `python3 bin/docs_build.py build`.
 
-> **Status (2026-09-04): partially superseded by the aesop-fold kit.** Registry consumption of `route`/`fable-check` and `bin/aesop_bridge.py` remain accurate for anyone running aesop, and the "Kits in aesop-managed projects" rules still apply to a root `aesop.yaml`. This repo's own Copilot manifest is now `copilot/aesop.toml`, and the primitive model lives in `docs/PRIMITIVES.md`; the aesop-side follow-ups below are deprioritized — see `.claude/kits/aesop-fold/PLAN.md` (Evaluation).
+> **aesop itself was archived on 2026-09-05** — its compiler and emitters stayed behind; what it
+> got right came here (`docs/PRIMITIVES.md`, `primitives/*.json` + `bin/primitives.py`). Read
+> everything below as a record of how the integration worked against a live aesop, not as a
+> current install path: an archived repo ships no new releases, so the `aesop` CLI flows in
+> "Consume this repo as an aesop registry" are **historical**, and §5's aesop-side follow-ups are
+> **moot**. What is still live and tested here is `bin/aesop_bridge.py` and the skill-export
+> mechanics — see the two sections marked STILL CURRENT.
+
+> **Status (2026-09-04, pre-dating the archival above): partially superseded by the aesop-fold kit.** Registry consumption of `route`/`fable-check` and `bin/aesop_bridge.py` remain accurate for anyone running aesop, and the "Kits in aesop-managed projects" rules still apply to a root `aesop.yaml`. This repo's own Copilot manifest is now `copilot/aesop.toml`, and the primitive model lives in `docs/PRIMITIVES.md`; the aesop-side follow-ups below are deprioritized — see `.claude/kits/aesop-fold/PLAN.md` (Evaluation).
 
 How to consume this plugin from [aesop](https://github.com/agentmc15/aesop) — the user's
 harness-portable "environment compiler" — and a proposal for the aesop-side follow-ups that
@@ -50,7 +58,14 @@ repo calls, requires, or version-couples to aesop.
 | Cost | abstract `budget_usd` stop | task-size dollar math, per-tick estimates |
 | Dependency direction | consumes this repo | imports nothing from aesop |
 
-## Consume this repo as an aesop registry
+## Consume this repo as an aesop registry (HISTORICAL — aesop archived 2026-09-05)
+
+> **The `aesop add skill` / `aesop update` flows in this section are historical.** They are how
+> vendoring worked against aesop at `5506617`, recorded because the *export surface* they describe
+> is still real and still tested on this side (the table at the end of this section, and
+> `bin/sync_pricing_refs.py`'s `references/` mirrors). Do not read the commands as an install path
+> to follow today: aesop is archived, so nothing new ships from it, and this repo has never run an
+> `aesop` binary in any test or verify command.
 
 This repo's `skills/<name>/SKILL.md` layout already matches aesop's registry lookup. As of
 `5506617`, aesop's `importPrimitive` (`src/federation.ts`) resolves a skill at
@@ -85,8 +100,10 @@ needing this repo's root `data/pricing.json` (see the third resolution step insi
 re-runs `bin/sync_pricing_refs.py` (which rewrites the mirrors from `data/pricing.json`) **and**
 the consumer updates — so a stale snapshot is a visible, opt-in state, never a silent one.
 
-**Export surface.** Only the two portable skills are meant to be consumed as a registry; the rest
-are plugin-only because they bind to Claude Code internals or local paths:
+**Export surface (STILL CURRENT).** This table is a property of *this* repo, not of aesop, so the
+archival does not touch it: only the two portable skills are meant to be consumed as a registry —
+by aesop or by anything else that reads a `skills/<name>/SKILL.md` tree — and the rest are
+plugin-only because they bind to Claude Code internals or local paths:
 
 | Skill | Exported? | Why |
 |---|---|---|
@@ -101,10 +118,15 @@ Note: on this machine the plugin is already installed at user scope in Claude Co
 registry path matters mainly for **other harnesses** (Codex, Cursor, Copilot, …) and for **other
 people or teams** who want `route`/`fable-check` without installing the full plugin.
 
-## Feed aesop's dials with real numbers
+## Feed aesop's dials with real numbers (STILL CURRENT)
 
 `bin/aesop_bridge.py` turns `data/pricing.json` into the concrete numbers aesop's abstract dials
-need. It is copy-paste output, not a runtime dependency — nothing it prints imports aesop, and it
+need. It survives the archival intact because it never needed aesop to exist: it reads this repo's
+own pricing file and prints numbers, invokes nothing, and is covered by
+`tests/test_aesop_bridge.py`. The output shape is still useful for any abstract-tier or
+`budget_usd`-style dial, aesop's or another tool's.
+
+It is copy-paste output, not a runtime dependency — nothing it prints imports aesop, and it
 hardcodes no price or model id. Three recipes:
 
 ```bash
@@ -174,11 +196,17 @@ The operative text lives in [`skills/architect/SKILL.md`](https://github.com/age
 "Aesop-managed target?" paragraph) and [`skills/execute/SKILL.md`](https://github.com/agentmc15/polytropos/blob/main/skills/execute/SKILL.md)
 (setup step for aesop-managed targets).
 
-## Proposed aesop-side follow-ups (live in the aesop repo, not here)
+## Proposed aesop-side follow-ups — MOOT (aesop archived 2026-09-05)
 
-These are improvements to make on the **aesop side**, through aesop's own phase-gated build
-process — *not* changes to this repo, and not prerequisites (the integration above works today
-with zero aesop changes). They are listed here as a starting point.
+> **None of these five will be done.** Every one of them is work *inside the aesop repo*, and that
+> repo was archived on 2026-09-05; the aesop-fold kit already folded what mattered into this repo
+> instead (`docs/PRIMITIVES.md`). They are kept verbatim below as a record of what the integration
+> was missing at the time, and because items 1 and 3 name real facts about the pinned commit that
+> the sections above still rely on. Nothing here is a backlog.
+
+These were improvements to make on the **aesop side**, through aesop's own phase-gated build
+process — *not* changes to this repo, and not prerequisites (the integration above needed zero
+aesop changes). They were listed here as a starting point.
 
 1. **Extend the Claude model maps for the Claude 5 family.** The claude-code emitter's `MODEL_MAP`
    and federation's `CLAUDE_MODEL_MAP` map opus/sonnet/haiku ↔ strong/mid/cheap as of `5506617`;
@@ -197,6 +225,7 @@ with zero aesop changes). They are listed here as a starting point.
 5. **List polytropos in `registry/plugins/`.** Add this repo as a worked claude-plugin
    example, documenting the `route`/`fable-check` export surface for other consumers.
 
-These proposals are the natural input to running **`/polytropos:architect` in the aesop
-repo** as a separate kit — planned and built there, under aesop's own process, never from this
-one.
+These proposals were written as the natural input to running **`/polytropos:architect` in the
+aesop repo** as a separate kit — planned and built there, under aesop's own process, never from
+this one. That run cannot happen: the target repo is archived. The kit that ran instead was
+`aesop-fold`, in this repo (`.claude/kits/aesop-fold/PLAN.md`).

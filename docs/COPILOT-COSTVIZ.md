@@ -32,13 +32,30 @@ python3 bin/copilot_usage.py --days 30
 python3 bin/copilot_usage.py --days 7 --top 5
 python3 bin/copilot_usage.py --copilot-home /some/other/home
 python3 bin/copilot_usage.py --session-dir /path/shaped/like/session-state
+python3 bin/copilot_usage.py --json
+python3 bin/copilot_usage.py --kits-dir tasks/kits
 ```
 
 `--days` windows the report by each session's last-seen timestamp (sessions with no parseable
 timestamp are kept regardless); `--top` bounds the top-sessions table; `--copilot-home` and
 `--session-dir` point the reader at a different home or an arbitrary session-state-shaped
 directory — the latter is how every test and verify run in this repo points it at a synthetic
-fixture instead of a real home.
+fixture instead of a real home. `--json` emits the machine-readable payload instead of markdown.
+
+### `--kits-dir`: joining sessions to kit runs
+
+`--kits-dir <dir>` takes a directory of kit directories (each holding `TASKS.md` / `NOTES.md`) and
+joins the session rows to the kit ledger those `NOTES.md` files record, by matching the `run=` id
+on each `outcome:` line. **The join is date-level, and the report says so.** A `run=` id carries a
+UTC *date* plus four random hex characters and no clock, so the index is bucketed by that date
+segment alone: a session matches a same-day run, and where more than one run shares the day the
+row is marked ambiguous and carries its candidates rather than picking one.
+
+It is never set by default, and an unmatched value degrades exactly like an absent one: the joined
+fields and the top-level `kits_dir` key are added only when at least one session actually matched,
+so omitting the flag — or pointing it at a directory with no matching kits — leaves the output
+byte-for-byte what it was. Reading a kit's `NOTES.md` is the only thing it adds; it still spends
+nothing and still never invokes the `copilot` CLI.
 
 The emitted markdown has: totals up top; spend by model; an exact per-turn output-tokens table
 across models; the top sessions by estimated cost; downgrade candidates (cheap/small sessions

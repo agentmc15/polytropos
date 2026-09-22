@@ -81,6 +81,38 @@ already have same-named agents. `~/.copilot/agents/implementer.agent.md` shadows
 `copilot/.github/agents/implementer.agent.md` of the same name, so a stale installed copy
 silently overrides an updated bundle until you reinstall.
 
+## Budget mode
+
+`run` takes an opt-in `--budget` flag that changes which tier a dispatch lands on, and nothing
+else about the loop above:
+
+```bash
+python3 bin/copilot_execute.py run --kit tasks/kits/<slug> --task <id> --budget --dry-run
+python3 bin/copilot_execute.py run --kit tasks/kits/<slug> --task <id> --budget [--budget-profile M]
+python3 bin/copilot_execute.py budget --kit tasks/kits/<slug>
+```
+
+The task's `model` pin still decides the *starting* tier; `--budget` demotes the dispatch exactly
+one tier below it, with the cheapest tier as the floor. The escalation ladder described above is
+untouched, and that is the point: the first rung a demoted task climbs to on a verify failure is
+the tier it would have started at unflagged, so one escalation returns it to standard dispatch
+rather than skipping past it. Which is also why `--budget` together with `--max-escalations 0` is
+self-defeating — a demoted task that fails verify goes straight to `blocked` without ever
+attempting its own pinned tier — and why the `/budget` skill says so explicitly. `review` has no
+budget flag; a phase review always dispatches the reviewer at its standard tier.
+
+Each budget run appends one labeled `budget est.:` line to the kit's `NOTES.md`, and
+`copilot_execute.py budget --kit <dir>` reads those lines back into a kit-level ledger and verdict
+without dispatching anything. Both are estimates over a named task profile (`--budget-profile`,
+validated against the `task_profiles` keys in `data/pricing.copilot.json`), never a bill, and the
+verdict may come back negative: `BACKFIRED` marks a run whose escalations cost more than its
+demotion saved, and the headline net counts only `done` runs, with blocked and no-demotion runs on
+their own labeled lines. Believe that ledger over the theory — with only two roles demoted, one
+escalation can erase a run's saving.
+
+The full surface, including the taught-not-enforced architect drop and the `/budget` skill itself:
+[COPILOT-HARNESS.md](COPILOT-HARNESS.md#beyond-routing-budget-mode-and-goliath).
+
 ## The Ralph goal loop
 
 A Ralph loop re-feeds one fixed anchor prompt every tick, with conversation history reset each

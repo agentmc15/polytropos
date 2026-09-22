@@ -32,7 +32,7 @@
       "kind": "markdown",
       "title": "GitHub Copilot CLI Documentation Center",
       "authoring_mode": "estimated",
-      "sources_sha256": "51930a691e677fac3aa4d6688b0c059c24039c3ca0259790909f2f90d0a6ebc6",
+      "sources_sha256": "7b55840762c970dcb3e6e960f962a960e2d00de61fc6e1bcd200860a5e78996d",
       "measurement": {
         "bytes": 3586,
         "words": 564,
@@ -308,7 +308,7 @@
       "kind": "markdown",
       "title": "Costs and AIC accounting",
       "authoring_mode": "estimated",
-      "sources_sha256": "dd3ac5d9856381f629ed7d608f4f32230027acfd1224ae7d67b9eb6bab711f1f",
+      "sources_sha256": "ba959312b09b5e45021d9abe48528e33444256fa7a08195458f123439203145d",
       "measurement": {
         "bytes": 8430,
         "words": 1350,
@@ -353,7 +353,7 @@
       "kind": "markdown",
       "title": "Practical workflows",
       "authoring_mode": "estimated",
-      "sources_sha256": "3f9164855ac0867185ac5d680202963752e979956d218fde039ba364791f4015",
+      "sources_sha256": "bbe7448fdb67bb3796d202aaf9b4582815398e3d8db5a0ee177c6c22df8405ec",
       "measurement": {
         "bytes": 12380,
         "words": 1997,

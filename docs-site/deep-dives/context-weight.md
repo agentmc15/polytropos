@@ -47,11 +47,12 @@ curve that cannot be computed from what Copilot logs.
 For Claude sessions, `session` doesn't just report growth — it explains what grew the window.
 
 **Mechanism:** every assistant `tool_use` block is linked to the tool name and a salient piece
-of its input (a file path for `Read`/`Edit`/`Write`, the first ~60 characters of a `Bash`
-command, the first ~60 characters of an `Agent` prompt). Each following `tool_result`, each
-plain user text block, and each `attachment` record is sized by its serialized character length
-and converted to an estimated token count at `chars / 4`. These estimates are ranked and grouped
-by tool name (and by file path within `Read`), each row labeled `est.`.
+of its input — a file path for `Read`/`Edit`/`Write`, and, for `Bash` and `Agent`, a descriptor
+that is deliberately redacted by default (see `--sensitive-detail` below). Each following
+`tool_result`, each plain user text block, and each `attachment` record is sized by its
+serialized character length and converted to an estimated token count at `chars / 4`. These
+estimates are ranked and grouped by tool name (and by file path within `Read`), each row labeled
+`est.`.
 
 **Reconciliation:** the sum of attributed estimates is compared against the session's measured
 window growth. Two things happen with the gap:
@@ -82,6 +83,52 @@ one.
 **Limits:** attribution is Claude-only. Estimated figures are byte-derived, not exact
 tokenization, so they are ranks and magnitudes — never priced, never merged with measured
 tokens.
+
+### `--sensitive-detail` — why the contributor table is vague on purpose
+
+These cards get read by someone else: "what filled this window" is a thing people paste into a
+channel. A 60-character prefix of a shell command is exactly where a token in a `curl -H` or a
+credential in an environment assignment lives, and what identifies a contributor is the
+*program*, not its arguments. So `session` and `watch` both withhold that text by default:
+
+| Tool | Default salient | With `--sensitive-detail` |
+|---|---|---|
+| `Bash` | the first shell word, then `…` (`ls …`) | the first ~60 characters of the command |
+| `Agent` | `<prompt, N chars>` | the first ~60 characters of the prompt |
+| `Read`/`Edit`/`Write` | the file path, always | unchanged |
+
+File paths are never withheld — attributing window growth to the file that caused it is the
+report's whole purpose, and a path is what a reader needs to act on. Text that
+`--sensitive-detail` restores is still passed through `bin/redact.py` first: an explicit request
+to see more is not a request to see a key. And redaction is shape-matching, which cannot prove
+absence — a credential that looks like an ordinary word is not caught, so a card shared with
+`--sensitive-detail` is a card you have chosen to vouch for.
+
+## Cross-session working set — `overview`
+
+`session` answers "what filled this one window". `overview` answers it across a window of days:
+
+```bash
+python3 bin/context_weight.py overview [--harness {all,claude,codex,copilot}] [--days N] [--top N] [--json]
+```
+
+`--days` defaults to 7 and `--top` caps the ranked rows in each section. The card is **one
+section per harness**, and each section is built by calling that harness's own `session` card
+builder once per matching transcript, rollout, or session and aggregating what those
+already-computed cards return — never a second, divergent implementation of the curve or pricing
+math. Each section carries that harness's own carry-cost line, priced only from that harness's
+own measured usage through that harness's own pricing file.
+
+**There is no cross-harness dollar total anywhere in `overview`'s output**, and that is the
+point rather than an omission: by the fidelity ladder above the three harnesses do not measure
+the same thing, so Claude gets a real per-session growth summary, Codex gets curve points with
+no content provenance, and Copilot gets a session-average weight with no curve at all. Summing
+those would be one number made of three different measurements.
+
+A harness whose home directory is entirely absent prints one clean "not found" line for its own
+section while the other sections still render, and the exit status is 0 either way. Homes are
+overridable for a fixture run with `--projects-dir`, `--codex-home`, and `--copilot-home`; they
+are read read-only, as everywhere else in this tool.
 
 ## Live threshold — `watch` (D15)
 
@@ -138,6 +185,16 @@ It also always names what it *can't* measure: `system prompt, tool schemas, plug
 listings, MCP definitions — resident but not measurable here; measure their effect with the
 session subcommand`.
 
+`--kit DIR` adds one more section: the residency of that kit's `GUARDRAILS.md`, built by
+`build_audit_constraints_section`. The file's own row — present/absent, bytes, `est.` tokens,
+`% of budget` — always renders, through the same `_audit_surface_entry` reader the surfaces
+above use rather than a second file-size reader. The resident/not-resident verdict needs
+`--session` too, because it is a question about a reconstructed window and not about a file;
+without one, `residency` stays null and the card says `residency requires --session — omitted`
+instead of guessing. When a session does resolve, the verdict comes from the *same*
+`_constraints_residency` computation the standalone `constraints` subcommand uses — one answer
+to "is this kit's GUARDRAILS.md still in the window", not two.
+
 And it always prints the reframe, unconditionally, at the top:
 
 - With `--session <id>`: a computed percentage against that session's real measured avg weight —
@@ -151,16 +208,19 @@ And it always prints the reframe, unconditionally, at the top:
 ## `demo` — the pinned regression reference
 
 `python3 bin/context_weight.py demo` builds synthetic fixtures for all three harnesses plus an
-audited project, entirely inside one throwaway temp directory, and prints all four cards. These
-numbers are hand-derivable from the fixtures and are this tool's standing regression check — if
-`demo`'s output ever disagrees with the table below, that's a defect to fix in the code, not a
-number to re-pin quietly.
+audited project and a kit, entirely inside one throwaway temp directory, and prints a card for
+each: the three session cards, the resident-surface audit, and two `constraints` cards — one
+kit whose GUARDRAILS.md was read in the session and one whose was not. These numbers are
+hand-derivable from the fixtures and are this tool's standing regression check — if `demo`'s
+output ever disagrees with the table below, that's a defect to fix in the code, not a number to
+re-pin quietly.
 
 **Claude** (`demo-claude`): 4 main calls, weights `10,000 / 20,000 / 30,000 / 8,000`, avg
 `17,000`, peak `30,000`, total submitted `68,000`; one inferred compaction (`30,000 → 8,000`);
 sidechain line `1 call(s), 5,000 tokens (7% of session mass)`. Attribution, ranked by magnitude:
-`unattributed growth 12,250 est.`, then `Bash` (`ls -la`) `5,000 est.`, then `Read`
-(`/workspace/demo.txt`) `2,000 est.`, then `assistant output (measured) 750 measured`.
+`unattributed growth 12,250 est.`, then `Bash` (rendered `ls …`, the fixture's command being
+`ls -la` — see `--sensitive-detail` above) `5,000 est.`, then `Read` (`/workspace/demo.txt`)
+`2,000 est.`, then `assistant output (measured) 750 measured`.
 
 **Codex** (`rollout-demo`): 3 per-turn calls, weights `3,000 / 8,000 / 13,000`, avg `8,000`; the
 verbatim no-provenance line present.

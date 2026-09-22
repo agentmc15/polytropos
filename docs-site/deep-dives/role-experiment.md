@@ -65,8 +65,16 @@ wins for this repo on two grounds:
 
 Since roadmap step 20 a kit's roster is a stated WORKFLOW, and each role is a stated
 CONTRACT, both in `bin/kit_contract.py` and both read by the interactive skill and every
-headless driver through the same grammar (`python3 bin/kit_contract.py roster --kit
-<dir> [--executor codex] [--json]`):
+headless driver through the same grammar:
+
+```bash
+python3 bin/kit_contract.py roster --kit <dir> [--executor EXECUTOR] [--json]
+```
+
+`--executor` chooses who would run it, out of `interactive | claude-code | copilot |
+codex | cursor | stub` (`--help` prints the set; the default is the interactive
+execute skill). `--json` returns the roster, the support verdict, and every role's
+contract.
 
 | Workflow | PLAN.md | Roles | Assurance it carries |
 |---|---|---|---|
@@ -85,18 +93,34 @@ deterministic check without a mandatory trio, and it must be asked for by name b
 it drops independent review; `reviewed` is every kit ever written; a declared role runs
 because the kit stated it for a purpose, never because its name exists.
 
-**What a headless driver can run.** `ROLE_SUPPORT` states it per executor and the drivers
-check it before previewing or claiming anything. All three run the implementer (`run`)
-and the phase-end independent review (`review`; on Codex `review` then `accept`); the
-per-task verifier's assurance is `partial` (the verify command runs, no verifier agent is
-dispatched per task) and is disclosed, never refused, because that has always been the
-headless shape; the seven optional roles are `unsupported` on every driver today (the
-drivers sequence no hook) and a kit that declares one is refused before dispatch with the
-supported alternatives named — run it interactively, drop the role, or `--roster-gap
-disclose` to proceed with the gap printed and recorded in the attempt ledger as
-`roster.checked`. Nothing is skipped in silence. The seven templates the architect
-instantiates are consumer-neutral: they name the kit's `GUARDRAILS.md` and the target
-repo's own conventions through a `<repo-root>` placeholder, never this plugin's fences.
+**What a headless driver can run.** `ROLE_SUPPORT` states it per executor and the
+drivers check it before previewing or claiming anything. It carries six executors:
+the four headless drivers, plus `interactive` (the execute skill's own loop, which
+sequences every role) and `stub` (the scheduler's conformance executor — a throwaway
+process standing in for a harness so batching, isolation, integration and
+cancellation can be proven without a model; it sequences the implementer and runs the
+deterministic check, and its reviewer is `unsupported` because it has no review at
+all).
+
+All **four** drivers run the implementer and the phase-end independent review, each
+through its own argv:
+
+| Driver | Implementer | Reviewer | Per-task verifier (`partial`) |
+|---|---|---|---|
+| `claude-code` | `run` | `review` | `run` executes the verify command; no verifier agent per task |
+| `copilot` | `run` | `review` | same |
+| `codex` | `run` | `review`, then `accept` | `run` executes the verify command; `review` dispatches an independent verifier per phase, not per task |
+| `cursor` | `run` (`agent -p --force`) | `review` (`agent -p --mode ask`) | `run` executes the verify command under the execution boundary; no verifier agent per task |
+
+The per-task verifier's assurance is `partial` everywhere and is disclosed, never
+refused, because that has always been the headless shape; the seven optional roles
+are `unsupported` on every driver today (the drivers sequence no hook) and a kit that
+declares one is refused before dispatch with the supported alternatives named — run
+it interactively, drop the role, or `--roster-gap disclose` to proceed with the gap
+printed and recorded in the attempt ledger as `roster.checked`. Nothing is skipped in
+silence. The seven templates the architect instantiates are consumer-neutral: they
+name the kit's `GUARDRAILS.md` and the target repo's own conventions through a
+`<repo-root>` placeholder, never this plugin's fences.
 
 ## Test plan: is the baseline trio worth it?
 

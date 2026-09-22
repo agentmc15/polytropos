@@ -95,10 +95,10 @@ The table below is a **snapshot of `data/pricing.copilot.json`, cached `2026-09-
 as a labeled point-in-time reference, not a live source; the file itself is authoritative. Prices
 are USD per million tokens (MTok).
 
-**24 rows, refreshed 2026-09-05:** the GPT-5.6 Sol, Terra, and Luna rows use the values in a
-user-supplied Codex pricing screenshot. That screenshot records provenance for the supplied
-values; it is not independent validation against GitHub's Copilot pricing page. The roster is
-unchanged at 24 models.
+**26 rows, every cell re-derived from the file at `cached_date` 2026-09-05:** the GPT-5.6 Sol,
+Terra, and Luna rows use the values in a user-supplied Codex pricing screenshot. That screenshot
+records provenance for the supplied values; it is not independent validation against GitHub's
+Copilot pricing page.
 **Claude Fable 5 remains the sole `frontier` tier.** Four models
 GitHub prices but the picker did not list as of the 2026-07-01 check (Gemini 2.5 Pro, Gemini 3
 Flash, GPT-5.4 nano, Raptor mini) stay intentionally excluded, as does a plain `Claude Sonnet 4`
@@ -108,6 +108,13 @@ the doc prices — picker presence unverified for all five.
 > PRICE-confirmed from the doc but were NOT checked against Copilot CLI's `/model` picker, which
 > is this roster's actual membership rule. If `/model` does not offer them, delete them from
 > `data/pricing.copilot.json`.
+>
+> **`price-unverified` is the mirror image of that.** `grok-4.6` and `gemini-3.7-flash` were added
+> to the file for the `goliath` skill from the user's own confirmed `/model` availability, so
+> membership is the *confirmed* half for these two; each row's own `notes` field says its pricing
+> still needs re-verification against the `update_from` source, so the rates are the unconfirmed
+> half. Neither row is named in `model_ids_note` or `pricing_refresh_note` — their provenance
+> lives only in their own `notes`, and that is also the only place to correct it.
 
 | Tier | Model | Vendor | $ in | $ cached in | $ out | flags |
 |---|---|---|---:|---:|---:|---|
@@ -121,6 +128,7 @@ the doc prices — picker presence unverified for all five.
 | strong | `gpt-5.5` | openai | $5.00 | $0.50 | $30.00 | long-ctx >272K |
 | strong | `gpt-5.6-sol` | openai | $4.00 | $0.40 | $20.00 | long-ctx >272K |
 | strong | `gemini-3.1-pro` | google | $2.00 | $0.20 | $12.00 | long-ctx >200K |
+| strong | `grok-4.6` | xai | $2.00 | $0.20 | $6.00 | **price-unverified** |
 | strong | `gpt-5.3-codex` | openai | $1.75 | $0.175 | $14.00 | — |
 | mid | `claude-sonnet-4.5` | anthropic | $3.00 | $0.30 | $15.00 | — |
 | mid | `claude-sonnet-4.6` | anthropic | $3.00 | $0.30 | $15.00 | — |
@@ -130,14 +138,16 @@ the doc prices — picker presence unverified for all five.
 | mid | `gemini-3.5-flash` | google | $1.50 | $0.15 | $9.00 | — |
 | mid | `gemini-3.6-flash` | google | $1.50 | $0.15 | $7.50 | **picker-unconfirmed** |
 | mid | `kimi-k2.7-code` | moonshot | $0.95 | $0.19 | $4.00 | — |
+| mid | `gemini-3.7-flash` | google | $0.75 | $0.075 | $3.75 | **price-unverified** |
 | cheap | `claude-haiku-4.5` | anthropic | $1.00 | $0.10 | $5.00 | — |
 | cheap | `gpt-5.4-mini` | openai | $0.75 | $0.075 | $4.50 | — |
 | cheap | `mai-code-1-flash` | microsoft | $0.75 | $0.075 | $4.50 | — |
 | cheap | `gpt-5-mini` | openai | $0.25 | $0.025 | $2.00 | — |
 | cheap | `gpt-5.6-luna` | openai | $0.20 | $0.02 | $1.20 | long-ctx >200K |
 
-Some rows carry caveats the table only flags: `claude-sonnet-5` is at promotional pricing until
-its `promo.until` date (the post-promo rate is unpublished); six rows carry `long_context`
+Some rows carry caveats the table only flags: `claude-sonnet-5`'s rates are promotional and its
+`promo.until` date has already passed, with no published post-promo rate behind it (see
+[Updating Copilot prices](#updating-copilot-prices)); six rows carry `long_context`
 step-up rates where **every token above the threshold costs more**, and `gpt-5.6-luna`'s
 threshold is 200K — lower than its GPT-5.6 siblings' 272K, so it steps up sooner. `gpt-5.6-sol`'s
 cache-write figure comes from the picker's cost panel only; the doc's OpenAI table has no
@@ -158,8 +168,80 @@ release disagrees, and correct ids in `data/pricing.copilot.json` only — never
 4. Rerun `python3 -m unittest discover -s tests` — `tests/test_copilot_bundle.py` and the cost
    engine's regression tests both read this file.
 
-Watch the Sonnet 5 `promo.until` date (`2026-08-31`): the post-promo rate isn't published yet, so
-that entry needs a deliberate re-check once the promo window closes, not just a rate copy-over.
+**The Sonnet 5 promo re-check is OWED, not upcoming.** In `data/pricing.copilot.json`,
+`models["claude-sonnet-5"].promo.until` is `2026-08-31`, and the `promo.note` beside it still says
+the post-promo rate is not yet published and to re-check `update_from` after that date. The file's
+own `cached_date` (`2026-09-05`) already postdates the window, so the rates carried for that model
+are promotional rates held past their stated end, with the re-check still outstanding — not a
+future task. Discharging it means reading `update_from`, then writing the outcome into
+`data/pricing.copilot.json`: the rate fields, plus that `promo` block itself (drop it if the
+promotion ended, restate `until` if it was extended). Only then is the snapshot table above
+re-derived. The correction never lands in this doc on its own — a table edit without a file edit
+would be inventing a price.
+
+## Beyond routing: budget mode and `goliath`
+
+Two bundle capabilities are neither routing nor part of the original Phase-2 workflow narrative in
+[COPILOT-WORKFLOW.md](COPILOT-WORKFLOW.md). Both are **skill-only** — a
+`copilot/.github/skills/<name>/SKILL.md` with no same-named `.agent.md` — so each is invoked as
+`/budget` or `/goliath` in a prompt (or auto-loaded when a request matches its `description:`),
+never through `copilot --agent`.
+
+### Budget mode — `/budget`, and `run --budget`
+
+Budget mode runs an *existing* kit on a lower dispatch ladder when AI Credits are tight. It moves
+where the execute driver dispatches and nothing else — not the kit's scope, not how it verifies,
+not how it reviews. The driver surface:
+
+```bash
+python3 bin/copilot_execute.py run --kit <dir> --task <id> --budget --dry-run
+python3 bin/copilot_execute.py run --kit <dir> --task <id> --budget [--budget-profile M]
+python3 bin/copilot_execute.py budget --kit <dir>
+```
+
+`--budget` dispatches one tier below the task's pin, with the cheapest tier as the floor — one
+rung, never two, and never a rung it invented. `--budget-profile` names which task profile the
+cost estimate is figured at; the accepted values are the `task_profiles` keys in
+`data/pricing.copilot.json`, and an unknown one exits 2 before anything is dispatched. The
+separate `budget --kit <dir>` subcommand reads that kit's `NOTES.md` and totals the runs recorded
+there into a ledger plus a verdict; it dispatches nothing and spends nothing.
+
+What budget mode deliberately leaves alone: the verifier, which is already at the floor tier, and
+`review`, which takes no budget flag at all and always dispatches the reviewer at its standard
+tier. The architect drop is **taught, not enforced** — the driver never dispatches the architect,
+so the skill tells you to pick that tier yourself from `python3 bin/copilot_pricing.py models`
+rather than from memory, because the roster and its tiers can change underneath you.
+
+The measurement is a labeled estimate over a named task profile, never a bill, and it is allowed
+to come back negative: `BACKFIRED` is the driver's own word for a run whose escalations cost more
+than its demotion saved. At kit level the headline net covers only `done` runs — blocked runs, and
+runs where no demotion was possible, are reported on their own labeled lines instead of being
+folded into it. `tests/test_copilot_budget.py` is the enforcement: it pins the
+one-tier/floor-cheapest demotion, the rung a demoted task escalates back to, the `NOTES.md` line
+shape, and the not-counted and `BACKFIRED` reporting paths.
+
+How the demotion interacts with the escalation ladder inside one `run` is described where that
+ladder is: [COPILOT-WORKFLOW.md](COPILOT-WORKFLOW.md#budget-mode).
+
+### `goliath` — a five-role pipeline policy
+
+`copilot/.github/skills/goliath/SKILL.md` is a Copilot-CLI-only orchestration *policy*. The
+architect plans first, then five execution roles run — implementer, test-author, verifier,
+orchestrator/reviewer, and a mandatory red-team pass — and the work is accepted only when all five
+report success against the architect's plan; on failure the exact evidence goes back to the
+responsible role and only the failed stage reruns. It ships no driver and no agent of its own: it
+is instructions for sequencing dispatches (`copilot -p "<role brief>" --model <resolved-id>`) plus
+a reporting contract — a closing ledger naming each role, the model actually used, any fallback
+taken, files changed, verify commands and their results, the reviewer decision, and the red-team
+findings, and no success claim when a required role could not run.
+
+Its per-role model table lives in the skill as a primary plus an ordered fallback per role, by
+display name only; the skill requires resolving each row against
+`python3 bin/copilot_pricing.py models` and the live `/model` picker before dispatch, and if every
+candidate for a role is unavailable the run stops and names the missing role rather than
+substituting another role's model. Two roster rows exist because of this skill: `grok-4.6` and
+`gemini-3.7-flash` were added to `data/pricing.copilot.json` for it, which is why both carry the
+`price-unverified` caveat in the table above.
 
 ## Statusline (experimental)
 
