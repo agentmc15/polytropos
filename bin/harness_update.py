@@ -57,11 +57,18 @@ swallowed. What `apply` deliberately CANNOT do: edit pricing numbers, edit docs 
 labels, or touch the Claude plugin cache.
 
 Exit codes for `check`: 0 when nothing checked reports drift, 3 when any section does (`apply`
-uses 0/1 instead -- it makes no freshness verdict). A `SHA
-STALE` claude result counts as drift for this engine's exit code, even though
-`plugin_staleness.py`'s OWN exit code treats SHA STALE as non-actionable (a squash-merge/rebase
-artifact) -- see `build_claude_section()` below for why the two engines disagree on that one
-point. Pricing-file AGE is informational only (never drift, even past the 60-day re-verify
+uses 0/1 instead -- it makes no freshness verdict). The claude section settles SHA STALE rather
+than guessing (2026-09-25): when git can list the tracked files, `plugin_staleness.
+resolve_with_tree` compares every one of them -- all identical is IN SYNC, anything else is
+DRIFTED. Only when git cannot answer does a SHA STALE result still count as drift here, because
+nothing then rules out a difference outside the compared globs (see `build_claude_section()`).
+A credential-shaped file inside the installed copy also counts as claude drift: it is something
+to delete now, not later.
+
+`preflight` asks a different question, before `claude plugin update` runs: is the checkout the
+plugin installs from safe to copy? It is read-only too -- it reads the marketplace record and
+asks git for `status` through `bin/release_gate.py`'s read-only verbs -- and it prints the update
+commands only when every gate passes. It never runs them. Pricing-file AGE is informational only (never drift, even past the 60-day re-verify
 threshold) -- only generated-mirror staleness and docs-snapshot-label staleness count toward the
 `data` section's drift flag. "not installed" is absence, never failure, and never counts as
 drift.
@@ -86,6 +93,8 @@ DEFAULT_REPO_ROOT = str(REPO_ROOT)
 DEFAULT_INSTALLED_MANIFEST = os.path.expanduser("~/.claude/plugins/installed_plugins.json")
 DEFAULT_COPILOT_HOME = os.path.expanduser("~/.copilot")
 DEFAULT_CODEX_HOME = os.path.expanduser("~/.codex")
+DEFAULT_KNOWN_MARKETPLACES = os.path.expanduser("~/.claude/plugins/known_marketplaces.json")
+DEFAULT_INSTALL_BRANCH = "main"
 
 EXIT_OK = 0
 # `apply` makes no freshness verdict, so it never uses EXIT_DRIFT: 0 on success (including
@@ -105,34 +114,86 @@ def _load_sibling(name):
     return mod
 
 
-def build_claude_section(repo_root, installed_manifest):
-    """The `claude` section of the check card: entirely delegated to
-    `bin/plugin_staleness.py.check_staleness()`, which is itself strictly read-only (it reads
-    `.claude-plugin/plugin.json`, `marketplace.json`, an installed-manifest JSON file, and
-    `.git/HEAD` directly -- never the `git` binary, never a write). This function only reshapes
-    that result into this engine's section shape; it never executes the remedy string it carries.
+def git_tracked_paths(repo_root):
+    """The claude section's bridge to git: every tracked path, from `bin/release_gate.py`'s
+    read-only `git ls-files` (run under `bin/proc_runner.py`), or None when git cannot answer.
+    Only `cmd_check` passes this in; the functions it is passed to take whatever list, or no
+    list, they are handed."""
+    return _load_sibling("release_gate").tracked_paths(repo_root)
 
-    Drift mapping: `DRIFTED` and `SHA STALE` both count as drift here, `IN SYNC` and "not
-    installed" do not. This deliberately widens plugin_staleness's own exit-3 rule (which treats
-    SHA STALE as non-actionable, exit 0) because this engine's `check` is meant to catch exactly
-    the class of incident that motivated this kit: an installed cache whose recorded commit no
-    longer matches HEAD is still something worth surfacing in an aggregate freshness card, even
-    when the file content itself has not moved."""
+
+def git_status_v2(source_dir):
+    """`preflight`'s bridge to git: `git status --porcelain=v2 --branch --ignored -z` through
+    `bin/release_gate.py`'s read-only verbs -> (rc, text). Only `cmd_preflight` passes it in."""
+    return _load_sibling("release_gate").git_read(
+        source_dir, "status", "--porcelain=v2", "--branch", "--ignored", "-z")
+
+
+#: The one `.env` name the repo's .gitignore re-includes: a template, meant to be committed.
+_ENV_TEMPLATE_NAME = ".env.example"
+_CREDENTIAL_RULES = {}
+
+
+def looks_like_credential(rel_path):
+    """True when a file NAME has a credential shape, by `bin/decision_context.py`'s
+    CREDENTIAL_NAMES and CREDENTIAL_SUFFIXES -- the repo's one list of them -- plus `.env.*`
+    variants such as `.env.local`. A name test, not a content scan: it can flag a file, never
+    prove one safe."""
+    if not _CREDENTIAL_RULES:
+        decision_context = _load_sibling("decision_context")
+        _CREDENTIAL_RULES["names"] = tuple(decision_context.CREDENTIAL_NAMES)
+        _CREDENTIAL_RULES["suffixes"] = tuple(decision_context.CREDENTIAL_SUFFIXES)
+    name = rel_path.rstrip("/").rsplit("/", 1)[-1]
+    if name in _CREDENTIAL_RULES["names"] or name.endswith(_CREDENTIAL_RULES["suffixes"]):
+        return True
+    return name.startswith(".env.") and name != _ENV_TEMPLATE_NAME
+
+
+def build_claude_section(repo_root, installed_manifest, tracked_paths_fn=None):
+    """The `claude` section of the check card, built on `bin/plugin_staleness.py`, which is
+    strictly read-only. This function reshapes its result; it never executes a remedy it carries.
+
+    With `tracked_paths_fn` (only `cmd_check` passes one: `git_tracked_paths`) every tracked file
+    is compared and `plugin_staleness.resolve_with_tree` settles the status -- all identical is
+    IN SYNC, anything else DRIFTED. Without it, or when git cannot answer, the per-glob status
+    stands and SHA STALE still counts as drift here: nothing then rules out a difference outside
+    the compared globs, which is exactly what happened on 2026-09-21 (a SHA STALE install with
+    two differing files under `docs/`). A credential-shaped file inside the installed copy
+    counts as drift too. `superseded` lists the cache's other version directories by path;
+    the human card prints their version names only, and `plugin_staleness.py` prints the
+    removal lines."""
     plugin_staleness = _load_sibling("plugin_staleness")
     result = plugin_staleness.check_staleness(repo_root, installed_manifest)
 
     if not result.get("installed"):
-        status = "not installed"
-        drift = False
-    else:
-        status = result.get("status")
-        drift = status in ("DRIFTED", "SHA STALE")
+        return {
+            "status": "not installed",
+            "drift": False,
+            "plugin_key": result.get("plugin_key"),
+            "detail": result,
+        }
 
+    tracked = tracked_paths_fn(repo_root) if tracked_paths_fn else None
+    if tracked is not None:
+        tree = plugin_staleness.compare_tree(repo_root, result.get("install_path"), tracked)
+        result = plugin_staleness.resolve_with_tree(result, tree)
+    status = result.get("status")
+    drift = status in ("DRIFTED", "SHA STALE")
+    credential_files = [rel for rel in (result.get("tree") or {}).get("untracked_in_install", [])
+                        if looks_like_credential(rel)]
+    if credential_files:
+        drift = True
+    superseded = plugin_staleness.superseded_versions(
+        result.get("install_path"), result.get("plugin_name"), result.get("marketplace"))
     return {
         "status": status,
         "drift": drift,
         "plugin_key": result.get("plugin_key"),
         "detail": result,
+        "whole_tree": "tree" in result,
+        "credential_files": credential_files,
+        "superseded": superseded,
+        "prune": plugin_staleness.prune_commands(superseded) if superseded else [],
     }
 
 
@@ -454,13 +515,14 @@ def build_data_section(repo_root, today=None):
     }
 
 
-def run_check(repo_root, installed_manifest, copilot_home=None, codex_home=None, today=None):
+def run_check(repo_root, installed_manifest, copilot_home=None, codex_home=None, today=None,
+              tracked_paths_fn=None):
     """The pure aggregation engine behind the `check` subcommand. Builds all four real sections
     and derives the overall `status`/`exit`. `today` is passed straight through to
     `build_data_section` (see its docstring for why it's an explicit parameter, never mocked
-    global time)."""
+    global time); `tracked_paths_fn` straight through to `build_claude_section`."""
     sections = {
-        "claude": build_claude_section(repo_root, installed_manifest),
+        "claude": build_claude_section(repo_root, installed_manifest, tracked_paths_fn),
         "copilot": build_copilot_section(repo_root, copilot_home),
         "codex": build_codex_section(repo_root, codex_home),
         "data": build_data_section(repo_root, today=today),
@@ -477,17 +539,38 @@ def run_check(repo_root, installed_manifest, copilot_home=None, codex_home=None,
 
 
 def _render_claude_section(section):
+    """Path-free by design, like the rest of `check`'s human card: tree paths are repo-relative,
+    and the cache's other versions appear by version name only."""
     lines = ["## claude", f"status: {section['status']}"]
     detail = section.get("detail") or {}
     if section["status"] == "not installed":
         lines.append(f"not installed -- no entry for `{section.get('plugin_key')}`")
-    elif section["status"] == "DRIFTED":
+        return "\n".join(lines)
+    if section["status"] == "DRIFTED":
         lines.append(f"remedy: {detail.get('remedy')}")
     elif section["status"] == "SHA STALE":
         lines.append(f"note: {detail.get('note')}")
-        lines.append("(flagged as drift by this aggregate check, unlike plugin_staleness alone)")
+        lines.append("(flagged as drift by this aggregate check: git could not list the tracked "
+                     "files, so nothing rules out a difference outside the compared set)")
+    elif detail.get("commit_id_only"):
+        lines.append("in sync -- every tracked file is identical; only the recorded commit id differs")
     else:
         lines.append("in sync")
+    tree = detail.get("tree")
+    if tree:
+        lines.append(
+            f"whole tree: {tree['tracked_total']} tracked files compared -- "
+            f"{len(tree['differs'])} differ, {len(tree['missing_from_install'])} missing from the "
+            f"install, {len(tree['untracked_in_install'])} untracked file(s) copied anyway")
+        lines.extend(f"  differs: {rel}" for rel in tree["differs"])
+        lines.extend(f"  missing: {rel}" for rel in tree["missing_from_install"])
+    for rel in section.get("credential_files") or []:
+        lines.append(f"!! credential-shaped file inside the installed copy: {rel} -- delete it")
+    superseded = section.get("superseded")
+    if superseded:
+        names = ", ".join(Path(p).name for p in superseded)
+        lines.append(f"cache: {len(superseded)} other version(s) beside the active one ({names}); "
+                     "`python3 bin/plugin_staleness.py` prints the removal lines")
     return "\n".join(lines)
 
 
@@ -606,12 +689,205 @@ def render_card(result):
 
 
 def cmd_check(args):
-    result = run_check(args.repo_root, args.installed_manifest, args.copilot_home, args.codex_home)
+    result = run_check(args.repo_root, args.installed_manifest, args.copilot_home, args.codex_home,
+                       tracked_paths_fn=git_tracked_paths)
     if args.json:
         print(json.dumps(result, indent=2))
     else:
         print(render_card(result))
     return result["exit"]
+
+
+# ---- preflight: is the checkout the plugin installs from safe to copy? ----------------------
+#
+# `claude plugin update` copies the install source wholesale and ignores `.gitignore`, and it
+# copies nothing unless the version changed. On 2026-09-24 the source was an agent's working
+# checkout, on a feature branch at the old version, holding an unreviewed module, and a key file
+# sat in it. Each gate below names one of those conditions. Read-only: the marketplace record and
+# `git status` are read, nothing is written, and the update commands are printed only when every
+# gate passes -- never run.
+
+PREFLIGHT_GATES = ("source-found", "git-checkout", "on-branch", "clean", "up-to-date",
+                   "no-credential-files", "version-changed")
+
+#: The most ignored files the credential gate will name-check before it gives up. A scan that
+#: stops short cannot vouch for the rest, so hitting the cap fails the gate.
+PREFLIGHT_SCAN_LIMIT = 20000
+
+POST_RESTART_CHECK = ('python3 "${CLAUDE_PLUGIN_ROOT}/bin/plugin_staleness.py" '
+                      '--loaded "${CLAUDE_PLUGIN_ROOT}"')
+
+
+def parse_status_v2(text):
+    """`git status --porcelain=v2 --branch --ignored -z` output -> branch, upstream, ahead,
+    behind, and the changed / untracked / ignored paths. Pure. `ahead`/`behind` stay None when
+    no upstream is configured."""
+    info = {"branch": None, "upstream": None, "ahead": None, "behind": None,
+            "changed": [], "untracked": [], "ignored": []}
+    records = text.split("\0")
+    i = 0
+    while i < len(records):
+        record = records[i]
+        i += 1
+        if not record:
+            continue
+        if record.startswith("# branch.head "):
+            info["branch"] = record[len("# branch.head "):]
+        elif record.startswith("# branch.upstream "):
+            info["upstream"] = record[len("# branch.upstream "):]
+        elif record.startswith("# branch.ab "):
+            ahead, behind = record[len("# branch.ab "):].split()
+            info["ahead"], info["behind"] = int(ahead), abs(int(behind))
+        elif record.startswith("1 "):
+            info["changed"].append(record.split(" ", 8)[8])
+        elif record.startswith("2 "):
+            info["changed"].append(record.split(" ", 9)[9])
+            i += 1  # a rename's original path follows as its own NUL-separated record
+        elif record.startswith("u "):
+            info["changed"].append(record.split(" ", 10)[10])
+        elif record.startswith("? "):
+            info["untracked"].append(record[2:])
+        elif record.startswith("! "):
+            info["ignored"].append(record[2:])
+    return info
+
+
+def resolve_install_source(known_marketplaces, marketplace):
+    """The directory `marketplace` installs from, per Claude Code's own marketplace record
+    (`installLocation`, else `source.path`) -> str, or None. Read-only; never raises."""
+    try:
+        data = json.loads(Path(known_marketplaces).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    entry = data.get(marketplace) if isinstance(data, dict) else None
+    if not isinstance(entry, dict):
+        return None
+    location = entry.get("installLocation")
+    if not location and isinstance(entry.get("source"), dict):
+        location = entry["source"].get("path")
+    return location or None
+
+
+def _credential_files_in(source, entries):
+    """Name-check `entries` (paths git reports; a trailing `/` is a whole directory, walked) ->
+    (credential-shaped paths, complete). `complete` is False when the scan hit its cap."""
+    root = Path(source)
+    found, seen = [], 0
+    for entry in entries:
+        path = root / entry
+        if entry.endswith("/") and path.is_dir():
+            for dirpath, dirnames, filenames in os.walk(path):
+                dirnames[:] = [d for d in dirnames if d not in ("__pycache__", ".git")]
+                for filename in filenames:
+                    seen += 1
+                    if seen > PREFLIGHT_SCAN_LIMIT:
+                        return sorted(found), False
+                    rel = (Path(dirpath) / filename).relative_to(root).as_posix()
+                    if looks_like_credential(rel):
+                        found.append(rel)
+        else:
+            seen += 1
+            if looks_like_credential(entry):
+                found.append(entry.rstrip("/"))
+    return sorted(found), True
+
+
+def run_preflight(repo_root, installed_manifest, known_marketplaces, source=None,
+                  branch=DEFAULT_INSTALL_BRANCH, git_status_fn=None):
+    """The pure engine behind `preflight`. `git_status_fn(source) -> (rc, text)` is the one way
+    it learns anything from git; `cmd_preflight` passes `git_status_v2`, and without one the
+    git-dependent gates fail rather than pass by default. Returns every gate, what the copy
+    would carry that git ignores, and -- only when every gate passes -- the commands to run."""
+    plugin_staleness = _load_sibling("plugin_staleness")
+    name, marketplace, _repo_version = plugin_staleness.read_plugin_identity(repo_root)
+    if source is None:
+        source = resolve_install_source(known_marketplaces, marketplace)
+    gates = []
+    report = {"source": source, "required_branch": branch, "gates": gates, "branch": None,
+              "copied_anyway": [], "credential_files": [], "commands": []}
+
+    def gate(key, ok, detail):
+        gates.append({"gate": key, "ok": ok, "detail": detail})
+        return ok
+
+    def finish():
+        report["ready"] = bool(gates) and all(g["ok"] for g in gates) and len(gates) == len(PREFLIGHT_GATES)
+        report["exit"] = EXIT_OK if report["ready"] else EXIT_DRIFT
+        if report["ready"]:
+            report["commands"] = [plugin_staleness.update_command(name, marketplace),
+                                  "after the restart, in a Claude Code session: " + POST_RESTART_CHECK]
+        return report
+
+    source_ok = bool(source) and (Path(source) / ".claude-plugin" / "plugin.json").is_file()
+    if not gate("source-found", source_ok,
+                f"installs from {source}" if source_ok else
+                f"no plugin checkout at {source!r}; the marketplace record names none, or it moved"):
+        return finish()
+    rc, text = git_status_fn(source) if git_status_fn else (None, "")
+    if not gate("git-checkout", rc == 0,
+                "git can read it" if rc == 0 else "git could not read the install source"):
+        return finish()
+    info = parse_status_v2(text)
+    report["branch"] = info["branch"]
+    gate("on-branch", info["branch"] == branch,
+         f"on `{info['branch']}`" if info["branch"] == branch else
+         f"on `{info['branch']}`, not `{branch}` -- the update would install that branch's tree")
+    dirty = info["changed"] + info["untracked"]
+    gate("clean", not dirty,
+         "no uncommitted or untracked work" if not dirty else
+         f"{len(dirty)} uncommitted or untracked path(s) would be copied: " + ", ".join(dirty[:8])
+         + (" ..." if len(dirty) > 8 else ""))
+    if info["upstream"] is None:
+        gate("up-to-date", True, "no upstream configured; not compared")
+    else:
+        gate("up-to-date", not info["behind"],
+             f"level with {info['upstream']} as of the last fetch" if not info["behind"] else
+             f"{info['behind']} commit(s) behind {info['upstream']} as of the last fetch -- pull first")
+    report["copied_anyway"] = list(info["ignored"])
+    credential, complete = _credential_files_in(source, info["ignored"] + info["untracked"])
+    report["credential_files"] = credential
+    gate("no-credential-files", complete and not credential,
+         "nothing credential-shaped would be copied" if complete and not credential else
+         (f"credential-shaped file(s) would be copied: {', '.join(credential)}" if credential else
+          f"more than {PREFLIGHT_SCAN_LIMIT} ignored files; the scan cannot vouch for the rest"))
+    _name, _market, source_version = plugin_staleness.read_plugin_identity(source)
+    entry = plugin_staleness.resolve_installed_entry(installed_manifest,
+                                                     plugin_staleness._plugin_key(name, marketplace))
+    installed_version = entry.get("version") if entry else None
+    if entry is None:
+        gate("version-changed", True, f"not installed yet; {source_version} would be a first install")
+    else:
+        gate("version-changed", source_version != installed_version,
+             f"{installed_version} -> {source_version}" if source_version != installed_version else
+             f"both {source_version}: the update would copy nothing -- bump first with "
+             "`python3 bin/release_gate.py bump <next>`, then merge it")
+    return finish()
+
+
+def render_preflight(report):
+    """`preflight`'s human card. Unlike `check`'s, it names the install source by path."""
+    lines = ["# harness-update preflight", "", f"install source: {report['source']}", "gates:"]
+    for g in report["gates"]:
+        lines.append(f"  {'ok  ' if g['ok'] else 'FAIL'}  {g['gate']:<20} {g['detail']}")
+    if report["copied_anyway"]:
+        lines.append("copied anyway (git ignores them; the installer does not): "
+                     + ", ".join(report["copied_anyway"]))
+    lines.append("")
+    if report["ready"]:
+        lines.append("verdict: ready -- run these yourself; this script never does:")
+        lines.extend(f"  {cmd}" for cmd in report["commands"])
+    else:
+        failed = [g["gate"] for g in report["gates"] if not g["ok"]]
+        lines.append("verdict: not ready -- " + ", ".join(failed or ["stopped before every gate ran"]))
+    lines.append(f"exit: {report['exit']}")
+    return "\n".join(lines)
+
+
+def cmd_preflight(args):
+    report = run_preflight(args.repo_root, args.installed_manifest, args.known_marketplaces,
+                           source=args.source, branch=args.branch, git_status_fn=git_status_v2)
+    print(json.dumps(report, indent=2) if args.json else render_preflight(report))
+    return report["exit"]
 
 
 # ---- apply: delegation to existing writers, never a new write path -----------------------------
@@ -1249,6 +1525,34 @@ def build_parser():
     )
     check_parser.add_argument("--json", action="store_true", help="machine-readable output")
     check_parser.set_defaults(func=cmd_check)
+    preflight_parser = subparsers.add_parser(
+        "preflight",
+        help="read-only: is the checkout the Claude plugin installs from safe to copy? Prints "
+             "the update commands only when every gate passes; never runs them",
+    )
+    preflight_parser.add_argument(
+        "--repo-root", default=DEFAULT_REPO_ROOT, help="repo whose plugin identity to use (default: this repo)"
+    )
+    preflight_parser.add_argument(
+        "--installed-manifest",
+        default=DEFAULT_INSTALLED_MANIFEST,
+        help="path to installed_plugins.json (default: ~/.claude/plugins/installed_plugins.json)",
+    )
+    preflight_parser.add_argument(
+        "--known-marketplaces",
+        default=DEFAULT_KNOWN_MARKETPLACES,
+        help="path to known_marketplaces.json (default: ~/.claude/plugins/known_marketplaces.json)",
+    )
+    preflight_parser.add_argument(
+        "--source", default=None,
+        help="the install source to vet (default: the marketplace record's installLocation)",
+    )
+    preflight_parser.add_argument(
+        "--branch", default=DEFAULT_INSTALL_BRANCH,
+        help=f"the branch the install source must be on (default: {DEFAULT_INSTALL_BRANCH})",
+    )
+    preflight_parser.add_argument("--json", action="store_true", help="machine-readable output")
+    preflight_parser.set_defaults(func=cmd_preflight)
 
     apply_parser = subparsers.add_parser(
         "apply",

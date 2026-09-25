@@ -279,8 +279,9 @@ Each lane below describes code paths, not a policy a model is asked to follow:
 
 - **Reversible work runs without asking.** Reading, planning, checking, rehearsing: every
   engine's `demo` / `--demo` / `--dry-run` path is synthetic or spawns nothing and spends
-  nothing; `bin/harness_update.py check`, `bin/exec_policy.py check`, and the two docs
-  generators' `check` compare and write nothing; `bin/runtime_data.py export --to` copies a store
+  nothing; `bin/harness_update.py check` and `preflight`, `bin/plugin_staleness.py` (with
+  `--full` and `--loaded` too), `bin/exec_policy.py check`, and the two docs generators' `check`
+  compare and write nothing; `bin/runtime_data.py export --to` copies a store
   to a directory you name and changes nothing else.
 - **Consequential actions are prepared in full, then gated on one named switch.** The switch is
   a flag in code, never a judgement made at run time. Spending needs `--live` together with an
@@ -290,13 +291,16 @@ Each lane below describes code paths, not a policy a model is asked to follow:
   `--adopt-existing`, which keeps the prior bytes. Restoring a blanket tool grant to a reviewer
   is `--review-permissions bypass`; leaving the OS boundary is `--exec-mode trusted-host`; both
   report themselves as the opt-out they are. Copying a store out of the tree is
-  `bin/runtime_data.py migrate --apply`, and it copies without removing the original.
+  `bin/runtime_data.py migrate --apply`, and it copies without removing the original. The version
+  bump, `bin/release_gate.py bump`, edits only where the version is stated and what reports it,
+  refuses while any uncommitted work is present, and never commits.
 - **Irreversible actions are never taken on the engine's own initiative.** Nothing here
   relocates a store, and the one deletion, `bin/runtime_data.py forget`, is a dry run by
   default, scoped by age, and deletes only with `--apply`. Installation never overwrites what it
   does not own, and rollback takes back only the bytes that run wrote. Target repositories are
   reached through a read-only verb allowlist. `bin/harness_update.py apply` never writes
-  `~/.claude`: the remedy is printed, not executed.
+  `~/.claude`: the remedy is printed, not executed, and so are the removal lines
+  `bin/plugin_staleness.py` prints for older cached plugin versions.
 
 Model dispatch sits in the middle lane by design. A kit run is your explicit action and the
 point of the tool; what the drivers add is that the run's own consequential steps (spend,

@@ -22,11 +22,27 @@ Compared per file: `skills/*/SKILL.md`, `data/pricing*.json`, `CLAUDE.md`, `bin/
 reported `identical` / `DIFFERS` / `missing`. Also reported: the repo's plugin.json "version"
 vs the installed record's "version", and -- only when a `.git` directory is present in the
 repo -- the current commit (read directly from `.git/HEAD` and its ref file or packed-refs;
-no `git` binary is ever invoked) vs the manifest's recorded "gitCommitSha". The installed copy
-itself carries no `.git` directory, so that half of the comparison degrades to "not available"
-rather than crashing whenever it cannot be made.
+no `git` binary is invoked for that) vs the manifest's recorded "gitCommitSha". The installed
+copy itself carries no `.git` directory, so that half of the comparison degrades to "not
+available" rather than crashing whenever it cannot be made.
 
-Strictly read-only: this script never writes anything and never shells out to any real CLI. When
+Three additions answer what the per-glob compare could not (2026-09-25):
+  - `--full` compares EVERY tracked file, not just the globs above, with counts per top-level
+    directory, and lists what the installed copy carries that git does not track -- the
+    installer ignores `.gitignore`, so a local settings file or a byte-compiled cache rides
+    along. With a whole-tree answer in hand a SHA STALE result is settled, not guessed: every
+    tracked file identical is IN SYNC (only the recorded commit id differs), anything else is
+    DRIFTED. The engine functions take the tracked list as an argument and never ask git
+    themselves; the CLI reads it from `--tracked-file`, or else asks `git ls-files` through
+    `bin/release_gate.py`'s read-only git verbs, which run under `bin/proc_runner.py`.
+  - The card lists the other version directories in the plugin's cache folder, which no update
+    ever removes, with one `rm -rf` line each. Those lines are printed for a human to run; this
+    script never runs them.
+  - `--loaded DIR` answers what a restart leaves open: is the session running the copy that is
+    installed? DIR is the directory the session loaded -- `${CLAUDE_PLUGIN_ROOT}` in a skill.
+
+Strictly read-only: this script never writes anything and never runs a harness CLI; the one
+process it can start is that read-only `git ls-files`, and only for `--full`. When
 installed, one of three statuses results -- decided primarily from the file-by-file comparison,
 with version and git HEAD as secondary signals; a file difference always wins and always means
 DRIFTED:
@@ -56,8 +72,11 @@ agent_tracker.py) rather than that stdlib helper.
 """
 
 import argparse
+import importlib.util
 import json
 import os
+import re
+import shlex
 import sys
 from pathlib import Path
 
@@ -70,6 +89,7 @@ DEFAULT_INSTALLED_MANIFEST = os.path.expanduser("~/.claude/plugins/installed_plu
 COMPARE_GLOBS = ("skills/*/SKILL.md", "data/pricing*.json", "CLAUDE.md", "bin/*.py")
 
 EXIT_OK = 0
+EXIT_USAGE = 2
 EXIT_DRIFTED = 3
 
 # The remedy text is pinned verbatim by the task brief. Built from two halves so that the
@@ -218,11 +238,17 @@ def compare_files(repo_dir, install_dir):
     return results
 
 
+def update_command(name, marketplace):
+    """The installer's refresh command line for this plugin, as TEXT for a human to run --
+    shared by the remedy below and by `harness_update.py preflight`. Never executed here."""
+    return (_REMEDY_CLI_A + _REMEDY_CLI_B).format(name=name, marketplace=marketplace)
+
+
 def build_remedy(name, marketplace):
     """The pinned actionable remedy line, filled in from this repo's own identity -- never a
     hardcoded plugin or marketplace name."""
-    core = (_REMEDY_CLI_A + _REMEDY_CLI_B).format(name=name, marketplace=marketplace)
-    return 'stale install — bump "version" in .claude-plugin/plugin.json, then: ' + core
+    return ('stale install — bump "version" in .claude-plugin/plugin.json, then: '
+            + update_command(name, marketplace))
 
 
 def check_staleness(repo_dir, installed_manifest_path):
@@ -302,6 +328,190 @@ def check_staleness(repo_dir, installed_manifest_path):
     return result
 
 
+# ---- the cache's other versions, the whole tree, and what a session loaded ---------------------
+
+#: A version directory under `<cache>/<marketplace>/<plugin>/`: dotted digits, optionally a
+#: pre-release or build suffix. A removal line is printed only for a directory this recognises.
+_VERSION_DIR_RE = re.compile(r"\A\d+(?:\.\d+)*(?:[-+][0-9A-Za-z.-]+)?\Z")
+
+#: Printed when the whole-tree compare settles a SHA STALE result as current.
+COMMIT_ID_ONLY_NOTE = (
+    "every tracked file is identical between this repo and the installed copy; only the git "
+    "commit id recorded at install time differs, which a squash-merge, a rebase, or a commit "
+    "that changed no file can each produce. No action is required."
+)
+
+
+def _version_key(name):
+    return tuple(int(part) for part in re.match(r"\d+(?:\.\d+)*", name).group(0).split("."))
+
+
+def superseded_versions(install_path, plugin_name, marketplace):
+    """Every other version directory beside the active install, oldest first.
+
+    Returns None unless `install_path` has the installer's shape,
+    `<cache>/<marketplace>/<plugin>/<version>` -- so no removal line is ever printed for a
+    layout this cannot vouch for -- and [] when the active version is the only one. Reads
+    directory names only; never deletes."""
+    if not install_path:
+        return None
+    active = Path(install_path)
+    parent = active.parent
+    if not active.name or parent.name != plugin_name or parent.parent.name != marketplace:
+        return None
+    if not parent.is_dir():
+        return None
+    others = [p for p in parent.iterdir()
+              if p.is_dir() and p.name != active.name and _VERSION_DIR_RE.match(p.name)]
+    return [str(p) for p in sorted(others, key=lambda p: _version_key(p.name))]
+
+
+def prune_commands(paths):
+    """One shell-quoted `rm -rf --` line per superseded version directory. PRINTED ONLY: nothing
+    in this module deletes a file or runs these lines."""
+    return [f"rm -rf -- {shlex.quote(p)}" for p in paths]
+
+
+def _walk_files(base_dir):
+    """Every file under base_dir as a POSIX relative path; git's own metadata is skipped."""
+    if not base_dir or not Path(base_dir).is_dir():
+        return set()
+    base = Path(base_dir)
+    rels = set()
+    for dirpath, dirnames, filenames in os.walk(base):
+        dirnames[:] = [d for d in dirnames if d != ".git"]
+        for filename in filenames:
+            rels.add((Path(dirpath) / filename).relative_to(base).as_posix())
+    return rels
+
+
+def _top_level(rel):
+    return rel.split("/", 1)[0] + "/" if "/" in rel else "(top level)"
+
+
+def compare_tree(repo_dir, install_dir, tracked):
+    """Compare EVERY tracked file, and list what the installed copy carries that git does not.
+
+    `tracked` is the repo's tracked paths (repo-relative, POSIX), handed in by the caller -- this
+    function never asks git. A tracked path absent from the working tree is reported under
+    `missing_in_checkout` rather than as drift, because the installer copies the working tree,
+    not the index. `by_dir` counts per top-level directory."""
+    tracked = sorted(set(tracked))
+    install_files = _walk_files(install_dir)
+    repo = Path(repo_dir)
+    install = Path(install_dir) if install_dir else None
+    identical, differs, missing_install, missing_checkout = 0, [], [], []
+    by_dir = {}
+
+    def count(rel, key):
+        bucket = by_dir.setdefault(_top_level(rel),
+                                   {"identical": 0, "differs": 0, "missing": 0, "untracked": 0})
+        bucket[key] += 1
+
+    for rel in tracked:
+        source = repo / rel
+        if not source.is_file():
+            missing_checkout.append(rel)
+            continue
+        if rel not in install_files:
+            missing_install.append(rel)
+            count(rel, "missing")
+            continue
+        try:
+            same = source.read_bytes() == (install / rel).read_bytes()
+        except OSError:
+            same = False
+        if same:
+            identical += 1
+            count(rel, "identical")
+        else:
+            differs.append(rel)
+            count(rel, "differs")
+    untracked = sorted(install_files - set(tracked))
+    for rel in untracked:
+        count(rel, "untracked")
+    return {
+        "tracked_total": len(tracked),
+        "identical": identical,
+        "differs": differs,
+        "missing_from_install": missing_install,
+        "missing_in_checkout": missing_checkout,
+        "untracked_in_install": untracked,
+        "by_dir": dict(sorted(by_dir.items())),
+    }
+
+
+def resolve_with_tree(result, tree):
+    """Settle a check_staleness() result with a compare_tree() answer -> a new result dict.
+
+    The one place the SHA STALE question is decided. The per-glob compare cannot see the rest
+    of the tree, so on its own SHA STALE is a guess; with the whole tree compared, any tracked
+    file that differs or is missing from the install is DRIFTED, and a tree with none is IN
+    SYNC with `commit_id_only` set when the recorded commit is all that differs."""
+    if not result.get("installed"):
+        return dict(result)
+    settled = dict(result)
+    settled["tree"] = tree
+    content_differs = bool(tree["differs"] or tree["missing_from_install"])
+    settled.pop("remedy", None)
+    settled.pop("note", None)
+    if content_differs or result["files_diff_count"] or not result["version_match"]:
+        settled["status"] = "DRIFTED"
+        settled["remedy"] = build_remedy(result["plugin_name"], result["marketplace"])
+    else:
+        settled["status"] = "IN SYNC"
+        if result.get("git_comparable") and not result.get("git_match"):
+            settled["commit_id_only"] = True
+            settled["note"] = COMMIT_ID_ONLY_NOTE
+    settled["drifted"] = settled["status"] == "DRIFTED"
+    settled["exit_code"] = EXIT_DRIFTED if settled["drifted"] else EXIT_OK
+    return settled
+
+
+LOADED_CURRENT = "current"
+LOADED_RESTART = "restart needed"
+LOADED_ELSEWHERE = "not the installed copy"
+
+
+def check_loaded(plugin_root, installed_manifest_path):
+    """After a restart: is the session running the copy that is installed?
+
+    `plugin_root` is the directory the session loaded -- `${CLAUDE_PLUGIN_ROOT}` inside a skill.
+    Three answers: `current` (it IS the recorded install path, at the recorded version);
+    `restart needed` (it is another version directory in the same cache folder -- the session
+    predates the update); `not the installed copy` (it lives somewhere else, as a
+    `--plugin-dir` session does, so there is nothing a restart would change). Read-only."""
+    root = Path(plugin_root)
+    base = {"loaded_root": str(root), "installed_manifest": str(installed_manifest_path)}
+    try:
+        name, marketplace, loaded_version = read_plugin_identity(root)
+    except (OSError, ValueError, KeyError):
+        return {**base, "status": "not a plugin root", "exit_code": EXIT_DRIFTED,
+                "note": f"{root} has no readable .claude-plugin/plugin.json and marketplace.json"}
+    key = _plugin_key(name, marketplace)
+    entry = resolve_installed_entry(installed_manifest_path, key)
+    base.update({"plugin_key": key, "loaded_version": loaded_version})
+    if entry is None:
+        return {**base, "status": "not installed", "exit_code": EXIT_OK,
+                "note": f"no install record for {key}; nothing to compare the session against"}
+    install_path = entry.get("installPath") or ""
+    installed_version = entry.get("version")
+    base.update({"install_path": install_path, "installed_version": installed_version})
+    real_root = os.path.realpath(root)
+    real_install = os.path.realpath(install_path) if install_path else ""
+    if real_root == real_install and loaded_version == installed_version:
+        return {**base, "status": LOADED_CURRENT, "exit_code": EXIT_OK,
+                "note": f"this session runs the installed copy, {installed_version}"}
+    if real_install and Path(real_root).parent == Path(real_install).parent:
+        return {**base, "status": LOADED_RESTART, "exit_code": EXIT_DRIFTED,
+                "note": (f"this session loaded {loaded_version} from {root}; the installed copy is "
+                         f"{installed_version} at {install_path}. Restart Claude Code, then check "
+                         "again.")}
+    return {**base, "status": LOADED_ELSEWHERE, "exit_code": EXIT_OK,
+            "note": (f"this session loaded the plugin from {root}, not from the installed cache "
+                     "(a --plugin-dir session); a restart would not change which copy it runs")}
+
+
 def render_markdown(result):
     """Render a check_staleness() result as a markdown card."""
     lines = [f"## plugin staleness — {result['plugin_key']}", ""]
@@ -338,13 +548,98 @@ def render_markdown(result):
             lines.append(f"  {f['status']:<9} {f['path']}")
     else:
         lines.append("  (none of the tracked patterns matched on either side)")
+    if result.get("tree"):
+        lines.append("")
+        lines.extend(render_tree(result["tree"]))
+    if "superseded" in result:
+        lines.append("")
+        lines.extend(render_superseded(result["superseded"]))
     lines.append("")
     lines.append(f"status: {result['status']}")
     if result["status"] == "DRIFTED":
         lines.append(f"remedy: {result['remedy']}")
-    elif result["status"] == "SHA STALE":
+    elif result.get("note"):
         lines.append(f"note: {result['note']}")
     return "\n".join(lines)
+
+
+def _group_by_top(paths):
+    groups = {}
+    for rel in paths:
+        groups.setdefault(_top_level(rel), []).append(rel)
+    return groups
+
+
+def render_tree(tree):
+    """The whole-tree block of the card: counts, then every differing or missing path, then what
+    the installed copy carries that git does not track, grouped by top-level directory."""
+    lines = [
+        f"whole tree: {tree['tracked_total']} tracked files — {tree['identical']} identical, "
+        f"{len(tree['differs'])} differ, {len(tree['missing_from_install'])} missing from the install"
+    ]
+    lines.append("  by directory:")
+    for top, counts in tree["by_dir"].items():
+        parts = [f"{n} {k}" for k, n in counts.items() if n]
+        lines.append(f"    {top:<24} " + ", ".join(parts))
+    for label, key in (("differs", "differs"), ("missing from the install", "missing_from_install"),
+                       ("tracked but absent from this checkout", "missing_in_checkout")):
+        if tree[key]:
+            lines.append(f"  {label}:")
+            lines.extend(f"    {rel}" for rel in tree[key])
+    untracked = tree["untracked_in_install"]
+    if untracked:
+        lines.append(f"  not tracked by git, copied anyway (the installer ignores .gitignore): "
+                     f"{len(untracked)} file(s)")
+        for paths in _group_by_top(untracked).values():
+            if len(paths) == 1:
+                lines.append(f"    {paths[0]}")
+            else:
+                common = os.path.commonpath([os.path.dirname(p) or "." for p in paths])
+                lines.append(f"    {len(paths)} files under {common}/")
+    return lines
+
+
+def render_superseded(superseded):
+    """The cache block: other version directories and their removal lines, printed only."""
+    if superseded is None:
+        return ["cache: the install path does not have the installer's layout; "
+                "no removal lines are printed"]
+    if not superseded:
+        return ["cache: only the active version is present"]
+    lines = [f"cache: {len(superseded)} other version director{'y' if len(superseded) == 1 else 'ies'} "
+             "beside the active one; no update removes them. To remove them (printed, never run):"]
+    lines.extend(f"  {cmd}" for cmd in prune_commands(superseded))
+    return lines
+
+
+def render_loaded(result):
+    """The --loaded answer as a short card."""
+    lines = [f"## loaded plugin — {result.get('plugin_key', result['loaded_root'])}", ""]
+    if result.get("loaded_version"):
+        lines.append(f"session loaded: `{result['loaded_version']}` from {result['loaded_root']}")
+    if result.get("install_path"):
+        lines.append(f"installed:      `{result['installed_version']}` at {result['install_path']}")
+    lines.append(f"status: {result['status']}")
+    lines.append(f"note: {result['note']}")
+    return "\n".join(lines)
+
+
+def _read_tracked_file(path):
+    """A tracked-path list from a file: NUL- or newline-separated, as `git ls-files [-z]` prints."""
+    text = Path(path).read_text()
+    parts = text.split("\0") if "\0" in text else text.splitlines()
+    return [p for p in (s.strip() for s in parts) if p]
+
+
+def _git_tracked_paths(repo_dir):
+    """The tracked list from git, via `bin/release_gate.py`'s read-only `git ls-files` (run under
+    `bin/proc_runner.py`); None when git cannot answer. Only main() calls this -- the engine
+    functions above always take the list as an argument."""
+    spec = importlib.util.spec_from_file_location(
+        "release_gate_for_staleness", Path(__file__).resolve().parent / "release_gate.py")
+    release_gate = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(release_gate)
+    return release_gate.tracked_paths(repo_dir)
 
 
 def main(argv=None):
@@ -363,9 +658,41 @@ def main(argv=None):
         help="path to installed_plugins.json (default: ~/.claude/plugins/installed_plugins.json)",
     )
     parser.add_argument("--json", action="store_true", help="machine-readable output")
+    parser.add_argument(
+        "--full", action="store_true",
+        help="compare every tracked file, not just the core globs, and list what the installed "
+             "copy carries that git does not track",
+    )
+    parser.add_argument(
+        "--tracked-file", metavar="PATH",
+        help="with --full: read the tracked-path list from PATH (`git ls-files -z` output) "
+             "instead of asking git",
+    )
+    parser.add_argument(
+        "--loaded", metavar="DIR",
+        help="after a restart: is the session running the installed copy? DIR is the directory "
+             "the session loaded -- ${CLAUDE_PLUGIN_ROOT} inside a skill",
+    )
     args = parser.parse_args(argv)
 
+    if args.loaded:
+        loaded = check_loaded(args.loaded, args.installed_manifest)
+        print(json.dumps(loaded, indent=2) if args.json else render_loaded(loaded))
+        return loaded["exit_code"]
+
     result = check_staleness(args.repo, args.installed_manifest)
+    if result["installed"]:
+        result["superseded"] = superseded_versions(
+            result.get("install_path"), result["plugin_name"], result["marketplace"])
+        if args.full:
+            tracked = (_read_tracked_file(args.tracked_file) if args.tracked_file
+                       else _git_tracked_paths(args.repo))
+            if tracked is None:
+                print("--full needs this repo's tracked-file list and git could not provide it; "
+                      "pass --tracked-file", file=sys.stderr)
+                return EXIT_USAGE
+            result = resolve_with_tree(result, compare_tree(args.repo, result.get("install_path"),
+                                                            tracked))
 
     if args.json:
         print(json.dumps(result, indent=2))

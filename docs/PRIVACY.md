@@ -155,41 +155,45 @@ Standing rules this creates:
 - **Migrate legacy in-tree stores out** (`python3 bin/runtime_data.py where` shows which
   still resolve inside the tree); once none does, the prune below finds nothing to delete.
 
-### The bump-and-prune runbook (validated 2026-07-26 on the 0.4.0 → 0.5.0 bump)
+### The bump-and-prune runbook (validated 2026-07-26 on the 0.4.0 → 0.5.0 bump; tooled 2026-09-25)
 
 The prune belongs **immediately after** the reinstall, never before — the reinstall is what
-recreates the exposure. Run these in order:
+recreates the exposure. Since 2026-09-25 each manual step below is a command; run them in order:
 
 ```bash
-# 1. bump the version (the ONLY place it lives) and commit it
-#    .claude-plugin/plugin.json  ->  "version": "<new>"
+# 1. bump the version where it is stated and rebuild what reports it. Refuses on uncommitted
+#    work and never commits -- review and merge the bump like any other change.
+python3 bin/release_gate.py bump <new>
 
-# 2. reinstall. `install` is a no-op when already installed at user scope —
-#    `update` is what actually re-copies the tree, and ONLY when the version differs:
-#    verified 2026-09-16, with the repository and the cache both reading 0.6.0 and six
-#    commits of content between them, `update` answered "already at the latest version
-#    (0.6.0)" and copied nothing. Step 1 is not bookkeeping; it is the lever. There is no
-#    content-addressed refresh, so a cache can be arbitrarily stale at a current version.
-claude plugin update polytropos@polytropos-local
+# 2. vet the checkout the plugin installs from: on main, clean, level with its upstream,
+#    nothing credential-shaped among the files git ignores, and the version actually changed.
+#    It prints the refresh commands only when every gate passes, and never runs them.
+python3 bin/harness_update.py preflight
 
-# 3. LOOK at what the copy pulled in, before deleting (this is the exposure)
+# 3. refresh. `install` is a no-op when already installed at user scope -- `update` is what
+#    actually re-copies the tree, and ONLY when the version differs: verified 2026-09-16, with
+#    the repository and the cache both reading 0.6.0 and six commits of content between them,
+#    `update` answered "already at the latest version (0.6.0)" and copied nothing. Step 1 is not
+#    bookkeeping; it is the lever. There is no content-addressed refresh.
+claude plugin marketplace update polytropos-local && claude plugin update polytropos@polytropos-local
+
+# 4. LOOK at the copy before deleting anything: every tracked file compared, and everything the
+#    copy carried that git does not track (this is the exposure), grouped by directory
+python3 bin/plugin_staleness.py --full
+
+# 5. prune: any legacy store directory step 4 listed inside the fresh copy, then every other
+#    version directory -- step 4's card prints one `rm -rf` line per superseded version
 C=~/.claude/plugins/cache/polytropos-local/polytropos
-for d in journal telemetry memory prefs trends benchruns attempts evals training; do
-  test -e "$C/<new>/$d" && echo "!! $d ($(find "$C/<new>/$d" -type f | wc -l) files)"
-done
-
-# 4. prune the fresh copy AND the superseded version directory
 rm -rf "$C/<new>"/{journal,telemetry,memory,prefs,trends,benchruns,attempts,evals,training} "$C/<new>"/value-report*.html
-rm -rf "$C/<old>"
 
-# 5. verify BOTH properties — clean, and actually current
-find "$C" \( -path '*/memory/*' -o -path '*/telemetry/*' -o -path '*/journal/*' -o -path '*/benchruns/*' -o -path '*/prefs/*' -o -path '*/trends/*' -o -path '*/attempts/*' -o -path '*/evals/*' -o -path '*/training/*' \) -type f
-ls "$C"                                    # only the new version should remain
+# 6. restart Claude Code; then, inside the new session, the update skill confirms the session
+#    runs the new copy (${CLAUDE_PLUGIN_ROOT} exists only in plugin context, not a plain shell):
+#    python3 "${CLAUDE_PLUGIN_ROOT}/bin/plugin_staleness.py" --loaded "${CLAUDE_PLUGIN_ROOT}"
 ```
 
 ### The fixed list is not exhaustive (2026-09-21)
 
-Step 4's list names what has TURNED OUT to be in the cache before, not a closed set. The plugin
+Step 5's list names what has TURNED OUT to be in the cache before, not a closed set. The plugin
 copy ignores `.gitignore` entirely: **whatever sits in the checkout and is not a tracked file
 gets copied**, regardless of what generated it.
 
@@ -221,7 +225,11 @@ C=~/.claude/plugins/cache/polytropos-local/polytropos/<new>
 comm -23 /tmp/cache-files.txt /tmp/tracked-files.txt   # in the cache, not tracked by git
 ```
 
-None of these extra categories get an `rm` added to the fixed list in step 4 — decide per item.
+Both checks are commands now (2026-09-25): `harness_update.py preflight` refuses a copy that
+would carry a credential-shaped file and lists what else it would carry, and
+`plugin_staleness.py --full` lists what the copy did carry that git does not track.
+
+None of these extra categories get an `rm` added to the fixed list in step 5 — decide per item.
 `.claude/settings.local.json` is the installer's own local config, not personal-data store
 output; a stray `.codex/agents/*.toml`, a leftover build directory, or compiled bytecode is a
 different judgment call each time a bump surfaces one.
@@ -230,7 +238,7 @@ Notes earned on the 0.5.0 run:
 
 - **`install` does not refresh an existing install** — it reports "already installed" and
   changes nothing. Use `update`, or the bump silently never lands.
-- **Step 5's `find` produces false positives**: `skills/journal/SKILL.md` and its Codex and
+- **A `find` over the cache for store names produces false positives**: `skills/journal/SKILL.md` and its Codex and
   Copilot twins match a `*/journal/*` glob and are legitimate tracked plugin files. Confirm any
   hit with `git ls-files --error-unmatch <path>` before treating it as personal data — the same
   root-anchoring distinction the repo's own `/journal/` gitignore rule exists to make.
