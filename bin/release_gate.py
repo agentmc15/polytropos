@@ -38,6 +38,7 @@ import ast
 import importlib.util
 import io
 import json
+import os
 import re
 import sys
 import unittest
@@ -1292,11 +1293,16 @@ def _read_json(path):
 
 
 def git_read(repo_root, verb, *args):
-    """A read-only git verb through the process runner -> (rc, stdout). Refuses any other."""
+    """A read-only git verb through the process runner -> (rc, stdout). Refuses any other.
+
+    `--no-optional-locks` keeps `status` from refreshing the index file as a side effect, which
+    it otherwise does, taking `index.lock` -- the one way a "read" could collide with another
+    process, such as an agent working in the same checkout."""
     if verb not in GIT_READ_VERBS:
         raise ValueError(f"release_gate runs only {GIT_READ_VERBS}; refused git {verb!r}")
     pr = _sibling("proc_runner")
-    result = pr.run(["git", verb, *args], cwd=str(repo_root), timeout=60, name=f"git {verb}")
+    result = pr.run(["git", "--no-optional-locks", verb, *args], cwd=str(repo_root), timeout=60,
+                    name=f"git {verb}")
     return result.get("rc"), result.get("stdout") or ""
 
 
@@ -2476,6 +2482,90 @@ def build_release_doc(repo_root=REPO_ROOT):
     return True
 
 
+# ---- bump: the version, everywhere it is stated, in one command ------------------------------
+#
+# `claude plugin update` copies nothing unless the version string changed, so every refresh of
+# the install starts with a bump. Done by hand, a bump is three files and two generators, and a
+# checkout with unrelated work in it turns "the bump commit" into something else. This edits the
+# version where it is stated, rebuilds what reports it, and refuses rather than guess. It never
+# commits: the bump is reviewed and merged like any other change.
+
+EXIT_REFUSED = 2
+
+#: Where the plugin version is stated besides `.claude-plugin/plugin.json`, as a template over
+#: the version. Each present file must contain it exactly once or the bump refuses. The
+#: generated block of docs/RELEASE.md is rebuilt, never edited, so it is not listed.
+VERSION_MIRRORS = (
+    ("docs/REFERENCE.md", "| Plugin version | {version} | `.claude-plugin/plugin.json` |"),
+)
+
+PLUGIN_MANIFEST = ".claude-plugin/plugin.json"
+_SEMVER_RE = re.compile(r"\A(\d+)\.(\d+)\.(\d+)\Z")
+
+
+class BumpRefused(ValueError):
+    """A bump this gate will not make, with the reason as the message."""
+
+
+def plan_bump(repo_root, new_version, git_read_fn=None):
+    """Check a bump is allowed -> {"old", "new", "edits": [(rel, before, after), ...]}. Reads only.
+
+    Refuses: a version that is not MAJOR.MINOR.PATCH or is not greater than the current one; a
+    checkout git cannot read, or one with any uncommitted or untracked path (the bump must be
+    its own change); and a stated version not found exactly once. `git_read_fn(verb, *args) ->
+    (rc, stdout)` defaults to this gate's own read-only `git_read`."""
+    root = Path(repo_root)
+    wanted = _SEMVER_RE.match(new_version or "")
+    if not wanted:
+        raise BumpRefused(f"{new_version!r} is not a MAJOR.MINOR.PATCH version")
+    manifest = (root / PLUGIN_MANIFEST).read_text(encoding="utf-8")
+    old = json.loads(manifest)["version"]
+    current = _SEMVER_RE.match(old)
+    if not current:
+        raise BumpRefused(f"the current version {old!r} is not MAJOR.MINOR.PATCH; bump it by hand")
+    if tuple(map(int, wanted.groups())) <= tuple(map(int, current.groups())):
+        raise BumpRefused(f"{new_version} is not greater than the current version, {old}")
+    git = git_read_fn or (lambda verb, *args: git_read(root, verb, *args))
+    rc, status = git("status", "--porcelain")
+    if rc != 0:
+        raise BumpRefused("git could not read this checkout; bump from a git checkout")
+    dirty = [line for line in status.splitlines() if line.strip()]
+    if dirty:
+        raise BumpRefused(f"{len(dirty)} uncommitted or untracked path(s) -- commit or clear them "
+                          "first, so the bump is its own change")
+    stated = f'"version": "{old}"'
+    if manifest.count(stated) != 1:
+        raise BumpRefused(f"{PLUGIN_MANIFEST} does not contain {stated} exactly once")
+    edits = [(PLUGIN_MANIFEST, stated, f'"version": "{new_version}"')]
+    for rel, template in VERSION_MIRRORS:
+        path = root / rel
+        if not path.is_file():
+            continue
+        before = template.format(version=old)
+        if path.read_text(encoding="utf-8").count(before) != 1:
+            raise BumpRefused(f"{rel} does not state the current version as {before!r} exactly once")
+        edits.append((rel, before, template.format(version=new_version)))
+    return {"old": old, "new": new_version, "edits": edits}
+
+
+def apply_bump(repo_root, plan, rebuild=True):
+    """Make the planned edits through `bin/safe_paths.py`, keeping each file's mode, then rebuild
+    what reports the version: this gate's block of docs/RELEASE.md, then the docs site. Returns
+    the edited paths. Never commits."""
+    root = Path(repo_root)
+    safe_paths = _sibling("safe_paths")
+    for rel, before, after in plan["edits"]:
+        path = root / rel
+        body = path.read_text(encoding="utf-8")
+        mode = os.stat(path).st_mode & 0o777
+        safe_paths.confined_replace(str(root), rel, body.replace(before, after, 1),
+                                    what="version bump", mode=mode)
+    if rebuild:
+        build_release_doc(root)
+        _sibling("docs_build").build_site(root)
+    return [rel for rel, _before, _after in plan["edits"]]
+
+
 def check_release_doc(repo_root=REPO_ROOT):
     """-> a finding string, or None when the block is current."""
     path = Path(repo_root) / RELEASE_DOC
@@ -2610,7 +2700,8 @@ def build_parser():
         description="The release matrix, the shared-contract evidence table, the packaging "
                     "review, and the release checklist, computed from the records that carry "
                     "them. Spawns nothing but read-only git; edits nothing but the marked block "
-                    "of docs/RELEASE.md on `build`.",
+                    "of docs/RELEASE.md on `build`, and on `bump` the stated plugin version plus "
+                    "what reports it.",
     )
     sub = p.add_subparsers(dest="cmd", required=True)
     m = sub.add_parser("matrix", help="operational support per harness, from the registry")
@@ -2633,14 +2724,43 @@ def build_parser():
     ck.add_argument("--run", action="store_true", help="also run every mapped test in-process")
     ck.add_argument("--json", action="store_true")
     sub.add_parser("build", help="rewrite the marked block of docs/RELEASE.md")
-    for node in (m, c, d, pk, rv, ck):
+    bp = sub.add_parser("bump", help="set the plugin version everywhere it is stated and rebuild "
+                                     "what reports it; refuses on uncommitted work; never commits")
+    bp.add_argument("version", help="the new MAJOR.MINOR.PATCH version, greater than the current one")
+    bp.add_argument("--dry-run", action="store_true", help="show the planned edits and write nothing")
+    for node in (m, c, d, pk, rv, ck, bp):
         node.add_argument("--repo-root", default=str(REPO_ROOT))
     return p
+
+
+def cmd_bump(root, version, dry_run=False):
+    """`bump`: plan, then (unless dry-run) apply and report what changed. Exit 2 on a refusal."""
+    try:
+        plan = plan_bump(root, version)
+    except BumpRefused as exc:
+        print(f"bump refused: {exc}", file=sys.stderr)
+        return EXIT_REFUSED
+    print(f"bump {plan['old']} -> {plan['new']}")
+    for rel, before, after in plan["edits"]:
+        print(f"  {rel}: {before!r} -> {after!r}")
+    if dry_run:
+        print("dry run: nothing written")
+        return EXIT_OK
+    apply_bump(root, plan)
+    rc, status = git_read(root, "status", "--porcelain")
+    changed = sorted(line[3:] for line in status.splitlines() if line.strip()) if rc == 0 else []
+    print("changed:")
+    print("\n".join(f"  {rel}" for rel in changed) or "  (git could not list the changes)")
+    print("next: run the suite and `release_gate.py check`, commit this as its own change and merge "
+          "it, then run `harness_update.py preflight` before refreshing the install")
+    return EXIT_OK
 
 
 def main(argv=None):
     args = build_parser().parse_args(argv)
     root = Path(getattr(args, "repo_root", str(REPO_ROOT)))
+    if args.cmd == "bump":
+        return cmd_bump(root, args.version, dry_run=args.dry_run)
     if args.cmd == "matrix":
         matrix = harness_matrix(root)
         if args.json:
