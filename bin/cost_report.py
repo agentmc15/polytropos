@@ -65,12 +65,18 @@ def rates_for(key, when, pricing):
     return inp, outp
 
 
+def cache_read_multiplier_for(key, pricing):
+    """Return a model-specific cache-read multiplier, or the legacy global fallback."""
+    model = pricing["models"][key]
+    return model.get("cache_read_multiplier", pricing["cache_read_multiplier"])
+
+
 def price(key, u, when, pricing):
     inp, outp = rates_for(key, when, pricing)
     return (
         u["input"] * inp
         + u["output"] * outp
-        + u["cache_read"] * inp * pricing["cache_read_multiplier"]
+        + u["cache_read"] * inp * cache_read_multiplier_for(key, pricing)
         + u["cache_write"] * inp * pricing["cache_write_multiplier_5m"]
     ) / 1e6
 

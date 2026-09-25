@@ -91,73 +91,63 @@ allotment GitHub can rebalance: `pro` ($10/mo → 1,500 AIC), `pro-plus` ($39/mo
 has a small variable allowance; `business` and `enterprise` pool AIC at the org level instead of a
 fixed per-seat number. (Recall 1 AIC = `usd_per_credit`, i.e. one cent.)
 
-The table below is a **snapshot of `data/pricing.copilot.json`, cached `2026-09-05`** — treat it
+The table below is a **snapshot of `data/pricing.copilot.json`, cached `2026-09-24`** — treat it
 as a labeled point-in-time reference, not a live source; the file itself is authoritative. Prices
 are USD per million tokens (MTok).
 
-**26 rows, every cell re-derived from the file at `cached_date` 2026-09-05:** the GPT-5.6 Sol,
-Terra, and Luna rows use the values in a user-supplied Codex pricing screenshot. That screenshot
-records provenance for the supplied values; it is not independent validation against GitHub's
-Copilot pricing page.
-**Claude Fable 5 remains the sole `frontier` tier.** Four models
-GitHub prices but the picker did not list as of the 2026-07-01 check (Gemini 2.5 Pro, Gemini 3
-Flash, GPT-5.4 nano, Raptor mini) stay intentionally excluded, as does a plain `Claude Sonnet 4`
-the doc prices — picker presence unverified for all five.
+**29 rows, every cell refreshed from GitHub's models-and-pricing page at `cached_date`
+2026-09-24.** The account's Copilot CLI `/model` picker also confirmed the displayed names of
+Claude Fable 5.1, Claude Opus 5.5, GPT-6 Astra/Sol/Luna, Gemini 3.8 Flash,
+MAI-Code-1.1-Flash, Grok 4.7, and Kimi K3 without sending a model prompt.
 
-> **Read the `picker-unconfirmed` flag literally.** `claude-opus-5` and `gemini-3.6-flash` are
-> PRICE-confirmed from the doc but were NOT checked against Copilot CLI's `/model` picker, which
-> is this roster's actual membership rule. If `/model` does not offer them, delete them from
-> `data/pricing.copilot.json`.
+> **The new slugs are confirmed.** Zero-prompt CLI checks opened `gpt-6-astra`, `gpt-6-sol`,
+> `gpt-6-luna`, `claude-fable-5.1`, `claude-opus-5.5`, `gemini-3.8-flash`,
+> `mai-code-1.1-flash`, `grok-4.7`, and `kimi-k3` with their expected display names and used 0
+> AIC. The file deliberately puts GPT-6 Astra, GPT-6 Sol, Gemini 3.8 Flash, and GPT-6 Luna first
+> in their tiers because file order supplies the no-preference defaults.
 >
-> **`price-unverified` is the mirror image of that.** `grok-4.6` and `gemini-3.7-flash` were added
-> to the file for the `goliath` skill from the user's own confirmed `/model` availability, so
-> membership is the *confirmed* half for these two; each row's own `notes` field says its pricing
-> still needs re-verification against the `update_from` source, so the rates are the unconfirmed
-> half. Neither row is named in `model_ids_note` or `pricing_refresh_note` — their provenance
-> lives only in their own `notes`, and that is also the only place to correct it.
+> **Fable is opt-in.** GitHub says Fable 5 and 5.1 retain prompts and outputs by default for
+> safety classifiers, subject to its documented ZDR/EFS conditions. Both remain selectable, but
+> GPT-6 Astra is the default frontier lane. Never infer an account's Fable entitlement from this
+> registry; `/model` and organization policy remain authoritative.
 
 | Tier | Model | Vendor | $ in | $ cached in | $ out | flags |
 |---|---|---|---:|---:|---:|---|
-| frontier | `claude-fable-5` | anthropic | $10.00 | $1.00 | $50.00 | — |
+| frontier | `gpt-6-astra` | openai | $10.00 | $1.00 | $50.00 | long-ctx >272K; default |
+| frontier | `claude-fable-5.1` | anthropic | $10.00 | $0.25 | $50.00 | retention caveat |
+| frontier | `claude-fable-5` | anthropic | $10.00 | $1.00 | $50.00 | retention caveat |
+| strong | `gpt-6-sol` | openai | $2.00 | $0.20 | $10.00 | long-ctx >272K; default |
+| strong | `claude-opus-5.5` | anthropic | $4.00 | $0.20 | $20.00 | — |
+| strong | `kimi-k3` | moonshot | $3.00 | $0.30 | $15.00 | — |
 | strong | `claude-opus-4.8-fast` | anthropic | $10.00 | $1.00 | $50.00 | — |
-| strong | `claude-opus-4.5` | anthropic | $5.00 | $0.50 | $25.00 | — |
-| strong | `claude-opus-4.6` | anthropic | $5.00 | $0.50 | $25.00 | — |
-| strong | `claude-opus-4.7` | anthropic | $5.00 | $0.50 | $25.00 | — |
+| strong | `claude-opus-4.7` | anthropic | $5.00 | $0.50 | $25.00 | retires 2026-10-02 |
 | strong | `claude-opus-4.8` | anthropic | $5.00 | $0.50 | $25.00 | — |
-| strong | `claude-opus-5` | anthropic | $5.00 | $0.50 | $25.00 | **picker-unconfirmed** |
+| strong | `claude-opus-5` | anthropic | $5.00 | $0.50 | $25.00 | — |
 | strong | `gpt-5.5` | openai | $5.00 | $0.50 | $30.00 | long-ctx >272K |
 | strong | `gpt-5.6-sol` | openai | $4.00 | $0.40 | $20.00 | long-ctx >272K |
-| strong | `gemini-3.1-pro` | google | $2.00 | $0.20 | $12.00 | long-ctx >200K |
-| strong | `grok-4.6` | xai | $2.00 | $0.20 | $6.00 | **price-unverified** |
+| strong | `grok-4.6` | xai | $2.00 | $0.50 | $6.00 | long-ctx >200K |
 | strong | `gpt-5.3-codex` | openai | $1.75 | $0.175 | $14.00 | — |
-| mid | `claude-sonnet-4.5` | anthropic | $3.00 | $0.30 | $15.00 | — |
-| mid | `claude-sonnet-4.6` | anthropic | $3.00 | $0.30 | $15.00 | — |
+| mid | `gemini-3.8-flash` | google | $0.75 | $0.075 | $3.75 | promo→2026-12-31; default |
+| mid | `grok-4.7` | xai | $2.00 | $0.50 | $6.00 | long-ctx >200K |
 | mid | `gpt-5.4` | openai | $2.50 | $0.25 | $15.00 | long-ctx >272K |
 | mid | `gpt-5.6-terra` | openai | $2.00 | $0.20 | $12.00 | long-ctx >272K |
-| mid | `claude-sonnet-5` | anthropic | $2.00 | $0.20 | $10.00 | promo→2026-08-31 |
-| mid | `gemini-3.5-flash` | google | $1.50 | $0.15 | $9.00 | — |
-| mid | `gemini-3.6-flash` | google | $1.50 | $0.15 | $7.50 | **picker-unconfirmed** |
-| mid | `kimi-k2.7-code` | moonshot | $0.95 | $0.19 | $4.00 | — |
-| mid | `gemini-3.7-flash` | google | $0.75 | $0.075 | $3.75 | **price-unverified** |
+| mid | `claude-sonnet-5` | anthropic | $2.00 | $0.20 | $10.00 | — |
+| mid | `gemini-3.5-flash` | google | $1.50 | $0.15 | $9.00 | retires 2026-10-02 |
+| mid | `gemini-3.6-flash` | google | $0.75 | $0.075 | $3.75 | promo→2026-12-31; retires 2026-10-02 |
+| mid | `kimi-k2.7-code` | moonshot | $0.95 | $0.19 | $4.00 | retires 2026-10-02 |
+| mid | `gemini-3.7-flash` | google | $0.75 | $0.075 | $3.75 | promo→2026-12-31 |
+| cheap | `gpt-6-luna` | openai | $0.10 | $0.01 | $0.50 | long-ctx >272K; default |
+| cheap | `mai-code-1.1-flash` | microsoft | $0.20 | $0.02 | $1.20 | — |
 | cheap | `claude-haiku-4.5` | anthropic | $1.00 | $0.10 | $5.00 | — |
 | cheap | `gpt-5.4-mini` | openai | $0.75 | $0.075 | $4.50 | — |
-| cheap | `mai-code-1-flash` | microsoft | $0.75 | $0.075 | $4.50 | — |
 | cheap | `gpt-5-mini` | openai | $0.25 | $0.025 | $2.00 | — |
 | cheap | `gpt-5.6-luna` | openai | $0.20 | $0.02 | $1.20 | long-ctx >200K |
 
-Some rows carry caveats the table only flags: `claude-sonnet-5`'s rates are promotional and its
-`promo.until` date has already passed, with no published post-promo rate behind it (see
-[Updating Copilot prices](#updating-copilot-prices)); six rows carry `long_context`
-step-up rates where **every token above the threshold costs more**, and `gpt-5.6-luna`'s
-threshold is 200K — lower than its GPT-5.6 siblings' 272K, so it steps up sooner. `gpt-5.6-sol`'s
-cache-write figure comes from the picker's cost panel only; the doc's OpenAI table has no
-cache-write column and does not corroborate it. Read the raw file for any of these — this
-snapshot does not update itself.
-
-**Model ids:** the roster was last verified against `/model` in Copilot CLI on **2026-07-01** —
-the 2026-07-25 and 2026-09-05 refreshes did NOT re-check the picker, so the ids
-here are what the CLI actually calls each model. Treat `/model` as authoritative if a future
-release disagrees, and correct ids in `data/pricing.copilot.json` only — never anywhere else.
+`gemini-3.8-flash` carries GitHub's published promotional rate through 2026-12-31. Long-context
+rows apply their stepped rates when one request exceeds the stated threshold; the estimator's
+whole-request simplification is documented in `bin/copilot_pricing.py`. Retired rows were removed
+from the active roster; entries scheduled to retire on 2026-10-02 remain explicitly labeled until
+the provider removes them.
 
 ## Updating Copilot prices
 
@@ -168,16 +158,10 @@ release disagrees, and correct ids in `data/pricing.copilot.json` only — never
 4. Rerun `python3 -m unittest discover -s tests` — `tests/test_copilot_bundle.py` and the cost
    engine's regression tests both read this file.
 
-**The Sonnet 5 promo re-check is OWED, not upcoming.** In `data/pricing.copilot.json`,
-`models["claude-sonnet-5"].promo.until` is `2026-08-31`, and the `promo.note` beside it still says
-the post-promo rate is not yet published and to re-check `update_from` after that date. The file's
-own `cached_date` (`2026-09-05`) already postdates the window, so the rates carried for that model
-are promotional rates held past their stated end, with the re-check still outstanding — not a
-future task. Discharging it means reading `update_from`, then writing the outcome into
-`data/pricing.copilot.json`: the rate fields, plus that `promo` block itself (drop it if the
-promotion ended, restate `until` if it was extended). Only then is the snapshot table above
-re-derived. The correction never lands in this doc on its own — a table edit without a file edit
-would be inventing a price.
+**The next promo re-check is Gemini 3.8 Flash.** Its `promo.until` is 2026-12-31. Read
+`update_from` at or after that date, then either replace the rate fields and remove the `promo`
+block or restate its extension. The correction never lands in this doc on its own — a table edit
+without a file edit would be inventing a price.
 
 ## Beyond routing: budget mode and `goliath`
 

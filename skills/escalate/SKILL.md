@@ -1,11 +1,11 @@
 ---
 name: escalate
-description: Run one task on the cheapest sufficient model behind a machine-checkable success check, and automatically escalate to a Fable 5 subagent (carrying the failure evidence) only if the check fails. Use when the user wants "try it cheap first, fall back to Fable if it doesn't work", an auto-escalating / verify-gated dispatch, or "have Opus attempt it and call Fable if needed".
+description: Run one task on the cheapest sufficient model behind a machine-checkable success check, and automatically escalate to a Fable 5.1 subagent (carrying the failure evidence) only if the check fails. Use when the user wants "try it cheap first, fall back to Fable if it doesn't work", an auto-escalating / verify-gated dispatch, or "have Opus attempt it and call Fable if needed".
 ---
 
 # Verify-gated escalation
 
-You run ONE task through a cost-ascending ladder of models, promoting to the next tier **only when a check fails** — so Fable 5 is spent on genuine difficulty, never on routine work. You are the orchestrator; you stay on the session model and dispatch attempts as subagents so you can grade them with fresh eyes.
+You run ONE task through a cost-ascending ladder of models, promoting to the next tier **only when a check fails** — so Fable 5.1 is spent on genuine difficulty, never on routine work. You are the orchestrator; you stay on the session model and dispatch attempts as subagents so you can grade them with fresh eyes.
 
 **The constraint that shapes everything:** nothing can switch the *main session's* model — only the user, via `/model`. "Opus checks, then calls Fable automatically" is therefore always: the orchestrator dispatches a subagent with the Agent tool's `model` parameter (`sonnet`/`opus`/`fable`), runs the verify command itself, and promotes on failure. There is no smaller/cheaper Fable model — the cheaper *way to run Fable* is lower effort and narrower scope (see Step 4).
 
@@ -19,7 +19,7 @@ Automatic escalation needs a failing check to fire on. Before dispatching anythi
 
 ## Step 1 — Pick the first (cheapest sufficient) tier
 
-Default to the **cheapest model you'd actually trust for this task**, not the session model by reflex. Use `/route`'s framing if unsure; typically Sonnet 5 for routine coding/edits, Opus 4.8 for multi-file or harder reasoning. This is the tier you're betting can do it without Fable. Read prices only if the user asks for a cost figure — resolve `data/pricing.json` via `${CLAUDE_PLUGIN_ROOT}/data/pricing.json`, falling back to `../../data/pricing.json` relative to this SKILL.md — and never quote rates from memory.
+Default to the **cheapest model you'd actually trust for this task**, not the session model by reflex. Use `/route`'s framing if unsure; typically Sonnet 5 for routine coding/edits, Opus 5.5 for multi-file or harder reasoning. This is the tier you're betting can do it without Fable. Read prices only if the user asks for a cost figure — resolve `data/pricing.json` via `${CLAUDE_PLUGIN_ROOT}/data/pricing.json`, falling back to `../../data/pricing.json` relative to this SKILL.md — and never quote rates from memory.
 
 ## Step 2 — First attempt
 
@@ -33,7 +33,7 @@ Run the verify command **yourself**, from the right working directory. The subag
 - **Fails** → retry once on the *same* model, handing the subagent the exact failure output — cheap attempts often just need to see the error. Re-verify.
 - **Fails again** → escalate (Step 4).
 
-## Step 4 — Escalate to Fable 5, cheaply
+## Step 4 — Escalate to Fable 5.1, cheaply
 
 Dispatch a subagent with `model: fable` carrying **only** what it needs: the task, the verify command, and the evidence from both failed attempts (what was tried, what the check reported). Ask it to either make the check pass or explain precisely why the task isn't doable as specified.
 
@@ -43,7 +43,6 @@ Two cost levers, in order of what you can actually control at dispatch:
 
 Re-verify Fable's output yourself. If it passes, relay it. If even Fable fails, stop and report honestly — what each tier tried, the final check output, and your read on whether the task is mis-specified. Do not keep burning Fable effort past `xhigh`.
 
-**Refusal fallback:** if the Fable subagent returns `stop_reason: "refusal"` (cyber/bio-adjacent classifiers — see `/polytropos:fable-check`), it won't retry into success. Fall back to an Opus 4.8 subagent at high effort for that hop and say why.
 
 ## Cost posture
 

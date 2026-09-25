@@ -36,6 +36,10 @@ BUNDLE = {
     "copilot": {"cached_date": "2020-03-03", "models": {
         "shared-id": {"tier": "strong"},
         "fake.dotted": {"tier": "cheap", "vendor": "fake"},
+    }, "retired_models": {
+        "claude-opus-4.6": {"tier": "strong", "vendor": "anthropic"},
+        "claude-sonnet-4.6": {"tier": "mid", "vendor": "anthropic"},
+        "mai-code-1-flash": {"tier": "cheap", "vendor": "microsoft"},
     }},
 }
 
@@ -47,7 +51,21 @@ class ResolveTests(unittest.TestCase):
     def test_a_concrete_id_one_harness_knows_resolves_to_it(self):
         hit = self.reg.resolve("fake-astra")
         self.assertEqual((hit["harness"], hit["tier"], hit["kind"]), ("codex", "frontier", "model"))
+        self.assertFalse(hit["retired"])
         self.assertEqual(hit["registry"], {"codex": "2020-02-02"})
+
+    def test_a_retired_copilot_id_keeps_its_historical_tier_without_becoming_selectable(self):
+        for model_id, tier in (("claude-opus-4.6", "strong"),
+                               ("claude-sonnet-4.6", "mid"),
+                               ("mai-code-1-flash", "cheap")):
+            with self.subTest(model=model_id):
+                hit = self.reg.resolve(model_id, harness="copilot")
+                self.assertEqual((hit["harness"], hit["tier"], hit["kind"]),
+                                 ("copilot", tier, "model"))
+                self.assertTrue(hit["retired"])
+        self.assertNotIn("mid", self.reg.tiers["copilot"],
+                         "retired tiers must not become selectable tier words")
+        self.assertIsNone(self.reg.resolve("mid", harness="copilot"))
 
     def test_an_id_two_harnesses_know_differently_is_ambiguous_not_guessed(self):
         hit = self.reg.resolve("shared-id")

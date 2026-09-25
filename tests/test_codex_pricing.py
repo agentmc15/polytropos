@@ -460,6 +460,75 @@ class LiveDataStructureTests(unittest.TestCase):
         self.assertEqual(set(pricing["task_profiles"]), {"XS", "S", "M", "L", "XL"})
 
 
+class LiveModelRefreshTests(unittest.TestCase):
+    """The active Codex ladder is deliberately checked against the live registry.
+
+    Unlike the synthetic calculator fixtures, these assertions protect the release
+    decision: GPT-6 Sol and Luna must remain the routing targets while GPT-5.6
+    Sol and Luna remain available only for historical estimate lookups.
+    """
+
+    def test_gpt6_models_are_the_active_routing_ladder(self):
+        pricing = cx.load_pricing()
+        expected = {
+            "frontier": "gpt-6-astra",
+            "strong": "gpt-6-sol",
+            "mid": "gpt-5.6-terra",
+            "cheap": "gpt-6-luna",
+        }
+        for tier, model_id in expected.items():
+            with self.subTest(tier=tier):
+                self.assertEqual(cx.resolve_tier(pricing, tier), model_id)
+
+    def test_gpt6_rates_thresholds_and_effort_support_are_recorded(self):
+        pricing = cx.load_pricing()
+        expected = {
+            "gpt-6-astra": {
+                "default_reasoning_effort": "low",
+                "supported_reasoning_efforts": ["low", "medium", "high", "xhigh", "max", "ultra"],
+            },
+            "gpt-6-sol": {
+                "default_reasoning_effort": "medium",
+                "supported_reasoning_efforts": ["low", "medium", "high", "xhigh", "max", "ultra"],
+                "rates": (2.0, 0.2, 2.5, 10.0),
+                "long_rates": (272000, 4.0, 0.4, 5.0, 15.0),
+            },
+            "gpt-6-luna": {
+                "default_reasoning_effort": "medium",
+                "supported_reasoning_efforts": ["low", "medium", "high", "xhigh", "max"],
+                "rates": (0.1, 0.01, 0.125, 0.5),
+                "long_rates": (272000, 0.2, 0.02, 0.25, 0.75),
+            },
+        }
+        for model_id, details in expected.items():
+            with self.subTest(model=model_id):
+                model = pricing["models"][model_id]
+                self.assertTrue(model["available"])
+                self.assertEqual(model["default_reasoning_effort"], details["default_reasoning_effort"])
+                self.assertEqual(model["supported_reasoning_efforts"], details["supported_reasoning_efforts"])
+                if "rates" in details:
+                    self.assertEqual(
+                        tuple(model[key] for key in (
+                            "input_per_mtok", "cached_input_per_mtok", "cache_write_per_mtok", "output_per_mtok"
+                        )),
+                        details["rates"],
+                    )
+                    long_context = model["long_context"]
+                    self.assertEqual(
+                        tuple(long_context[key] for key in (
+                            "threshold_input_tokens", "input_per_mtok", "cached_input_per_mtok",
+                            "cache_write_per_mtok", "output_per_mtok"
+                        )),
+                        details["long_rates"],
+                    )
+
+    def test_gpt56_sol_and_luna_remain_cost_only_history(self):
+        pricing = cx.load_pricing()
+        for model_id in ("gpt-5.6-sol", "gpt-5.6-luna"):
+            with self.subTest(model=model_id):
+                self.assertEqual(pricing["models"][model_id]["tier"], "cost-only")
+
+
 class CliSmokeTests(unittest.TestCase):
     def test_models_json_against_real_pricing_parses(self):
         buf = io.StringIO()

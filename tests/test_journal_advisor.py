@@ -281,6 +281,26 @@ class EstimateMathReuseTests(unittest.TestCase):
         self.assertEqual(slot["model"], "fake-haiku-1")
         self.assertAlmostEqual(slot["usd_est"], expected_usd, places=9)
 
+    def test_claude_estimate_honors_model_cache_override(self):
+        pricing = {
+            **CLAUDE_PRICING,
+            "models": {
+                **CLAUDE_PRICING["models"],
+                "fake-haiku-1": {
+                    **CLAUDE_PRICING["models"]["fake-haiku-1"],
+                    "cache_read_multiplier": 0.025,
+                },
+            },
+        }
+        signal = ja.build_harness_signal({}, pricing, COPILOT_PRICING, CODEX_PRICING)
+        slot = signal["harnesses"]["claude_code"]["est"]["S"]["cheap"]
+        p = pricing["task_profiles"]["S"]
+        expected_usd = (
+            p["input_tokens"] * ((1 - ja.ADVISOR_CACHE_HIT) + ja.ADVISOR_CACHE_HIT * 0.025)
+            / 1e6 * 1.0 + p["output_tokens"] / 1e6 * 5.0
+        )
+        self.assertAlmostEqual(slot["usd_est"], expected_usd, places=9)
+
 
 # ---- 3. slot resolution --------------------------------------------------------------------
 

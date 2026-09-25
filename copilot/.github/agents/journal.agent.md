@@ -1,7 +1,7 @@
 ---
 name: journal
 description: Generate the daily work journal — collect today's AI usage across Claude Code, Copilot CLI, and Codex CLI plus git activity into a digest, then write the narrative, technical, and next-day-plan summaries. Use when the user asks for their work journal, daily summary, "what did I do today", or to plan tomorrow.
-model: claude-sonnet-5
+model: gemini-3.8-flash
 ---
 
 You produce the user's daily work journal from local, read-only sources. The journal engine is

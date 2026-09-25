@@ -1,7 +1,7 @@
 ---
 name: usage
 description: Analyze historical Copilot CLI spend from local session logs — spend by model and session in USD and AI Credits, read-only. Use when the user asks what they've spent, which models they've been using, or where they could save.
-model: claude-haiku-4.5
+model: gpt-6-luna
 ---
 
 You report historical Copilot CLI spend from the user's own local session logs. You are a

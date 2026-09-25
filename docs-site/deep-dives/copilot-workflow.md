@@ -30,10 +30,10 @@ Three pieces were added:
 Each agent's `model:` frontmatter pin is a tier choice, not a free-standing id: the test suite
 checks it against the live tier for that id in `data/pricing.copilot.json`, so a future roster
 change fails loudly instead of silently going stale. As a labeled snapshot tied to that file's
-`cached_date` **2026-08-11**, the pins were: `architect` → `claude-fable-5` (frontier — kit
-planning is the expensive meta-work done once), `implementer` → `claude-sonnet-5` (mid — the
-day-to-day workhorse), `verifier` → `claude-haiku-4.5` (cheap — rerunning a verify command is
-mechanical), `reviewer` → `claude-opus-4.8` (strong — drift review is judgment work). Read
+`cached_date` **2026-09-24**, the pins are: `architect` → `gpt-6-astra` (frontier — kit
+planning is the expensive meta-work done once), `implementer` → `gemini-3.8-flash` (mid — the
+day-to-day workhorse), `verifier` → `gpt-6-luna` (cheap — rerunning a verify command is
+mechanical), `reviewer` → `gpt-6-sol` (strong — drift review is judgment work). Read
 `data/pricing.copilot.json` itself for current ids; don't assume this snapshot updates.
 
 ## Architect → execute → verify → escalate

@@ -15,27 +15,27 @@ Claude Code sessions run on one model at a time, and the price spread across the
 
 | Model | Input $/MTok | Output $/MTok | Relative cost |
 |---|---:|---:|---|
-| Fable 5 | $10 | $50 | 2× Opus, ~3.3× Sonnet, 10× Haiku |
-| Opus 5 | $5 | $25 | baseline daily driver |
-| Opus 4.8 | $5 | $25 | superseded by Opus 5 at the same rate |
-| Sonnet 5 | $3 ($2 intro until 2026-08-31) | $15 ($10 intro) | near Opus-tier at high effort |
+| Fable 5.1 | $10 | $50 | 2.5× Opus 5.5, 5× Sonnet, 10× Haiku |
+| Opus 5.5 | $4 | $20 | default for most workloads |
+| Opus 5 | $5 | $25 | historical costing and compatibility |
+| Sonnet 5 | $2 | $10 | speed-and-intelligence workhorse |
 | Haiku 4.5 | $1 | $5 | bulk/simple API work |
 
-*(Prices cached 2026-07-24 in `data/pricing.json` — the single source of truth; nothing else hard-codes a price.)*
+*(Prices cached 2026-09-24 in `data/pricing.json` — the single source of truth; nothing else hard-codes a price.)*
 
-Running Fable 5 as a standing default is harmless on a subscription (dollars don't change) but becomes a 2×–10× overpayment the day Fable moves to pay-per-token — a real 30-day baseline measured on this machine showed **~$614 API-equivalent with 87% of it on Fable 5**, mostly from cache reads in long agentic sessions. That is one dated observation on one machine, not a standing figure — `python3 bin/cost_report.py --days 30` re-measures it on yours.
+Running the frontier tier as a standing default is harmless on a subscription (dollars don't change) but can become an overpayment under pay-per-token billing. Usage mix is local and changes over time, so `python3 bin/cost_report.py --days 30` is the evidence for a current account rather than a fixed example in this guide.
 
 The plugin solves three problems:
 
 1. **Per-task routing** — which model should handle *this* task, with a cost estimate before running it.
-2. **The Fable escalation pattern** — use Fable 5 only for the portion of work that needs it, and make its quality persist after you leave it.
+2. **The Fable escalation pattern** — use Fable 5.1 only for the portion of work that needs it, and make its quality persist after you leave it.
 3. **Visibility** — historical spend analysis and an ambient statusline so drift is noticed, not discovered on an invoice.
 
 ## 2. Two billing modes with opposite goals
 
 The same routing question gets opposite answers depending on how tokens are paid for. Every skill reads the mode from `data/pricing.json → billing_mode` (overridable per invocation with `--api` / `--sub`).
 
-**`api` mode — optimize dollars.** Any pay-per-token usage: an application you're building, or Claude Code on API-key billing. The cheapest *sufficient* model wins. Haiku 4.5 earns its keep for classification, extraction, and bulk calls. Cache discounts (reads at 0.1×), batch processing (50% off), and Sonnet 5's introductory pricing all factor into the estimate.
+**`api` mode — optimize dollars.** Any pay-per-token usage: an application you're building, or Claude Code on API-key billing. The cheapest *sufficient* model wins. Haiku 4.5 earns its keep for classification, extraction, and bulk calls. Cache discounts, batch processing, and per-model rate data factor into the estimate.
 
 **`subscription` mode — optimize rate-limit burn.** Claude Code / Claude UI on a plan: the marginal dollar cost of any request is zero, and the only scarce resource is the 5-hour and 7-day rate-limit windows. Consequences:
 
@@ -151,7 +151,7 @@ harnesses and the journal get §7.
 
 ### 4.1 `data/pricing.json`
 
-Everything numeric lives here: per-model input/output rates, `intro_pricing` windows (Sonnet 5's $2/$10 until 2026-08-31 is applied automatically by date), cache multipliers (reads 0.1×, 5-minute-TTL writes 1.25×), the 50% batch discount, per-model context windows and notes, the default `billing_mode`, and the task-size token profiles used for estimation. When Claude prices change, this file is the only edit; bump `cached_date`.
+Everything numeric lives here: per-model input/output rates, cache multipliers (including model-specific overrides), the 50% batch discount, per-model context windows and notes, the default `billing_mode`, and the task-size token profiles used for estimation. When Claude prices change, this file is the only edit; bump `cached_date`.
 
 It has **three siblings, one per harness (§7), and they never merge** — no harness's config reads another's file. `data/pricing.copilot.json` is the same kind of single source of truth for Copilot, where the AI-Credit unit itself is data rather than a constant in code. `data/pricing.codex.json` carries the Codex roster and burn index, with a `model_ids_note` saying that its model ids are best-effort — corrections land in that file and nowhere else. `data/pricing.cursor.json` carries **no rates at all**, because Cursor publishes no per-model CLI price table this repo could mirror; that absence is the honest state, and it is why a Cursor dispatch is unpriced rather than estimated from someone else's numbers. The one cross-file reader is `bin/model_registry.py`, and it reads model ids and tiers only — never a price — and reports an ambiguity rather than picking when one id sits in two files under two tier names.
 
@@ -162,8 +162,8 @@ Two generated mirrors under `skills/{route,fable-check}/references/` keep the ae
 Four steps, executed by the model reading the skill:
 
 1. **Mode.** Resolve `api` vs `subscription` (flag > task framing > pricing.json default). App-building questions force `api`.
-2. **Classify.** In `api` mode, a cheapest-sufficient ladder: Haiku (bulk/simple) → Sonnet 5 (workhorse) → the Opus tier (hard debugging, architecture) → Fable 5 (long-horizon, Opus-failed). Ties break *down*, with an explicit "upgrade if you see X" signal. In `subscription` mode: the Opus tier as daily driver, escalate complex work toward Fable (via the architect pattern), Haiku skipped, effort as the burn lever.
-3. **Estimate.** Match the task to a size profile (XS 10K/1K tokens through XL 1.5M/100K), price each candidate model, show cache-discounted figures for agentic sizes (≈80% of cumulative input assumed to be 0.1× cache reads), apply intro/batch adjustments.
+2. **Classify.** In `api` mode, a cheapest-sufficient ladder: Haiku (bulk/simple) → Sonnet 5 (workhorse) → the Opus tier (hard debugging, architecture) → Fable 5.1 (long-horizon, Opus-failed). Ties break *down*, with an explicit "upgrade if you see X" signal. In `subscription` mode: the Opus tier as daily driver, escalate complex work toward Fable (via the architect pattern), Haiku skipped, effort as the burn lever.
+3. **Estimate.** Match the task to a size profile (XS 10K/1K tokens through XL 1.5M/100K), price each candidate model, show cache-discounted figures for agentic sizes, and apply the data-defined cache and batch adjustments.
 4. **Recommend + act.** A compact table with the recommendation bolded, then: **dispatch now** (Agent tool, `model` set to the recommendation, self-contained brief written from the conversation), **switch the session** (prints the `/model` command), or — for big Fable-worthy tasks — hand off to `/architect`. App questions get model ID + API parameters to paste into code instead.
 
 ### 4.3 `/architect` — Fable as architect
@@ -230,7 +230,7 @@ The analyzer walks `~/.claude/projects/**/*.jsonl` (Claude Code's local transcri
 
 - **Dedupes by message id** (resumed sessions duplicate history into new files).
 - **Normalizes model strings** — `claude-fable-5[1m]`, date-suffixed IDs — onto pricing.json keys by prefix match; unknown models are tallied and reported, never silently dropped.
-- **Prices each record**: `(input×in + output×out + cache_read×in×0.1 + cache_write×in×1.25) / 1e6`, with Sonnet 5 intro rates applied by record date.
+- **Prices each record** from the matching model's data-defined input, output, cache-read, and cache-write rates; historical records retain the rate applicable to their date where the registry supplies it.
 - **Aggregates** by model and session, then flags **downgrade candidates**: sessions whose models were all Fable/Opus-tier but whose footprint was Sonnet-sized (< 50K tokens, < 10 tool calls), with the exact dollar delta vs re-pricing every record at Sonnet 5 rates.
 - Frames output per mode: savings (`api`) vs burn share (`subscription`).
 
@@ -392,7 +392,7 @@ harness's config reads another's pricing file, and none of them is invoked by a 
 command, or kit execution; `--dry-run` and `--demo` are the sanctioned smoke paths and spawn
 nothing.
 
-**The Copilot harness (`copilot/`).** The same per-task routing and cost discipline ported to GitHub Copilot CLI. A cross-vendor `route` agent classifies a task into a tier (cheap / mid / strong / frontier) and prices 2–3 candidate models across vendors; an architect→execute→verify→escalate port (`bin/copilot_execute.py` plus model-pinned agents) mirrors the kit loop; and a budget-capped **Ralph** goal loop (`bin/copilot_ralph.py`) drives a self-directed objective under a spend ceiling. Copilot meters everything in **AI Credits** (the AIC's dollar value is data — `billing_unit.usd_per_credit` in `data/pricing.copilot.json` — never a literal in a doc or skill), priced by `bin/copilot_pricing.py` from the separate `data/pricing.copilot.json` (where Claude Fable 5 is the sole frontier-tier model on the roster). Because Copilot has no `${CLAUDE_PLUGIN_ROOT}`-style runtime variable, the bundle's config carries a `{{POLYTROPOS_ROOT}}` placeholder that `bin/harness_select.py` resolves to an absolute path at install time. Beside those: `bin/copilot_usage.py` reads `~/.copilot`'s session logs strictly read-only for a usage report, `bin/copilot_prefs.py` is the single home for the user's own model pins and excludes, `bin/copilot_statusline.py` is the Copilot-side twin of the statusline, and `copilot-docs/` is a generated doc center written only by `bin/copilot_docs.py`. Full guides: `docs/COPILOT-HARNESS.md`, `docs/COPILOT-WORKFLOW.md`, `docs/COPILOT-COSTVIZ.md`.
+**The Copilot harness (`copilot/`).** The same per-task routing and cost discipline ported to GitHub Copilot CLI. A cross-vendor `route` agent classifies a task into a tier (cheap / mid / strong / frontier) and prices 2–3 candidate models across vendors; an architect→execute→verify→escalate port (`bin/copilot_execute.py` plus model-pinned agents) mirrors the kit loop; and a budget-capped **Ralph** goal loop (`bin/copilot_ralph.py`) drives a self-directed objective under a spend ceiling. Copilot meters everything in **AI Credits** (the AIC's dollar value is data — `billing_unit.usd_per_credit` in `data/pricing.copilot.json` — never a literal in a doc or skill), priced by `bin/copilot_pricing.py` from the separate `data/pricing.copilot.json`. The dated 2026-09-24 roster has GPT-6 Astra and Claude Fable 5.1 in the frontier tier; file order selects GPT-6 Astra as the no-preference default because Fable has a documented Anthropic retention caveat. Because Copilot has no `${CLAUDE_PLUGIN_ROOT}`-style runtime variable, the bundle's config carries a `{{POLYTROPOS_ROOT}}` placeholder that `bin/harness_select.py` resolves to an absolute path at install time. Beside those: `bin/copilot_usage.py` reads `~/.copilot`'s session logs strictly read-only for a usage report, `bin/copilot_prefs.py` is the single home for the user's own model pins and excludes, `bin/copilot_statusline.py` is the Copilot-side twin of the statusline, and `copilot-docs/` is a generated doc center written only by `bin/copilot_docs.py`. Full guides: `docs/COPILOT-HARNESS.md`, `docs/COPILOT-WORKFLOW.md`, `docs/COPILOT-COSTVIZ.md`.
 
 **The Codex harness (`codex/`).** Native `$skill` workflows packaged as a Codex plugin, with routing data in `data/pricing.codex.json`. Its distinguishing feature is **central application policy** (`bin/codex_policy.py`, `bin/codex_app_policy.py`): Astra owns planning, dependency coordination, bounded recovery and final acceptance, while Luna, Terra and Sol implement — cheap mechanical, routine, and hard/security/integration work respectively — and model identity, availability, effort support and pricing are all derived from the pricing file at run time rather than written into the policy. The kit-dispatch driver is `bin/codex_execute.py` (`status` / `run` / `review` / `accept` / `prepare`), which instantiates no warm pool and whose recovery path requires driver-recorded lower-tier attempts plus a real failure signal before it climbs; a dispatch that failed for an `auth`, `config`, `permission` or `infrastructure` reason stops the ladder and names the class instead. Two routing policies are selectable by name — `reserved` (the default) and an opt-in `adaptive` one — and which is in force is an explicit selection written into the run's NOTES.md, never learned from observations. `bin/codex_usage.py` reads `~/.codex` read-only with an honest unpriced fallback, and `bin/codex_legacy_migration.py` retires proven legacy copies reversibly. **A ChatGPT-plan Codex run is usage-limited, not token-billed**, so every dollar figure for one is a labeled API-equivalent relative-burn proxy and never a bill: `billed_usd` stays null and proxy dollars never enter a priced total. Full guide: `docs/CODEX-HARNESS.md`.
 
@@ -410,7 +410,7 @@ python3 bin/routing_scorecard.py --history --kits-dir .claude/kits
 
 for the current cross-kit per-tier card, and `python3 bin/attempt_history.py show --kits-dir .claude/kits` for the dispatch-level join. The card's own columns are the answer: per tier, how many tasks were pinned to it, how many carry an outcome, and how those outcomes split across **first-try / retry / escalated / blocked**, with a first-try and an escalation rate beside them, plus per-role findings-and-confirmed counts and the re-route history. Read those columns; do not read a number out of this page. What is safe to say qualitatively is only this: the great majority of execution work passes verify on the first attempt at the tier it was pinned to, retries are a real recorded minority rather than a theoretical one, and the escalated and frontier columns are there precisely so that "the cheap tiers held" is something you check rather than something you assume. Any figure fixed here would be wrong by the next kit; the command is the claim. Measurement (§6) is what makes each downgrade decision evidence-based rather than a hunch.
 
-**When Fable 5 leaves the subscription:**
+**When the Fable tier leaves the subscription:**
 1. `data/pricing.json` → `billing_mode: "api"`.
 2. `~/.claude/settings.json` → default model `opus` (or `sonnet`), remove standing `effortLevel`.
 3. Same architect/execute posture — it is now also the *dollar*-optimal shape, concentrating Fable spend in the short planning phase.

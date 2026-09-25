@@ -98,6 +98,19 @@ FIXTURE = {
             "output_per_mtok": 2.0,
         },
     },
+    "retired_models": {
+        "fake-retired-strong": {
+            "display": "Fake Retired Strong",
+            "vendor": "fake-vendor",
+            "tier": "strong",
+            "input_per_mtok": 4.0,
+            "cached_input_per_mtok": 0.4,
+            "cache_write_per_mtok": 5.0,
+            "output_per_mtok": 20.0,
+            "retired_on": "2020-01-01",
+            "replacement": "fake-strong",
+        },
+    },
 }
 
 
@@ -378,6 +391,16 @@ class PriceTokensMathTests(unittest.TestCase):
         usd = cu.price_tokens(u, "fake-cheap", FIXTURE)
         self.assertAlmostEqual(usd, 1.0 + 0.1 + 0.0 + 2.0)
 
+    def test_retired_model_is_priced_from_historical_partition(self):
+        u = {
+            "input": 1_000_000,
+            "cache_read": 1_000_000,
+            "cache_write": 1_000_000,
+            "output": 1_000_000,
+        }
+        usd = cu.price_tokens(u, "fake-retired-strong", FIXTURE)
+        self.assertAlmostEqual(usd, 4.0 + 0.4 + 5.0 + 20.0)
+
     def test_usd_to_aic_divides_by_fixture_rate(self):
         # billing_unit.usd_per_credit == 0.5 -> aic == usd / 0.5 == usd * 2.
         self.assertAlmostEqual(cu.usd_to_aic(3.1, FIXTURE), 6.2)
@@ -393,6 +416,13 @@ class MatchModelTests(unittest.TestCase):
 
     def test_suffixed_match(self):
         self.assertEqual(cu.match_model("fake-strong-20260701", FIXTURE), "fake-strong")
+
+    def test_retired_exact_and_suffixed_matches_are_historical_priced_keys(self):
+        self.assertEqual(cu.match_model("fake-retired-strong", FIXTURE), "fake-retired-strong")
+        self.assertEqual(
+            cu.match_model("fake-retired-strong-20200101", FIXTURE), "fake-retired-strong"
+        )
+        self.assertEqual(cu.display_for("fake-retired-strong", FIXTURE), "Fake Retired Strong")
 
     def test_unknown_returns_none(self):
         self.assertIsNone(cu.match_model("totally-unmapped-id", FIXTURE))

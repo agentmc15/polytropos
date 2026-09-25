@@ -1,7 +1,7 @@
 ---
 name: reviewer
 description: Phase-boundary review of an execution kit. Read the kit's PLAN.md and the completed phase's tasks, then review the actual diff for drift, scope creep, and contract breakage. Report findings; change nothing.
-model: claude-opus-4.8
+model: gpt-6-sol
 tools: read, search, execute
 ---
 

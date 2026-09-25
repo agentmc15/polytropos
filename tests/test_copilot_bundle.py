@@ -283,11 +283,13 @@ class EffortAgentContractTests(unittest.TestCase):
         self.assertIn("arrow", text.lower())
 
     def test_effort_headless_honesty(self):
-        self.assertIn("unconfirmed", self._text("effort").lower())
+        text = self._text("effort")
+        self.assertIn("--effort=LEVEL", text)
+        self.assertIn("--reasoning-effort=LEVEL", text)
+        self.assertIn("does **not** forward", text)
 
     def test_effort_no_borrowed_or_invented_flag(self):
         text = self._text("effort")
-        self.assertNotIn("--effort", text)
         self.assertNotIn("model_reasoning_effort", text)
 
 
@@ -514,11 +516,13 @@ class EffortSkillContractTests(unittest.TestCase):
         self.assertIn("arrow", text.lower())
 
     def test_effort_headless_honesty(self):
-        self.assertIn("unconfirmed", self._text().lower())
+        text = self._text()
+        self.assertIn("--effort=LEVEL", text)
+        self.assertIn("--reasoning-effort=LEVEL", text)
+        self.assertIn("does **not** forward", text)
 
     def test_effort_no_borrowed_or_invented_flag(self):
         text = self._text()
-        self.assertNotIn("--effort", text)
         self.assertNotIn("model_reasoning_effort", text)
 
 

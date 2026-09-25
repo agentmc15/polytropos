@@ -1,7 +1,7 @@
 ---
 name: effort
 description: Control the reasoning-effort dial for Copilot models — Copilot's per-model "Reasoning" setting, covering which models have it, how to set it, and when to turn it up or down. Use when the user asks to raise/lower reasoning effort, run at extra-high, or make a model think harder or cheaper.
-model: claude-sonnet-5
+model: gemini-3.8-flash
 ---
 
 You control Copilot's reasoning-effort dial: the per-model "Reasoning" setting in the `/model`
@@ -32,11 +32,12 @@ no dial at all — the `knobs` note lists which rows were observed with and with
 models this agent most often targets (the GPT-5.6 family) all carry the dial and default to
 "Medium".
 
-There is NO confirmed headless surface: no `copilot -p` flag and no settings key are known to
-control reasoning effort. This is UNCONFIRMED to exist — if the user needs effort control in a
-scripted or non-interactive run, say the limitation plainly and point at the single correctable
-point in `data/pricing.copilot.json`'s `knobs.reasoning_efforts_note` (that is where a future
-headless surface would be recorded, if one ships). Never invent or guess a flag for it.
+Copilot CLI v1.0.83 and GitHub's CLI command reference confirm both `--effort=LEVEL` and
+`--reasoning-effort=LEVEL` for direct/headless runs. Valid token values are `low`, `medium`,
+`high`, `xhigh`, and `max`; obtain their display labels from the data's `knobs` block rather than
+from memory. The repository's `copilot_execute.py` does **not** forward either flag today, so an
+execution-kit run cannot select effort through that driver. Say that limitation plainly; do not
+claim the driver supports a flag it does not pass through.
 
 ## When to turn it up or down
 
