@@ -66,6 +66,7 @@ The Codex repo-bench port is planning-only and structurally refuses live candida
 ## Keep going
 
 - [Manual documentation site](https://agentmc15.github.io/polytropos/) — maintained, cross-harness reference.
+- [Full reference](docs/REFERENCE.md) — every model, role, skill, engine and harness on one long page.
 - [How it works](docs/HOW-IT-WORKS.md) — architecture and policy rationale.
 - [Guide & cookbook](docs/GUIDE.md) — skill reference and worked examples.
 - [Copilot documentation center](copilot-docs/README.md) — task-oriented Copilot material.
