@@ -93,11 +93,12 @@ Reasoning effort is set INTERACTIVELY, in the `/model` picker:
 This is a per-model property, not global. Some rows show `—` in the Reasoning column and have
 no dial at all — the `knobs` note lists which rows were observed with and without one.
 
-There is NO confirmed headless surface: no `copilot -p` flag and no settings key are known to
-control reasoning effort. This is UNCONFIRMED to exist — if the user needs effort control in a
-scripted or non-interactive run, say the limitation plainly and point at the single correctable
-point in `data/pricing.copilot.json`'s `knobs.reasoning_efforts_note` (that is where a future
-headless surface would be recorded, if one ships). Never invent or guess a flag for it.
+Copilot CLI v1.0.83 and GitHub's CLI command reference confirm both `--effort=LEVEL` and
+`--reasoning-effort=LEVEL` for direct/headless runs. Valid token values are `low`, `medium`,
+`high`, `xhigh`, and `max`; obtain their display labels from the data's `knobs` block rather than
+from memory. The repository's `copilot_execute.py` does **not** forward either flag today, so an
+execution-kit run cannot select effort through that driver. Say that limitation plainly; do not
+claim the driver supports a flag it does not pass through.
 
 ### When to turn it up or down
 

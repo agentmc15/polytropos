@@ -10,11 +10,12 @@ private answer to the same question.
 WHAT THIS IS. One READ-ONLY reader over the three pricing files -- `data/pricing.json`,
 `data/pricing.codex.json`, `data/pricing.copilot.json` -- that answers "which harness, which
 tier" for an alias word or a concrete id, and says which file version it answered from. It
-reads model ids and tiers ONLY. It never reads a price, never merges the files, and never
-hands one harness's roster to another harness's driver; the drivers keep resolving through
-their own file exactly as before. This exists for the cross-harness evidence readers (the
-scorecard, the attempt history, telemetry), which have to name a tier for whatever id a
-ledger happens to carry.
+reads model ids and tiers ONLY. It also indexes Copilot's `retired_models` solely so an
+evidence reader can classify an old ledger line; each such candidate/result is marked
+`retired`. It never reads a price, never merges the files, and never hands one harness's
+roster to another harness's driver; the drivers keep resolving through their own file exactly
+as before. This exists for the cross-harness evidence readers (the scorecard, the attempt
+history, telemetry), which have to name a tier for whatever id a ledger happens to carry.
 
 WHAT IT REFUSES TO GUESS. Tier vocabularies differ per harness (Claude: haiku/sonnet/opus/
 frontier; Codex and Copilot: cheap/mid/strong/frontier) and one id can sit in two files with
@@ -96,6 +97,22 @@ class Registry:
                     "id": model_id,
                     "tier": tier,
                     "vendor": info.get("vendor"),
+                    "retired": False,
+                })
+            # Copilot preserves retired entries for historical pricing. They are evidence-only:
+            # indexing them here lets old attempt records retain their original Copilot tier,
+            # but they never enter `tiers`, which is the registry's active selectable vocabulary.
+            # Other harnesses currently have no retired map; accepting it generically keeps the
+            # reader schema-oriented without granting any dispatcher a new selection path.
+            for model_id, info in (pricing.get("retired_models") or {}).items():
+                if not isinstance(info, dict):
+                    continue
+                self.models.setdefault(normalize_id(model_id), []).append({
+                    "harness": harness,
+                    "id": model_id,
+                    "tier": info.get("tier"),
+                    "vendor": info.get("vendor"),
+                    "retired": True,
                 })
             self.tiers[harness] = tiers
 
@@ -119,7 +136,10 @@ class Registry:
             if harness is None or entry["harness"] == harness:
                 found.append({"harness": entry["harness"], "id": entry["id"],
                               "tier": entry["tier"], "kind": "model",
-                              "vendor": entry.get("vendor")})
+                              "vendor": entry.get("vendor"),
+                              # Keep `kind=model` for readers that predate retired entries;
+                              # this additive marker tells evidence consumers it is historical.
+                              "retired": bool(entry.get("retired"))})
         return found
 
     def resolve(self, model, harness=None):
@@ -147,6 +167,7 @@ class Registry:
             "tiers": {entry["harness"]: entry["tier"] for entry in found},
             "id": first.get("id"),
             "kind": first["kind"],
+            "retired": bool(first.get("retired")),
             "registry": {h: self.sources.get(h, {}).get("cached_date") for h in harnesses},
         }
         return result

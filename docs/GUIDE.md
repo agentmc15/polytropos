@@ -14,7 +14,7 @@ tasks, greenfield builds, brownfield work, backlog burndown, security, and measu
 > test counts are read out of the tree by the command named beside them. An earlier revision of this
 > guide quoted a track record that had gone badly stale; the fix was to stop quoting it (§6).
 
-> Prices in this document are a **labeled snapshot** (cached `2026-09-21`) of
+> Prices in this document are a **labeled snapshot** (cached `2026-09-24`) of
 > `data/pricing.json` — the single source of truth. Nothing else hard-codes a price; when
 > `pricing.json` changes, these tables are updated together with its `cached_date`.
 
@@ -46,7 +46,7 @@ capability persist afterward** so cheaper models finish the work at near-frontie
 Three moves make that real:
 
 - **Route per task** — decide the cheapest *sufficient* model before running, with a cost estimate.
-- **Escalate, don't default** — start cheap behind a check; promote to Fable 5 only on failure, or
+- **Escalate, don't default** — start cheap behind a check; promote to Fable 5.1 only on failure, or
   concentrate Fable in a one-time planning phase whose judgment is written down as scaffolding.
 - **See the spend, and prove it held** — historical transcript analysis, an ambient statusline, and
   a routing scorecard that audits whether the cheap tiers actually held quality.
@@ -55,15 +55,14 @@ Three moves make that real:
 
 ## 2. The model lineup and the two billing modes
 
-Labeled snapshot (cached `2026-09-21`, from `data/pricing.json`):
+Labeled snapshot (cached `2026-09-24`, from `data/pricing.json`):
 
 | Model | Input $/MTok | Output $/MTok | Best for |
 |---|--:|--:|---|
-| **Fable 5.1** | 10 | 50 | Long-horizon autonomous work, hardest reasoning, planning — the current frontier model, at Fable 5's rate |
-| **Fable 5** | 10 | 50 | Still served; superseded by Fable 5.1 at the same rate |
-| **Opus 5** | 5 | 25 | Multi-file features, hard debugging, review — the daily driver |
-| **Opus 4.8** | 5 | 25 | Superseded by Opus 5 at the same rate; costing historical transcripts |
-| **Sonnet 5** | 2 | 10 | Day-to-day workhorse; near Opus-tier at high effort |
+| **Fable 5.1** | 10 | 50 | Long-horizon autonomous work, hardest reasoning, planning |
+| **Opus 5.5** | 4 | 20 | Default for most workloads and long-running agentic coding or knowledge work |
+| **Opus 5** | 5 | 25 | Historical costing and compatibility |
+| **Sonnet 5** | 2 | 10 | Speed-and-intelligence workhorse |
 | **Haiku 4.5** | 1 | 5 | Classification, extraction, bulk API calls |
 
 The same routing question gets **opposite answers** depending on how tokens are paid for. Every
@@ -72,9 +71,7 @@ per invocation with `--api` / `--sub`.
 
 - **`api` mode — optimize dollars.** Any pay-per-token usage (an app you're building, or Claude
   Code on API-key billing). The cheapest *sufficient* model wins; Haiku earns its keep; cache
-  reads (`cache_read_multiplier`, 0.1×) and the 50% `batch_discount` factor in. No model in the
-  file carries an `intro_pricing` window today — Sonnet 5's launch rate became its base rate —
-  but `rates_for` still honours one by date if a future entry adds it.
+  reads, the 50% batch discount, and per-model rate data all factor in.
 - **`subscription` mode — optimize rate-limit burn.** On a plan, marginal dollar cost is zero; the
   scarce resource is the 5-hour and 7-day windows. Haiku is pointless (you'd only lose
   capability), the daily driver is the best sustainable model, and burn is managed with **effort
@@ -107,7 +104,7 @@ always: the orchestrator stays on its model and dispatches a Fable *subagent*.
 ### `/polytropos:route <task>`
 Picks the right model for one task and estimates its cost before you run it.
 1. **Resolve mode** — `--api`/`--sub` flag > task framing (app-building forces `api`) > pricing.json default.
-2. **Classify** — in `api` mode, a cheapest-sufficient ladder Haiku → Sonnet 5 → Opus 4.8 → Fable 5,
+2. **Classify** — in `api` mode, a cheapest-sufficient ladder Haiku → Sonnet 5 → Opus tier → Fable 5.1,
    ties broken *down* with an explicit "upgrade if you see X" signal; in `subscription` mode, Opus
    as daily driver, complex work escalating toward Fable via the architect pattern, Haiku skipped,
    effort as the burn lever.
@@ -118,7 +115,7 @@ Picks the right model for one task and estimates its cost before you run it.
    for big Fable-worthy tasks — hand off to `/architect`. App questions get a model ID + API params.
 
 ### `/polytropos:architect <task>`
-**Fable 5 runs once, at the start; its judgment persists as scaffolding.** Pay frontier rates for
+**Fable 5.1 runs once, at the start; its judgment persists as scaffolding.** Pay frontier rates for
 the phase that buys the most — decomposition, contracts, guardrails — and encode the results so
 cheaper models execute at near-Fable quality. Two entry modes: from an Opus/Sonnet session it
 dispatches a **Fable subagent** (the session never changes model); or run natively after
@@ -271,7 +268,7 @@ prompts, let it delegate, give it a memory surface.
 ### `/polytropos:cost-report`
 Wraps `bin/cost_report.py` (python3, stdlib only). Walks `~/.claude/projects/**/*.jsonl`, dedupes
 by message id, normalizes model strings onto pricing keys (unknowns tallied, never dropped), and
-prices each record from `pricing.json` (intro rates applied by date). Reports spend by model, top
+prices each record from `pricing.json` (using the data-defined rate applicable to its date). Reports spend by model, top
 sessions, and **downgrade candidates** — Fable/Opus-only sessions with a Sonnet-sized footprint,
 with the exact delta of re-pricing at Sonnet 5. `--days N`, `--mode api|subscription`.
 
@@ -733,7 +730,7 @@ Each example labels its **category**, the **command(s)**, what **happens**, and 
 ### Example 1 — Task · "Which model, and what will it cost?"
 **Command:** `/polytropos:route add input validation to the signup form handler`
 **Happens:** route resolves `subscription` mode, classifies the task as routine single-file work,
-and prints a compact table: Sonnet 5 (recommended, effort `medium`), Opus 4.8 (overkill here),
+and prints a compact table: Sonnet 5 (recommended, effort `medium`), the current Opus tier (overkill here),
 with API-equivalent burn per candidate from the XS/S profile. It then offers to *dispatch now* or
 prints `` `/model sonnet` ``.
 **Why:** the cheapest sufficient model for routine edits is Sonnet 5; the estimate is a burn proxy,
@@ -831,10 +828,10 @@ verify-gated escalation (dollars concentrate on the hard few) and for a hard-sto
 ### Example 9 — Security · Reviewing a diff (and why *not* Fable)
 **Commands:** `/security-review` (built-in) for the pending diff; for model choice on the analysis,
 `/polytropos:route --sub security review of the new auth/session changes`
-**Happens:** route recommends **Opus 4.8, not Fable 5**, and says why: Fable's cyber-adjacent
-safety classifiers **refuse** much security-analysis work (`stop_reason: "refusal"`), and Opus 4.8
+**Happens:** route recommends **the Opus tier, not the Fable tier**, and says why: Fable's cyber-adjacent
+safety classifiers **refuse** much security-analysis work (`stop_reason: "refusal"`), and the Opus tier
 is the stronger tool for cybersecurity analysis regardless. If a Fable hop is ever mid-flight and
-returns a refusal, escalate's **refusal fallback** reruns that hop on Opus 4.8.
+returns a refusal, escalate's **refusal fallback** reruns that hop on the Opus tier.
 **Why:** more expensive is not more capable here. This is the one place the "escalate to Fable"
 instinct is wrong — `fable-check` encodes it so you don't learn it the hard way.
 
@@ -984,6 +981,6 @@ counts against the revision it names in `assessed_revision`, not against the tre
 
 ---
 
-*polytropos · guide generated 2026-07-01, refreshed 2026-09-21 · prices are a labeled
-snapshot cached `2026-09-21` in `data/pricing.json` (single source of truth) · aesop claims pinned
+*polytropos · guide generated 2026-07-01, refreshed 2026-09-24 · prices are a labeled
+snapshot cached `2026-09-24` in `data/pricing.json` (single source of truth) · aesop claims pinned
 to commit `5506617`.*

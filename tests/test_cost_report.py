@@ -5,7 +5,6 @@ computed from this file's own location, per PLAN.md D2.
 """
 
 import contextlib
-import copy
 import importlib.util
 import io
 import json
@@ -64,65 +63,24 @@ class MatchModelTests(unittest.TestCase):
 
 
 class RatesForTests(unittest.TestCase):
-    """``rates_for`` against the real pricing file AND against a synthetic entry that carries
-    an ``intro_pricing`` block.
-
-    The synthetic half exists because of the 2026-09-21 refresh: Sonnet 5's intro window closed
-    and the live page made the intro rate its base rate, so ``data/pricing.json`` carries no
-    ``intro_pricing`` block on ANY model now. The window arithmetic is still live code, so it is
-    exercised here against an injected block with rates deliberately distinct from every real
-    one -- otherwise these three assertions would have quietly become a test of nothing while
-    keeping their names.
-    """
-
-    #: Injected on a copy of the real file. 7.0/35.0 appears nowhere in data/pricing.json, so a
-    #: passing assertion can only come from the intro branch actually firing.
-    INTRO_RATES = (7.0, 35.0)
-    INTRO_UNTIL = "2026-08-31"
-
     def setUp(self):
         self.pricing = cr.load_pricing()
-        self.with_intro = copy.deepcopy(self.pricing)
-        inp, outp = self.INTRO_RATES
-        self.with_intro["models"]["claude-sonnet-5"]["intro_pricing"] = {
-            "input_per_mtok": inp,
-            "output_per_mtok": outp,
-            "until": self.INTRO_UNTIL,
-        }
 
-    def test_no_live_model_carries_an_intro_window(self):
-        # Guards the premise of the three assertions below: if a future refresh adds an
-        # intro_pricing block back to the real file, this fails and the base-rate pins get
-        # re-read against it rather than silently mispinned.
-        carrying = [k for k, v in self.pricing["models"].items() if "intro_pricing" in v]
-        self.assertEqual(carrying, [])
-
-    def test_intro_pricing_before_and_on_boundary(self):
-        for day in ("2026-07-15", self.INTRO_UNTIL):
+    def test_current_sonnet_rates_apply_at_any_date(self):
+        for day in ("2026-07-15", "2026-09-24"):
             when = datetime.fromisoformat(f"{day}T00:00:00+00:00")
             with self.subTest(day=day):
                 self.assertEqual(
-                    cr.rates_for("claude-sonnet-5", when, self.with_intro),
-                    self.INTRO_RATES,
+                    cr.rates_for("claude-sonnet-5", when, self.pricing), (2.0, 10.0)
                 )
 
-    def test_base_pricing_after_intro_window(self):
-        when = datetime.fromisoformat("2026-09-01T00:00:00+00:00")
-        self.assertEqual(cr.rates_for("claude-sonnet-5", when, self.with_intro), (2.0, 10.0))
-        # And with no block at all, the real file's base rate applies on the same date.
-        self.assertEqual(cr.rates_for("claude-sonnet-5", when, self.pricing), (2.0, 10.0))
-
-    def test_when_none_uses_base_rates(self):
+    def test_when_none_uses_current_base_rates(self):
         self.assertEqual(cr.rates_for("claude-sonnet-5", None, self.pricing), (2.0, 10.0))
-        # when=None must ignore an in-window block, not fall into it.
-        self.assertEqual(cr.rates_for("claude-sonnet-5", None, self.with_intro), (2.0, 10.0))
 
     def test_fable_has_no_intro_pricing(self):
         when = datetime.fromisoformat("2026-01-01T00:00:00+00:00")
-        for key in ("claude-fable-5-1", "claude-fable-5"):
-            with self.subTest(model=key):
-                self.assertEqual(cr.rates_for(key, when, self.pricing), (10.0, 50.0))
-                self.assertEqual(cr.rates_for(key, None, self.pricing), (10.0, 50.0))
+        self.assertEqual(cr.rates_for("claude-fable-5", when, self.pricing), (10.0, 50.0))
+        self.assertEqual(cr.rates_for("claude-fable-5", None, self.pricing), (10.0, 50.0))
 
 
 class PriceTests(unittest.TestCase):
@@ -136,6 +94,20 @@ class PriceTests(unittest.TestCase):
         }
         cost = cr.price("claude-fable-5", u, None, pricing)
         self.assertAlmostEqual(cost, 17.25)
+
+    def test_current_fable_uses_its_model_specific_cache_read_rate(self):
+        pricing = cr.load_pricing()
+        u = {"input": 1_000_000, "output": 100_000, "cache_read": 1_000_000,
+             "cache_write": 100_000}
+        cost = cr.price("claude-fable-5-1", u, None, pricing)
+        self.assertAlmostEqual(cost, 16.5)
+
+    def test_current_opus_uses_its_model_specific_cache_read_rate(self):
+        pricing = cr.load_pricing()
+        u = {"input": 1_000_000, "output": 100_000, "cache_read": 1_000_000,
+             "cache_write": 100_000}
+        cost = cr.price("claude-opus-5-5", u, None, pricing)
+        self.assertAlmostEqual(cost, 6.7)
 
 
 class ParseTimestampTests(unittest.TestCase):

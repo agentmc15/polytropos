@@ -18,9 +18,7 @@ python3 bin/copilot_pricing.py knobs    # Copilot: Title-Case display forms
 ```
 
 The two vocabularies never mix. As a labeled snapshot of each file at its own `cached_date`
-(`data/pricing.codex.json` **2026-09-05**, `data/pricing.copilot.json` **2026-09-21**) — run the
-two commands above for the live lists; neither file's `knobs` block changed in the 2026-09-21
-Copilot price re-verify — Codex's
+**2026-09-24** — run the two commands above for the live lists — Codex's
 `knobs.reasoning_efforts` in `data/pricing.codex.json` is
 `["low","medium","high","xhigh","max","ultra"]`, the literal tokens passed to
 `-c model_reasoning_effort=<level>`; Copilot's `knobs.reasoning_efforts` in
@@ -30,8 +28,8 @@ and a Copilot display word never stands in for a Codex flag value.
 
 The two lists are not the same ladder with different casing, and it is worth naming how they
 differ at both ends. The Codex list is a **union across the roster**, not a per-model menu: its
-`reasoning_efforts_note` records it as what the local Codex runtime's `model/list` probe reported
-on 2026-09-05, and says supported levels vary by model — consult a model's own
+`reasoning_efforts_note` records it as what the local Codex runtime's `debug models` probe reported
+on 2026-09-24, and says supported levels vary by model — consult a model's own
 `supported_reasoning_efforts` before assuming a level is available to it. That probe's union has
 no `minimal` and does have `ultra`; the Copilot display list still carries `Minimal` and has no
 `Ultra`. Where the earlier GPT-5.6 announcement ladder (§4) and the Codex file disagree, the file
@@ -43,12 +41,13 @@ what the runtime itself reported.
 | Harness | Mechanism | Status |
 |---|---|---|
 | Codex | `-c model_reasoning_effort=<level>` on `codex exec`, and `codex_execute.py run --effort <level>` (validated against `knobs.reasoning_efforts` at run time — an unknown level errors before dispatch; under the opt-in `adaptive` routing policy an omitted effort is the model's own default, raised one step for a difficult task when the model reports that step, and a rung that cannot take the chosen level runs at its own default with the attempt saying so) | Confirmed |
-| Copilot | Interactive `/model` picker; ←/→ arrow keys adjust the "Reasoning" column on the selected row. Per-model: rows showing `—` (Auto, Claude Sonnet 4.5, Claude Haiku 4.5, Claude Opus 4.5, Kimi K2.7 Code) have no dial; every other row defaults to "Medium" | Interactive mechanism confirmed; headless surface UNCONFIRMED — no `copilot -p` flag or settings key is known to exist |
+| Copilot | Interactive `/model` picker; ←/→ arrow keys adjust the "Reasoning" column on the selected row. For headless commands, `copilot -p` accepts `--effort=LEVEL` or `--reasoning-effort=LEVEL`, where `LEVEL` is `low`, `medium`, `high`, `xhigh`, or `max`. Per-model picker support is recorded in `data/pricing.copilot.json`; rows showing `—` have no dial, while observed adjustable rows default to "Medium" | Interactive and headless CLI mechanisms confirmed; Polytropos's execute driver does not yet forward a chosen effort |
 | Claude Code | — | Out of scope here; effort is managed in-model, not by a CLI dial |
 
-Because no headless Copilot flag is confirmed, `bin/copilot_execute.py` is byte-untouched and
-nothing under `copilot/` names `--effort` or `model_reasoning_effort` — inventing either would be
-fabrication. Codex's flag is already live in `bin/codex_execute.py` and needed no change.
+The headless Copilot flags are a CLI capability, not yet a Polytropos execution-driver feature:
+`bin/copilot_execute.py` does not accept or forward an effort selection. Its dispatched work
+therefore uses the CLI/model default until that forwarding path is deliberately implemented and
+verified. Codex's `--effort` path is already live in `bin/codex_execute.py`.
 
 ## 3. Guidance
 
@@ -63,17 +62,17 @@ fabrication. Codex's flag is already live in `bin/codex_execute.py` and needed n
 - Burn honesty differs by harness. Codex under a ChatGPT subscription draws down opaque
   usage/rate limits, not dollars — any dollar figure shown for a subscription run is a labeled
   API-equivalent relative-burn proxy, never a bill (`billed_usd` stays null). Copilot AI Credits
-  are real money, settled at `billing_unit.usd_per_credit` ($0.01/credit).
+  are real money, settled at the data-defined `billing_unit.usd_per_credit` rate.
 
-## 4. Data provenance (2026-07-18 captures, plus the 2026-09-05 Codex runtime probe)
+## 4. Data provenance (historical captures, plus the 2026-09-24 Codex runtime probe)
 
 - **GPT-5.6 announcement PDF (2026-07-18, authoritative for the announced ladder).** Confirms the
   ascending token ladder `minimal | low | medium | high | xhigh | max` — `max` is the deepest of
   those, giving more reasoning time than `xhigh`. GPT-5.6 (Sol/Terra/Luna) is GA across ChatGPT,
   Codex, and the API. This is a July snapshot of an announcement, superseded on both ends by the
   next bullet for what Codex actually accepts.
-- **Codex runtime `model/list` probe (2026-09-05), the standing Codex source.** As of
-  `data/pricing.codex.json`'s own `cached_date` **2026-09-05**, `ultra` is **in**
+- **Codex runtime `debug models` probe (2026-09-24), the standing Codex source.** As of
+  `data/pricing.codex.json`'s own `cached_date` **2026-09-24**, `ultra` is **in**
   `knobs.reasoning_efforts` — a rung on the ladder this file publishes, not only a mode — and
   `minimal` is not. The file keeps a `knobs.modes.ultra` entry for the behavior that comes with
   it; quoting its note: "Reported by the local Codex runtime as a supported reasoning effort for
@@ -82,42 +81,36 @@ fabrication. Codex's flag is already live in `bin/codex_execute.py` and needed n
   fan-out count, it does not say how the delegation is invoked or configured, and it explicitly
   declines to infer a price effect. It is also per-model, so a level in the union is not a level
   every model takes.
-- **`knobs.modes.fast` (same file, unchanged).** Its note: "Codex fast mode: priority processing
+- **`knobs.modes.fast` (same file).** Its note: "Codex fast mode: priority processing
   for time-sensitive work — the published speed lever. CLI surface and pricing impact unpublished
   as of cached_date — no flag or multiplier invented." So `fast` remains a published mode with no
   known CLI surface — nothing in this repo sets it, and nothing here should invent a flag for it.
 - **Copilot `/model` picker screenshots (user-supplied).** The Reasoning column is the
   mechanism — footer literally reads "←/→ reasoning effort". Two display words were directly
-  observed: "Medium" (default) and "Extra High" (Sol cycled up). Sol's picker cost panel showed
-  500 / 3,000 / 50 / 625 credits per 1M tokens (input / output / cached input / cache write) at that
-  capture, and matched `gpt-5.6-sol`'s rates in `data/pricing.copilot.json` as the file then stood.
-  It no longer does: the 2026-09-05 refresh moved Sol's rates and the 2026-09-21 capture of GitHub's
-  own models-and-pricing page confirms the lower figures, so read Sol's credits from the file (or
-  `python3 bin/copilot_pricing.py est`) rather than from this July panel.
-- **API pricing table (GA, captured 2026-07-18).** Default-tier USD/1M for Sol/Terra/Luna
-  matches `data/pricing.codex.json`'s existing rates exactly — no rate value changed in that
-  file this kit. Long-context step-up tiers were re-captured 2026-08-11 after OpenAI's 2026-07-30
-  cut (Terra -20% / Luna -80%). Where they live now differs per file: `data/pricing.codex.json`
-  keeps them as a note only — its `long_context_note` states the per-request rule and carries no
-  figures — while `data/pricing.copilot.json` models them as schema, one `long_context` block per
-  row, and the 2026-09-21 page capture re-verified every one of those blocks cell by cell (Sol and
-  Terra step up above 272K, Luna above 200K). Read the step-up rates from that file: the per-model
-  figures this bullet used to quote disagreed with it for Sol, and a prose copy of a rate is exactly
-  the thing that rots.
+  observed: "Medium" (default) and "Extra High" (Sol cycled up). Sol's picker cost panel shows
+  500 / 3,000 / 50 / 625 credits per 1M tokens (input / output / cached input / cache write) —
+  matching `gpt-5.6-sol`'s rates in `data/pricing.copilot.json` exactly.
+- **GitHub Copilot CLI command reference and local `copilot --help` (2026-09-24).** Both document
+  `--effort=LEVEL` and `--reasoning-effort=LEVEL` for headless Copilot commands, with the
+  lowercase token ladder `low | medium | high | xhigh | max`. This confirms the headless CLI
+  surface; it does not establish that the current execution driver forwards a selection.
+- **Pricing registries (2026-09-24).** `data/pricing.codex.json` records the locally observed
+  Codex roster and its supported effort sets; `data/pricing.copilot.json` records the picker- and
+  zero-prompt-checked Copilot roster. Each file models a long-context tier only where its source
+  publishes one. Read the current file rather than carrying a historical rate or threshold forward.
 
-The pricing files are the live source of truth for all of the above; this section names the
-provenance as a labeled 2026-07-18 snapshot, not a substitute for reading the data.
+The pricing files are the live source of truth for all of the above; historical captures explain
+why a field exists but are not substitutes for reading the dated data.
 
 ## 5. Open items ledger
 
 | Open item | Single correctable point |
 |---|---|
-| Copilot headless effort surface (no confirmed `copilot -p` flag or settings key) | `pricing.copilot.json` → `knobs.reasoning_efforts_note` |
 | The four unobserved Copilot display renderings (Minimal/Low/High/Max) | `pricing.copilot.json` → `knobs.reasoning_efforts_note` |
-| GPT-5.6 long-context threshold-tier schema modeling (both harnesses) | each file's `long_context_note` |
+| Polytropos Copilot execution-driver effort forwarding | `bin/copilot_execute.py` plus its CLI contract and tests |
 | `fast` mode's CLI surface and pricing impact (both unpublished); and, now that `ultra` is a ladder rung, how its automatic task delegation is invoked or configured — the note records the behavior, not a control | `pricing.codex.json` → `knobs.modes` notes |
-| Copilot roster refresh — the price half is DONE (full cell-by-cell re-verify against the models-and-pricing page, `cached_date` bumped to 2026-09-21, nine rows added and five delisted); what stays open is the PICKER half, since `/model` has not been re-checked since 2026-07-01 and every row added since is price-confirmed only | `pricing.copilot.json` → `model_ids_note` |
-| Exact GPT-5.6 id strings on both harnesses (best-effort lowercase-dot pattern) | each file's `model_ids_note` |
+| Future Copilot roster or picker changes | `pricing.copilot.json` → `model_ids_note` and the dated picker evidence |
+| Future Codex catalog or effort-support changes | `pricing.codex.json` → each model's `supported_reasoning_efforts` and `model_ids_note` |
 
 A Claude-side `effort` skill is out of scope: Claude Code manages effort in-model, not through a
 CLI dial, so there is no Claude-side counterpart to port.

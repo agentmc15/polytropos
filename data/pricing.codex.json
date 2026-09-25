@@ -1,7 +1,7 @@
 {
-  "cached_date": "2026-09-05",
-  "update_from": "User-provided screenshot captured 2026-09-05. Rates are transcribed from that screenshot and have not been independently source-validated. Plan prices remain separately sourced from https://openai.com/chatgpt/pricing.",
-  "model_ids_note": "The Astra/Sol/Terra/Luna orchestration and worker ids match the Codex runtime roster captured in this session. GPT-5.5 is runtime-available but cost-only for this policy. GPT-5.4 nano is transcribed from the pricing screenshot and was absent from the runtime roster (which listed a distinct GPT-5.4 mini), so nano is marked unavailable and cost-only. codex-auto-review remains a non-selectable observed id with an explicitly assumed rate.",
+  "cached_date": "2026-09-24",
+  "update_from": "GPT-6 API rates and long-context thresholds were refreshed from https://developers.openai.com/api/docs/pricing and model identities from https://developers.openai.com/api/docs/models on 2026-09-24. The local `codex debug models` catalog confirmed GPT-6 Astra, Sol, and Luna availability plus their supported reasoning levels. Historical GPT-5.6 rates remain retained for past-estimate continuity. Plan prices remain separately sourced from https://openai.com/chatgpt/pricing.",
+  "model_ids_note": "GPT-6 Astra, Sol, and Luna match the local Codex runtime catalog captured on 2026-09-24; they are the active frontier, strong, and cheap policy targets. GPT-5.6 Terra remains the active mid target. GPT-5.6 Sol and Luna remain available cost-only entries for historical estimates, not routing targets. GPT-5.5 is runtime-available but cost-only for this policy. GPT-5.4 nano is transcribed from the pricing screenshot and was absent from the runtime roster (which listed a distinct GPT-5.4 mini), so nano is marked unavailable and cost-only. codex-auto-review remains a non-selectable observed id with an explicitly assumed rate.",
   "billing_modes": {
     "api": {
       "unit": "USD",
@@ -49,10 +49,10 @@
       "max",
       "ultra"
     ],
-    "reasoning_efforts_note": "Union of reasoning efforts reported by the local Codex runtime model/list probe on 2026-09-05. Supported levels vary by model; consult each model's supported_reasoning_efforts.",
+    "reasoning_efforts_note": "Union of reasoning efforts reported by the local `codex debug models` probe on 2026-09-24. Supported levels vary by model; consult each model's supported_reasoning_efforts.",
     "modes": {
       "ultra": {
-        "note": "Reported by the local Codex runtime as a supported reasoning effort for Astra, Sol, and Terra, with automatic task delegation; Luna does not report support. No pricing multiplier is inferred."
+        "note": "Reported by the local Codex runtime as a supported reasoning effort for GPT-6 Astra and Sol plus GPT-5.6 Terra, with automatic task delegation; GPT-6 Luna does not report support. No pricing multiplier is inferred."
       },
       "fast": {
         "note": "Codex fast mode: priority processing for time-sensitive work — the published speed lever. CLI surface and pricing impact unpublished as of cached_date — no flag or multiplier invented."
@@ -66,7 +66,7 @@
       "tier": "frontier",
       "available": true,
       "supported_reasoning_efforts": ["low", "medium", "high", "xhigh", "max", "ultra"],
-      "default_reasoning_effort": "medium",
+      "default_reasoning_effort": "low",
       "input_per_mtok": 10.0,
       "cached_input_per_mtok": 1.0,
       "cache_write_per_mtok": 12.5,
@@ -80,10 +80,30 @@
       },
       "notes": "Reserved orchestration and evidence-gated recovery model; excluded from ordinary implementation and routine verification."
     },
+    "gpt-6-sol": {
+      "display": "GPT-6 Sol",
+      "vendor": "openai",
+      "tier": "strong",
+      "available": true,
+      "supported_reasoning_efforts": ["low", "medium", "high", "xhigh", "max", "ultra"],
+      "default_reasoning_effort": "medium",
+      "input_per_mtok": 2.0,
+      "cached_input_per_mtok": 0.2,
+      "cache_write_per_mtok": 2.5,
+      "output_per_mtok": 10.0,
+      "long_context": {
+        "threshold_input_tokens": 272000,
+        "input_per_mtok": 4.0,
+        "cached_input_per_mtok": 0.4,
+        "cache_write_per_mtok": 5.0,
+        "output_per_mtok": 15.0
+      },
+      "notes": "Active strong worker for difficult implementation, security-sensitive work, complex integration, and independent verification."
+    },
     "gpt-5.6-sol": {
       "display": "GPT-5.6 Sol",
       "vendor": "openai",
-      "tier": "strong",
+      "tier": "cost-only",
       "available": true,
       "supported_reasoning_efforts": ["low", "medium", "high", "xhigh", "max", "ultra"],
       "default_reasoning_effort": "low",
@@ -98,7 +118,7 @@
         "cache_write_per_mtok": 10.0,
         "output_per_mtok": 30.0
       },
-      "notes": "Difficult implementation, security-sensitive work, complex integration, and independent verification."
+      "notes": "Historical cost-only entry; not eligible for Polytropos worker routing."
     },
     "gpt-5.6-terra": {
       "display": "GPT-5.6 Terra",
@@ -120,10 +140,30 @@
       },
       "notes": "Routine implementation and debugging."
     },
+    "gpt-6-luna": {
+      "display": "GPT-6 Luna",
+      "vendor": "openai",
+      "tier": "cheap",
+      "available": true,
+      "supported_reasoning_efforts": ["low", "medium", "high", "xhigh", "max"],
+      "default_reasoning_effort": "medium",
+      "input_per_mtok": 0.1,
+      "cached_input_per_mtok": 0.01,
+      "cache_write_per_mtok": 0.125,
+      "output_per_mtok": 0.5,
+      "long_context": {
+        "threshold_input_tokens": 272000,
+        "input_per_mtok": 0.2,
+        "cached_input_per_mtok": 0.02,
+        "cache_write_per_mtok": 0.25,
+        "output_per_mtok": 0.75
+      },
+      "notes": "Active cheap worker for mechanical implementation tasks."
+    },
     "gpt-5.6-luna": {
       "display": "GPT-5.6 Luna",
       "vendor": "openai",
-      "tier": "cheap",
+      "tier": "cost-only",
       "available": true,
       "supported_reasoning_efforts": ["low", "medium", "high", "xhigh", "max"],
       "default_reasoning_effort": "medium",
@@ -138,7 +178,7 @@
         "cache_write_per_mtok": 0.5,
         "output_per_mtok": 1.8
       },
-      "notes": "Cheap and mechanical implementation tasks."
+      "notes": "Historical cost-only entry; not eligible for Polytropos worker routing."
     },
     "gpt-5.5": {
       "display": "GPT-5.5",

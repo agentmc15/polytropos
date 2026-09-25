@@ -30,7 +30,7 @@ The table below is generated directly from the skill files on disk at build time
 hand-typed, so it can never drift from what is actually installed.
 
 <!-- BEGIN GENERATED: skills-inventory -->
-Snapshot: `data/pricing.copilot.json` (cached_date 2026-09-21) — pricing sha256 `541644755f987e7ef8ee8455881047077173d65ef0e84e55956674df58fe29ed`, roster sha256 `891106cc6a8ff89be13f7c01de118cce3d54c7df855e71ac0b570f0444dec4d5`.
+Snapshot: `data/pricing.copilot.json` (cached_date 2026-09-24) — pricing sha256 `f29eb145cfcdd05fb649caff9b02acda832bdb20e880342d7e3c0fa3308ba6b4`, roster sha256 `51b4cbb450cc300e151098004ff738ff651882c40bddd867a5a90295ad7465c2`.
 
 | Skill | Description | Source |
 |---|---|---|

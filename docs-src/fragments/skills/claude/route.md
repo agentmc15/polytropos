@@ -1,9 +1,10 @@
 ### What it does
 
-Most sessions run on whatever model you last picked, usually stronger than the task in
-front of you needs. This turns that habit into a thirty-second decision: describe one
-task, get back a short candidate table — a cost estimate and one line of rationale each —
-and a single recommendation. Nothing changes on your machine until you accept what follows.
+Describe one task and get a short candidate table, rationale, and recommendation. Nothing
+changes on your machine until you accept what follows.
+
+The first row in each pricing tier is the current default. Older rows support historical
+costing and compatible explicit pins; their presence is not an availability guarantee.
 
 ### When to reach for it
 
@@ -19,13 +20,9 @@ and a single recommendation. Nothing changes on your machine until you accept wh
 /polytropos:route --sub write unit tests for utils/date.py
 ```
 
-Back comes, in order: **the mode and why** — `--sub` forced subscription framing, so every
-figure is API-equivalent burn, not money spent; **a candidate table**, recommendation
-bolded, the cheapest tier skipped entirely in that mode because effort is the burn lever
-there; then **one action**. Accept *dispatch now* and a self-contained brief is written for
-you (the subagent shares none of this conversation), run, and relayed back. Decline it and
-you get the line to paste — `` `/model sonnet` `` — because only you can switch your
-session's model.
+The reply states the mode and why — `--sub` means API-equivalent burn, not money — then a
+candidate table and one action. Accept *dispatch now* for a self-contained subagent brief,
+or decline for the exact `/model sonnet` command; only you can switch the session model.
 
 ### Failure modes & fallbacks
 

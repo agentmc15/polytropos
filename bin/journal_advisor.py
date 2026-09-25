@@ -201,11 +201,12 @@ def _claude_est(pricing, profiles, cache_hit, notes):
                                  "pricing.json — no estimate")
                 continue
             spec = models[model_id]
+            model_cache_read_mult = spec.get("cache_read_multiplier", cache_read_mult)
             rate_in = spec["input_per_mtok"]
             rate_out = spec["output_per_mtok"]
             usd = (
                 p["input_tokens"]
-                * ((1 - cache_hit) * rate_in + cache_hit * rate_in * cache_read_mult)
+                * ((1 - cache_hit) * rate_in + cache_hit * rate_in * model_cache_read_mult)
                 / 1e6
                 + p["output_tokens"] / 1e6 * rate_out
             )

@@ -102,10 +102,10 @@ Install commands live in one place, the README's [Start here](https://github.com
 
 ## The intended workflow
 
-**The Opus tier (Opus 5 today) is the daily driver. The frontier tier (Fable 5.1 today) is escalated per-portion, then you come back down.**
+**The Opus tier (Opus 5.5 today) is the daily driver. The frontier tier (Fable 5.1 today) is escalated per-portion, then you come back down.**
 
 ```
-daily work (Opus 5)
+daily work (Opus 5.5)
    │  complex planning / complex task detected (/route flags it, or you know)
    ▼
 /polytropos:architect <task>        ← the frontier tier runs ONCE (in-session or as a subagent)
@@ -140,7 +140,7 @@ Four pricing files are the **single numeric source of truth — one file per har
 
 ### Claude — `data/pricing.json`
 
-Derived from `data/pricing.json`, `cached_date` **2026-09-21** — 8 models, USD per million tokens.
+Derived from `data/pricing.json`, `cached_date` **2026-09-24** — 9 models, USD per million tokens.
 
 | Model id | Display | Tier | Input | Output | Context window | Max output |
 |---|---|---|---:|---:|---:|---:|
@@ -149,26 +149,31 @@ Derived from `data/pricing.json`, `cached_date` **2026-09-21** — 8 models, USD
 | `claude-opus-4-7` | Opus 4.7 | opus | $5 | $25 | 1,000,000 | 128,000 |
 | `claude-opus-4-8` | Opus 4.8 | opus | $5 | $25 | 1,000,000 | 128,000 |
 | `claude-opus-5` | Opus 5 | opus | $5 | $25 | 1,000,000 | 128,000 |
+| `claude-opus-5-5` | Opus 5.5 | opus | $4 | $20 | 1,000,000 | 128,000 |
 | `claude-sonnet-4-6` | Sonnet 4.6 | sonnet | $3 | $15 | 1,000,000 | 64,000 |
-| `claude-sonnet-5` | Sonnet 5 | sonnet | $2 | $10 | 1,000,000 | 128,000 |
+| `claude-sonnet-5` | Sonnet 5 | sonnet | $2 | $10 | 1,000,000 | 64,000 |
 | `claude-haiku-4-5` | Haiku 4.5 | haiku | $1 | $5 | 200,000 | 64,000 |
 
 File-wide multipliers and modes, from the same file: `billing_mode` `subscription`, `cache_read_multiplier` (0.1×), `cache_write_multiplier_5m` (1.25×), `cache_write_multiplier_1h` (2.0×), `batch_discount` (0.5×). `task_profiles` carries 5 size priors (XS, S, M, L, XL).
 
-Each entry's `notes` field carries the operational caveats a router must surface — refusal classifiers, always-on thinking, retention requirements, turn length, superseded-at-the-same-rate relationships, and where this file's own global multipliers over-estimate a specific model. Read the notes rather than inferring from the rates.
+Per-model cache-read rates, from the same file: `claude-fable-5-1` (0.025×), `claude-opus-5-5` (0.05×). Each replaces the file-wide `cache_read_multiplier` for that model; the file-wide figure remains the fallback for every other row.
+
+Each entry's `notes` field carries the operational caveats a router must surface — always-on thinking, which row supersedes which, and which models carry their own cache-read rate. Read the notes rather than inferring from the rates.
 
 ### Codex — `data/pricing.codex.json`
 
-Derived from `data/pricing.codex.json`, `cached_date` **2026-09-05** — 7 rows, of which 4 are routable worker/orchestrator tiers; the rest carry a `cost-only` or `non-routing` tier and are never selected for work. USD per million tokens.
+Derived from `data/pricing.codex.json`, `cached_date` **2026-09-24** — 9 rows, of which 4 are routable worker/orchestrator tiers; the rest carry a `cost-only` or `non-routing` tier and are never selected for work. USD per million tokens.
 
 | Model id | Display | Tier | Available | Input | Cached in | Cache write | Output | Long-context block | Efforts |
 |---|---|---|---|---:|---:|---:|---:|---|---|
-| `gpt-6-astra` | GPT-6 Astra | frontier | yes | $10 | $1 | $12.5 | $50 | ≥272,000 in-tok: $20 / $2 / $25 / $75 | low, **medium**, high, xhigh, max, ultra |
-| `gpt-5.6-sol` | GPT-5.6 Sol | strong | yes | $4 | $0.4 | $5 | $20 | ≥272,000 in-tok: $8 / $0.8 / $10 / $30 | **low**, medium, high, xhigh, max, ultra |
+| `gpt-6-astra` | GPT-6 Astra | frontier | yes | $10 | $1 | $12.5 | $50 | ≥272,000 in-tok: $20 / $2 / $25 / $75 | **low**, medium, high, xhigh, max, ultra |
+| `gpt-6-sol` | GPT-6 Sol | strong | yes | $2 | $0.2 | $2.5 | $10 | ≥272,000 in-tok: $4 / $0.4 / $5 / $15 | low, **medium**, high, xhigh, max, ultra |
 | `gpt-5.6-terra` | GPT-5.6 Terra | mid | yes | $2 | $0.2 | $2.5 | $12 | ≥272,000 in-tok: $4 / $0.4 / $5 / $18 | low, **medium**, high, xhigh, max, ultra |
-| `gpt-5.6-luna` | GPT-5.6 Luna | cheap | yes | $0.2 | $0.02 | $0.25 | $1.2 | ≥200,000 in-tok: $0.4 / $0.04 / $0.5 / $1.8 | low, **medium**, high, xhigh, max |
+| `gpt-6-luna` | GPT-6 Luna | cheap | yes | $0.1 | $0.01 | $0.125 | $0.5 | ≥272,000 in-tok: $0.2 / $0.02 / $0.25 / $0.75 | low, **medium**, high, xhigh, max |
 | `gpt-5.4-nano` | GPT-5.4 nano | cost-only | no | $0.2 | $0.02 | — | $1.25 | — | — |
 | `gpt-5.5` | GPT-5.5 | cost-only | yes | $5 | $0.5 | — | $30 | ≥272,000 in-tok: $10 / $1 / — / $45 | low, **medium**, high, xhigh |
+| `gpt-5.6-luna` | GPT-5.6 Luna | cost-only | yes | $0.2 | $0.02 | $0.25 | $1.2 | ≥200,000 in-tok: $0.4 / $0.04 / $0.5 / $1.8 | low, **medium**, high, xhigh, max |
+| `gpt-5.6-sol` | GPT-5.6 Sol | cost-only | yes | $4 | $0.4 | $5 | $20 | ≥272,000 in-tok: $8 / $0.8 / $10 / $30 | **low**, medium, high, xhigh, max, ultra |
 | `codex-auto-review` <br>*rate assumed from* `gpt-5.3-codex` | Codex auto-review (Codex Desktop) | non-routing | — | $1.75 | $0.175 | — | $14 | — | — |
 
 The long-context column reads *input / cached input / cache write / output*; the bolded effort is that row's `default_reasoning_effort`. Plans in the same file: `plus` $20/mo (included usage: null), `pro` $200/mo (included usage: null), `business` price not recorded (included usage: null), `enterprise` price not recorded (included usage: null). Effort ladder (`knobs.reasoning_efforts`): low, medium, high, xhigh, max, ultra. Cache: `cache_read_multiplier` (0.1×), `cache_write_multiplier` (1.25×), `cache_min_life_minutes` 30.
@@ -179,47 +184,41 @@ Orchestration policy (same file, `orchestration_policy`): orchestrator tier `fro
 
 ### Copilot — `data/pricing.copilot.json`
 
-Derived from `data/pricing.copilot.json`, `cached_date` **2026-09-21** — 35 rows across 6 vendors. Rates are USD per million tokens; Copilot settles them in `billing_unit.name` = **AIC** at `usd_per_credit` 0.01, so credits = USD ÷ that field — the unit itself is data, never a literal in a skill.
+Derived from `data/pricing.copilot.json`, `cached_date` **2026-09-24** — 29 rows across 6 vendors. Rates are USD per million tokens; Copilot settles them in `billing_unit.name` = **AIC** at `usd_per_credit` 0.01, so credits = USD ÷ that field — the unit itself is data, never a literal in a skill.
 
-5 rows are flagged **DELISTED** in their own `notes`: kept at their last published rates so historical sessions can still be costed, not for new work. 10 rows carry a `long_context` step-up block and 3 carry a `promo` window; both are broken out under the main table.
+6 retired models live apart from the roster, in `retired_models`, each with its `retired_on` date and `replacement`: they keep historical sessions costable, and no routing, preference, forecast or dispatch path reads them (`claude-opus-4.5`, `claude-opus-4.6`, `claude-sonnet-4.5`, `claude-sonnet-4.6`, `gemini-3.1-pro`, `mai-code-1-flash`). 10 rows carry a `long_context` step-up block and 2 carry a `promo` window; both are broken out under the main table.
 
 | Model id | Display | Vendor | Tier | Input | Cached in | Cache write | Output | Flags |
 |---|---|---|---|---:|---:|---:|---:|---|
 | `claude-fable-5` | Claude Fable 5 | anthropic | frontier | $10 | $1 | $12.5 | $50 | — |
 | `claude-fable-5.1` | Claude Fable 5.1 | anthropic | frontier | $10 | $0.25 | $12.5 | $50 | — |
+| `gpt-6-astra` | GPT-6 Astra | openai | frontier | $10 | $1 | $12.5 | $50 | long-context ≥272,000 |
 | `claude-opus-4.8-fast` | Claude Opus 4.8 (fast mode) | anthropic | strong | $10 | $1 | $12.5 | $50 | — |
-| `gpt-6-astra` | GPT-6 Astra | openai | strong | $10 | $1 | $12.5 | $50 | long-context ≥272,000 |
-| `claude-opus-4.5` | Claude Opus 4.5 | anthropic | strong | $5 | $0.5 | $6.25 | $25 | DELISTED |
-| `claude-opus-4.6` | Claude Opus 4.6 | anthropic | strong | $5 | $0.5 | $6.25 | $25 | DELISTED |
 | `claude-opus-4.7` | Claude Opus 4.7 | anthropic | strong | $5 | $0.5 | $6.25 | $25 | — |
 | `claude-opus-4.8` | Claude Opus 4.8 | anthropic | strong | $5 | $0.5 | $6.25 | $25 | — |
 | `claude-opus-5` | Claude Opus 5 | anthropic | strong | $5 | $0.5 | $6.25 | $25 | — |
 | `gpt-5.5` | GPT-5.5 | openai | strong | $5 | $0.5 | — | $30 | long-context ≥272,000 |
+| `claude-opus-5.5` | Claude Opus 5.5 | anthropic | strong | $4 | $0.2 | $5 | $20 | — |
 | `gpt-5.6-sol` | GPT-5.6 Sol | openai | strong | $4 | $0.4 | $5 | $20 | long-context ≥272,000 |
 | `kimi-k3` | Kimi K3 | moonshot | strong | $3 | $0.3 | — | $15 | — |
-| `gemini-3.1-pro` | Gemini 3.1 Pro | google | strong | $2 | $0.2 | — | $12 | DELISTED, long-context ≥200,000 |
-| `grok-4.5` | Grok 4.5 | xai | strong | $2 | $0.5 | — | $6 | long-context ≥200,000 |
+| `gpt-6-sol` | GPT-6 Sol | openai | strong | $2 | $0.2 | $2.5 | $10 | long-context ≥272,000 |
 | `grok-4.6` | Grok 4.6 | xai | strong | $2 | $0.5 | — | $6 | long-context ≥200,000 |
-| `grok-4.7` | Grok 4.7 | xai | strong | $2 | $0.5 | — | $6 | long-context ≥200,000 |
 | `gpt-5.3-codex` | GPT-5.3-Codex | openai | strong | $1.75 | $0.175 | — | $14 | — |
-| `claude-sonnet-4` | Claude Sonnet 4 | anthropic | mid | $3 | $0.3 | $3.75 | $15 | — |
-| `claude-sonnet-4.5` | Claude Sonnet 4.5 | anthropic | mid | $3 | $0.3 | $3.75 | $15 | DELISTED |
-| `claude-sonnet-4.6` | Claude Sonnet 4.6 | anthropic | mid | $3 | $0.3 | $3.75 | $15 | — |
 | `gpt-5.4` | GPT-5.4 | openai | mid | $2.5 | $0.25 | — | $15 | long-context ≥272,000 |
 | `claude-sonnet-5` | Claude Sonnet 5 | anthropic | mid | $2 | $0.2 | $2.5 | $10 | — |
 | `gpt-5.6-terra` | GPT-5.6 Terra | openai | mid | $2 | $0.2 | $2.5 | $12 | long-context ≥272,000 |
+| `grok-4.7` | Grok 4.7 | xai | mid | $2 | $0.5 | — | $6 | long-context ≥200,000 |
 | `gemini-3.5-flash` | Gemini 3.5 Flash | google | mid | $1.5 | $0.15 | — | $9 | — |
 | `kimi-k2.7-code` | Kimi K2.7 Code | moonshot | mid | $0.95 | $0.19 | — | $4 | — |
 | `gemini-3.6-flash` | Gemini 3.6 Flash | google | mid | $0.75 | $0.075 | — | $3.75 | promo until 2026-12-31 |
-| `gemini-3.7-flash` | Gemini 3.7 Flash | google | mid | $0.75 | $0.075 | — | $3.75 | promo until 2026-12-31 |
+| `gemini-3.7-flash` | Gemini 3.7 Flash | google | mid | $0.75 | $0.075 | — | $3.75 | — |
 | `gemini-3.8-flash` | Gemini 3.8 Flash | google | mid | $0.75 | $0.075 | — | $3.75 | promo until 2026-12-31 |
 | `claude-haiku-4.5` | Claude Haiku 4.5 | anthropic | cheap | $1 | $0.1 | $1.25 | $5 | — |
 | `gpt-5.4-mini` | GPT-5.4 mini | openai | cheap | $0.75 | $0.075 | — | $4.5 | — |
-| `mai-code-1-flash` | MAI-Code-1-Flash | microsoft | cheap | $0.75 | $0.075 | — | $4.5 | DELISTED |
 | `gpt-5-mini` | GPT-5 mini | openai | cheap | $0.25 | $0.025 | — | $2 | — |
-| `gpt-5.4-nano` | GPT-5.4 nano | openai | cheap | $0.2 | $0.02 | — | $1.25 | — |
 | `gpt-5.6-luna` | GPT-5.6 Luna | openai | cheap | $0.2 | $0.02 | $0.25 | $1.2 | long-context ≥200,000 |
 | `mai-code-1.1-flash` | MAI-Code-1.1-Flash | microsoft | cheap | $0.2 | $0.02 | — | $1.2 | — |
+| `gpt-6-luna` | GPT-6 Luna | openai | cheap | $0.1 | $0.01 | $0.125 | $0.5 | long-context ≥272,000 |
 
 A `—` in the cache-write column means the file records no cache-write rate for that row, not that cache writes are free.
 
@@ -227,28 +226,27 @@ A `—` in the cache-write column means the file records no cache-write rate for
 
 | Model id | Threshold (input tokens) | Input | Cached in | Cache write | Output |
 |---|---:|---:|---:|---:|---:|
-| `gemini-3.1-pro` | 200,000 | $4 | $0.4 | — | $18 |
+| `gpt-6-astra` | 272,000 | $20 | $2 | $25 | $75 |
 | `gpt-5.5` | 272,000 | $10 | $1 | — | $45 |
 | `gpt-5.6-sol` | 272,000 | $8 | $0.8 | $10 | $30 |
-| `gpt-6-astra` | 272,000 | $20 | $2 | $25 | $75 |
-| `grok-4.5` | 200,000 | $4 | $1 | — | $12 |
+| `gpt-6-sol` | 272,000 | $4 | $0.4 | $5 | $15 |
 | `grok-4.6` | 200,000 | $4 | $1 | — | $12 |
-| `grok-4.7` | 200,000 | $4 | $1 | — | $12 |
 | `gpt-5.4` | 272,000 | $5 | $0.5 | — | $22.5 |
 | `gpt-5.6-terra` | 272,000 | $4 | $0.4 | $5 | $18 |
+| `grok-4.7` | 200,000 | $4 | $1 | — | $12 |
 | `gpt-5.6-luna` | 200,000 | $0.4 | $0.04 | $0.5 | $1.8 |
+| `gpt-6-luna` | 272,000 | $0.2 | $0.02 | $0.25 | $0.75 |
 
-**Promotional windows** (3 rows) — the post-promo rate is not published, so re-check `update_from` after the date rather than assuming the rate holds:
+**Promotional windows** (2 rows) — the post-promo rate is not published, so re-check `update_from` after the date rather than assuming the rate holds:
 
 | Model id | Promo until |
 |---|---|
 | `gemini-3.6-flash` | 2026-12-31 |
-| `gemini-3.7-flash` | 2026-12-31 |
 | `gemini-3.8-flash` | 2026-12-31 |
 
-Plans in the same file: `free` $0/mo, `pro` $10/mo / 1,500 AIC, `pro-plus` $39/mo / 7,000 AIC, `max` $200/mo / 20,000 AIC, `business` price not recorded, `enterprise` price not recorded. Effort ladder (`knobs.reasoning_efforts`, ascending display form): Minimal, Low, Medium, High, Extra High, Max.
+Plans in the same file: `free` $0/mo, `pro` $10/mo / 1,500 AIC, `pro-plus` $39/mo / 7,000 AIC, `max` $200/mo / 20,000 AIC, `business` price not recorded, `enterprise` price not recorded. Effort ladder (`knobs.reasoning_efforts`, ascending display form): Low, Medium, High, Extra High, Max.
 
-One caveat the file states about itself and this page repeats: the DELISTED exclusion is **by note only**. Every row's tier must remain one of frontier/strong/mid/cheap, so nothing mechanically stops a caller selecting a delisted row — read the note. Prices were re-verified cell by cell against the source page on the `cached_date` above; the *roster* (which ids the picker actually offers) carries its own separate caveat in `model_ids_note`.
+How the file was checked is recorded in the file itself: `pricing_refresh_note` for the rates, and `model_ids_note` for the *roster* (which ids the picker actually offers). Read those notes rather than assuming a listed model is selectable.
 
 ### Cursor — `data/pricing.cursor.json`
 
@@ -313,9 +311,9 @@ A skill's `SKILL.md` **is** its runtime behavior, not documentation of it. All f
 
 ### Routing and cost
 
-**`/polytropos:route <task>`** — picks the model for one task and prices it before you run it. It first decides the billing mode: from `billing_mode` in `data/pricing.json` for a session-routing question, or always `api` when the question is "what should the app I'm building call". Then it classifies the task, prices each candidate from the pricing file at run time (never from memory), and returns a compact table with the recommendation bolded plus two actions — dispatch now to a subagent pinned to the recommended alias, or the exact `/model` command for you to switch your own session. `--api` / `--sub` forces the framing. It **never** switches your main session's model, and a big frontier-worthy task is routed to `/polytropos:architect` instead of a plain dispatch. It optionally prefers a measured tier map if `prefs/repo-bench.json` exists for this repo, citing the run it came from — and ignores that file as stale if any id in it is missing from the pricing file.
+**`/polytropos:route <task>`** — picks the model for one task and prices it before you run it. It first decides the billing mode: from `billing_mode` in `data/pricing.json` for a session-routing question, or always `api` when the question is "what should the app I'm building call". Then it classifies the task, prices each candidate from the pricing file at run time (never from memory), and returns a compact table with the recommendation bolded plus two actions — dispatch now to a subagent pinned to the recommended alias, or the exact `/model` command for you to switch your own session. `--api` / `--sub` forces the framing. It **never** switches your main session's model, and a big frontier-worthy task is routed to `/polytropos:architect` instead of a plain dispatch. It optionally prefers a measured tier map if `prefs/repo-bench.json` exists for this repo, citing the run it came from — and ignores that file as stale if any id in it is missing from the pricing file. Within a tier, the first row of `data/pricing.json` is the current default; older rows stay for historical costing and explicit compatibility pins, never as evidence that a model is still offered.
 
-**`/polytropos:fable-check <task>`** — the judgment reference for the frontier tier: is this task worth it here, and if so how should it be run. Routes there for long-horizon autonomous work, problems the tier below already failed on, deep research, and heavy parallel sub-agent orchestration; explicitly *not* for routine coding, solved problems, or security-analysis-heavy work where the classifiers refuse much of it. It surfaces the same caveats every time — refusal `stop_reason` with its named fallback, minutes-long turns, the retention requirement, always-on thinking — and gives five optimal-use rules (full spec up front; sweep effort rather than defaulting to the top; de-prescribe prompts migrated from older models; let it delegate; ground progress claims against tool results). Ratios are derived from the pricing file, never quoted from memory.
+**`/polytropos:fable-check <task>`** — the judgment reference for the frontier tier: is this task worth it here, and if so how should it be run. Routes there for long-horizon autonomous work, problems the tier below already failed on at higher effort, deep research, and heavy parallel sub-agent orchestration; explicitly *not* for routine coding, solved problems, or anything the tiers below can handle at the needed effort. The caveat it surfaces every time is that thinking is always on, and it gives five optimal-use rules (full spec up front; take the model's documented default effort as the baseline and raise it only on evidence; de-prescribe prompts migrated from older models; let it delegate; ground progress claims against tool results). Ratios are derived from the pricing file, never quoted from memory.
 
 **`/polytropos:cost-report`** — historical spend from your own local transcripts. It runs `bin/cost_report.py`, which walks `~/.claude/projects/**/*.jsonl` read-only, extracts per-message model and usage, dedupes by message id (resumed sessions duplicate history), and prices everything from `data/pricing.json`. Flags: `--days N`, `--mode api|subscription`, `--top N`, `--json`, `--projects-dir DIR`. It reports spend by model, the top sessions, and **downgrade candidates** — sessions run on a high tier with a small footprint — with the dollar delta framed as savings in `api` mode and as burn share in `subscription` mode. Two no-data outcomes are kept distinct: a missing projects directory renders nothing, while a present-but-empty one renders a full zero-row report with a label, which is honest output rather than a failure.
 
@@ -329,7 +327,7 @@ A skill's `SKILL.md` **is** its runtime behavior, not documentation of it. All f
 
 **`/polytropos:execute <slug>`** — run the kit. Setup locates it, reads `PLAN.md` + `GUARDRAILS.md` + `TASKS.md`, and reads the four dials once. Before the first dispatch it runs `python3 bin/kit_contract.py graph --kit .claude/kits/<slug>` (exit 2 on a duplicate id, unknown or self dependency, or cycle — each named with its fix; it fixes `TASKS.md` and reports the defect, never routes around an invalid plan) and then `roster`. Per task: mark `in-progress` → check the budget dial → dispatch the brief **verbatim** to the implementer with the task's `model` field passed as the Agent tool's `model` parameter (**which overrides the agent file's frontmatter**) → verify independently → on pass mark `done` and append the ledger line; on fail retry once with the failure output, then mark `blocked` and move on. Independent tasks dispatch in parallel; phase boundaries dispatch the reviewer. Three properties are worth naming: the `evidence:` rule means a `red-green` task whose check already passed beforehand is **blocked, not done**, whatever it exits now; the fences are **re-read from disk at every phase start** as an unconditional guarantee (compaction-triggered re-reads are best-effort, and the skill says which it is honoring); and a budget stop appends one `result=budget-stop` line, leaves statuses untouched, and is never folded into a fluent "all done" summary.
 
-**`/polytropos:escalate <task>`** — the per-task sibling of execute's escalation valve. Step 0 pins a **machine-checkable** success condition, and if the task genuinely has none the skill says so plainly rather than pretending a vibe is a verify. Then: attempt on the cheapest tier you'd actually trust; run the check yourself; on failure retry once on the *same* model with the exact failure output; only on a second failure escalate to a frontier subagent carrying **only** the task, the check, and the evidence from both attempts. Two cost levers in order of what you control: **scope** (hand it the diagnosis, not a blank re-attempt) and **effort** where the invocation exposes it. Re-verify the frontier output too; if even that fails, stop and report honestly. A refusal `stop_reason` falls back to the tier below at high effort, because a refusal will not retry into success.
+**`/polytropos:escalate <task>`** — the per-task sibling of execute's escalation valve. Step 0 pins a **machine-checkable** success condition, and if the task genuinely has none the skill says so plainly rather than pretending a vibe is a verify. Then: attempt on the cheapest tier you'd actually trust; run the check yourself; on failure retry once on the *same* model with the exact failure output; only on a second failure escalate to a frontier subagent carrying **only** the task, the check, and the evidence from both attempts. Two cost levers in order of what you control: **scope** (hand it the diagnosis, not a blank re-attempt) and **effort** where the invocation exposes it. Re-verify the frontier output too; if even that fails, stop and report honestly.
 
 **`/polytropos:setup`** — wires `bin/statusline.py` into `~/.claude/settings.json` as the `statusLine` command: model name colour-coded by price tier, estimated session cost, context percentage, and 5h/7d rate-limit burn on subscription sessions. It edits user-level settings, so it verifies the script runs, shows you the exact block, warns if a `statusLine` key already exists, and writes **only** after explicit confirmation — and the command it writes must be a literal absolute path, because `${CLAUDE_PLUGIN_ROOT}` does not exist outside plugin context. It also offers a **separate** opt-in, never bundled with the statusline step: a `PostToolUse` hook (`bin/kit_verify_hook.py hook`) that blocks a task's `- status:` line from being edited to `done` without a verify-pass marker — and it tells you precisely what that does not cover (it fires on `Edit` only, so a `done` flip performed via `Write` is not enforced).
 

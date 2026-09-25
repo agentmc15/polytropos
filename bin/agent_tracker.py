@@ -106,23 +106,32 @@ def _load_pricing():
         return None
 
 
-def _fable_cost(tok, pricing):
-    """Price Fable tokens from pricing.json — never hardcode rates (single source of truth)."""
+def _pricing_model_id(raw_model_id, pricing):
+    """Resolve a transcript model id to its pricing key, including dated snapshots."""
+    raw = str(raw_model_id or "").split("[")[0].strip()
+    for key in (pricing.get("models") or {}):
+        if raw == key or raw.startswith(key + "-"):
+            return key
+    return None
+
+
+def _fable_cost(tok, model_id, pricing):
+    """Price one Fable model's tokens from pricing.json, never a newer model's rate."""
     if not pricing:
         return 0.0
-    m = (pricing.get("models") or {}).get("claude-fable-5") or {}
+    models = pricing.get("models") or {}
+    m = models.get(model_id) or {}
     inp = m.get("input_per_mtok", 0) or 0
     outp = m.get("output_per_mtok", 0) or 0
-    cr = pricing.get("cache_read_multiplier", 0.1)
+    cr = m.get("cache_read_multiplier", pricing.get("cache_read_multiplier", 0.1))
     cw = pricing.get("cache_write_multiplier_5m", 1.25)
     return (tok["in"] * inp + tok["out"] * outp
             + tok["cache_read"] * inp * cr + tok["cache_write"] * inp * cw) / 1_000_000
 
 
-def _fable_tokens_in_transcript(path):
-    """Sum token usage attributed to a Fable model across a subagent transcript. None if no Fable."""
-    tot = {"in": 0, "out": 0, "cache_read": 0, "cache_write": 0}
-    found = False
+def _fable_tokens_in_transcript(path, pricing):
+    """Group Fable transcript usage by its priced model id, or return None when absent."""
+    by_model = {}
     try:
         with open(path) as f:
             for line in f:
@@ -133,15 +142,21 @@ def _fable_tokens_in_transcript(path):
                 msg = o.get("message") or {}
                 u = msg.get("usage") or o.get("usage") or {}
                 mid = str(msg.get("model") or o.get("model") or "")
-                if u and "fable" in mid.lower():
-                    found = True
-                    tot["in"] += u.get("input_tokens", 0) or 0
-                    tot["out"] += u.get("output_tokens", 0) or 0
-                    tot["cache_read"] += u.get("cache_read_input_tokens", 0) or 0
-                    tot["cache_write"] += u.get("cache_creation_input_tokens", 0) or 0
+                if not u or "fable" not in mid.lower():
+                    continue
+                model_id = _pricing_model_id(mid, pricing)
+                if model_id is None:
+                    continue
+                tok = by_model.setdefault(
+                    model_id, {"in": 0, "out": 0, "cache_read": 0, "cache_write": 0}
+                )
+                tok["in"] += u.get("input_tokens", 0) or 0
+                tok["out"] += u.get("output_tokens", 0) or 0
+                tok["cache_read"] += u.get("cache_read_input_tokens", 0) or 0
+                tok["cache_write"] += u.get("cache_creation_input_tokens", 0) or 0
     except Exception:
         return None
-    return tot if found else None
+    return by_model or None
 
 
 def _load_usage():
@@ -201,14 +216,16 @@ def accumulate_fable(agent_id, transcript_path):
         try:
             if _already_processed(agent_id):
                 return
-            tok = _fable_tokens_in_transcript(transcript_path)
+            pricing = _load_pricing()
+            by_model = _fable_tokens_in_transcript(transcript_path, pricing or {})
             _mark_processed(agent_id)  # mark even if non-Fable, so multi-fire won't re-parse
-            if not tok:
+            if not by_model:
                 return
             d = _load_usage()
-            for k in ("in", "out", "cache_read", "cache_write"):
-                d[k] += tok[k]
-            d["cost"] += _fable_cost(tok, _load_pricing())
+            for model_id, tok in by_model.items():
+                for k in ("in", "out", "cache_read", "cache_write"):
+                    d[k] += tok[k]
+                d["cost"] += _fable_cost(tok, model_id, pricing)
             _save_usage(d)
         finally:
             fcntl.flock(lock, fcntl.LOCK_UN)

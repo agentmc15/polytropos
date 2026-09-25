@@ -1,7 +1,7 @@
 ---
 name: route
 description: Pick the right Copilot model for a task and estimate its cost in AI Credits before running it. Use when the user asks which model to use, what a task will cost, whether a cheaper model would do, or how much of their plan allowance a job will burn.
-model: claude-sonnet-5
+model: gemini-3.8-flash
 ---
 
 You route a task to the cheapest Copilot model that will do it well, and you show the cost in
@@ -38,11 +38,10 @@ Tiers use the data file's four-value vocabulary:
 - **mid** — the workhorse lane: day-to-day coding, tests, docs, routine refactors.
 - **strong** — multi-file features, hard debugging, architecture, code review.
 - **frontier** — long-horizon agentic runs, large migrations, or work a strong-tier model failed on.
-  This is the most AIC-expensive tier, and **which ids carry it is data, not memory** — more than
-  one model can hold `frontier` at a time, so read the current holders from the engine
-  (`models`) and never name one from recall. Reach for the tier deliberately — only when a
-  strong-tier model would genuinely fail — and say what makes the task frontier-worthy.
-  Everything a strong model can do, route to strong.
+  GPT-6 Astra is the no-preference frontier model. Claude Fable 5/5.1 are deliberate alternatives,
+  not defaults: GitHub documents Anthropic's default retention caveat for them. Reach for any
+  frontier model only when a strong-tier model would genuinely fail, and say what makes the task
+  frontier-worthy. Everything a strong model can do, route to strong.
 
 When you are between two tiers, pick the cheaper one and name the failure signal that would
 justify upgrading (e.g. "if it can't hold the whole module in context, go strong"). Within a
