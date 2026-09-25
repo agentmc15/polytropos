@@ -1916,6 +1916,10 @@ class PreflightTests(unittest.TestCase):
             source, _manifest, known = self._setup(td)
             report = self._run(source, Path(td) / "no-such-manifest.json", known)
             self.assertTrue(self._gate(report, "version-changed")["ok"])
+            # `update` refuses a plugin that is not installed; a first install prints `install`.
+            self.assertTrue(report["ready"])
+            self.assertEqual(report["commands"][0], ps.install_command("fake-plugin", "fake-market"))
+            self.assertNotEqual(report["commands"][0], ps.update_command("fake-plugin", "fake-market"))
 
     def test_a_missing_marketplace_record_stops_at_the_first_gate(self):
         with tempfile.TemporaryDirectory() as td:

@@ -816,7 +816,9 @@ def run_preflight(repo_root, installed_manifest, known_marketplaces, source=None
         report["ready"] = bool(gates) and all(g["ok"] for g in gates) and len(gates) == len(PREFLIGHT_GATES)
         report["exit"] = EXIT_OK if report["ready"] else EXIT_DRIFT
         if report["ready"]:
-            report["commands"] = [plugin_staleness.update_command(name, marketplace),
+            refresh = (plugin_staleness.install_command if report.get("first_install")
+                       else plugin_staleness.update_command)
+            report["commands"] = [refresh(name, marketplace),
                                   "after the restart, in a Claude Code session: " + POST_RESTART_CHECK]
         return report
 
@@ -864,6 +866,7 @@ def run_preflight(repo_root, installed_manifest, known_marketplaces, source=None
     entry = plugin_staleness.resolve_installed_entry(installed_manifest,
                                                      plugin_staleness._plugin_key(name, marketplace))
     installed_version = entry.get("version") if entry else None
+    report["first_install"] = entry is None
     if entry is None:
         gate("version-changed", True, f"not installed yet; {source_version} would be a first install")
     else:
