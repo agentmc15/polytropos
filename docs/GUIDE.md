@@ -369,6 +369,16 @@ no-clobber, repo mirrors regenerate — and the Claude side is **print-only**: t
 `claude plugin update` remedy is shown, never executed, because repo code never writes
 `~/.claude`. `demo` exercises both paths on synthetic temp trees.
 
+Three commands close the gaps a refresh used to leave. `harness_update.py preflight` vets the
+checkout the plugin installs from before anything is copied: it must be on `main`, clean, level
+with its upstream, free of credential-shaped files among what git ignores, and at a new version.
+It prints the refresh commands only when every gate passes. `plugin_staleness.py --full` compares
+every tracked file with the installed copy, lists what the copy carries that git does not track,
+and prints a removal line for each older cached version. It also settles a "SHA STALE" result: if
+every tracked file is identical, only the recorded commit id differs. After the restart,
+`plugin_staleness.py --loaded "${CLAUDE_PLUGIN_ROOT}"` confirms the session runs the new copy. The
+bump itself is `release_gate.py bump <new>`.
+
 The same check-first workflow ships as Codex `$update`, using the Codex bundle root and preserving
 the same ownership and no-clobber boundaries.
 

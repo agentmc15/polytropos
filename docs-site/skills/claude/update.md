@@ -82,6 +82,8 @@ sets for plugin-executed content; if it is unset, fall back to resolving
 python3 "${CLAUDE_PLUGIN_ROOT}/bin/harness_update.py" check
 python3 "${CLAUDE_PLUGIN_ROOT}/bin/harness_update.py" apply --dry-run
 python3 "${CLAUDE_PLUGIN_ROOT}/bin/harness_update.py" apply
+python3 "${CLAUDE_PLUGIN_ROOT}/bin/harness_update.py" preflight
+python3 "${CLAUDE_PLUGIN_ROOT}/bin/plugin_staleness.py" --loaded "${CLAUDE_PLUGIN_ROOT}"
 ```
 
 ### Check-first law — binding, not a suggestion
@@ -90,6 +92,25 @@ Always run `check` first and report its card, no matter why the skill was invoke
 only when the user has explicitly asked for a refresh in **this conversation** — being invoked
 to look at freshness is not consent to write. If it is unclear whether the user wants a refresh
 or just a look, run `apply --dry-run` and show the would-do plan rather than guessing either way.
+
+### Refreshing the Claude plugin — preflight first, then the user's go-ahead
+
+`claude plugin update` copies the checkout the plugin installs from — wholesale, ignoring
+`.gitignore` — and copies nothing unless the version changed. Before relaying the refresh
+commands, run `preflight` and report every gate it prints:
+
+- Relay the commands only when it exits 0 (`verdict: ready`), and run them only on the user's
+  explicit go-ahead in this conversation.
+- `version-changed` failing means a bump comes first: `python3 bin/release_gate.py bump <next>`
+  in the repo, which refuses on uncommitted work and never commits; the bump is then reviewed and
+  merged like any change.
+- `on-branch` or `clean` failing means someone is working in the install source. Report it; never
+  switch its branch or clear its work to make the gate pass.
+- `no-credential-files` failing names the file. It has to leave the checkout before the copy.
+
+After the restart, confirm the session loaded the new copy with the `--loaded` line above:
+`current` means done; `restart needed` means this session still runs an older cached version; `not
+the installed copy` means a `--plugin-dir` session, which no restart changes.
 
 ### What `apply` can and cannot do
 
@@ -136,8 +157,8 @@ prior file beside its destination as `<name>.polytropos-bak`. Never run it on yo
 
 Pricing NUMBERS and docs snapshot TABLES are never auto-edited by this engine — a stale
 `cached_date` or a stale docs label means a human refresh from the source data, both changed
-together in one edit (the repo's CLAUDE.md rule). Point the user at `README.md` for the
-`data/pricing.json` refresh runbook, and at `docs/COPILOT-HARNESS.md`'s own runbook lines for
+together in one edit (the repo's CLAUDE.md rule). Point the user at `docs/REFERENCE.md`'s
+"Updating prices" section for the `data/pricing.json` refresh runbook, and at `docs/COPILOT-HARNESS.md`'s own runbook lines for
 the `data/pricing.copilot.json` refresh.
 
 ### Reading the card
@@ -145,6 +166,14 @@ the `data/pricing.copilot.json` refresh.
 - Exit code 3 means drift somewhere; the card's verdict line names which of the four sections
   (claude / copilot / codex / data) drifted.
 - "not installed" is an absence, not a failure — report it as such.
+- `whole tree:` in the claude section means every tracked file was compared, so a SHA STALE
+  result has been settled one way or the other. SHA STALE itself appears only when git could not
+  list the tracked files.
+- `!! credential-shaped file inside the installed copy` is drift to fix now: that file sits in
+  the plugin cache.
+- A `cache:` line names other version directories that no update removes.
+  `python3 bin/plugin_staleness.py` prints one `rm -rf` line for each; relay them, and run them
+  only on the user's explicit go-ahead.
 - An `unmanaged` result on codex is a warning worth mentioning, not an alarm.
 - A codex `conflict` count means destinations differ from what the bundle would write (an
   edited managed file, or an unresolved placeholder) — real drift, worth naming; a
@@ -158,7 +187,7 @@ the `data/pricing.copilot.json` refresh.
   plus `status`/`exit`; `apply` emits `dry_run`/`targets`/`results`/`errors`/`status`/`exit`.
   Treat them as two separate shapes to parse, by design, never interchangeably.
 - **Both embed absolute home paths** (install paths, Codex destinations, prompts overwritten,
-  skip-differs entries) — and so does the HUMAN `apply` card, which lists destination paths
-  line by line (`check`'s human card is path-free). Scrub these before pasting either envelope
-  or the apply card anywhere outward — a chat, an issue, a PR description, anything leaving
-  this machine.
+  skip-differs entries), and so do two HUMAN cards: `apply`'s, which lists destination paths line
+  by line, and `preflight`'s, which names the install source. `check`'s human card is path-free.
+  Scrub paths before pasting any of these anywhere outward — a chat, an issue, a PR description,
+  anything leaving this machine.

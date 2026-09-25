@@ -28,6 +28,7 @@ import io
 import json
 import os
 import shutil
+import subprocess
 import tempfile
 import unittest
 from datetime import date
@@ -1682,6 +1683,304 @@ class ReadOnlyTests(unittest.TestCase):
 
 
 # ---- source-introspection guard over the pure layer ----------------------------------------------
+
+# ---- 2026-09-25: the whole-tree claude section, credential files, and preflight ----------------
+
+TRACKED_FIXTURE = ["CLAUDE.md", "bin/tool.py", "docs/guide.md"]
+DOC = {"docs/guide.md": "# guide\n"}
+
+
+def _claude_fixture(base, install_extra=None, repo_extra=None, cache=False):
+    """A SHA STALE fixture: identical core files, a differing recorded commit."""
+    repo = _make_repo(base)
+    for rel, text in (repo_extra or {}).items():
+        _write(repo / rel, text)
+    _add_git_ref_head(repo, "6" * 40)
+    install = _make_install(base, subdir="cache/fake-market/fake-plugin/1.0.0" if cache else "install/1.0.0")
+    for rel, text in (install_extra or {}).items():
+        _write(install / rel, text)
+    manifest = _write_manifest(base, "fake-plugin@fake-market", {
+        "installPath": str(install), "version": "1.0.0", "gitCommitSha": "e" * 40})
+    return repo, install, manifest
+
+
+class ClaudeSectionWholeTreeTests(unittest.TestCase):
+    def test_sha_stale_with_an_identical_tree_settles_in_sync_and_is_not_drift(self):
+        with tempfile.TemporaryDirectory() as td:
+            repo, _install, manifest = _claude_fixture(Path(td), install_extra=DOC, repo_extra=DOC)
+            section = hu.build_claude_section(repo, manifest, lambda root: TRACKED_FIXTURE)
+            self.assertEqual(section["status"], "IN SYNC")
+            self.assertFalse(section["drift"])
+            self.assertTrue(section["whole_tree"])
+            self.assertTrue(section["detail"]["commit_id_only"])
+            self.assertIn("only the recorded commit id differs", hu._render_claude_section(section))
+
+    def test_sha_stale_with_a_differing_doc_is_drifted(self):
+        with tempfile.TemporaryDirectory() as td:
+            repo, _install, manifest = _claude_fixture(
+                Path(td), install_extra={"docs/guide.md": "# stale\n"}, repo_extra=DOC)
+            section = hu.build_claude_section(repo, manifest, lambda root: TRACKED_FIXTURE)
+            self.assertEqual(section["status"], "DRIFTED")
+            self.assertTrue(section["drift"])
+            self.assertIn("differs: docs/guide.md", hu._render_claude_section(section))
+
+    def test_without_a_tracked_list_sha_stale_still_counts_as_drift(self):
+        with tempfile.TemporaryDirectory() as td:
+            repo, _install, manifest = _claude_fixture(Path(td), install_extra=DOC, repo_extra=DOC)
+            section = hu.build_claude_section(repo, manifest, lambda root: None)
+            self.assertEqual(section["status"], "SHA STALE")
+            self.assertTrue(section["drift"])
+            self.assertFalse(section["whole_tree"])
+            self.assertIn("git could not list the tracked files", hu._render_claude_section(section))
+
+    def test_a_credential_shaped_file_in_the_installed_copy_is_drift(self):
+        with tempfile.TemporaryDirectory() as td:
+            repo, _install, manifest = _claude_fixture(
+                Path(td), install_extra={**DOC, ".env": "KEY=v\n"}, repo_extra=DOC)
+            section = hu.build_claude_section(repo, manifest, lambda root: TRACKED_FIXTURE)
+            self.assertEqual(section["status"], "IN SYNC")
+            self.assertEqual(section["credential_files"], [".env"])
+            self.assertTrue(section["drift"])
+            self.assertIn("!! credential-shaped file inside the installed copy: .env",
+                          hu._render_claude_section(section))
+
+    def test_other_cached_versions_are_named_and_the_human_card_stays_path_free(self):
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            repo, install, manifest = _claude_fixture(base, install_extra=DOC, repo_extra=DOC, cache=True)
+            (install.parent / "0.9.0").mkdir()
+            section = hu.build_claude_section(repo, manifest, lambda root: TRACKED_FIXTURE)
+            self.assertEqual([Path(p).name for p in section["superseded"]], ["0.9.0"])
+            self.assertTrue(section["prune"][0].startswith("rm -rf -- "))
+            card = hu._render_claude_section(section)
+            self.assertIn("(0.9.0)", card)
+            self.assertNotIn(str(base), card)
+
+    def test_cmd_check_is_what_wires_the_git_bridge_in(self):
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            repo, _install, manifest = _claude_fixture(base, install_extra=DOC, repo_extra=DOC)
+            real = hu.git_tracked_paths
+            hu.git_tracked_paths = lambda root: TRACKED_FIXTURE
+            try:
+                _code, out = _run_main(["check", "--repo-root", str(repo), "--installed-manifest",
+                                        str(manifest), "--copilot-home", str(base / "copilot"),
+                                        "--codex-home", str(base / "codex"), "--json"])
+            finally:
+                hu.git_tracked_paths = real
+            self.assertEqual(json.loads(out)["claude"]["status"], "IN SYNC")
+
+
+class LooksLikeCredentialTests(unittest.TestCase):
+    def test_names_from_the_one_list_plus_env_variants(self):
+        cases = {".env": True, ".env.local": True, "config/.env.production": True,
+                 ".env.example": False, "id_rsa": True, "certs/server.pem": True,
+                 "deploy.key": True, ".netrc": True, "settings.local.json": False,
+                 "README.md": False, ".codex/agents/kit-verifier.toml": False}
+        for rel, expected in cases.items():
+            with self.subTest(rel=rel):
+                self.assertEqual(hu.looks_like_credential(rel), expected)
+
+
+class ParseStatusV2Tests(unittest.TestCase):
+    def test_every_record_kind_including_renames_conflicts_and_spaces(self):
+        text = "\0".join([
+            "# branch.oid 1234abcd",
+            "# branch.head main",
+            "# branch.upstream origin/main",
+            "# branch.ab +1 -2",
+            "1 .M N... 100644 100644 100644 aaaa bbbb bin/my tool.py",
+            "2 R. N... 100644 100644 100644 aaaa bbbb R100 new name.md", "old name.md",
+            "u UU N... 100644 100644 100644 100644 aaaa bbbb cccc conflicted.py",
+            "? scratch.txt",
+            "! .env",
+            "! .codex/",
+        ]) + "\0"
+        info = hu.parse_status_v2(text)
+        self.assertEqual((info["branch"], info["upstream"], info["ahead"], info["behind"]),
+                         ("main", "origin/main", 1, 2))
+        self.assertEqual(info["changed"], ["bin/my tool.py", "new name.md", "conflicted.py"])
+        self.assertEqual(info["untracked"], ["scratch.txt"])
+        self.assertEqual(info["ignored"], [".env", ".codex/"])
+
+    def test_no_upstream_leaves_ahead_and_behind_unknown(self):
+        info = hu.parse_status_v2("# branch.oid 1\0# branch.head main\0")
+        self.assertIsNone(info["upstream"])
+        self.assertIsNone(info["behind"])
+
+
+def _status(branch="main", upstream="origin/main", behind=0, changed=(), untracked=(), ignored=()):
+    records = ["# branch.oid 1234", f"# branch.head {branch}"]
+    if upstream:
+        records += [f"# branch.upstream {upstream}", f"# branch.ab +0 -{behind}"]
+    records += [f"1 .M N... 100644 100644 100644 aaaa bbbb {p}" for p in changed]
+    records += [f"? {p}" for p in untracked] + [f"! {p}" for p in ignored]
+    return "\0".join(records) + "\0"
+
+
+class PreflightTests(unittest.TestCase):
+    def _setup(self, td, source_version="1.0.1", installed_version="1.0.0", record=True):
+        base = Path(td)
+        source = _make_repo(base, version=source_version)
+        manifest = _write_manifest(base, "fake-plugin@fake-market",
+                                   {"installPath": str(base / "cache"), "version": installed_version})
+        known = base / "known_marketplaces.json"
+        known.write_text(json.dumps({"fake-market": {
+            "installLocation": str(source), "source": {"source": "directory", "path": str(source)}}}
+            if record else {}))
+        return source, manifest, known
+
+    def _run(self, source, manifest, known, **status):
+        return hu.run_preflight(source, manifest, known,
+                                git_status_fn=lambda src: (0, _status(**status)))
+
+    def _gate(self, report, key):
+        return next(g for g in report["gates"] if g["gate"] == key)
+
+    def test_a_clean_main_checkout_at_a_new_version_is_ready_and_gets_the_commands(self):
+        with tempfile.TemporaryDirectory() as td:
+            report = self._run(*self._setup(td))
+            self.assertTrue(report["ready"])
+            self.assertEqual(report["exit"], hu.EXIT_OK)
+            self.assertEqual([g["gate"] for g in report["gates"]], list(hu.PREFLIGHT_GATES))
+            self.assertEqual(report["commands"][0], ps.update_command("fake-plugin", "fake-market"))
+            self.assertIn(hu.POST_RESTART_CHECK, report["commands"][1])
+            self.assertIn("verdict: ready", hu.render_preflight(report))
+
+    def test_each_failing_condition_fails_its_own_gate_and_withholds_the_commands(self):
+        cases = {
+            "on-branch": {"branch": "feat/jev-offline-provider-j01"},
+            "clean": {"untracked": ["bin/jev_decision_provider.py"]},
+            "up-to-date": {"behind": 7},
+        }
+        for key, status in cases.items():
+            with self.subTest(gate=key), tempfile.TemporaryDirectory() as td:
+                report = self._run(*self._setup(td), **status)
+                self.assertFalse(self._gate(report, key)["ok"])
+                self.assertFalse(report["ready"])
+                self.assertEqual(report["exit"], hu.EXIT_DRIFT)
+                self.assertEqual(report["commands"], [])
+
+    def test_a_modified_tracked_file_fails_clean_by_name(self):
+        with tempfile.TemporaryDirectory() as td:
+            report = self._run(*self._setup(td), changed=["mkdocs.yml"])
+            self.assertIn("mkdocs.yml", self._gate(report, "clean")["detail"])
+
+    def test_no_upstream_is_not_a_failure(self):
+        with tempfile.TemporaryDirectory() as td:
+            report = self._run(*self._setup(td), upstream=None)
+            self.assertTrue(self._gate(report, "up-to-date")["ok"])
+            self.assertTrue(report["ready"])
+
+    def test_an_ignored_env_file_or_one_inside_an_ignored_dir_refuses(self):
+        with tempfile.TemporaryDirectory() as td:
+            source, manifest, known = self._setup(td)
+            _write(source / ".env", "TYPESAFE_API_KEY=synthetic\n")
+            _write(source / ".secrets" / ".env.local", "K=v\n")
+            report = self._run(source, manifest, known, ignored=[".env", ".secrets/", ".DS_Store"])
+            gate = self._gate(report, "no-credential-files")
+            self.assertFalse(gate["ok"])
+            self.assertEqual(report["credential_files"], [".env", ".secrets/.env.local"])
+            self.assertFalse(report["ready"])
+
+    def test_a_template_env_file_does_not_refuse(self):
+        with tempfile.TemporaryDirectory() as td:
+            source, manifest, known = self._setup(td)
+            report = self._run(source, manifest, known, ignored=[".env.example", ".DS_Store"])
+            self.assertTrue(self._gate(report, "no-credential-files")["ok"])
+
+    def test_a_scan_that_hits_its_cap_cannot_vouch_and_fails(self):
+        with tempfile.TemporaryDirectory() as td:
+            source, manifest, known = self._setup(td)
+            for i in range(5):
+                _write(source / "junk" / f"f{i}.txt", "x\n")
+            saved = hu.PREFLIGHT_SCAN_LIMIT
+            hu.PREFLIGHT_SCAN_LIMIT = 3
+            try:
+                report = self._run(source, manifest, known, ignored=["junk/"])
+            finally:
+                hu.PREFLIGHT_SCAN_LIMIT = saved
+            gate = self._gate(report, "no-credential-files")
+            self.assertFalse(gate["ok"])
+            self.assertIn("cannot vouch", gate["detail"])
+
+    def test_an_unchanged_version_fails_and_points_at_the_bump(self):
+        with tempfile.TemporaryDirectory() as td:
+            report = self._run(*self._setup(td, source_version="1.0.0"))
+            gate = self._gate(report, "version-changed")
+            self.assertFalse(gate["ok"])
+            self.assertIn("release_gate.py bump", gate["detail"])
+
+    def test_not_yet_installed_is_a_first_install_not_a_failure(self):
+        with tempfile.TemporaryDirectory() as td:
+            source, _manifest, known = self._setup(td)
+            report = self._run(source, Path(td) / "no-such-manifest.json", known)
+            self.assertTrue(self._gate(report, "version-changed")["ok"])
+
+    def test_a_missing_marketplace_record_stops_at_the_first_gate(self):
+        with tempfile.TemporaryDirectory() as td:
+            report = self._run(*self._setup(td, record=False))
+            self.assertEqual([g["gate"] for g in report["gates"]], ["source-found"])
+            self.assertFalse(report["ready"])
+
+    def test_without_a_way_to_ask_git_the_git_gate_fails_rather_than_passing(self):
+        with tempfile.TemporaryDirectory() as td:
+            source, manifest, known = self._setup(td)
+            report = hu.run_preflight(source, manifest, known)
+            self.assertEqual([g["gate"] for g in report["gates"]], ["source-found", "git-checkout"])
+            self.assertFalse(report["ready"])
+
+
+class ResolveInstallSourceTests(unittest.TestCase):
+    def test_install_location_then_source_path_then_none(self):
+        with tempfile.TemporaryDirectory() as td:
+            known = Path(td) / "known.json"
+            known.write_text(json.dumps({"m": {"installLocation": "/a", "source": {"path": "/b"}}}))
+            self.assertEqual(hu.resolve_install_source(known, "m"), "/a")
+            known.write_text(json.dumps({"m": {"source": {"path": "/b"}}}))
+            self.assertEqual(hu.resolve_install_source(known, "m"), "/b")
+            self.assertIsNone(hu.resolve_install_source(known, "other"))
+            known.write_text("not json")
+            self.assertIsNone(hu.resolve_install_source(known, "m"))
+            self.assertIsNone(hu.resolve_install_source(Path(td) / "absent.json", "m"))
+
+
+@unittest.skipUnless(shutil.which("git"), "git is not installed")
+class PreflightRealGitTests(unittest.TestCase):
+    """The one place the parser meets real `git status` output: a throwaway repo in a temp dir."""
+
+    def _git(self, repo, *args):
+        subprocess.run(["git", "-c", "user.name=fixture", "-c", "user.email=fixture@example.invalid",
+                        *args], cwd=repo, check=True, capture_output=True)
+
+    def test_the_parser_reads_what_git_actually_prints(self):
+        with tempfile.TemporaryDirectory() as td:
+            repo = _make_repo(Path(td), version="1.0.1")
+            _write(repo / ".gitignore", ".env\n")
+            self._git(repo, "init", "-q", "-b", "main")
+            self._git(repo, "add", "-A")
+            self._git(repo, "commit", "-q", "-m", "fixture")
+            _write(repo / ".env", "K=synthetic\n")
+            _write(repo / "scratch notes.txt", "wip\n")
+            rc, text = hu.git_status_v2(repo)
+            self.assertEqual(rc, 0)
+            info = hu.parse_status_v2(text)
+            self.assertEqual(info["branch"], "main")
+            self.assertIsNone(info["upstream"])
+            self.assertEqual(info["untracked"], ["scratch notes.txt"])
+            self.assertIn(".env", info["ignored"])
+
+    def test_the_cli_refuses_a_directory_git_cannot_read(self):
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            source = _make_repo(base)
+            known = base / "known.json"
+            known.write_text(json.dumps({"fake-market": {"installLocation": str(source)}}))
+            code, out = _run_main(["preflight", "--repo-root", str(source), "--installed-manifest",
+                                   str(base / "none.json"), "--known-marketplaces", str(known)])
+            self.assertEqual(code, hu.EXIT_DRIFT)
+            self.assertIn("FAIL  git-checkout", out)
+
 
 class SourceHygieneTests(unittest.TestCase):
     def test_pure_layer_never_resolves_home_shells_out_or_hits_network(self):
