@@ -2,9 +2,9 @@
   "schema": "copilot-docs/aic-report/v1",
   "pricing_snapshot": {
     "path": "data/pricing.copilot.json",
-    "cached_date": "2026-09-05",
-    "pricing_sha256": "a3fc378864600d41ccb4eb53c8f2e2a087a3b675cb4517d60836c85ffef9ec93",
-    "roster_sha256": "0f44f13e673165f0253d4ed6f005a3b28ef1e62afe6d6fbf8fad678ab7049610"
+    "cached_date": "2026-09-24",
+    "pricing_sha256": "f29eb145cfcdd05fb649caff9b02acda832bdb20e880342d7e3c0fa3308ba6b4",
+    "roster_sha256": "51b4cbb450cc300e151098004ff738ff651882c40bddd867a5a90295ad7465c2"
   },
   "prefs_snapshot": {
     "source": null,
@@ -12,8 +12,8 @@
     "excludes": [],
     "notes": [],
     "resolved": {
-      "mid": "claude-sonnet-5",
-      "strong": "claude-opus-4.8"
+      "mid": "gemini-3.8-flash",
+      "strong": "gpt-6-sol"
     },
     "resolved_via": {
       "mid": "roster-default",
@@ -32,7 +32,7 @@
       "kind": "markdown",
       "title": "GitHub Copilot CLI Documentation Center",
       "authoring_mode": "estimated",
-      "sources_sha256": "508dba21542a9b6dd9b8c07aa4e08c2ebcc2cc6557020a5af73e1f63a6357a97",
+      "sources_sha256": "2b9ac98aa2a16632df71a14b57e78057418c6f47ac36d5b5a7f878d348625dbe",
       "measurement": {
         "bytes": 3586,
         "words": 564,
@@ -40,9 +40,9 @@
         "ai_output_lexemes": 858
       },
       "cost": {
-        "model_id": "claude-sonnet-5",
-        "model_display": "Claude Sonnet 5",
-        "model_vendor": "anthropic",
+        "model_id": "gemini-3.8-flash",
+        "model_display": "Gemini 3.8 Flash",
+        "model_vendor": "google",
         "model_tier": "mid",
         "symbolic_tier": "mid",
         "symbolic_profile": "S",
@@ -50,14 +50,12 @@
         "assumed_input_tokens": 40000,
         "cache_hit_assumed": 0.8,
         "rates_used": "base",
-        "warnings": [
-          "promo pricing ended 2026-08-31 \u2014 rates may be stale; re-check update_from"
-        ],
-        "usd": 0.030979999999999997,
-        "aic": 3.098,
+        "warnings": [],
+        "usd": 0.011617499999999998,
+        "aic": 1.1617499999999998,
         "uncertainty": "Prospective estimate: assumes the manifest's declared input-token convention and treats this document's own measured lexeme count as a stand-in for model output tokens \u2014 not a historical usage measurement."
       },
-      "resolved_model_id": "claude-sonnet-5"
+      "resolved_model_id": "gemini-3.8-flash"
     },
     {
       "path": "index.html",
@@ -79,7 +77,7 @@
       "kind": "markdown",
       "title": "Installing the Copilot CLI bundle",
       "authoring_mode": "estimated",
-      "sources_sha256": "c05e17bcdc92ce47d9c5337bd78f5f798ed3594802fc03a2022632921427032d",
+      "sources_sha256": "8c90004402ef08d9c29a58d7ee9e09a761344f6badd695211bafb094b9f0efbf",
       "measurement": {
         "bytes": 3516,
         "words": 551,
@@ -87,9 +85,9 @@
         "ai_output_lexemes": 800
       },
       "cost": {
-        "model_id": "claude-sonnet-5",
-        "model_display": "Claude Sonnet 5",
-        "model_vendor": "anthropic",
+        "model_id": "gemini-3.8-flash",
+        "model_display": "Gemini 3.8 Flash",
+        "model_vendor": "google",
         "model_tier": "mid",
         "symbolic_tier": "mid",
         "symbolic_profile": "S",
@@ -97,14 +95,12 @@
         "assumed_input_tokens": 40000,
         "cache_hit_assumed": 0.8,
         "rates_used": "base",
-        "warnings": [
-          "promo pricing ended 2026-08-31 \u2014 rates may be stale; re-check update_from"
-        ],
-        "usd": 0.030399999999999996,
-        "aic": 3.0399999999999996,
+        "warnings": [],
+        "usd": 0.011399999999999997,
+        "aic": 1.1399999999999997,
         "uncertainty": "Prospective estimate: assumes the manifest's declared input-token convention and treats this document's own measured lexeme count as a stand-in for model output tokens \u2014 not a historical usage measurement."
       },
-      "resolved_model_id": "claude-sonnet-5"
+      "resolved_model_id": "gemini-3.8-flash"
     },
     {
       "path": "install.html",
@@ -126,7 +122,7 @@
       "kind": "markdown",
       "title": "Safety and cost boundaries",
       "authoring_mode": "estimated",
-      "sources_sha256": "6e369425c8773099476f5a6496b4041efaf5fe421d0e5820216c4aefea8ede61",
+      "sources_sha256": "280eed4b3038f713903857317dd5b283ac7780d289368f4edca69c1e56d26f4e",
       "measurement": {
         "bytes": 4945,
         "words": 762,
@@ -134,9 +130,9 @@
         "ai_output_lexemes": 1118
       },
       "cost": {
-        "model_id": "claude-sonnet-5",
-        "model_display": "Claude Sonnet 5",
-        "model_vendor": "anthropic",
+        "model_id": "gemini-3.8-flash",
+        "model_display": "Gemini 3.8 Flash",
+        "model_vendor": "google",
         "model_tier": "mid",
         "symbolic_tier": "mid",
         "symbolic_profile": "S",
@@ -144,14 +140,12 @@
         "assumed_input_tokens": 40000,
         "cache_hit_assumed": 0.8,
         "rates_used": "base",
-        "warnings": [
-          "promo pricing ended 2026-08-31 \u2014 rates may be stale; re-check update_from"
-        ],
-        "usd": 0.03358,
-        "aic": 3.3579999999999997,
+        "warnings": [],
+        "usd": 0.012592499999999998,
+        "aic": 1.2592499999999998,
         "uncertainty": "Prospective estimate: assumes the manifest's declared input-token convention and treats this document's own measured lexeme count as a stand-in for model output tokens \u2014 not a historical usage measurement."
       },
-      "resolved_model_id": "claude-sonnet-5"
+      "resolved_model_id": "gemini-3.8-flash"
     },
     {
       "path": "safety.html",
@@ -173,7 +167,7 @@
       "kind": "markdown",
       "title": "Skills reference",
       "authoring_mode": "estimated",
-      "sources_sha256": "39be58738e8a6ba4a98bab027ed538b552068f49a6983352133ecde7dc627661",
+      "sources_sha256": "e032adcd49331147f192d96b2c401071d7a1dd93dce5b76c60c98b3ea7c188c0",
       "measurement": {
         "bytes": 22631,
         "words": 3728,
@@ -181,9 +175,9 @@
         "ai_output_lexemes": 4150
       },
       "cost": {
-        "model_id": "claude-opus-4.8",
-        "model_display": "Claude Opus 4.8",
-        "model_vendor": "anthropic",
+        "model_id": "gpt-6-sol",
+        "model_display": "GPT-6 Sol",
+        "model_vendor": "openai",
         "model_tier": "strong",
         "symbolic_tier": "strong",
         "symbolic_profile": "M",
@@ -192,11 +186,11 @@
         "cache_hit_assumed": 0.8,
         "rates_used": "base",
         "warnings": [],
-        "usd": 0.31375,
-        "aic": 31.374999999999996,
+        "usd": 0.1255,
+        "aic": 12.549999999999999,
         "uncertainty": "Prospective estimate: assumes the manifest's declared input-token convention and treats this document's own measured lexeme count as a stand-in for model output tokens \u2014 not a historical usage measurement."
       },
-      "resolved_model_id": "claude-opus-4.8"
+      "resolved_model_id": "gpt-6-sol"
     },
     {
       "path": "skills.html",
@@ -218,17 +212,17 @@
       "kind": "markdown",
       "title": "Agents reference",
       "authoring_mode": "estimated",
-      "sources_sha256": "4b83d2b2a848a41ca4d9effd2f55e291878ed4f0e7deec107ed7867a28930ea2",
+      "sources_sha256": "5d9a52b2dd65b038d758fdaea4e88616c190c6504f91022b2b1906369e5b4477",
       "measurement": {
-        "bytes": 16474,
-        "words": 2659,
-        "lexemes": 3991,
+        "bytes": 16454,
+        "words": 2662,
+        "lexemes": 3997,
         "ai_output_lexemes": 2979
       },
       "cost": {
-        "model_id": "claude-opus-4.8",
-        "model_display": "Claude Opus 4.8",
-        "model_vendor": "anthropic",
+        "model_id": "gpt-6-sol",
+        "model_display": "GPT-6 Sol",
+        "model_vendor": "openai",
         "model_tier": "strong",
         "symbolic_tier": "strong",
         "symbolic_profile": "M",
@@ -237,11 +231,11 @@
         "cache_hit_assumed": 0.8,
         "rates_used": "base",
         "warnings": [],
-        "usd": 0.284475,
-        "aic": 28.447499999999998,
+        "usd": 0.11378999999999999,
+        "aic": 11.378999999999998,
         "uncertainty": "Prospective estimate: assumes the manifest's declared input-token convention and treats this document's own measured lexeme count as a stand-in for model output tokens \u2014 not a historical usage measurement."
       },
-      "resolved_model_id": "claude-opus-4.8"
+      "resolved_model_id": "gpt-6-sol"
     },
     {
       "path": "agents.html",
@@ -250,7 +244,7 @@
       "authoring_mode": "estimated",
       "markdown_source": "AGENTS.md",
       "measurement": {
-        "bytes": 20766
+        "bytes": 20746
       },
       "cost": {
         "usd": 0.0,
@@ -263,17 +257,17 @@
       "kind": "markdown",
       "title": "Models and preferences",
       "authoring_mode": "estimated",
-      "sources_sha256": "3ba526efa903d5f9d6e99855570661aa7de3098d2b399870d514e2c99b7701d5",
+      "sources_sha256": "0e221764b990087d604d382bd69ca4974c64e2a910a71cbcb0f5f2b354a7f236",
       "measurement": {
-        "bytes": 16351,
-        "words": 2628,
-        "lexemes": 4102,
+        "bytes": 15810,
+        "words": 2515,
+        "lexemes": 3922,
         "ai_output_lexemes": 1577
       },
       "cost": {
-        "model_id": "claude-opus-4.8",
-        "model_display": "Claude Opus 4.8",
-        "model_vendor": "anthropic",
+        "model_id": "gpt-6-sol",
+        "model_display": "GPT-6 Sol",
+        "model_vendor": "openai",
         "model_tier": "strong",
         "symbolic_tier": "strong",
         "symbolic_profile": "M",
@@ -282,11 +276,11 @@
         "cache_hit_assumed": 0.8,
         "rates_used": "base",
         "warnings": [],
-        "usd": 0.249425,
-        "aic": 24.9425,
+        "usd": 0.09977,
+        "aic": 9.977,
         "uncertainty": "Prospective estimate: assumes the manifest's declared input-token convention and treats this document's own measured lexeme count as a stand-in for model output tokens \u2014 not a historical usage measurement."
       },
-      "resolved_model_id": "claude-opus-4.8"
+      "resolved_model_id": "gpt-6-sol"
     },
     {
       "path": "models.html",
@@ -295,7 +289,7 @@
       "authoring_mode": "estimated",
       "markdown_source": "MODELS.md",
       "measurement": {
-        "bytes": 20193
+        "bytes": 19828
       },
       "cost": {
         "usd": 0.0,
@@ -308,7 +302,7 @@
       "kind": "markdown",
       "title": "Costs and AIC accounting",
       "authoring_mode": "estimated",
-      "sources_sha256": "b511b20fa94cd87ed0d3b99b3613d42d86b5ed669041dc1cadd2d1a867a0d50f",
+      "sources_sha256": "7c2d3c755aee122a2bf19b1cc92c037b11e36e22a104542d40c3488409a058ca",
       "measurement": {
         "bytes": 8430,
         "words": 1350,
@@ -316,9 +310,9 @@
         "ai_output_lexemes": 1881
       },
       "cost": {
-        "model_id": "claude-opus-4.8",
-        "model_display": "Claude Opus 4.8",
-        "model_vendor": "anthropic",
+        "model_id": "gpt-6-sol",
+        "model_display": "GPT-6 Sol",
+        "model_vendor": "openai",
         "model_tier": "strong",
         "symbolic_tier": "strong",
         "symbolic_profile": "M",
@@ -327,11 +321,11 @@
         "cache_hit_assumed": 0.8,
         "rates_used": "base",
         "warnings": [],
-        "usd": 0.257025,
-        "aic": 25.7025,
+        "usd": 0.10280999999999998,
+        "aic": 10.280999999999999,
         "uncertainty": "Prospective estimate: assumes the manifest's declared input-token convention and treats this document's own measured lexeme count as a stand-in for model output tokens \u2014 not a historical usage measurement."
       },
-      "resolved_model_id": "claude-opus-4.8"
+      "resolved_model_id": "gpt-6-sol"
     },
     {
       "path": "costs.html",
@@ -353,7 +347,7 @@
       "kind": "markdown",
       "title": "Practical workflows",
       "authoring_mode": "estimated",
-      "sources_sha256": "7934daf3b9b9e2a7e74d014bd865b607f4680979707f41195b72153fbaf8482e",
+      "sources_sha256": "39ac35ccb986d2d69fc6ce2758f3fd19e3b4bfb3b48808304b8ae32761797888",
       "measurement": {
         "bytes": 12380,
         "words": 1997,
@@ -361,9 +355,9 @@
         "ai_output_lexemes": 2713
       },
       "cost": {
-        "model_id": "claude-sonnet-5",
-        "model_display": "Claude Sonnet 5",
-        "model_vendor": "anthropic",
+        "model_id": "gemini-3.8-flash",
+        "model_display": "Gemini 3.8 Flash",
+        "model_vendor": "google",
         "model_tier": "mid",
         "symbolic_tier": "mid",
         "symbolic_profile": "M",
@@ -371,14 +365,12 @@
         "assumed_input_tokens": 150000,
         "cache_hit_assumed": 0.8,
         "rates_used": "base",
-        "warnings": [
-          "promo pricing ended 2026-08-31 \u2014 rates may be stale; re-check update_from"
-        ],
-        "usd": 0.11112999999999999,
-        "aic": 11.113,
+        "warnings": [],
+        "usd": 0.041673749999999996,
+        "aic": 4.167375,
         "uncertainty": "Prospective estimate: assumes the manifest's declared input-token convention and treats this document's own measured lexeme count as a stand-in for model output tokens \u2014 not a historical usage measurement."
       },
-      "resolved_model_id": "claude-sonnet-5"
+      "resolved_model_id": "gemini-3.8-flash"
     },
     {
       "path": "workflows.html",
@@ -434,7 +426,7 @@
     }
   ],
   "totals": {
-    "usd": 1.310765,
-    "aic": 131.0765
+    "usd": 0.5191537499999999,
+    "aic": 51.915375
   }
 }

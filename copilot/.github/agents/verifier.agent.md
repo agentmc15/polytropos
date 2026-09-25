@@ -1,7 +1,7 @@
 ---
 name: verifier
 description: Fresh-context adversarial verification of one completed kit task. Rerun the task's verify command yourself and check every acceptance bullet against the actual files; never trust the implementer's claims.
-model: claude-haiku-4.5
+model: gpt-6-luna
 tools: read, execute
 ---
 

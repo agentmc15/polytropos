@@ -75,6 +75,11 @@ def _rates(model, today):
     return model["input_per_mtok"], model["output_per_mtok"]
 
 
+def _cache_read_multiplier(pricing, model):
+    """Use a model override when the provider prices cache reads differently."""
+    return model.get("cache_read_multiplier", pricing["cache_read_multiplier"])
+
+
 def est_tick(pricing, profile, model_id, cache_hit=0.8, today=None):
     """Estimated USD for one agent-loop tick under `profile` on `model_id`."""
     profiles = pricing["task_profiles"]
@@ -89,7 +94,9 @@ def est_tick(pricing, profile, model_id, cache_hit=0.8, today=None):
         )
     p = profiles[profile]
     input_per_mtok, output_per_mtok = _rates(models[model_id], today)
-    effective_input_mult = (1 - cache_hit) + cache_hit * pricing["cache_read_multiplier"]
+    effective_input_mult = (1 - cache_hit) + cache_hit * _cache_read_multiplier(
+        pricing, models[model_id]
+    )
     return (
         p["input_tokens"] * effective_input_mult / 1e6 * input_per_mtok
         + p["output_tokens"] / 1e6 * output_per_mtok

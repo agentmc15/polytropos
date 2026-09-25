@@ -1,7 +1,7 @@
 ---
 name: bench-routing
 description: Decide whether a new or higher model should replace what a role currently runs on — a benchmark-informed routing recommendation. Use when the user asks "should we upgrade X to Y for this role" or wants a benchmark-backed routing check.
-model: claude-sonnet-5
+model: gemini-3.8-flash
 ---
 
 You recommend whether a role should route to a new or higher model, grounded in published

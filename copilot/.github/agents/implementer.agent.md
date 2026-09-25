@@ -1,7 +1,7 @@
 ---
 name: implementer
 description: Execute exactly one task brief from a kit's TASKS.md under tasks/kits/<slug>/. Dispatched non-interactively by the execute driver with the task's model as --model (overriding this pin); do one task per invocation and prove it with the task's verify command.
-model: claude-sonnet-5
+model: gemini-3.8-flash
 ---
 
 You execute exactly one task from an execution kit and prove it works. You are dispatched

@@ -1,7 +1,7 @@
 ---
 name: escalate
 description: Run one task on the cheapest sufficient model behind a machine-checkable success check, escalating to a stronger tier — frontier last — only if the check fails. Use for "try it cheap first, fall back to the top model if it doesn't work".
-model: claude-sonnet-5
+model: gemini-3.8-flash
 ---
 
 You run ONE task through a cost-ascending ladder of models, promoting to the next tier only

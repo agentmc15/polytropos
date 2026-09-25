@@ -40,6 +40,7 @@ def _load(name):
 
 
 cp = _load("copilot_pricing")
+prefs = _load("copilot_prefs")
 
 
 # ---- synthetic fixture --------------------------------------------------------------------
@@ -445,7 +446,8 @@ class KnobsCmdTests(unittest.TestCase):
             cp.main(["knobs"])
         out = buf.getvalue()
         self.assertIn("Extra High", out)
-        self.assertIn("unconfirmed", out.lower())
+        self.assertIn("--effort=LEVEL", out)
+        self.assertIn("does NOT yet forward", out)
 
 
 class LiveDataStructureTests(unittest.TestCase):
@@ -477,7 +479,7 @@ class LiveDataStructureTests(unittest.TestCase):
         pricing = cp.load_pricing()
         self.assertEqual(set(pricing["task_profiles"]), {"XS", "S", "M", "L", "XL"})
 
-    def test_user_supplied_gpt56_rates_are_recorded_for_existing_copilot_rows(self):
+    def test_official_gpt56_rates_are_recorded_for_existing_copilot_rows(self):
         pricing = cp.load_pricing()
         expected = {
             "gpt-5.6-sol": ((4.0, 0.4, 5.0, 20.0), (8.0, 0.8, 10.0, 30.0), 272000),
@@ -499,8 +501,107 @@ class LiveDataStructureTests(unittest.TestCase):
             self.assertEqual(long_rates, long_expected, model_id)
             self.assertEqual(long_context["threshold_tokens"], threshold, model_id)
 
-        self.assertIn("user-supplied", pricing["pricing_refresh_note"])
-        self.assertIn("not an independent validation", pricing["pricing_refresh_note"])
+        self.assertIn("GitHub's models-and-pricing page", pricing["pricing_refresh_note"])
+
+    def test_current_account_confirmed_models_lead_each_tier(self):
+        pricing = cp.load_pricing()
+        expected_defaults = {
+            "frontier": "gpt-6-astra",
+            "strong": "gpt-6-sol",
+            "mid": "gemini-3.8-flash",
+            "cheap": "gpt-6-luna",
+        }
+        for tier, expected_id in expected_defaults.items():
+            actual_id = next(
+                model_id for model_id, info in pricing["models"].items()
+                if info["tier"] == tier
+            )
+            self.assertEqual(actual_id, expected_id, tier)
+
+    def test_current_refresh_rows_have_official_rates_and_confirmed_slugs(self):
+        pricing = cp.load_pricing()
+        expected = {
+            "gpt-6-astra": (10.0, 1.0, 12.5, 50.0),
+            "gpt-6-sol": (2.0, 0.2, 2.5, 10.0),
+            "gpt-6-luna": (0.1, 0.01, 0.125, 0.5),
+            "claude-fable-5.1": (10.0, 0.25, 12.5, 50.0),
+            "claude-opus-5.5": (4.0, 0.2, 5.0, 20.0),
+            "gemini-3.8-flash": (0.75, 0.075, None, 3.75),
+            "mai-code-1.1-flash": (0.2, 0.02, None, 1.2),
+            "grok-4.7": (2.0, 0.5, None, 6.0),
+            "kimi-k3": (3.0, 0.3, None, 15.0),
+        }
+        for model_id, (input_rate, cached_rate, cache_write, output_rate) in expected.items():
+            with self.subTest(model=model_id):
+                model = pricing["models"][model_id]
+                self.assertEqual(model["input_per_mtok"], input_rate)
+                self.assertEqual(model["cached_input_per_mtok"], cached_rate)
+                self.assertEqual(model.get("cache_write_per_mtok"), cache_write)
+                self.assertEqual(model["output_per_mtok"], output_rate)
+                self.assertIn("zero-prompt CLI check confirmed this slug", model["notes"])
+
+        self.assertIn("Anthropic retention", pricing["models"]["claude-fable-5.1"]["notes"])
+        self.assertEqual(pricing["models"]["gemini-3.8-flash"]["promo"]["until"], "2026-12-31")
+
+    def test_active_notes_do_not_claim_superseded_default_or_cheapest_titles(self):
+        pricing = cp.load_pricing()
+        opus_48 = pricing["models"]["claude-opus-4.8"]["notes"].lower()
+        mini = pricing["models"]["gpt-5-mini"]["notes"].lower()
+        self.assertNotIn("strongest non-fable", opus_48)
+        self.assertNotIn("default strong-tier pick", opus_48)
+        self.assertNotIn("cheapest input rate on the roster", mini)
+        self.assertIn("gpt-6", pricing["billing_unit"]["note"].lower())
+
+    def test_already_retired_rows_are_not_selectable(self):
+        pricing = cp.load_pricing()
+        for model_id in (
+            "claude-opus-4.5", "claude-opus-4.6", "claude-sonnet-4.5",
+            "claude-sonnet-4.6", "gemini-3.1-pro", "mai-code-1-flash",
+        ):
+            self.assertNotIn(model_id, pricing["models"], model_id)
+
+    def test_retired_partition_preserves_rates_but_is_not_routable(self):
+        pricing = cp.load_pricing()
+        retired = pricing["retired_models"]
+        self.assertEqual(set(retired) & set(pricing["models"]), set())
+        model = retired["claude-sonnet-4.6"]
+        self.assertEqual(model["retired_on"], "2026-09-01")
+        self.assertEqual(model["replacement"], "claude-sonnet-5")
+        self.assertEqual(model["input_per_mtok"], 3.0)
+        with self.assertRaises(ValueError):
+            prefs.parse_pin_flag("mid=claude-sonnet-4.6", pricing)
+        with self.assertRaises(ValueError):
+            prefs.effective_prefs(
+                pricing, no_prefs=True, exclude_flags=("claude-sonnet-4.6",)
+            )
+
+    def test_scheduled_kimi_retirement_is_labeled_while_row_remains_active(self):
+        model = cp.load_pricing()["models"]["kimi-k2.7-code"]
+        self.assertEqual(model["tier"], "mid")
+        self.assertIn("Scheduled to retire 2026-10-02", model["notes"])
+        self.assertIn("Kimi K3", model["notes"])
+
+    def test_current_github_rates_cover_grok_and_scheduled_gemini_rows(self):
+        models = cp.load_pricing()["models"]
+        grok = models["grok-4.6"]
+        self.assertEqual(
+            (grok["input_per_mtok"], grok["cached_input_per_mtok"], grok["output_per_mtok"]),
+            (2.0, 0.5, 6.0),
+        )
+        self.assertEqual(
+            (
+                grok["long_context"]["input_per_mtok"],
+                grok["long_context"]["cached_input_per_mtok"],
+                grok["long_context"]["output_per_mtok"],
+            ),
+            (4.0, 1.0, 12.0),
+        )
+        gemini = models["gemini-3.6-flash"]
+        self.assertEqual(
+            (gemini["input_per_mtok"], gemini["cached_input_per_mtok"], gemini["output_per_mtok"]),
+            (0.75, 0.075, 3.75),
+        )
+        self.assertEqual(gemini["promo"]["until"], "2026-12-31")
 
 
 class CliSmokeTests(unittest.TestCase):

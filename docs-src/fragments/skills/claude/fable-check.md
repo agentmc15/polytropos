@@ -1,6 +1,6 @@
 ### What it does
 
-Answers two questions about one specific task before you commit a model to it: is Fable 5
+Answers two questions about one specific task before you commit a model to it: is Fable 5.1
 actually worth it here, and if so, how should it be run for the best result. Cost ratios
 are derived from the pricing file at call time rather than quoted from memory, so the
 answer never goes stale even after prices change.
@@ -8,10 +8,9 @@ answer never goes stale even after prices change.
 ### When to reach for it
 
 - Before spending Fable time on a task you're not sure clears its bar.
-- Opus 4.8 already failed at something and you're deciding whether to escalate further.
+- Opus 5.5 at higher effort already failed at something and you're deciding whether to escalate further.
 - You want effort-level and framing advice for a Fable dispatch, not just a yes/no.
-- **Not** for security-analysis-heavy work — Fable's own classifiers refuse much of it, and
-  Opus 4.8 is the better tool there regardless of what the ratio says.
+- **Not** for routine work with a well-known solution — use the cheapest sufficient tier.
 
 ### Worked example
 
@@ -27,13 +26,8 @@ memory surface for anything spanning multiple sessions.
 
 ### Failure modes & fallbacks
 
-- **The task is routine or security-analysis-heavy.** Say plainly that Sonnet 5 at high
-  effort likely suffices, or that Opus 4.8 is the better fit because Fable's classifiers
-  decline much cyber/bio-adjacent work outright.
-- **A refusal happens anyway** (`stop_reason: "refusal"`). The fallback is an Opus 4.8
-  rerun, not a retried prompt on the same model.
-- **Long single turns.** Plan for timeouts and streaming rather than blocking a UI on one
-  request — a property of the model, not a dispatch bug.
+- **The task is routine.** Say plainly that Sonnet 5 or Opus 5.5 at suitable effort likely
+  suffices; reserve Fable 5.1 for demonstrated difficulty.
 
 ### Cost & safety
 

@@ -14,7 +14,7 @@ a preference file was read from, which tiers carry a pin, which model ids are ex
 each symbolic tier (`cheap`, `mid`, `strong`, `frontier`) currently resolves to and why.
 
 <!-- BEGIN GENERATED: model-preferences -->
-Snapshot: `data/pricing.copilot.json` (cached_date 2026-09-05) — pricing sha256 `a3fc378864600d41ccb4eb53c8f2e2a087a3b675cb4517d60836c85ffef9ec93`, roster sha256 `0f44f13e673165f0253d4ed6f005a3b28ef1e62afe6d6fbf8fad678ab7049610`.
+Snapshot: `data/pricing.copilot.json` (cached_date 2026-09-24) — pricing sha256 `f29eb145cfcdd05fb649caff9b02acda832bdb20e880342d7e3c0fa3308ba6b4`, roster sha256 `51b4cbb450cc300e151098004ff738ff651882c40bddd867a5a90295ad7465c2`.
 
 - Prefs source: `(none — defaults)`
 
@@ -24,8 +24,8 @@ Snapshot: `data/pricing.copilot.json` (cached_date 2026-09-05) — pricing sha25
 
 | Tier | Resolves to | Via |
 |---|---|---|
-| mid | `claude-sonnet-5` | roster-default |
-| strong | `claude-opus-4.8` | roster-default |
+| mid | `gemini-3.8-flash` | roster-default |
+| strong | `gpt-6-sol` | roster-default |
 <!-- END GENERATED: model-preferences -->
 
 ## How tier resolution works
@@ -53,36 +53,39 @@ per-million-token rates, any notes the pricing data itself carries, and whether 
 eligible or excluded under active preferences.
 
 <!-- BEGIN GENERATED: model-roster -->
-Snapshot: `data/pricing.copilot.json` (cached_date 2026-09-05) — pricing sha256 `a3fc378864600d41ccb4eb53c8f2e2a087a3b675cb4517d60836c85ffef9ec93`, roster sha256 `0f44f13e673165f0253d4ed6f005a3b28ef1e62afe6d6fbf8fad678ab7049610`.
+Snapshot: `data/pricing.copilot.json` (cached_date 2026-09-24) — pricing sha256 `f29eb145cfcdd05fb649caff9b02acda832bdb20e880342d7e3c0fa3308ba6b4`, roster sha256 `51b4cbb450cc300e151098004ff738ff651882c40bddd867a5a90295ad7465c2`.
 
 | Model | Display | Vendor | Tier | Input $/MTok | Cached input $/MTok | Output $/MTok | Notes | Preference |
 |---|---|---|---|---|---|---|---|---|
-| `claude-fable-5` | Claude Fable 5 | anthropic | frontier | 10.0 | 1.0 | 50.0 | The standout model on this roster — the best available, and not close. Sole frontier tier. Reserve it for the hardest work: long-horizon agentic runs, large migrations, and problems a strong-tier model already failed on. Worth its AIC precisely when a strong-tier model would fail. | eligible |
-| `claude-opus-4.8` | Claude Opus 4.8 | anthropic | strong | 5.0 | 0.5 | 25.0 | Strongest non-Fable Anthropic model; the default strong-tier pick for multi-file features, hard debugging, architecture, and review. | eligible |
-| `claude-opus-4.7` | Claude Opus 4.7 | anthropic | strong | 5.0 | 0.5 | 25.0 | Same published rate as Opus 4.8; kept selectable because /model lists it. Prefer 4.8 for new work. | eligible |
-| `claude-opus-4.6` | Claude Opus 4.6 | anthropic | strong | 5.0 | 0.5 | 25.0 | Same published rate as Opus 4.8; kept selectable because /model lists it. Prefer 4.8 for new work. | eligible |
-| `claude-opus-4.5` | Claude Opus 4.5 | anthropic | strong | 5.0 | 0.5 | 25.0 | Same published rate as Opus 4.8; kept selectable because /model lists it. Prefer 4.8 for new work. | eligible |
-| `gpt-5.5` | GPT-5.5 | openai | strong | 5.0 | 0.5 | 30.0 | OpenAI flagship (Powerful); step-up rates above 272K input tokens. Strong tier — Fable 5 is the sole frontier pick. | eligible |
-| `gpt-5.3-codex` | GPT-5.3-Codex | openai | strong | 1.75 | 0.175 | 14.0 | Coding-focused reasoning model; id doc-confirmed. Best value in the strong tier for code work. | eligible |
-| `gemini-3.1-pro` | Gemini 3.1 Pro | google | strong | 2.0 | 0.2 | 12.0 | Public preview; step-up rates above 200K input tokens. | eligible |
-| `claude-opus-4.8-fast` | Claude Opus 4.8 (fast mode) | anthropic | strong | 10.0 | 1.0 | 50.0 | Preview fast mode: Opus capability at Fable-level prices — you pay 2x for speed, not capability. Pick plain Opus 4.8 unless latency is the constraint. | eligible |
-| `claude-sonnet-5` | Claude Sonnet 5 | anthropic | mid | 2.0 | 0.2 | 10.0 | The default mid-tier workhorse and best value on the roster at promo pricing: day-to-day coding, tests, docs, refactors. | eligible |
-| `claude-sonnet-4.6` | Claude Sonnet 4.6 | anthropic | mid | 3.0 | 0.3 | 15.0 | Same published rate as Sonnet 4.5. Superseded by promo-priced Sonnet 5 for new work. | eligible |
-| `claude-sonnet-4.5` | Claude Sonnet 4.5 | anthropic | mid | 3.0 | 0.3 | 15.0 | Same published rate as Sonnet 4.6. Superseded by promo-priced Sonnet 5 for new work. | eligible |
+| `gpt-6-astra` | GPT-6 Astra | openai | frontier | 10.0 | 1.0 | 50.0 | Current default frontier lane. Account /model picker and a zero-prompt CLI check confirmed this slug on 2026-09-24. GitHub lists base and >272K single-request rates. | eligible |
+| `claude-fable-5.1` | Claude Fable 5.1 | anthropic | frontier | 10.0 | 0.25 | 50.0 | Account /model picker and a zero-prompt CLI check confirmed this slug on 2026-09-24. GitHub documents default Anthropic retention for Fable requests, so it is an opt-in frontier alternative rather than the no-preference default. | eligible |
+| `claude-fable-5` | Claude Fable 5 | anthropic | frontier | 10.0 | 1.0 | 50.0 | Earlier Fable frontier alternative. GitHub documents default Anthropic retention for Fable requests; use only when that policy is acceptable. GPT-6 Astra leads the no-preference frontier lane. | eligible |
+| `gpt-6-sol` | GPT-6 Sol | openai | strong | 2.0 | 0.2 | 10.0 | Current default strong lane. Account /model picker and a zero-prompt CLI check confirmed this slug on 2026-09-24. GitHub lists base and >272K single-request rates. | eligible |
+| `claude-opus-5.5` | Claude Opus 5.5 | anthropic | strong | 4.0 | 0.2 | 20.0 | Account /model picker and a zero-prompt CLI check confirmed this slug on 2026-09-24. Current Anthropic strong alternative at lower published rates than prior Opus entries. | eligible |
+| `claude-opus-4.8` | Claude Opus 4.8 | anthropic | strong | 5.0 | 0.5 | 25.0 | GitHub-listed Anthropic strong alternative. The active strong default is GPT-6 Sol; route by the current tier order and account availability. | eligible |
+| `claude-opus-4.7` | Claude Opus 4.7 | anthropic | strong | 5.0 | 0.5 | 25.0 | Scheduled to retire 2026-10-02; GitHub recommends Claude Opus 5. Keep only for compatibility while the provider still lists it. | eligible |
+| `gpt-5.5` | GPT-5.5 | openai | strong | 5.0 | 0.5 | 30.0 | OpenAI powerful alternative; step-up rates above 272K input tokens. GPT-6 Sol is the current strong default. | eligible |
+| `gpt-5.3-codex` | GPT-5.3-Codex | openai | strong | 1.75 | 0.175 | 14.0 | Coding-focused OpenAI strong alternative; its active status and pricing are confirmed by GitHub's current catalog. | eligible |
+| `claude-opus-4.8-fast` | Claude Opus 4.8 (fast mode) | anthropic | strong | 10.0 | 1.0 | 50.0 | Preview fast mode with GitHub-listed $10/$1/$12.50/$50 per-MTok rates. Select it only when its latency tradeoff is appropriate for the task. | eligible |
+| `gemini-3.8-flash` | Gemini 3.8 Flash | google | mid | 0.75 | 0.075 | 3.75 | Current default mid lane. Account /model picker and a zero-prompt CLI check confirmed this slug on 2026-09-24. | eligible |
+| `claude-sonnet-5` | Claude Sonnet 5 | anthropic | mid | 2.0 | 0.2 | 10.0 | Current Anthropic versatile alternative for day-to-day coding, tests, docs, and refactors. | eligible |
 | `gpt-5.4` | GPT-5.4 | openai | mid | 2.5 | 0.25 | 15.0 | OpenAI workhorse; step-up rates above 272K input tokens. | eligible |
-| `gemini-3.5-flash` | Gemini 3.5 Flash | google | mid | 1.5 | 0.15 | 9.0 | Lightweight-class but priced above the cheap lane; routed as mid. | eligible |
-| `kimi-k2.7-code` | Kimi K2.7 Code | moonshot | mid | 0.95 | 0.19 | 4.0 | Budget coding model; mid capability at near-cheap prices. | eligible |
-| `claude-haiku-4.5` | Claude Haiku 4.5 | anthropic | cheap | 1.0 | 0.1 | 5.0 | id doc-confirmed. Cheapest Anthropic model; classification, extraction, formatting, bulk. | eligible |
-| `gpt-5-mini` | GPT-5 mini | openai | cheap | 0.25 | 0.025 | 2.0 | Cheapest input rate on the roster; lightweight lookups and bulk. | eligible |
+| `gemini-3.5-flash` | Gemini 3.5 Flash | google | mid | 1.5 | 0.15 | 9.0 | Scheduled to retire 2026-10-02; GitHub recommends Gemini 3.8 Flash. Retained only while the provider still lists it. | eligible |
+| `kimi-k2.7-code` | Kimi K2.7 Code | moonshot | mid | 0.95 | 0.19 | 4.0 | Scheduled to retire 2026-10-02; GitHub recommends Kimi K3. Retained only while the provider still lists it. | eligible |
+| `gpt-6-luna` | GPT-6 Luna | openai | cheap | 0.1 | 0.01 | 0.5 | Current default cheap lane. Account /model picker and a zero-prompt CLI check confirmed this slug on 2026-09-24. GitHub lists base and >272K single-request rates. | eligible |
+| `mai-code-1.1-flash` | MAI-Code-1.1-Flash | microsoft | cheap | 0.2 | 0.02 | 1.2 | Account /model picker and a zero-prompt CLI check confirmed this slug on 2026-09-24. Replaces retired MAI-Code-1-Flash. | eligible |
+| `claude-haiku-4.5` | Claude Haiku 4.5 | anthropic | cheap | 1.0 | 0.1 | 5.0 | GitHub-listed Anthropic lightweight alternative for classification, extraction, formatting, and bulk work. | eligible |
+| `gpt-5-mini` | GPT-5 mini | openai | cheap | 0.25 | 0.025 | 2.0 | GitHub-listed OpenAI lightweight alternative for lookups and bulk work. GPT-6 Luna currently has the lowest active input rate. | eligible |
 | `gpt-5.4-mini` | GPT-5.4 mini | openai | cheap | 0.75 | 0.075 | 4.5 | Lightweight OpenAI model. | eligible |
-| `mai-code-1-flash` | MAI-Code-1-Flash | microsoft | cheap | 0.75 | 0.075 | 4.5 | Microsoft lightweight coding model. | eligible |
-| `gpt-5.6-sol` | GPT-5.6 Sol | openai | strong | 4.0 | 0.4 | 20.0 | OpenAI flagship durable tier (Powerful), GA. Base and >272K single-request rates refreshed from the user-supplied Codex pricing screenshot captured 2026-09-05; the screenshot is recorded provenance, not an independent official-source validation. Reasoning and context-window capability facts do not alter these prices. | eligible |
-| `gpt-5.6-terra` | GPT-5.6 Terra | openai | mid | 2.0 | 0.2 | 12.0 | Balanced everyday tier (Versatile), GA; confirmed present in /model 2026-07-18. Base and >272K single-request rates refreshed from the user-supplied Codex pricing screenshot captured 2026-09-05; the screenshot is recorded provenance, not an independent Copilot pricing validation. | eligible |
-| `gpt-5.6-luna` | GPT-5.6 Luna | openai | cheap | 0.2 | 0.02 | 1.2 | Fast & affordable tier (Lightweight), GA; confirmed present in /model 2026-07-18. Base and >200K single-request rates refreshed from the user-supplied Codex pricing screenshot captured 2026-09-05; the screenshot is recorded provenance, not an independent Copilot pricing validation. The lower threshold applies to one request, not cumulative session totals. | eligible |
-| `claude-opus-5` | Claude Opus 5 | anthropic | strong | 5.0 | 0.5 | 25.0 | Added 2026-07-25 from the models-and-pricing doc (GA, Powerful). Same published rates as Opus 4.5/4.6/4.7/4.8, so it is a strong-tier peer on price. NOT yet confirmed present in the /model picker — if the picker does not list it, remove it here (this file's roster rule is what /model actually offers). | eligible |
-| `gemini-3.6-flash` | Gemini 3.6 Flash | google | mid | 1.5 | 0.15 | 7.5 | Added 2026-07-25 from the models-and-pricing doc (GA, Versatile). Same input/cached rates as Gemini 3.5 Flash but cheaper output, so it strictly dominates 3.5 Flash on price — prefer it where both are available. NOT yet confirmed present in the /model picker; remove here if the picker does not list it. | eligible |
-| `grok-4.6` | Grok 4.6 | xai | strong | 2.0 | 0.2 | 6.0 | Added for the Goliath Copilot skill from the user's confirmed /model availability. Pricing requires re-verification against GitHub's current models-and-pricing source. | eligible |
-| `gemini-3.7-flash` | Gemini 3.7 Flash | google | mid | 0.75 | 0.075 | 3.75 | Added for the Goliath Copilot skill from the user's confirmed /model availability. Pricing requires re-verification against GitHub's current models-and-pricing source. | eligible |
+| `gpt-5.6-sol` | GPT-5.6 Sol | openai | strong | 4.0 | 0.4 | 20.0 | OpenAI powerful alternative. GitHub's current pricing page confirms base and >272K single-request rates. | eligible |
+| `gpt-5.6-terra` | GPT-5.6 Terra | openai | mid | 2.0 | 0.2 | 12.0 | Balanced OpenAI mid-tier alternative. GitHub's current pricing page confirms base and >272K single-request rates. | eligible |
+| `gpt-5.6-luna` | GPT-5.6 Luna | openai | cheap | 0.2 | 0.02 | 1.2 | Affordable OpenAI alternative. GitHub's current pricing page confirms base and >200K single-request rates; the lower threshold applies to one request, not cumulative session totals. | eligible |
+| `claude-opus-5` | Claude Opus 5 | anthropic | strong | 5.0 | 0.5 | 25.0 | GitHub-listed strong Anthropic alternative. Current official pricing confirms this row. | eligible |
+| `gemini-3.6-flash` | Gemini 3.6 Flash | google | mid | 0.75 | 0.075 | 3.75 | Scheduled to retire 2026-10-02; GitHub recommends Gemini 3.8 Flash. GitHub's current promotional pricing is published through 2026-12-31; retain this row only while the provider still lists it. | eligible |
+| `grok-4.6` | Grok 4.6 | xai | strong | 2.0 | 0.5 | 6.0 | GitHub's current pricing page confirms base and >200K single-request rates. Grok 4.7 is the newer current alternative. | eligible |
+| `gemini-3.7-flash` | Gemini 3.7 Flash | google | mid | 0.75 | 0.075 | 3.75 | GitHub's current pricing page confirms this promotional row; Gemini 3.8 Flash is the newer current alternative. | eligible |
+| `grok-4.7` | Grok 4.7 | xai | mid | 2.0 | 0.5 | 6.0 | Account /model picker and a zero-prompt CLI check confirmed this slug on 2026-09-24. GitHub lists base and >200K single-request rates. | eligible |
+| `kimi-k3` | Kimi K3 | moonshot | strong | 3.0 | 0.3 | 15.0 | Account /model picker and a zero-prompt CLI check confirmed this slug on 2026-09-24. GitHub classifies it as Powerful. | eligible |
 <!-- END GENERATED: model-roster -->
 
 ## Reading tiers and task fit
@@ -103,18 +106,17 @@ Some models expose a configurable reasoning-effort control; others do not. The t
 read directly from the pricing data's own knob facts.
 
 <!-- BEGIN GENERATED: reasoning-knobs -->
-Snapshot: `data/pricing.copilot.json` (cached_date 2026-09-05) — pricing sha256 `a3fc378864600d41ccb4eb53c8f2e2a087a3b675cb4517d60836c85ffef9ec93`, roster sha256 `0f44f13e673165f0253d4ed6f005a3b28ef1e62afe6d6fbf8fad678ab7049610`.
+Snapshot: `data/pricing.copilot.json` (cached_date 2026-09-24) — pricing sha256 `f29eb145cfcdd05fb649caff9b02acda832bdb20e880342d7e3c0fa3308ba6b4`, roster sha256 `51b4cbb450cc300e151098004ff738ff651882c40bddd867a5a90295ad7465c2`.
 
 | Reasoning effort |
 |---|
-| Minimal |
 | Low |
 | Medium |
 | High |
 | Extra High |
 | Max |
 
-Display-form ladder, ascending. Ground truth: the GPT-5.6 announcement (2026-07-18 capture) confirms the token ladder minimal/low/medium/high/xhigh/max ('max' is the new deepest — even more reasoning time than 'xhigh'); Copilot CLI's /model picker renders Title-Case display forms, of which 'Medium' and 'Extra High' were directly observed (2026-07-18 screenshots), mapping to medium and xhigh. The other four display renderings are Title-Case mappings of the confirmed token ladder, not yet observed in the picker — if the picker renders any differently, correct the list HERE (only here). Mechanism: reasoning effort is set INTERACTIVELY in the /model picker with the left/right arrow keys on the selected model row (picker footer: '←/→ reasoning effort'); it is a per-model property — rows showing '—' have no reasoning control (observed: Auto, Claude Sonnet 4.5, Claude Haiku 4.5, Claude Opus 4.5, Kimi K2.7 Code), while every other observed row (GPT-5.6 Sol/Terra/Luna, GPT-5.5, GPT-5.4, GPT-5.3-Codex, GPT-5.4 mini, GPT-5 mini, Gemini 3.1 Pro, Gemini 3.5 Flash, MAI-Code-1-Flash, Claude Sonnet 5/4.6, Claude Opus 4.8/4.7/4.6 incl. fast mode, Claude Fable 5) defaults to 'Medium'; GPT-5.6 Sol was observed cycled up to 'Extra High'. A headless surface is UNCONFIRMED — no copilot -p flag or settings key for reasoning effort is known to exist; do not invent one. If one ships, record it here (only here).
+Display-form ladder, ascending. Copilot CLI v1.0.83 --help and GitHub's CLI command reference confirm headless `--effort=LEVEL` and `--reasoning-effort=LEVEL` flags with low/medium/high/xhigh/max values; this list renders those values in the picker-style display form. The /model picker also supports per-model interactive adjustment with left/right arrows. This repository's copilot_execute.py does NOT yet forward either effort flag, so execution-kit runs cannot select effort through the driver; use a direct Copilot CLI invocation or the picker when effort control is required. Do not infer a model's effort support merely from its appearance in this list.
 <!-- END GENERATED: reasoning-knobs -->
 
 Reasoning effort, where it exists, is a **per-model** setting, not a bundle-wide one — two models
@@ -134,7 +136,7 @@ output-token count. These are convenience buckets for estimation, not measured t
 particular task.
 
 <!-- BEGIN GENERATED: task-profiles -->
-Snapshot: `data/pricing.copilot.json` (cached_date 2026-09-05) — pricing sha256 `a3fc378864600d41ccb4eb53c8f2e2a087a3b675cb4517d60836c85ffef9ec93`, roster sha256 `0f44f13e673165f0253d4ed6f005a3b28ef1e62afe6d6fbf8fad678ab7049610`.
+Snapshot: `data/pricing.copilot.json` (cached_date 2026-09-24) — pricing sha256 `f29eb145cfcdd05fb649caff9b02acda832bdb20e880342d7e3c0fa3308ba6b4`, roster sha256 `51b4cbb450cc300e151098004ff738ff651882c40bddd867a5a90295ad7465c2`.
 
 | Profile | Label | Input tokens | Output tokens |
 |---|---|---|---|

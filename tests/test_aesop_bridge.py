@@ -127,6 +127,25 @@ class EstTickMathTests(unittest.TestCase):
         cost = ab.est_tick(FIXTURE, "TEST", "fake-haiku", cache_hit=0, today=date(2020, 1, 1))
         self.assertAlmostEqual(cost, 1.2)
 
+    def test_model_cache_override_beats_global_fallback(self):
+        pricing = {
+            **FIXTURE,
+            "models": {
+                **FIXTURE["models"],
+                "fake-haiku": {
+                    **FIXTURE["models"]["fake-haiku"],
+                    "cache_read_multiplier": 0.025,
+                },
+            },
+        }
+        # effective input multiplier = 0.2 + 0.8 * 0.025 = 0.22;
+        # cost = 0.22 + 0.2 = 0.42.
+        self.assertAlmostEqual(
+            ab.est_tick(pricing, "TEST", "fake-haiku", cache_hit=0.8,
+                        today=date(2020, 1, 1)),
+            0.42,
+        )
+
 
 class IntroPricingBoundaryTests(unittest.TestCase):
     """fake-sonnet: base 3.0/6.0, intro 1.0/2.0 until 2030-06-15. Boundary via `today`

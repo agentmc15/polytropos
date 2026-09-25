@@ -1,7 +1,7 @@
 ### What it does
 
 Runs one task on the cheapest model you'd actually trust for it, behind a check that can
-fail — and only calls in Fable 5 when that check actually does. The orchestrator itself
+fail — and only calls in Fable 5.1 when that check actually does. The orchestrator itself
 never changes its own model; it dispatches attempts as subagents and grades each one with
 its own fresh read, so Fable time is spent on genuine difficulty rather than routine work.
 
@@ -18,7 +18,7 @@ its own fresh read, so Fable time is spent on genuine difficulty rather than rou
 Pin the verify command first, then dispatch: a Sonnet subagent attempts the task, the
 orchestrator runs the verify command itself — never trusting the subagent's own claim —
 and on failure retries once on the same model with that failure output attached. A second
-failure escalates: a Fable 5 subagent gets only the task, the verify command, and both
+failure escalates: a Fable 5.1 subagent gets only the task, the verify command, and both
 attempts' failure evidence, never a blank re-attempt. The orchestrator re-verifies Fable's
 result the same way, at every step, and relays a plain answer either way.
 

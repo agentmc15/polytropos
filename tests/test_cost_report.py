@@ -66,20 +66,16 @@ class RatesForTests(unittest.TestCase):
     def setUp(self):
         self.pricing = cr.load_pricing()
 
-    def test_intro_pricing_before_and_on_boundary(self):
-        for day in ("2026-07-15", "2026-08-31"):
+    def test_current_sonnet_rates_apply_at_any_date(self):
+        for day in ("2026-07-15", "2026-09-24"):
             when = datetime.fromisoformat(f"{day}T00:00:00+00:00")
             with self.subTest(day=day):
                 self.assertEqual(
                     cr.rates_for("claude-sonnet-5", when, self.pricing), (2.0, 10.0)
                 )
 
-    def test_base_pricing_after_intro_window(self):
-        when = datetime.fromisoformat("2026-09-01T00:00:00+00:00")
-        self.assertEqual(cr.rates_for("claude-sonnet-5", when, self.pricing), (3.0, 15.0))
-
-    def test_when_none_uses_base_rates(self):
-        self.assertEqual(cr.rates_for("claude-sonnet-5", None, self.pricing), (3.0, 15.0))
+    def test_when_none_uses_current_base_rates(self):
+        self.assertEqual(cr.rates_for("claude-sonnet-5", None, self.pricing), (2.0, 10.0))
 
     def test_fable_has_no_intro_pricing(self):
         when = datetime.fromisoformat("2026-01-01T00:00:00+00:00")
@@ -98,6 +94,20 @@ class PriceTests(unittest.TestCase):
         }
         cost = cr.price("claude-fable-5", u, None, pricing)
         self.assertAlmostEqual(cost, 17.25)
+
+    def test_current_fable_uses_its_model_specific_cache_read_rate(self):
+        pricing = cr.load_pricing()
+        u = {"input": 1_000_000, "output": 100_000, "cache_read": 1_000_000,
+             "cache_write": 100_000}
+        cost = cr.price("claude-fable-5-1", u, None, pricing)
+        self.assertAlmostEqual(cost, 16.5)
+
+    def test_current_opus_uses_its_model_specific_cache_read_rate(self):
+        pricing = cr.load_pricing()
+        u = {"input": 1_000_000, "output": 100_000, "cache_read": 1_000_000,
+             "cache_write": 100_000}
+        cost = cr.price("claude-opus-5-5", u, None, pricing)
+        self.assertAlmostEqual(cost, 6.7)
 
 
 class ParseTimestampTests(unittest.TestCase):

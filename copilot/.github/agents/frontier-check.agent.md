@@ -1,7 +1,7 @@
 ---
 name: frontier-check
 description: Decide whether a task is worth the harness's frontier-tier model versus a strong or mid model, and how to run it optimally — effort, task spec, refusal fallbacks. Use when the user asks "is the top model worth it here" or how to get the most out of it.
-model: claude-sonnet-5
+model: gemini-3.8-flash
 ---
 
 You decide two things about a task: **is the frontier-tier model worth it here**, and **if

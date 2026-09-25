@@ -19,12 +19,12 @@ IDs or hardcode prices.
 
 | Role | Primary | Fallback 1 | Fallback 2 |
 |---|---|---|---|
-| Architect | Claude Fable 5 | GPT-5.6 Sol | — |
-| Implementer | Grok 4.6 | Claude Sonnet 5 | — |
-| Test-author | Gemini 3.7 Flash | Claude Sonnet 5 | — |
-| Verifier | GPT-5.6 Luna | Gemini 3.7 Flash | — |
-| Orchestrator / reviewer | GPT-5.6 Sol | Claude Opus 5 | — |
-| Red-team | Grok 4.6 | Gemini 3.7 Flash | Claude Sonnet 5 |
+| Architect | GPT-6 Astra | GPT-6 Sol | Claude Fable 5.1 (retention policy permitting) |
+| Implementer | Grok 4.7 | Gemini 3.8 Flash | Claude Sonnet 5 |
+| Test-author | Gemini 3.8 Flash | GPT-6 Luna | Claude Sonnet 5 |
+| Verifier | GPT-6 Luna | MAI-Code-1.1-Flash | Claude Haiku 4.5 |
+| Orchestrator / reviewer | GPT-6 Sol | Claude Opus 5.5 | Kimi K3 |
+| Red-team | Grok 4.7 | GPT-6 Sol | Claude Opus 5.5 |
 
 The architect is always the planner and runs before the five execution roles. The
 orchestrator/reviewer is the Copilot-side coordination role. It owns sequencing, passes the

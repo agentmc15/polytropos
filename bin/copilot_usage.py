@@ -86,14 +86,25 @@ def load_pricing():
         return json.load(f)
 
 
+def pricing_model(key, pricing):
+    """Return an active or retired model row for historical pricing, else ``None``.
+
+    Only this historical-usage module consults ``retired_models``. Routing, preferences,
+    forecasts, and dispatch keep scanning ``models`` alone, so a retired row can never
+    become a default or an escalation candidate.
+    """
+    return pricing.get("models", {}).get(key) or pricing.get("retired_models", {}).get(key)
+
+
 def match_model(model_id, pricing):
-    """Map a raw model string (may carry a bracketed suffix) to a pricing key, or None."""
+    """Map a raw model string (may carry a bracketed suffix) to an active or retired key."""
     if not model_id or model_id.startswith("<"):
         return None
     base = model_id.split("[")[0].strip()
-    for key in pricing["models"]:
-        if base == key or base.startswith(key + "-"):
-            return key
+    for registry in (pricing.get("models", {}), pricing.get("retired_models", {})):
+        for key in registry:
+            if base == key or base.startswith(key + "-"):
+                return key
     return None
 
 
@@ -103,7 +114,9 @@ def price_tokens(u, key, pricing):
     Cache writes ARE priced when the model row carries a ``cache_write_per_mtok`` rate
     (observed usage), unlike copilot_pricing.est_cost's forecast convention.
     """
-    m = pricing["models"][key]
+    m = pricing_model(key, pricing)
+    if m is None:
+        raise KeyError(f"unknown active or retired Copilot model id: {key}")
     return (
         u["input"] * m["input_per_mtok"]
         + u["cache_read"] * m["cached_input_per_mtok"]
@@ -294,7 +307,7 @@ def collect_sessions(session_dir):
 def display_for(raw_model, pricing):
     key = match_model(raw_model, pricing)
     if key:
-        return pricing["models"][key]["display"]
+        return pricing_model(key, pricing)["display"]
     return raw_model
 
 
@@ -532,7 +545,7 @@ def build_usage_payload(session_dir, days=30, top=10, kits_dir=None):
     for key, b in sorted(by_model.items(), key=lambda kv: -kv[1]["usd"]):
         by_model_list.append({
             "model": key,
-            "display": pricing["models"][key]["display"],
+            "display": pricing_model(key, pricing)["display"],
             "sessions": b["sessions"],
             "multi": b["multi"],
             "input": b["input"],
@@ -603,7 +616,7 @@ def build_usage_payload(session_dir, days=30, top=10, kits_dir=None):
         if target_key
         and r["matched_keys"]
         and all(
-            pricing["models"][k]["tier"] in EXPENSIVE_TIERS for k in r["matched_keys"]
+            pricing_model(k, pricing)["tier"] in EXPENSIVE_TIERS for k in r["matched_keys"]
         )
         and r["footprint"] < DOWNGRADE_TOKEN_CEILING
         and r["turns"] < DOWNGRADE_TURN_CEILING

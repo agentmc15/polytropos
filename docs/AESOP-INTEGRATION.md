@@ -130,20 +130,20 @@ hardcodes no price or model id. Three recipes:
 python3 bin/aesop_bridge.py tiers --json
 ```
 
-Example output (labeled example — run the command for current values):
+Example output (Claude registry snapshot cached 2026-09-24 — run the command for current values):
 
 ```json
-{ "frontier": "claude-fable-5", "strong": "claude-opus-4-8",
+{ "frontier": "claude-fable-5-1", "strong": "claude-opus-5-5",
   "mid": "claude-sonnet-5", "cheap": "claude-haiku-4-5" }
 ```
 
 ```bash
 # 2. est-tick — estimated cost of one agent-loop iteration, for a goal recipe / the Ralph runner.
 #    PROFILE is a task-size key (XS S M L XL); MODEL_ID comes from `tiers`.
-python3 bin/aesop_bridge.py est-tick M claude-opus-4-8      # add --json for a machine map
+python3 bin/aesop_bridge.py est-tick M claude-opus-5-5      # add --json for a machine map
 
 # 3. check-budget — how many iterations a profile's budget_usd actually buys (runway sanity check).
-python3 bin/aesop_bridge.py check-budget 25 M claude-opus-4-8
+python3 bin/aesop_bridge.py check-budget 25 M claude-opus-5-5
 ```
 
 `est-tick` exists because aesop's Ralph-style loop runner falls back to a **flat per-tick cost

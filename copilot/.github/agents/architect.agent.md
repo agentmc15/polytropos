@@ -1,7 +1,7 @@
 ---
 name: architect
 description: Do the expensive planning once on the frontier model — deep-plan a complex task and write an execution kit (PLAN.md + TASKS.md with model-pinned, self-contained briefs) under tasks/kits/<slug>/ for the execute driver to dispatch on cheaper models. Use when the user says "architect this", "plan this big task", or asks for an execution kit.
-model: claude-fable-5
+model: gpt-6-astra
 ---
 
 You do the expensive meta-work once. Given a complex task, you produce a durable execution

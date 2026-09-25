@@ -41,19 +41,17 @@ The detailed mechanics, limits, and examples live in the [documentation site](ht
 
 Polytropos also has a [Cursor headless harness](docs/CURSOR-HARNESS.md). Its adapter and bundle are separate from the three quick starts above, and its usage remains unpriced where no rates are known.
 
-## Current models: public releases vs. configured rosters
+## Current model routes
 
-This is a deliberately compact **availability snapshot as of 2026-09-24**, not a pricing table and not a promise of picker availability. Public provider catalogs change independently of a local harness. Polytropos does **not** automatically add, route, or expose a newly announced model; it must be deliberately verified and configured in that harness’s canonical pricing/roster file.
+These are **configuration snapshots checked on 2026-09-24**, not an automatic feed of new releases or a guarantee for every account. Each harness has its own pricing and model registry; public availability and your client’s picker can still differ. The links lead to the provider catalogs used for this refresh.
 
-| Provider surface | Public release/catalog snapshot | What Polytropos currently configures |
+| Harness | Current Polytropos routes | Why an older model may still appear |
 |---|---|---|
-| [Anthropic models](https://platform.claude.com/docs/en/models/overview) | Fable 5.1; Opus 5.5; Sonnet 5; Haiku 4.5 | Claude data snapshot: **2026-07-24** — Fable 5, Opus 5 (plus historical 4.7/4.8), Sonnet 5/4.6, Haiku 4.5. |
-| [OpenAI models](https://developers.openai.com/api/docs/models) | GPT-6 Astra, Sol, Luna | Codex data snapshot: **2026-09-05** — `gpt-6-astra`, `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna`, legacy entries, and `codex-auto-review`. |
-| [GitHub Copilot models & pricing](https://docs.github.com/en/copilot/reference/copilot-billing/models-and-pricing) | New GPT-6 family; Fable 5.1; Opus 5.5; Gemini 3.8 Flash; MAI-Code-1.1-Flash; Grok 4.7; Kimi K3; and other GitHub-listed models | Copilot data snapshot: **2026-09-05** — a separately curated roster spanning configured Claude, GPT, Gemini, Kimi, MAI, and Grok entries. Some entries are explicitly price- or picker-unconfirmed. |
+| **Claude Code** · [Anthropic lineup](https://platform.claude.com/docs/en/models/overview) | Fable 5.1 (frontier), Opus 5.5 (strong), Sonnet 5 (mid), Haiku 4.5 (cheap). | Prior generations remain for historical estimates and explicit compatibility pins where the provider still supports them. |
+| **Codex CLI** · [OpenAI lineup](https://developers.openai.com/api/docs/models) | GPT-6 Astra (reserved orchestration), GPT-6 Sol (strong work and verification), GPT-5.6 Terra (mid work), GPT-6 Luna (cheap work). | Terra remains the available mid-tier worker; older Sol/Luna entries are cost-only. |
+| **GitHub Copilot CLI** · [GitHub CLI model support](https://docs.github.com/en/copilot/reference/ai-models/supported-models) | The curated roster now includes GPT-6 Astra/Sol/Luna, Claude Fable 5.1 and Opus 5.5, Gemini 3.8 Flash, MAI-Code-1.1-Flash, Grok 4.7, and Kimi K3 alongside retained models. | Published support alone does not grant an account access; check `/model` and your organization’s policies. Fable 5.1 has a [data-retention caveat](https://docs.github.com/en/copilot/reference/ai-models/supported-models). |
 
-In GitHub’s current catalog, the following names are **not in this repo’s Copilot roster**: GPT-5.4 nano; GPT-6 Astra, Sol, and Luna; Claude Sonnet 4, Opus 5.5, and Fable 5.1; Gemini 3.8 Flash; MAI-Code-1.1-Flash; Grok 4.5 and 4.7; and Kimi K3. Some are new releases; others are older catalog entries or changed names. This comparison is about documentation coverage, not permission to dispatch them.
-
-The canonical files remain [Claude `data/pricing.json`](data/pricing.json), [Codex `data/pricing.codex.json`](data/pricing.codex.json), and [Copilot `data/pricing.copilot.json`](data/pricing.copilot.json). They are intentionally unchanged here: no prices are inferred from this comparison, and a provider’s public listing is not evidence that a model is installed, selectable, or policy-routable. In particular, check Copilot’s `/model` picker and each file’s notes before treating a listed name as available.
+The canonical files are [Claude `data/pricing.json`](data/pricing.json), [Codex `data/pricing.codex.json`](data/pricing.codex.json), and [Copilot `data/pricing.copilot.json`](data/pricing.copilot.json). Rates, context thresholds, tier defaults, and availability notes belong there; a public catalog entry never silently becomes a routing target.
 
 ## Important security boundaries
 
