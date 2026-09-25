@@ -1,6 +1,11 @@
 .claude/settings.local.json
 __pycache__/
 .DS_Store
+# local secrets: API keys and credentials (e.g. TYPESAFE_API_KEY) -- never committed.
+# Unanchored so it also covers a stray .env in a subdirectory.
+.env
+.env.*
+!.env.example
 # daily-journal output + inbox (personal data — never committed)
 /journal/
 # routing-trend snapshot store (generated local data — never committed)
