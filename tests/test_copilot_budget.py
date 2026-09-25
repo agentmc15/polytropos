@@ -12,7 +12,10 @@ No test in this file EVER invokes the real `copilot` binary or touches the real 
 Every dispatch goes through one of two seams: an injected fake `runner`/`verify_runner`
 callable (pure-function tests of `budget_demote`/`run_task`), or a synthetic STUB_BIN string
 passed via `--copilot-bin` where a dry-run never spawns anything anyway. `Path.home()` is
-never called anywhere in this file. Every `main()` invocation passes `--no-prefs` (never a
+never called anywhere in this file -- but the driver resolves its attempt ledger through
+`bin/runtime_data.py`, which does, so `setUpModule` points `POLYTROPOS_DATA_HOME` at a temp
+dir; this file's own silence about the home was never enough to keep the ledger out of the
+real data root. Every `main()` invocation passes `--no-prefs` (never a
 bare run that could read a real `prefs/copilot.json`) and dry-run tests additionally patch
 `subprocess` in the loaded module to raise if touched, proving the negative. Live-roster
 end-to-end tests patch `ce.load_pricing` to the synthetic fixture below so they never depend
@@ -28,6 +31,7 @@ and `billing_unit` — T1 only needs `budget_demote`, but the fixture is shared 
 import contextlib
 import importlib.util
 import io
+import os
 import re
 import tempfile
 import unittest
@@ -46,6 +50,24 @@ def _load(name):
 
 ce = _load("copilot_execute")
 cp = _load("copilot_pricing")
+
+# The driver opens the attempt ledger under the per-user data root by default. Without this,
+# every run of this module left three `tmp*` namespaces in the real store. Every test here runs
+# with that root pointed at a temp dir, the same rule tests/test_copilot_execute.py follows.
+_DATA_HOME = None
+_DATA_HOME_PATCH = None
+
+
+def setUpModule():
+    global _DATA_HOME, _DATA_HOME_PATCH
+    _DATA_HOME = tempfile.TemporaryDirectory(prefix="polytropos-test-data-")
+    _DATA_HOME_PATCH = mock.patch.dict(os.environ, {"POLYTROPOS_DATA_HOME": _DATA_HOME.name})
+    _DATA_HOME_PATCH.start()
+
+
+def tearDownModule():
+    _DATA_HOME_PATCH.stop()
+    _DATA_HOME.cleanup()
 
 
 # ---- fixtures ---------------------------------------------------------------------------------
