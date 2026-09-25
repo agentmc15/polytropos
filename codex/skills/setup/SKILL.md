@@ -1,0 +1,33 @@
+---
+name: setup
+description: Configure Codex CLI's native status line to show model, context, estimated thread cost when available, rate limits, and token usage. Use when the user asks to set up or change the Polytropos-style Codex status line.
+---
+
+# Set up the Codex status line
+
+Use Codex CLI's native status-line support. Do not install or invoke the Claude-only `bin/statusline.py` command.
+
+Resolve `POLYTROPOS_ROOT` from this skill's location. In a managed copy use `POLYTROPOS_ROOT="{{POLYTROPOS_ROOT}}"`; reject the literal placeholder. The root is only for identifying the managed installation; status-line configuration belongs to Codex itself.
+
+## Preferred interactive setup
+
+1. Inspect the current `[tui]` section in `~/.codex/config.toml`, if the file exists. Report the existing `status_line` value without exposing unrelated configuration.
+2. Show the intended ordered fields before changing anything:
+
+   ```toml
+   [tui]
+   status_line = ["model-with-reasoning", "estimated-thread-cost", "context-used", "five-hour-limit", "weekly-limit", "used-tokens"]
+   status_line_use_colors = true
+   ```
+
+3. Obtain explicit confirmation before writing user-level configuration or operating the interactive picker.
+4. In Codex CLI, run `/statusline`, select the same fields in the user's preferred order, and save. Prefer the picker because it validates the identifiers supported by that installed Codex version and preserves unrelated configuration.
+5. Start a new session when needed, then verify the visible status line. Report fields the installed client omits or cannot populate as unavailable; do not invent values.
+
+## Non-interactive fallback
+
+Use this only when the picker cannot be operated and the user has confirmed the exact edit. Preserve every unrelated key and table in `~/.codex/config.toml`. If `[tui]` or `status_line` already exists, merge or replace only the two status-line keys shown above. Parse and write valid TOML rather than using broad textual replacement.
+
+If the installed Codex version rejects an identifier, remove only that unsupported identifier after showing the validation result. `estimated-thread-cost` is an estimate exposed by the client when available, not proof of a bill; rate-limit fields may be absent when the account or client does not expose them.
+
+Finish by reporting the final ordered field list and whether it was verified in a fresh Codex session.

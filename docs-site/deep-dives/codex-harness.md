@@ -79,7 +79,11 @@ For an existing application configuration, use the same three commands: `plan` s
 
 ## Skills and legacy copies
 
-`$architect` plans kits, `$bench-routing` reads benchmark priors, `$context-weight` measures context, `$doctor` diagnoses setup, `$effort` selects effort, `$escalate` explains recovery, `$execute` dispatches kits, `$frontier-check` checks reserved orchestration, `$journal` prepares the work journal, `$memory` recalls bounded context, `$route` estimates assignments, and `$usage` reports local use. Under a ChatGPT plan, dollars are API-equivalent burn proxies; API-key runs are token-metered.
+`$architect` plans kits, `$assess-improvement` prepares evidence-backed improvement findings, `$bench-routing` reads benchmark priors, `$context-weight` measures context, `$doctor` diagnoses setup, `$effort` selects effort, `$escalate` explains recovery, `$execute` dispatches kits, `$frontier-check` checks reserved orchestration, `$graphify` builds and reads an offline repository graph, `$journal` prepares the work journal, `$memory` recalls bounded context, `$repo-bench` prepares benchmark plans, `$route` estimates assignments, `$setup` configures the native status line, `$update` checks and applies harness refreshes, and `$usage` reports local use. Claude's `cost-report` and `fable-check` capabilities are represented by the Codex-native `$usage` and `$frontier-check` names. Under a ChatGPT plan, dollars are API-equivalent burn proxies; API-key runs are token-metered.
+
+The Codex `$repo-bench` port is intentionally planning-only. It can prepare and inspect a benchmark plan, but it structurally refuses live candidate or judge dispatch because the current benchmark engine and its USD ceiling are Claude-specific. A proxy-dollar estimate under a ChatGPT plan is not a spend ceiling.
+
+`$setup` configures Codex's native `/statusline`; it does not invoke Claude's `bin/statusline.py`. The native picker persists an ordered `tui.status_line` list in `~/.codex/config.toml`. Available fields depend on the installed client and account; choose from the fields shown by `/statusline` rather than copying Claude status-line commands or assuming a session-cost field exists.
 
 When usage logs expose nested cache-write counts, `$usage` retains the inclusive raw input total and prices the read, write, and uncached portions separately. Missing write counts are not inferred; observed writes without a configured rate are reported unpriced.
 
@@ -100,4 +104,4 @@ Retirement requires `--native-skills-confirmed`; edited files remain a conflict.
 
 ## Good next Codex additions
 
-Future work may add a repo-bench adapter, an opt-in verify hook, Automation templates, Plugin icons, and context-fidelity reporting. Codex's built-in `/statusline` does not need to be ported.
+Future work may add a live Codex repo-bench adapter with native telemetry and enforceable resource ceilings, an opt-in verify hook, Automation templates, Plugin icons, and context-fidelity reporting. The `$setup` skill already exposes Codex's built-in `/statusline`; the Claude status-line script is not portable to Codex.

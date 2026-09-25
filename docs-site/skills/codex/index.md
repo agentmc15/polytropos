@@ -5,6 +5,7 @@
 | Skill | Description | Page |
 | --- | --- | --- |
 | architect | Plan complex Codex work as a policy-routed execution kit. | [architect](architect.md) |
+| assess-improvement | Assess an existing repository for a small, evidence-backed improvement opportunity and produce a scoped findings report and handoff briefs. Use for evidence-driven improvement planning, including multi-harness Polytropos assessments. Not for implementing or activating a change. | [assess-improvement](assess-improvement.md) |
 | bench-routing | Compare benchmark priors with central Codex worker-role assignments. | [bench-routing](bench-routing.md) |
 | context-weight | Analyze how Codex context grows, what resident instructions cost, and where fidelity stops. Use for context-window pressure, growth curves, loaded-surface audits, or compaction questions. | [context-weight](context-weight.md) |
 | doctor | Diagnose Codex plugin, policy, app configuration, agents, skills, and managed-install state without changing it. | [doctor](doctor.md) |
@@ -12,9 +13,13 @@
 | escalate | Run verification-gated Codex recovery through the central execution driver. | [escalate](escalate.md) |
 | execute | Run a prepared Codex kit through central policy, worker verification, and Astra acceptance. | [execute](execute.md) |
 | frontier-check | Decide whether a task needs Astra orchestration or a policy-selected worker. | [frontier-check](frontier-check.md) |
+| graphify | Build and inspect an offline local knowledge graph of a repository with the optional external graphify CLI. Use for symbol lookup, call structure, dependency or impact analysis, repository mapping, or grounding architecture work in an unfamiliar codebase. | [graphify](graphify.md) |
 | journal | Generate the daily work journal — collect today's AI usage across Claude Code, Copilot CLI, and Codex CLI plus git activity into a digest, then write the narrative, technical, and next-day-plan summaries. Use when the user asks for their work journal, daily summary, "what did I do today", or to plan tomorrow. | [journal](journal.md) |
 | memory | Recall a small, relevance-gated set of private local facts and review their staleness. Use when durable project context may help but context quality and privacy must stay bounded. | [memory](memory.md) |
+| repo-bench | Plan Codex model benchmarks against real work mined from a repository, with subscription-safe burn and API-equivalent proxy reporting. | [repo-bench](repo-bench.md) |
 | route | Estimate a Codex task and preview its central policy worker assignment. | [route](route.md) |
+| setup | Configure Codex CLI's native status line to show model, context, estimated thread cost when available, rate limits, and token usage. Use when the user asks to set up or change the Polytropos-style Codex status line. | [setup](setup.md) |
+| update | Check and refresh Polytropos harness installs and generated mirrors with the repository's updater. Use for install freshness, bundle drift, or an explicitly requested refresh; checking is read-only and always comes first. | [update](update.md) |
 | usage | Analyze historical Codex CLI activity from local session logs, read-only — honestly unpriced or labeled-proxy. Use when the user asks what they've used, burned, or spent in Codex. | [usage](usage.md) |
 
 ## Using these skills

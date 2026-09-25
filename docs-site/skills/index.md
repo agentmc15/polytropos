@@ -5,7 +5,7 @@
 | Skill | Claude Code | GitHub Copilot CLI | OpenAI Codex CLI |
 | --- | --- | --- | --- |
 | architect | [architect](claude/architect.md) | [architect](copilot/architect.md) | [architect](codex/architect.md) |
-| assess-improvement | [assess-improvement](claude/assess-improvement.md) | — | — |
+| assess-improvement | [assess-improvement](claude/assess-improvement.md) | — | [assess-improvement](codex/assess-improvement.md) |
 | bench-routing | [bench-routing](claude/bench-routing.md) | [bench-routing](copilot/bench-routing.md) | [bench-routing](codex/bench-routing.md) |
 | budget | — | [budget](copilot/budget.md) | — |
 | context-weight | [context-weight](claude/context-weight.md) | [context-weight](copilot/context-weight.md) | [context-weight](codex/context-weight.md) |
@@ -17,14 +17,14 @@
 | fable-check | [fable-check](claude/fable-check.md) | — | — |
 | frontier-check | — | [frontier-check](copilot/frontier-check.md) | [frontier-check](codex/frontier-check.md) |
 | goliath | — | [goliath](copilot/goliath.md) | — |
-| graphify | [graphify](claude/graphify.md) | — | — |
+| graphify | [graphify](claude/graphify.md) | — | [graphify](codex/graphify.md) |
 | journal | [journal](claude/journal.md) | [journal](copilot/journal.md) | [journal](codex/journal.md) |
 | lessons-loop | — | [lessons-loop](copilot/lessons-loop.md) | — |
 | memory | [memory](claude/memory.md) | — | [memory](codex/memory.md) |
-| repo-bench | [repo-bench](claude/repo-bench.md) | — | — |
+| repo-bench | [repo-bench](claude/repo-bench.md) | — | [repo-bench](codex/repo-bench.md) |
 | route | [route](claude/route.md) | [route](copilot/route.md) | [route](codex/route.md) |
-| setup | [setup](claude/setup.md) | — | — |
-| update | [update](claude/update.md) | — | — |
+| setup | [setup](claude/setup.md) | — | [setup](codex/setup.md) |
+| update | [update](claude/update.md) | — | [update](codex/update.md) |
 | usage | — | [usage](copilot/usage.md) | [usage](codex/usage.md) |
 
 ## Why the rosters differ
@@ -45,19 +45,23 @@ different name. Where a dash is simply "not built yet", it says so below.
 - [fable-check](claude/fable-check.md) — the go/no-go for the specific frontier model in the
   Claude lineup. Copilot and Codex ask the identical question about *their* top tier and
   call it [frontier-check](copilot/frontier-check.md).
-- [graphify](claude/graphify.md) — drives an external, user-installed graph CLI and feeds
-  the resulting brief into planning. The reader engine behind it is harness-neutral and
-  runs from any shell, so a Copilot or Codex session can use the same brief without a skill
-  of its own.
-- [repo-bench](claude/repo-bench.md) — benchmarks candidate *Claude* models on a repo's own
-  real work, so the harness that dispatches the candidates is Claude Code by construction.
-  A Codex adapter for the same engine is named as a future addition in the
-  [Codex harness deep dive](../deep-dives/codex-harness.md).
-- [setup](claude/setup.md) — installs the Claude Code statusline into Claude Code's own
-  settings file. It configures exactly one harness; there is nothing to mirror.
-- [update](claude/update.md) — the one surface where a dash means the opposite of missing:
-  a single freshness card that reports on **all three** harness installs at once. It lives
-  on Claude Code because it has to live somewhere.
+
+### Claude Code and Codex CLI, not Copilot CLI
+
+- **assess-improvement** ([Claude Code](claude/assess-improvement.md),
+  [Codex](codex/assess-improvement.md)) — the same read-only evidence and no-fit discipline;
+  Cursor carries this card too, outside this three-column matrix.
+- **graphify** ([Claude Code](claude/graphify.md), [Codex](codex/graphify.md)) — optional,
+  user-installed external graph CLI with offline-only defaults and advisory graph readers.
+- **repo-bench** ([Claude Code](claude/repo-bench.md), [Codex](codex/repo-bench.md)) — both mine
+  target-repo tasks, but only the Claude engine dispatches live candidates today. The Codex
+  skill plans with Codex pricing and burn labels, then structurally refuses live dispatch
+  until a subscription-safe ceiling and result ledger exist.
+- **setup** ([Claude Code](claude/setup.md), [Codex](codex/setup.md)) — separate native status
+  lines: Claude configures its command in `~/.claude/settings.json`; Codex configures its
+  built-in `/statusline` in `~/.codex/config.toml`.
+- **update** ([Claude Code](claude/update.md), [Codex](codex/update.md)) — both wrap the one
+  all-harness freshness checker; neither implicitly rewrites user-owned configuration.
 
 ### GitHub Copilot CLI only
 
@@ -81,8 +85,8 @@ different name. Where a dash is simply "not built yet", it says so below.
 
 ### Present, under a different name
 
-Some rows carry a dash because the capability is named for the harness it serves — and
-one because it genuinely is not built yet:
+Some rows carry a dash because the capability is named for the harness it serves; others
+are not built for a particular harness yet:
 
 - **effort** ([Copilot](copilot/effort.md), [Codex](codex/effort.md)) — on Claude Code the
   effort dial is a session setting you control directly, and the guidance for using it

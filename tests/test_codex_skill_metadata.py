@@ -56,7 +56,7 @@ def parse_metadata(path):
 class CodexSkillMetadataTests(unittest.TestCase):
     def test_every_canonical_skill_has_complete_distinct_metadata(self):
         skills = canonical_skills()
-        self.assertEqual(len(skills), 12)
+        self.assertEqual(len(skills), 17)
         display_names = set()
         short_descriptions = set()
         for skill_dir in skills:
@@ -107,7 +107,7 @@ class CodexSkillMetadataTests(unittest.TestCase):
                 for action in plan["actions"]
                 if action["source"].endswith(METADATA_RELATIVE.as_posix())
             ]
-            self.assertEqual(len(metadata_actions), 12)
+            self.assertEqual(len(metadata_actions), 17)
             self.assertEqual({action["state"] for action in metadata_actions}, {"install"})
             harness.apply_codex_plan(plan)
 
@@ -127,7 +127,7 @@ class CodexSkillMetadataTests(unittest.TestCase):
                 for record in ownership["files"]
                 if record["destination"].endswith(METADATA_RELATIVE.as_posix())
             ]
-            self.assertEqual(len(owned_metadata), 12)
+            self.assertEqual(len(owned_metadata), 17)
 
             route_skill = relocated_root / "codex" / "skills" / "route" / "SKILL.md"
             self.assertEqual(

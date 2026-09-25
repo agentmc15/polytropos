@@ -5,7 +5,7 @@
 > Benchmark Claude models on a repo's own real work and re-tier them from measured evidence — mined issue-fix pairs or red-validated mutation repairs, sandboxed candidates, four independent oracles. Use when the user asks to benchmark models on their repo, pick a daily driver, or re-tier models for a project. The default is a priced plan that spends nothing; a live run needs a cost ceiling the user confirms in this conversation.
 
 - **Source:** [skills/repo-bench/SKILL.md](https://github.com/agentmc15/polytropos/blob/main/skills/repo-bench/SKILL.md)
-- **Also available on:** this harness only — see the [parity matrix](../index.md)
+- **Also available on:** [OpenAI Codex CLI](../codex/repo-bench.md)
 - **References shipped with the skill:** [references/acquisition.md](https://github.com/agentmc15/polytropos/blob/main/skills/repo-bench/references/acquisition.md), [references/calibration.md](https://github.com/agentmc15/polytropos/blob/main/skills/repo-bench/references/calibration.md), [references/isolation.md](https://github.com/agentmc15/polytropos/blob/main/skills/repo-bench/references/isolation.md), [references/oracles.md](https://github.com/agentmc15/polytropos/blob/main/skills/repo-bench/references/oracles.md), [references/presenting.md](https://github.com/agentmc15/polytropos/blob/main/skills/repo-bench/references/presenting.md), [references/regrade.md](https://github.com/agentmc15/polytropos/blob/main/skills/repo-bench/references/regrade.md), [references/setup.md](https://github.com/agentmc15/polytropos/blob/main/skills/repo-bench/references/setup.md), [references/subcommands.md](https://github.com/agentmc15/polytropos/blob/main/skills/repo-bench/references/subcommands.md)
 
 ## In practice

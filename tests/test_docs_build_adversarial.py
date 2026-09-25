@@ -352,7 +352,7 @@ class LiveTreeInventoryTests(unittest.TestCase):
         # 15 since D25 added skills/assess-improvement (was 14).
         self.assertEqual(counts["claude"], 15)
         self.assertEqual(counts["copilot"], 13)
-        self.assertEqual(counts["codex"], 12)
+        self.assertEqual(counts["codex"], 17)
         self.assertIn(("claude", "route"), pairs)
         self.assertIn(("copilot", "budget"), pairs)
         self.assertIn(("codex", "doctor"), pairs)

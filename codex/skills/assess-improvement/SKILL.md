@@ -1,0 +1,59 @@
+---
+name: assess-improvement
+description: Assess an existing repository for a small, evidence-backed improvement opportunity and produce a scoped findings report and handoff briefs. Use for evidence-driven improvement planning, including multi-harness Polytropos assessments. Not for implementing or activating a change.
+---
+
+# Assess improvement opportunities
+
+Produce a reviewable, evidence-first assessment of whether a bounded improvement is worth testing. The result is planning input, not authorization to modify the repository. Resolve the installed Polytropos bundle root from this skill's location when bundle-owned material must be cited; a managed copy may contain `{{POLYTROPOS_ROOT}}`, which must be resolved before use.
+
+## Boundaries
+
+- Treat target source and configuration as read-only by default. Writing the requested report or task briefs to the designated output location is allowed.
+- Do not install packages, mine private telemetry, invoke paid or private providers, make network calls, mutate target repositories, or change policy or release state solely because this skill is active.
+- Preserve existing authorization. An already authorized bounded action may be used as evidence; record its scope and provenance. This skill grants no new authority.
+- Prefer deterministic inspection. If a useful test requires mutation, run it against a temporary copy and disclose that limitation.
+- Do not infer a defect from absence, a plan, a stale document, a schema, or one anecdote. Use `unknown`, `unverified`, or `insufficient-evidence` where appropriate.
+- Keep facts, constraints, judgments, and proposed actions separate. Preserve the existing owners of admission, execution, verification, evidence, budgets, and release.
+- Scope conclusions to the named repository, component, harness, task cohort, and evaluation context.
+
+## Assessment workflow
+
+1. Restate repository and revision, requested outcome, included components and harnesses, evidence allowed, exclusions, and unknown access.
+2. Establish the baseline from repository instructions, architecture and lifecycle documents, relevant contracts, current source, tests, fixtures, and release or evaluation material. Cite file, symbol or line, and revision when available.
+3. Map authorities and interfaces. Distinguish demonstrated runtime enforcement from documentation and adapter claims.
+4. Look for a small recurring pain signal: repeated failure category, reproducible divergence, persistent manual recovery, a code-and-test-corroborated limitation, or a clear evaluation gap. One observation creates a hypothesis, not recurrence.
+5. Test applicability and no-fit: identify affected and unaffected scopes, prerequisites, privacy and authorization constraints, incompatible environments, and counterexamples.
+6. Choose the smallest reversible intervention that could falsify the hypothesis while preserving acceptance, permission, budget, and verification rules. Prefer a deterministic or manual first experiment.
+7. Define evaluation before recommending promotion: a named baseline, ordinary control, candidate, comparable cohort and ceilings, acceptance criteria, label source, exclusion rules, counterevidence, rollback, and an `insufficient-evidence` condition.
+8. Prepare the report and any independent task briefs using [references/assessment-template.md](references/assessment-template.md). Do not implement the proposed tasks.
+
+## Evidence standard
+
+Maintain an evidence ledger with one row per material claim. Use these categorical statuses:
+
+- `observed`: directly supported by current source, fixture, record, or authorized measurement.
+- `documented`: stated in maintained material but not independently verified here.
+- `inferred`: a bounded interpretation with its reasoning and alternatives stated.
+- `unknown` / `unverified`: evidence is absent or could not be checked.
+- `insufficient-evidence`: evidence cannot support an expected-benefit or promotion claim.
+
+Do not turn model output, a valid typed response, benchmark replay, or self-reported resource use into proof of semantic correctness or causal improvement. Cache or replay evidence applies only when project/provider eligibility, task and acceptance version, complete input state, policy version, and relevant calibration context match.
+
+Do not invent a numeric probability. If one is supplied, record its prediction target, provenance, and validation status separately from the categorical assessment.
+
+## Candidate and system-specific guidance
+
+Prefer narrow, reversible, testable candidates such as a deterministic guard, stronger evidence join, bounded context-repair trigger, clearer unsupported-state handling, or a manual reporting seam. Record required permissions, private data, credentials, isolation, labels, and held-out validation before recommending evaluation.
+
+Treat broad executable policy languages and autonomous self-modification as no-fit or deferred unless separately requested research has external acceptance and permission boundaries. A future provider integration remains conditional on explicit authorization, privacy review, technical conformance, a no-spend/manual fallback, and local comparative evaluation.
+
+For a whole-Polytropos assessment, inspect the shared runtime and every supported harness independently. Do not transfer pricing, capability, or enforcement claims between harnesses. Separate native, adapted, documented-only, runtime-verified, and unsupported behavior. Keep graph or context outputs advisory rather than permissive, and preserve this chain for adaptive decisions: bounded state -> advisory judgment or deterministic rule -> deterministic policy selection -> fresh admission -> native execution -> required verification -> authoritative evidence.
+
+## Deliverables and stopping condition
+
+Return a scope-specific findings report and zero or more self-contained task briefs in the requested location. A sound result may be `no supported intervention`.
+
+Stop when evidence is insufficient, no small recurring signal exists, required evidence is unavailable, or the next step needs authorization not already granted. Each task brief must identify its objective, exact scope, preserved authorities, evidence, bounded change, non-goals, acceptance criteria, deterministic/offline verification, evaluation dependencies, later approvals, and rollback or no-promotion condition.
+
+When ranking multiple candidates, rank only within the assessed scope using expected learning value, reversibility, evidence quality, and disruption—not an invented probability, vendor claim, or presumed cost.

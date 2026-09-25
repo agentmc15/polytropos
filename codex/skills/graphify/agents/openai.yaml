@@ -1,0 +1,4 @@
+interface:
+  display_name: "Graphify Repository"
+  short_description: "Map code structure and change impact offline"
+  default_prompt: "Use $graphify to build or inspect an offline knowledge graph for this repository."

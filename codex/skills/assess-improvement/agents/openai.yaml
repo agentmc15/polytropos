@@ -1,0 +1,4 @@
+interface:
+  display_name: "Assess Improvement"
+  short_description: "Find a bounded, evidence-backed improvement"
+  default_prompt: "Use $assess-improvement to assess this repository and prepare evidence-backed handoff briefs."

@@ -5,7 +5,7 @@
 > Assess an existing repository for a small, evidence-backed improvement opportunity and produce a scoped findings report and handoff briefs. Use when the user asks where a codebase could be improved, wants an evidence-driven improvement plan, or wants a harness or runtime ecosystem assessed — including multi-harness Polytropos assessments. Not for implementing, activating, enabling providers, or promoting a policy change.
 
 - **Source:** [skills/assess-improvement/SKILL.md](https://github.com/agentmc15/polytropos/blob/main/skills/assess-improvement/SKILL.md)
-- **Also available on:** this harness only — see the [parity matrix](../index.md)
+- **Also available on:** [OpenAI Codex CLI](../codex/assess-improvement.md)
 - **References shipped with the skill:** [references/assessment-template.md](https://github.com/agentmc15/polytropos/blob/main/skills/assess-improvement/references/assessment-template.md)
 
 ## The skill card — what the model reads

@@ -5,7 +5,7 @@
 > Build and read a local knowledge graph of a repo with the external graphify CLI — symbol lookup with file:line precision, call structure, impact analysis, and an architect-grounding brief, all offline. Use when the user wants repo structure analyzed or mapped, asks what calls or depends on something, wants impact analysis for a change, or before architecting against an unfamiliar repo. Args: optional repo path (default: the current repo).
 
 - **Source:** [skills/graphify/SKILL.md](https://github.com/agentmc15/polytropos/blob/main/skills/graphify/SKILL.md)
-- **Also available on:** this harness only — see the [parity matrix](../index.md)
+- **Also available on:** [OpenAI Codex CLI](../codex/graphify.md)
 
 ## In practice
 

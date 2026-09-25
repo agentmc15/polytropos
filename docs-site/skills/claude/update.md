@@ -5,7 +5,7 @@
 > Check and refresh everything this repo installs into its harnesses — Claude plugin cache staleness, Copilot and Codex bundle drift, generated pricing mirrors, and docs snapshot freshness. Use when the user asks to update or refresh the plugin or a harness install, asks whether installs or pricing docs are stale, or after pulling or merging changes into this repo. Args: optional "apply" to refresh after checking (check-only is the default).
 
 - **Source:** [skills/update/SKILL.md](https://github.com/agentmc15/polytropos/blob/main/skills/update/SKILL.md)
-- **Also available on:** this harness only — see the [parity matrix](../index.md)
+- **Also available on:** [OpenAI Codex CLI](../codex/update.md)
 
 ## In practice
 
