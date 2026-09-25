@@ -375,7 +375,7 @@ no-clobber, repo mirrors regenerate — and the Claude side is **print-only**: t
 `~/.claude`. `demo` exercises both paths on synthetic temp trees.
 
 Three commands close the gaps a refresh used to leave. `harness_update.py preflight` vets the
-checkout the plugin installs from before anything is copied: it must be on `main`, clean, level
+checkout the marketplace actually installs from before anything is copied: it must be on `main`, clean, level
 with its upstream, free of credential-shaped files among what git ignores, and at a new version.
 It prints the refresh commands only when every gate passes. `plugin_staleness.py --full` compares
 every tracked file with the installed copy, lists what the copy carries that git does not track,

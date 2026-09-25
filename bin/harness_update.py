@@ -707,8 +707,8 @@ def cmd_check(args):
 # `git status` are read, nothing is written, and the update commands are printed only when every
 # gate passes -- never run.
 
-PREFLIGHT_GATES = ("source-found", "git-checkout", "on-branch", "clean", "up-to-date",
-                   "no-credential-files", "version-changed")
+PREFLIGHT_GATES = ("source-found", "matches-marketplace", "git-checkout", "on-branch", "clean",
+                   "up-to-date", "no-credential-files", "version-changed")
 
 #: The most ignored files the credential gate will name-check before it gives up. A scan that
 #: stops short cannot vouch for the rest, so hitting the cap fails the gate.
@@ -800,11 +800,13 @@ def run_preflight(repo_root, installed_manifest, known_marketplaces, source=None
     would carry that git ignores, and -- only when every gate passes -- the commands to run."""
     plugin_staleness = _load_sibling("plugin_staleness")
     name, marketplace, _repo_version = plugin_staleness.read_plugin_identity(repo_root)
+    recorded = resolve_install_source(known_marketplaces, marketplace)
     if source is None:
-        source = resolve_install_source(known_marketplaces, marketplace)
+        source = recorded
     gates = []
-    report = {"source": source, "required_branch": branch, "gates": gates, "branch": None,
-              "copied_anyway": [], "credential_files": [], "commands": []}
+    report = {"source": source, "installs_from": recorded, "required_branch": branch,
+              "gates": gates, "branch": None, "copied_anyway": [], "credential_files": [],
+              "commands": []}
 
     def gate(key, ok, detail):
         gates.append({"gate": key, "ok": ok, "detail": detail})
@@ -814,15 +816,25 @@ def run_preflight(repo_root, installed_manifest, known_marketplaces, source=None
         report["ready"] = bool(gates) and all(g["ok"] for g in gates) and len(gates) == len(PREFLIGHT_GATES)
         report["exit"] = EXIT_OK if report["ready"] else EXIT_DRIFT
         if report["ready"]:
-            report["commands"] = [plugin_staleness.update_command(name, marketplace),
+            refresh = (plugin_staleness.install_command if report.get("first_install")
+                       else plugin_staleness.update_command)
+            report["commands"] = [refresh(name, marketplace),
                                   "after the restart, in a Claude Code session: " + POST_RESTART_CHECK]
         return report
 
     source_ok = bool(source) and (Path(source) / ".claude-plugin" / "plugin.json").is_file()
     if not gate("source-found", source_ok,
-                f"installs from {source}" if source_ok else
+                f"a plugin checkout at {source}" if source_ok else
                 f"no plugin checkout at {source!r}; the marketplace record names none, or it moved"):
         return finish()
+    # Vetting a tree proves nothing about the update unless it is the tree the update copies: the
+    # installer copies the marketplace record's location, whatever `--source` named.
+    same = bool(recorded) and os.path.realpath(source) == os.path.realpath(recorded)
+    gate("matches-marketplace", same,
+         "the marketplace installs from this checkout" if same else
+         (f"the marketplace installs from {recorded}, not this checkout -- the update would copy "
+          "that tree, so re-point the marketplace before trusting these gates" if recorded else
+          "no marketplace record names an install source; add the marketplace first"))
     rc, text = git_status_fn(source) if git_status_fn else (None, "")
     if not gate("git-checkout", rc == 0,
                 "git can read it" if rc == 0 else "git could not read the install source"):
@@ -854,6 +866,7 @@ def run_preflight(repo_root, installed_manifest, known_marketplaces, source=None
     entry = plugin_staleness.resolve_installed_entry(installed_manifest,
                                                      plugin_staleness._plugin_key(name, marketplace))
     installed_version = entry.get("version") if entry else None
+    report["first_install"] = entry is None
     if entry is None:
         gate("version-changed", True, f"not installed yet; {source_version} would be a first install")
     else:

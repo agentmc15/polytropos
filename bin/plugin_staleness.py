@@ -97,6 +97,9 @@ EXIT_DRIFTED = 3
 # only ever prints these commands as a string; it never executes them.
 _REMEDY_CLI_A = "claude plugin marketplace update {marketplace} && claude plugin"
 _REMEDY_CLI_B = " update {name}@{marketplace} (restart to apply)"
+# A first install is its own verb: `update` refuses a plugin that is not installed.
+_INSTALL_CLI_A = "claude plugin"
+_INSTALL_CLI_B = " install {name}@{marketplace} (restart to apply)"
 
 # Printed only for a SHA-STALE result. Deliberately carries no CLI invocation and no mention of
 # a version "bump" as an action to take -- printing the DRIFTED remedy here would be the false
@@ -242,6 +245,12 @@ def update_command(name, marketplace):
     """The installer's refresh command line for this plugin, as TEXT for a human to run --
     shared by the remedy below and by `harness_update.py preflight`. Never executed here."""
     return (_REMEDY_CLI_A + _REMEDY_CLI_B).format(name=name, marketplace=marketplace)
+
+
+def install_command(name, marketplace):
+    """The installer's first-install command line, as TEXT for a human to run -- for a plugin
+    with no install record, where `update_command` would be refused. Never executed here."""
+    return (_INSTALL_CLI_A + _INSTALL_CLI_B).format(name=name, marketplace=marketplace)
 
 
 def build_remedy(name, marketplace):

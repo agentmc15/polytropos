@@ -1916,6 +1916,10 @@ class PreflightTests(unittest.TestCase):
             source, _manifest, known = self._setup(td)
             report = self._run(source, Path(td) / "no-such-manifest.json", known)
             self.assertTrue(self._gate(report, "version-changed")["ok"])
+            # `update` refuses a plugin that is not installed; a first install prints `install`.
+            self.assertTrue(report["ready"])
+            self.assertEqual(report["commands"][0], ps.install_command("fake-plugin", "fake-market"))
+            self.assertNotEqual(report["commands"][0], ps.update_command("fake-plugin", "fake-market"))
 
     def test_a_missing_marketplace_record_stops_at_the_first_gate(self):
         with tempfile.TemporaryDirectory() as td:
@@ -1927,8 +1931,43 @@ class PreflightTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             source, manifest, known = self._setup(td)
             report = hu.run_preflight(source, manifest, known)
-            self.assertEqual([g["gate"] for g in report["gates"]], ["source-found", "git-checkout"])
+            self.assertEqual([g["gate"] for g in report["gates"]],
+                             ["source-found", "matches-marketplace", "git-checkout"])
             self.assertFalse(report["ready"])
+
+    def test_vetting_a_tree_the_marketplace_does_not_install_from_is_not_ready(self):
+        # The 2026-09-25 rehearsal: `--source` named a clean clone while the marketplace still
+        # installed from another checkout, and the report said ready. Every other gate passes here.
+        with tempfile.TemporaryDirectory() as td:
+            source, manifest, known = self._setup(td)
+            elsewhere = _make_repo(Path(td) / "elsewhere", version="1.0.1")
+            report = hu.run_preflight(source, manifest, known, source=str(elsewhere),
+                                      git_status_fn=lambda src: (0, _status()))
+            gate = self._gate(report, "matches-marketplace")
+            self.assertFalse(gate["ok"])
+            self.assertIn(str(source), gate["detail"])
+            self.assertEqual([g["gate"] for g in report["gates"] if not g["ok"]], ["matches-marketplace"])
+            self.assertFalse(report["ready"])
+            self.assertEqual(report["commands"], [])
+
+    def test_the_same_checkout_by_another_path_matches(self):
+        with tempfile.TemporaryDirectory() as td:
+            source, manifest, known = self._setup(td)
+            link = Path(td) / "link-to-source"
+            link.symlink_to(source, target_is_directory=True)
+            report = hu.run_preflight(source, manifest, known, source=str(link),
+                                      git_status_fn=lambda src: (0, _status()))
+            self.assertTrue(self._gate(report, "matches-marketplace")["ok"])
+            self.assertTrue(report["ready"])
+
+    def test_an_explicit_source_with_no_marketplace_record_is_not_ready(self):
+        with tempfile.TemporaryDirectory() as td:
+            source, manifest, known = self._setup(td, record=False)
+            report = hu.run_preflight(source, manifest, known, source=str(source),
+                                      git_status_fn=lambda src: (0, _status()))
+            gate = self._gate(report, "matches-marketplace")
+            self.assertFalse(gate["ok"])
+            self.assertIn("no marketplace record", gate["detail"])
 
 
 class ResolveInstallSourceTests(unittest.TestCase):
