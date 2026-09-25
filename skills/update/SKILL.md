@@ -40,6 +40,9 @@ commands, run `preflight` and report every gate it prints:
 - `on-branch` or `clean` failing means someone is working in the install source. Report it; never
   switch its branch or clear its work to make the gate pass.
 - `no-credential-files` failing names the file. It has to leave the checkout before the copy.
+- `matches-marketplace` failing means the checkout that was vetted is not the one the update
+  copies: the marketplace installs from somewhere else. Point the marketplace at the vetted
+  checkout, or run `preflight` without `--source`, before trusting the other gates.
 
 After the restart, confirm the session loaded the new copy with the `--loaded` line above:
 `current` means done; `restart needed` means this session still runs an older cached version; `not

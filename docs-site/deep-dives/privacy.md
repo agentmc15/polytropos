@@ -170,7 +170,8 @@ recreates the exposure. Since 2026-09-25 each manual step below is a command; ru
 #    work and never commits -- review and merge the bump like any other change.
 python3 bin/release_gate.py bump <new>
 
-# 2. vet the checkout the plugin installs from: on main, clean, level with its upstream,
+# 2. vet the checkout the marketplace installs from (a --source it does not use fails):
+#    on main, clean, level with its upstream,
 #    nothing credential-shaped among the files git ignores, and the version actually changed.
 #    It prints the refresh commands only when every gate passes, and never runs them.
 python3 bin/harness_update.py preflight
