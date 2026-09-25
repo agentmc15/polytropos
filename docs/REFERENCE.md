@@ -1,0 +1,568 @@
+# Polytropos reference
+
+> *aesop tells the fables; polytropos finds the way.*
+
+*(polytropos — “of many ways”, Odysseus’s epithet and the fourth word of the Odyssey: many models, many paths, resourceful under constraint.)*
+
+This is the long-form companion to the [README](../README.md): every model, role, skill, engine and harness on one page. It was the repository's front page until 2026-09-24, when the README became a short cross-harness landing page.
+
+A Claude Code plugin that picks the right model per task, estimates the cost before you run it, and keeps the frontier tier — Fable 5.1 today, with Fable 5 still served at the same rate — reserved for work that actually needs it.
+
+That is the one-line version. The longer version is that polytropos is a **routing, execution, and measurement system** for agentic coding work, installed as a plugin into four harnesses (Claude Code, GitHub Copilot CLI, OpenAI Codex CLI, Cursor CLI). It decides which model a task should run on and what that will cost; it turns a hard problem into an *execution kit* so the bulk of the work can be dispatched to lower-priced tiers against a written plan; it records every dispatch it makes so that "the cheap model was fine here" becomes something you check rather than something you assume; and it holds the boundary — one place each for whether code may run, whether a path may be written, how a process is bounded, where personal data lives, and what must not leave the machine in plain text.
+
+**What is in it, at a glance** — every count below is one you can re-derive, and the command to do it is beside it:
+
+| Surface | Count | Re-derive it with |
+|---|---:|---|
+| Skills (Claude Code) | 15 | `ls -d skills/*/` |
+| Skills (Copilot bundle) | 13 | `ls -d copilot/.github/skills/*/` |
+| Skills (Codex bundle) | 17 | `ls -d codex/skills/*/` |
+| Skills (Cursor bundle) | 2 | `ls -d cursor/skills/*/` |
+| Engines (`bin/*.py`) | 69 | `ls bin/*.py \| wc -l` |
+| Pricing files (one per harness, never merged) | 4 | `ls data/pricing*.json` |
+| Runtime stores, all outside the tree | 9 | `python3 bin/runtime_data.py where` |
+| Capability rows in the operational registry | 62 | `python3 bin/harness_adapter.py` |
+| Pipeline roles in the kit contract | 10 | `kit_contract.PIPELINE_ORDER` — 3 standing + 7 extended |
+| Plugin version | 0.6.3 | `.claude-plugin/plugin.json` |
+
+> **Security posture — read before unattended use.** On macOS the kit drivers run each verify
+> command inside an OS boundary (`bin/exec_policy.py`, `sandbox-exec`): writes confined to the
+> workspace, network denied, credential stores unreadable. It is the default and it refuses
+> rather than downgrading. **Linux and Windows have no backend implemented yet**, so
+> verification there requires the explicit `--exec-mode trusted-host`, which enforces nothing.
+> Benchmark candidate and judge dispatch is not yet confined either. See
+> [SECURITY.md](../SECURITY.md) for what is and is not enforced today.
+
+---
+
+## Documentation map
+
+**The manual — full documentation site:** <https://agentmc15.github.io/polytropos/> — every skill on every harness (Claude Code, Copilot CLI, Codex CLI), getting-started guides, workflows, and deep dives. Generated from the skill files themselves and rebuilt on every push to `main` (drift-gated by `tests/test_docs_site.py`).
+
+**In-depth architecture guide:** [docs/HOW-IT-WORKS.md](HOW-IT-WORKS.md) (Markdown) · [docs/how-it-works.html](how-it-works.html) (styled HTML — open in a browser). Its §4 is the authority behind this page's engine table.
+
+**Complete guide & cookbook:** [docs/GUIDE.md](GUIDE.md) · [docs/guide.html](guide.html) — every skill documented, the iterative workflows, how aesop fits, and 11 worked examples (tasks, greenfield, brownfield, backlog, security, measurement).
+
+| Topic | Document |
+|---|---|
+| AI primitives — aesop, folded in | [docs/PRIMITIVES.md](PRIMITIVES.md) |
+| Aesop integration (historical) | [docs/AESOP-INTEGRATION.md](AESOP-INTEGRATION.md) · [docs/AESOP-COMPILE-PROPOSAL.md](AESOP-COMPILE-PROPOSAL.md) |
+| GitHub Copilot harness | [docs/COPILOT-HARNESS.md](COPILOT-HARNESS.md) · [docs/COPILOT-WORKFLOW.md](COPILOT-WORKFLOW.md) · [docs/COPILOT-COSTVIZ.md](COPILOT-COSTVIZ.md) · [docs/COPILOT-PARITY.md](COPILOT-PARITY.md) · [docs/COPILOT-PINS.md](COPILOT-PINS.md) |
+| Copilot documentation center (generated) | [copilot-docs/README.md](../copilot-docs/README.md) ([HTML](../copilot-docs/index.html)) |
+| OpenAI Codex harness | [docs/CODEX-HARNESS.md](CODEX-HARNESS.md) |
+| Cursor harness | [docs/CURSOR-HARNESS.md](CURSOR-HARNESS.md) |
+| Kit scheduler — opt-in bounded concurrency | [docs/KIT-SCHEDULER.md](KIT-SCHEDULER.md) |
+| Workflow evaluation — whole workflows on held-out tasks | [docs/WORKFLOW-EVAL.md](WORKFLOW-EVAL.md) |
+| Decision and improvement — the mechanism release | [docs/DECISION-IMPROVEMENT-V1-HANDOFF.md](DECISION-IMPROVEMENT-V1-HANDOFF.md) · [conformance](DECISION-IMPROVEMENT-CONFORMANCE.md) · [authority inventory](DECISION-IMPROVEMENT-AUTHORITY-INVENTORY.md) · [reconciliation](DECISION-IMPROVEMENT-RECONCILIATION.md) |
+| Training-data preparation | [docs/TRAINING-DATA-READINESS.md](TRAINING-DATA-READINESS.md) |
+| Release gate and supported matrix | [docs/RELEASE.md](RELEASE.md) |
+| Daily work journal | [docs/DAILY-JOURNAL.md](DAILY-JOURNAL.md) · [docs/NEXT-DAY-RUNBOOK.md](NEXT-DAY-RUNBOOK.md) |
+| Memory skill | [docs/MEMORY-SKILL.md](MEMORY-SKILL.md) |
+| Context weight | [docs/CONTEXT-WEIGHT.md](CONTEXT-WEIGHT.md) |
+| Graph-engineering properties | [docs/GRAPH-ENGINEERING.md](GRAPH-ENGINEERING.md) |
+| Evidence-loop measurement surfaces | [docs/EVIDENCE-LOOP.md](EVIDENCE-LOOP.md) |
+| The role-roster experiment | [docs/ROLE-EXPERIMENT.md](ROLE-EXPERIMENT.md) |
+| Routing history and trends | [docs/ROUTING-HISTORY.md](ROUTING-HISTORY.md) · [docs/ROUTING-TRENDS.md](ROUTING-TRENDS.md) |
+| Per-task dollar attribution | [docs/PER-TASK-DOLLARS.md](PER-TASK-DOLLARS.md) |
+| Effort dial | [docs/EFFORT-DIAL.md](EFFORT-DIAL.md) |
+| Main-session model switching (an upstream ask) | [docs/FUSION-TIER1.md](FUSION-TIER1.md) · [docs/FUSION-TIER2.md](FUSION-TIER2.md) |
+| Privacy — what stays local, and the runbooks | [docs/PRIVACY.md](PRIVACY.md) |
+| Security policy — what is and is not enforced | [SECURITY.md](../SECURITY.md) |
+| Installation and prerequisites | [SETUP.md](../SETUP.md) |
+
+The **aesop fold** deserves a sentence of its own, because it explains a whole directory. [docs/PRIMITIVES.md](PRIMITIVES.md) carries the nine converged primitives (instructions, skills, subagents, commands, MCP, hooks, permissions, loops, state) and the six-harness support matrix, brought over from [aesop](https://github.com/agentmc15/aesop) and now living here as data plus a read-only validator: `primitives/*.json` + `bin/primitives.py` (`model` / `matrix` / `check` / `plan`). **aesop itself was archived on 2026-09-05** — its compiler and emitters stayed behind; what it got right came here. The matrix is generated into the doc and drift-tested, so the published table cannot diverge from the data.
+
+---
+
+## Why
+
+Two billing modes with **opposite** optimization goals:
+
+- **`api`** — building an app, or any pay-per-token usage. Optimize dollars: the cheapest sufficient model wins. The lowest tier earns its keep here.
+- **`subscription`** — Claude Code / Claude UI on a plan. Marginal dollar cost is zero; the only cost is 5-hour/7-day rate-limit burn. The lowest tier is pointless here — use the best model on the plan and manage burn with **effort levels**, not model downgrades.
+
+Set your default mode in `data/pricing.json` → `billing_mode`. Override per invocation with `--api` / `--sub`.
+
+A **subscription run is usage-limited, not token-billed**, and that distinction is load-bearing across this whole system. Every dollar figure for a ChatGPT-plan Codex run is a labeled API-equivalent relative-burn proxy, never a bill: `billed_usd` stays null, the source stays `priced: false` / `usd: null`, and proxy dollars never enter a priced total or a digest's totals. Cursor goes further — it publishes no per-token rates at all, so a Cursor dispatch is simply unpriced.
+
+---
+
+## Install
+
+Install commands live in one place, the README's [Start here](../README.md#start-here) table, with prerequisites and the Python floor in [SETUP.md](../SETUP.md). They are not repeated here, so the two pages cannot disagree. In outline: Claude Code installs from this repo's local marketplace (`polytropos-local`); Codex CLI installs as a Codex plugin from that same marketplace ([docs/CODEX-HARNESS.md](CODEX-HARNESS.md)); Copilot CLI and Cursor install through one writer, `bin/harness_select.py`, which Codex also uses for its optional project roles and legacy copies.
+
+**Installation never overwrites what it does not own:** every destination is classified before a byte is written — absent, already identical, written by this installer and unchanged, or something else — and that last case is preserved and reported rather than replaced. `install` creates with `O_EXCL` so absence is asserted by the kernel in the same operation as the write, and a rollback after a partial failure takes back only the bytes that run actually wrote.
+
+---
+
+## The intended workflow
+
+**The Opus tier (Opus 5.5 today) is the daily driver. The frontier tier (Fable 5.1 today) is escalated per-portion, then you come back down.**
+
+```
+daily work (Opus 5.5)
+   │  complex planning / complex task detected (/route flags it, or you know)
+   ▼
+/polytropos:architect <task>        ← the frontier tier runs ONCE (in-session or as a subagent)
+   │  emits an execution kit: .claude/kits/<slug>/PLAN.md + TASKS.md + GUARDRAILS.md,
+   │  model-pinned subagents (implementer=sonnet, verifier=haiku, reviewer=opus),
+   │  Fable's judgment encoded as scaffolding
+   ▼
+/polytropos:execute <slug>          ← back on Opus/Sonnet; loop dispatches tasks
+   │  to the kit's agents, verifies independently, updates state, writes the ledger
+   ▼
+blocked task? → targeted Fable consult (one task's brief only) → resume cheap execution
+   ▼
+python3 bin/routing_scorecard.py <slug> --session <id>   ← measure: did the cheap
+                                                            tiers hold, and at what cost
+```
+
+The kit's agents pin their own models in frontmatter, so the model mix enforces itself during execution — frontier spend stays concentrated in the short architecture phase. The loop then **closes with measurement**, because `/polytropos:execute` leaves machine-readable ledger lines in the kit's `NOTES.md` that `bin/routing_scorecard.py` reads back.
+
+Two read-only skills feed the front of that loop without sitting inside it. `/polytropos:graphify`
+grounds the architect in a repo's actual structure before it dispatches wide exploratory reads.
+`/polytropos:assess-improvement` answers the question that comes *before* "plan this": is there a
+small, evidence-backed improvement here worth testing at all? It returns a scoped findings report
+and self-contained handoff briefs — or the honest conclusion that there is no supported
+intervention — and it never implements, activates, or promotes anything. Turning one of its briefs
+into an execution kit is still `/polytropos:architect`'s job.
+
+---
+
+## Model rosters and price snapshots
+
+Four pricing files are the **single numeric source of truth — one file per harness, never merged**; no harness's config reads another's. Nothing in a skill, script, or bundle hardcodes a price, ratio, plan fact, credit value, model id, or pricing date: they are all derived at run time. Every table below is a **labeled snapshot generated from its file at that file's own `cached_date`** — not retyped, and stale the moment the file moves. `README.md` and the `docs/` tables change only in the same edit as the file they mirror. `tests/test_harness_update.py` fails if `data/pricing.json`'s `cached_date` is missing from `README.md` or `data/pricing.copilot.json`'s from `docs/COPILOT-HARNESS.md`, and `tests/test_reference_doc.py` fails if any of the four labels on this page falls behind its file, or if a model id in a pricing file is missing from this page.
+
+### Claude — `data/pricing.json`
+
+Derived from `data/pricing.json`, `cached_date` **2026-09-24** — 9 models, USD per million tokens.
+
+| Model id | Display | Tier | Input | Output | Context window | Max output |
+|---|---|---|---:|---:|---:|---:|
+| `claude-fable-5` | Fable 5 | frontier | $10 | $50 | 1,000,000 | 128,000 |
+| `claude-fable-5-1` | Fable 5.1 | frontier | $10 | $50 | 1,000,000 | 128,000 |
+| `claude-opus-4-7` | Opus 4.7 | opus | $5 | $25 | 1,000,000 | 128,000 |
+| `claude-opus-4-8` | Opus 4.8 | opus | $5 | $25 | 1,000,000 | 128,000 |
+| `claude-opus-5` | Opus 5 | opus | $5 | $25 | 1,000,000 | 128,000 |
+| `claude-opus-5-5` | Opus 5.5 | opus | $4 | $20 | 1,000,000 | 128,000 |
+| `claude-sonnet-4-6` | Sonnet 4.6 | sonnet | $3 | $15 | 1,000,000 | 64,000 |
+| `claude-sonnet-5` | Sonnet 5 | sonnet | $2 | $10 | 1,000,000 | 64,000 |
+| `claude-haiku-4-5` | Haiku 4.5 | haiku | $1 | $5 | 200,000 | 64,000 |
+
+File-wide multipliers and modes, from the same file: `billing_mode` `subscription`, `cache_read_multiplier` (0.1×), `cache_write_multiplier_5m` (1.25×), `cache_write_multiplier_1h` (2.0×), `batch_discount` (0.5×). `task_profiles` carries 5 size priors (XS, S, M, L, XL).
+
+Per-model cache-read rates, from the same file: `claude-fable-5-1` (0.025×), `claude-opus-5-5` (0.05×). Each replaces the file-wide `cache_read_multiplier` for that model; the file-wide figure remains the fallback for every other row.
+
+Each entry's `notes` field carries the operational caveats a router must surface — always-on thinking, which row supersedes which, and which models carry their own cache-read rate. Read the notes rather than inferring from the rates.
+
+### Codex — `data/pricing.codex.json`
+
+Derived from `data/pricing.codex.json`, `cached_date` **2026-09-24** — 9 rows, of which 4 are routable worker/orchestrator tiers; the rest carry a `cost-only` or `non-routing` tier and are never selected for work. USD per million tokens.
+
+| Model id | Display | Tier | Available | Input | Cached in | Cache write | Output | Long-context block | Efforts |
+|---|---|---|---|---:|---:|---:|---:|---|---|
+| `gpt-6-astra` | GPT-6 Astra | frontier | yes | $10 | $1 | $12.5 | $50 | ≥272,000 in-tok: $20 / $2 / $25 / $75 | **low**, medium, high, xhigh, max, ultra |
+| `gpt-6-sol` | GPT-6 Sol | strong | yes | $2 | $0.2 | $2.5 | $10 | ≥272,000 in-tok: $4 / $0.4 / $5 / $15 | low, **medium**, high, xhigh, max, ultra |
+| `gpt-5.6-terra` | GPT-5.6 Terra | mid | yes | $2 | $0.2 | $2.5 | $12 | ≥272,000 in-tok: $4 / $0.4 / $5 / $18 | low, **medium**, high, xhigh, max, ultra |
+| `gpt-6-luna` | GPT-6 Luna | cheap | yes | $0.1 | $0.01 | $0.125 | $0.5 | ≥272,000 in-tok: $0.2 / $0.02 / $0.25 / $0.75 | low, **medium**, high, xhigh, max |
+| `gpt-5.4-nano` | GPT-5.4 nano | cost-only | no | $0.2 | $0.02 | — | $1.25 | — | — |
+| `gpt-5.5` | GPT-5.5 | cost-only | yes | $5 | $0.5 | — | $30 | ≥272,000 in-tok: $10 / $1 / — / $45 | low, **medium**, high, xhigh |
+| `gpt-5.6-luna` | GPT-5.6 Luna | cost-only | yes | $0.2 | $0.02 | $0.25 | $1.2 | ≥200,000 in-tok: $0.4 / $0.04 / $0.5 / $1.8 | low, **medium**, high, xhigh, max |
+| `gpt-5.6-sol` | GPT-5.6 Sol | cost-only | yes | $4 | $0.4 | $5 | $20 | ≥272,000 in-tok: $8 / $0.8 / $10 / $30 | **low**, medium, high, xhigh, max, ultra |
+| `codex-auto-review` <br>*rate assumed from* `gpt-5.3-codex` | Codex auto-review (Codex Desktop) | non-routing | — | $1.75 | $0.175 | — | $14 | — | — |
+
+The long-context column reads *input / cached input / cache write / output*; the bolded effort is that row's `default_reasoning_effort`. Plans in the same file: `plus` $20/mo (included usage: null), `pro` $200/mo (included usage: null), `business` price not recorded (included usage: null), `enterprise` price not recorded (included usage: null). Effort ladder (`knobs.reasoning_efforts`): low, medium, high, xhigh, max, ultra. Cache: `cache_read_multiplier` (0.1×), `cache_write_multiplier` (1.25×), `cache_min_life_minutes` 30.
+
+Orchestration policy (same file, `orchestration_policy`): orchestrator tier `frontier` from a `reserved` pool, worker tiers `cheap`, `mid`, `strong`, default worker tier `mid`, maximum worker tier `strong`, verification tier `strong`.
+
+**A ChatGPT-plan Codex run is usage-limited, not token-billed.** The plan rows above carry `included_usage: null` because no published token allowance exists, and this file says never to fabricate one. So every dollar figure this repo prints for a subscription Codex run is a **labeled API-equivalent relative-burn proxy, never a bill** — `billed_usd` stays null, the source stays `priced: false` / `usd: null`, and a proxy dollar never enters a priced total or a journal digest's totals. Codex model ids are best-effort (`model_ids_note`); corrections land in that file and nowhere else.
+
+### Copilot — `data/pricing.copilot.json`
+
+Derived from `data/pricing.copilot.json`, `cached_date` **2026-09-24** — 29 rows across 6 vendors. Rates are USD per million tokens; Copilot settles them in `billing_unit.name` = **AIC** at `usd_per_credit` 0.01, so credits = USD ÷ that field — the unit itself is data, never a literal in a skill.
+
+6 retired models live apart from the roster, in `retired_models`, each with its `retired_on` date and `replacement`: they keep historical sessions costable, and no routing, preference, forecast or dispatch path reads them (`claude-opus-4.5`, `claude-opus-4.6`, `claude-sonnet-4.5`, `claude-sonnet-4.6`, `gemini-3.1-pro`, `mai-code-1-flash`). 10 rows carry a `long_context` step-up block and 2 carry a `promo` window; both are broken out under the main table.
+
+| Model id | Display | Vendor | Tier | Input | Cached in | Cache write | Output | Flags |
+|---|---|---|---|---:|---:|---:|---:|---|
+| `claude-fable-5` | Claude Fable 5 | anthropic | frontier | $10 | $1 | $12.5 | $50 | — |
+| `claude-fable-5.1` | Claude Fable 5.1 | anthropic | frontier | $10 | $0.25 | $12.5 | $50 | — |
+| `gpt-6-astra` | GPT-6 Astra | openai | frontier | $10 | $1 | $12.5 | $50 | long-context ≥272,000 |
+| `claude-opus-4.8-fast` | Claude Opus 4.8 (fast mode) | anthropic | strong | $10 | $1 | $12.5 | $50 | — |
+| `claude-opus-4.7` | Claude Opus 4.7 | anthropic | strong | $5 | $0.5 | $6.25 | $25 | — |
+| `claude-opus-4.8` | Claude Opus 4.8 | anthropic | strong | $5 | $0.5 | $6.25 | $25 | — |
+| `claude-opus-5` | Claude Opus 5 | anthropic | strong | $5 | $0.5 | $6.25 | $25 | — |
+| `gpt-5.5` | GPT-5.5 | openai | strong | $5 | $0.5 | — | $30 | long-context ≥272,000 |
+| `claude-opus-5.5` | Claude Opus 5.5 | anthropic | strong | $4 | $0.2 | $5 | $20 | — |
+| `gpt-5.6-sol` | GPT-5.6 Sol | openai | strong | $4 | $0.4 | $5 | $20 | long-context ≥272,000 |
+| `kimi-k3` | Kimi K3 | moonshot | strong | $3 | $0.3 | — | $15 | — |
+| `gpt-6-sol` | GPT-6 Sol | openai | strong | $2 | $0.2 | $2.5 | $10 | long-context ≥272,000 |
+| `grok-4.6` | Grok 4.6 | xai | strong | $2 | $0.5 | — | $6 | long-context ≥200,000 |
+| `gpt-5.3-codex` | GPT-5.3-Codex | openai | strong | $1.75 | $0.175 | — | $14 | — |
+| `gpt-5.4` | GPT-5.4 | openai | mid | $2.5 | $0.25 | — | $15 | long-context ≥272,000 |
+| `claude-sonnet-5` | Claude Sonnet 5 | anthropic | mid | $2 | $0.2 | $2.5 | $10 | — |
+| `gpt-5.6-terra` | GPT-5.6 Terra | openai | mid | $2 | $0.2 | $2.5 | $12 | long-context ≥272,000 |
+| `grok-4.7` | Grok 4.7 | xai | mid | $2 | $0.5 | — | $6 | long-context ≥200,000 |
+| `gemini-3.5-flash` | Gemini 3.5 Flash | google | mid | $1.5 | $0.15 | — | $9 | — |
+| `kimi-k2.7-code` | Kimi K2.7 Code | moonshot | mid | $0.95 | $0.19 | — | $4 | — |
+| `gemini-3.6-flash` | Gemini 3.6 Flash | google | mid | $0.75 | $0.075 | — | $3.75 | promo until 2026-12-31 |
+| `gemini-3.7-flash` | Gemini 3.7 Flash | google | mid | $0.75 | $0.075 | — | $3.75 | — |
+| `gemini-3.8-flash` | Gemini 3.8 Flash | google | mid | $0.75 | $0.075 | — | $3.75 | promo until 2026-12-31 |
+| `claude-haiku-4.5` | Claude Haiku 4.5 | anthropic | cheap | $1 | $0.1 | $1.25 | $5 | — |
+| `gpt-5.4-mini` | GPT-5.4 mini | openai | cheap | $0.75 | $0.075 | — | $4.5 | — |
+| `gpt-5-mini` | GPT-5 mini | openai | cheap | $0.25 | $0.025 | — | $2 | — |
+| `gpt-5.6-luna` | GPT-5.6 Luna | openai | cheap | $0.2 | $0.02 | $0.25 | $1.2 | long-context ≥200,000 |
+| `mai-code-1.1-flash` | MAI-Code-1.1-Flash | microsoft | cheap | $0.2 | $0.02 | — | $1.2 | — |
+| `gpt-6-luna` | GPT-6 Luna | openai | cheap | $0.1 | $0.01 | $0.125 | $0.5 | long-context ≥272,000 |
+
+A `—` in the cache-write column means the file records no cache-write rate for that row, not that cache writes are free.
+
+**Long-context blocks** (10 rows) — these rates apply only when a *single request's* input-token count exceeds the row's threshold, never to an aggregated session or task-profile total:
+
+| Model id | Threshold (input tokens) | Input | Cached in | Cache write | Output |
+|---|---:|---:|---:|---:|---:|
+| `gpt-6-astra` | 272,000 | $20 | $2 | $25 | $75 |
+| `gpt-5.5` | 272,000 | $10 | $1 | — | $45 |
+| `gpt-5.6-sol` | 272,000 | $8 | $0.8 | $10 | $30 |
+| `gpt-6-sol` | 272,000 | $4 | $0.4 | $5 | $15 |
+| `grok-4.6` | 200,000 | $4 | $1 | — | $12 |
+| `gpt-5.4` | 272,000 | $5 | $0.5 | — | $22.5 |
+| `gpt-5.6-terra` | 272,000 | $4 | $0.4 | $5 | $18 |
+| `grok-4.7` | 200,000 | $4 | $1 | — | $12 |
+| `gpt-5.6-luna` | 200,000 | $0.4 | $0.04 | $0.5 | $1.8 |
+| `gpt-6-luna` | 272,000 | $0.2 | $0.02 | $0.25 | $0.75 |
+
+**Promotional windows** (2 rows) — the post-promo rate is not published, so re-check `update_from` after the date rather than assuming the rate holds:
+
+| Model id | Promo until |
+|---|---|
+| `gemini-3.6-flash` | 2026-12-31 |
+| `gemini-3.8-flash` | 2026-12-31 |
+
+Plans in the same file: `free` $0/mo, `pro` $10/mo / 1,500 AIC, `pro-plus` $39/mo / 7,000 AIC, `max` $200/mo / 20,000 AIC, `business` price not recorded, `enterprise` price not recorded. Effort ladder (`knobs.reasoning_efforts`, ascending display form): Low, Medium, High, Extra High, Max.
+
+How the file was checked is recorded in the file itself: `pricing_refresh_note` for the rates, and `model_ids_note` for the *roster* (which ids the picker actually offers). Read those notes rather than assuming a listed model is selectable.
+
+### Cursor — `data/pricing.cursor.json`
+
+`data/pricing.cursor.json`, `cached_date` **2026-09-13**, carries **0 models and no rates at all** — and that is the honest state, not a gap waiting to be filled from another harness's numbers. Its `update_from` records why: Cursor publishes no per-model CLI price table this file could mirror. Under the `plan` mode the file marks `usage_limited: true` with `unit: null`, so **every Cursor dispatch is unpriced — `billed_usd` stays null and no proxy dollar is invented**; under `api_key` the file records that the pricing is not held here and is never estimated from another harness's rates. Model ids are likewise absent by design: the host's own list is read at run time, read-only, by `python3 bin/cursor_adapter.py models`, and a `--model` handed to the driver is passed through as written and resolved by Cursor.
+
+### Where the numbers are allowed to live
+
+`bin/model_registry.py` is the **one** cross-harness reader of model ids and tiers — and it never reads a price. Generated mirrors under `skills/route/references/` and `skills/fable-check/references/` are never hand-edited; regenerate them with `python3 bin/sync_pricing_refs.py` (`python3 bin/sync_pricing_refs.py --check` and `tests/test_pricing_refs.py` fail on drift). Everything else derives a rate from a pricing file at run time:
+
+```bash
+python3 bin/copilot_pricing.py models          # cross-vendor roster in USD + AIC; also est / runway / knobs / prefs
+python3 bin/codex_pricing.py models            # Codex roster and burn index; --profile adds est/burn columns
+python3 bin/model_registry.py --harness claude  # ids and tiers only, never prices
+python3 bin/aesop_bridge.py tiers               # which model currently occupies each tier
+```
+
+---
+
+## Roles
+
+A polytropos run has roles, and they are defined exactly once — in `bin/kit_contract.py`, the **one kit contract**. Task parsing, graph validation, readiness, status transitions, budget admission, run ids, and the outcome vocabulary live there and are re-exported by every driver; `tests/test_kit_contract.py` fails if any implementation reappears in two drivers. The contract version is `polytropos.task/1`.
+
+**The two human-facing roles first**, because they frame everything else:
+
+- **The orchestrator** is your own daily-driver session running `/polytropos:execute`. Its job is stated in the skill as faithful dispatch, independent verification, and state-keeping — *not* re-litigating the plan. It runs each task's verify command itself, because that exit status is orchestrator-owned evidence and an implementer's claim of success is not. It also runs under a **lean-driver** rule: its own context is the run's most expensive artifact, so it reads only kit state (`PLAN.md`, `GUARDRAILS.md`, `TASKS.md`, `NOTES.md`) plus verify output, and delegates every exploratory read to a cheap scout that returns conclusions rather than file dumps.
+- **The architect** is `/polytropos:architect`, and it is the one role pinned to the frontier tier. Its own words: **"Fable 5 runs once, at the start; its judgment persists as scaffolding."** — wording that predates Fable 5.1; the skill dispatches the `fable` alias, so which frontier model runs is the harness's resolution of that alias, and both Fable 5 and Fable 5.1 sit in the table above at the same rate. It plans on that tier exactly once — either as a dispatched subagent while your main session stays on the daily driver, or natively if you have switched — and its output is not a plan but an execution kit: `PLAN.md`, `TASKS.md`, `GUARDRAILS.md`, and model-pinned agents. Then it hands back and tells you to switch down.
+
+**The pipeline roles.** Every kit has the **standing trio** — `implementer`, `verifier`, `reviewer`. A kit's `PLAN.md` may add up to **seven extended roles** on an optional `roles:` line, from exactly this vocabulary: `scout`, `test-author`, `second-verifier`, `red-team`, `security-auditor`, `docs-editor`, `synthesizer`. Anything else is out of grammar and the roster check refuses it. Absent line = the trio, unchanged. The pipeline order the contract declares is `scout → implementer → test-author → verifier → second-verifier → red-team → reviewer → security-auditor → docs-editor → synthesizer`.
+
+Role boundaries are the design, not an accident: `red-team` attacks *beyond* the acceptance criteria rather than re-running the verifier's checks; `security-auditor` is fences, leaks, and injection surface only, never the reviewer's drift review; `second-verifier` must carry a stated *different* lens from the verifier's. The read-only roles carry a `tools:` pin (no Write, no Edit) — and the architect skill is explicit that this removes the *casual* path, not the capability, because Bash alone can rewrite any tracked file, so the pin is paired with a stated damage-restore practice rather than trusted on its own.
+
+**Workflows** name the assurance level a kit declares, on an optional `workflow:` line: `direct` (implementer and deterministic checks only, no independent review), `reviewed` (the trio — the default), `extended` (trio plus the declared roles). **Statuses** are exactly `pending | in-progress | done | blocked`, and the only transitions are into `in-progress` from anywhere, and out of `in-progress` to `done` or `blocked`.
+
+**Executors** are the six things that can sequence roles: `interactive | claude-code | copilot | codex | cursor | stub`.
+
+### The honest part: only one executor sequences all ten roles
+
+This is the fact a summary must not blur. **All ten roles are sequenced only by the `interactive` executor — the `/polytropos:execute` skill running in a Claude Code session.** Each of the four headless drivers (`bin/claude_execute.py`, `bin/copilot_execute.py`, `bin/codex_execute.py`, `bin/cursor_execute.py`) sequences `implementer` and `reviewer`, runs the verify command itself rather than dispatching a verifier agent per task (recorded as `partial`, not `sequenced`), and supports **none** of the seven extended roles. Read it straight out of the contract for any kit and any executor — `python3 bin/kit_contract.py roster --kit <dir> --executor <name> --json` prints the roster, the per-role support level with its reason, and every gap by name. The table below is `kit_contract.ROLE_SUPPORT` in full:
+
+| Role | `interactive` | `claude-code` | `copilot` | `codex` | `cursor` | `stub` |
+|---|---|---|---|---|---|---|
+| `scout` (extended) | sequenced | — | — | — | — | — |
+| `implementer` (standing) | sequenced | sequenced | sequenced | sequenced | sequenced | sequenced |
+| `test-author` (extended) | sequenced | — | — | — | — | — |
+| `verifier` (standing) | sequenced | partial | partial | partial | partial | partial |
+| `second-verifier` (extended) | sequenced | — | — | — | — | — |
+| `red-team` (extended) | sequenced | — | — | — | — | — |
+| `reviewer` (standing) | sequenced | sequenced | sequenced | sequenced | sequenced | — |
+| `security-auditor` (extended) | sequenced | — | — | — | — | — |
+| `docs-editor` (extended) | sequenced | — | — | — | — | — |
+| `synthesizer` (extended) | sequenced | — | — | — | — | — |
+
+Each `partial` carries its own reason in the contract, and they differ: on `claude-code`, `copilot`, and `cursor`, `run` executes the verify command and no verifier agent is dispatched per task; on `codex`, `review` additionally dispatches an independent verifier *per phase*, not per task; on `stub`, the verify command runs in the worker's copy and again on the merged tree. A `—` is `unsupported` with a stated reason, which is why **a declared role a driver cannot run is refused or disclosed, never silently skipped** — the run stops by default, and `--roster-gap disclose` proceeds only with the gap printed and recorded in the attempt ledger.
+
+Extended roles are **measured, never mandated**. `python3 bin/routing_scorecard.py --roles` prints each declared role's dispatches, findings, confirmed findings, precision, and marginal catches, with "insufficient sample" below the evidence floor — so "does a red-team pay for itself here" is a question with a card behind it. Declare a role for a stated purpose drawn from the task's risk, never because the name exists. Full write-up: [docs/ROLE-EXPERIMENT.md](ROLE-EXPERIMENT.md).
+
+---
+
+## Capabilities — the fifteen skills
+
+A skill's `SKILL.md` **is** its runtime behavior, not documentation of it. All fifteen live under `skills/` (`ls -d skills/*/`); each resolves plugin files through `${CLAUDE_PLUGIN_ROOT}`, falling back to a path relative to its own `SKILL.md` resolved to absolute before shelling out.
+
+### Routing and cost
+
+**`/polytropos:route <task>`** — picks the model for one task and prices it before you run it. It first decides the billing mode: from `billing_mode` in `data/pricing.json` for a session-routing question, or always `api` when the question is "what should the app I'm building call". Then it classifies the task, prices each candidate from the pricing file at run time (never from memory), and returns a compact table with the recommendation bolded plus two actions — dispatch now to a subagent pinned to the recommended alias, or the exact `/model` command for you to switch your own session. `--api` / `--sub` forces the framing. It **never** switches your main session's model, and a big frontier-worthy task is routed to `/polytropos:architect` instead of a plain dispatch. It optionally prefers a measured tier map if `prefs/repo-bench.json` exists for this repo, citing the run it came from — and ignores that file as stale if any id in it is missing from the pricing file. Within a tier, the first row of `data/pricing.json` is the current default; older rows stay for historical costing and explicit compatibility pins, never as evidence that a model is still offered.
+
+**`/polytropos:fable-check <task>`** — the judgment reference for the frontier tier: is this task worth it here, and if so how should it be run. Routes there for long-horizon autonomous work, problems the tier below already failed on at higher effort, deep research, and heavy parallel sub-agent orchestration; explicitly *not* for routine coding, solved problems, or anything the tiers below can handle at the needed effort. The caveat it surfaces every time is that thinking is always on, and it gives five optimal-use rules (full spec up front; take the model's documented default effort as the baseline and raise it only on evidence; de-prescribe prompts migrated from older models; let it delegate; ground progress claims against tool results). Ratios are derived from the pricing file, never quoted from memory.
+
+**`/polytropos:cost-report`** — historical spend from your own local transcripts. It runs `bin/cost_report.py`, which walks `~/.claude/projects/**/*.jsonl` read-only, extracts per-message model and usage, dedupes by message id (resumed sessions duplicate history), and prices everything from `data/pricing.json`. Flags: `--days N`, `--mode api|subscription`, `--top N`, `--json`, `--projects-dir DIR`. It reports spend by model, the top sessions, and **downgrade candidates** — sessions run on a high tier with a small footprint — with the dollar delta framed as savings in `api` mode and as burn share in `subscription` mode. Two no-data outcomes are kept distinct: a missing projects directory renders nothing, while a present-but-empty one renders a full zero-row report with a label, which is honest output rather than a failure.
+
+**`/polytropos:context-weight`** — what filled your context window, and what to do about it. The skill opens by saying what it **cannot** do: it cannot remove anything from your window, because skills are text loaded *into* the window and only the harness can mutate the message array. It ranks three levers in priority order — **prevent** (free and lossless: delegate bulk reads, cap tool output, defer loads), **prune** (cheap but lossy: compaction and context editing, the only lever that can cost accuracy), **measure** (free: knowing when to act). `bin/context_weight.py` has six cards — `session`, `overview`, `audit`, `watch`, `constraints --kit KIT`, `demo` — all taking `--json`, and `session`/`overview`/`constraints` taking `--harness claude|codex|copilot` where each harness is reported at *its own* honest fidelity, never at Claude's. `watch` is Claude-only by design and prints an honest refusal for the other two rather than fabricating a number their logs cannot support. Its headline move is the **checkpoint before compacting**: write decisions, constraints, and open questions to a file *before* the lossy step, because a summary written afterwards can only summarize what survived.
+
+**`/polytropos:bench-routing`** — should a role move to a different model? It runs `bin/bench_routing.py` over `data/benchmarks.aa.json`, a screenshot-transcribed snapshot of an external general-capability index. `rank` gives ranked tables; `roles --harness claude|codex|copilot|all` gives a per-harness role recommendation with availability derived from the pricing files at run time (a benchmark entry matching no available model is reported UNAVAILABLE, never silently dropped); `compare` is the one to reach for, joining the benchmark pick against this repo's own measured first-try rate per tier. The discipline is the point: **measured outcomes beat the benchmark prior**, a nominally-positive but small gain is reported `not_supported` rather than softened into "might be worth considering", and only `implementer` gets a real verdict — the ledger records per-*task* outcomes, so architect, reviewer, orchestrator, and verifier are reported `no_role_evidence` rather than judged on a number measuring a different job. The index's `usd_per_task` is a ranking ratio and is never presented as a bill.
+
+### Planning and execution
+
+**`/polytropos:architect <task>`** — plan once on the frontier tier and write the execution kit. Step 0 gets onto that tier (dispatch mode, keeping your main session on the daily driver; or native mode if you switched). Step 1 writes `PLAN.md`: goal and a checkable "done", constraints and an explicit out-of-scope fence, architecture decisions **each with rationale** (the "why" is what lets a cheaper model make consistent micro-decisions later), risks with their tripwires, and four optional single-line dials — `autonomy:`, `budget:`, `roles:`, `workflow:` — which are PLAN.md line families, never task fields. Step 2 writes `TASKS.md` (self-contained briefs, acceptance criteria, a verify command per task, `depends:`/`independent:` marking, an optional `evidence:` field, phase headings), the project subagents with their models and `tools:` pinned, and the kit's own `GUARDRAILS.md` — always created, never a stub, because an absent file is indistinguishable from a forgotten one. Step 3 hands off with the exact next command. It reads a repo's graph first when one exists, and treats a `stale` or `unknown` graph as hints rather than evidence.
+
+**`/polytropos:execute <slug>`** — run the kit. Setup locates it, reads `PLAN.md` + `GUARDRAILS.md` + `TASKS.md`, and reads the four dials once. Before the first dispatch it runs `python3 bin/kit_contract.py graph --kit .claude/kits/<slug>` (exit 2 on a duplicate id, unknown or self dependency, or cycle — each named with its fix; it fixes `TASKS.md` and reports the defect, never routes around an invalid plan) and then `roster`. Per task: mark `in-progress` → check the budget dial → dispatch the brief **verbatim** to the implementer with the task's `model` field passed as the Agent tool's `model` parameter (**which overrides the agent file's frontmatter**) → verify independently → on pass mark `done` and append the ledger line; on fail retry once with the failure output, then mark `blocked` and move on. Independent tasks dispatch in parallel; phase boundaries dispatch the reviewer. Three properties are worth naming: the `evidence:` rule means a `red-green` task whose check already passed beforehand is **blocked, not done**, whatever it exits now; the fences are **re-read from disk at every phase start** as an unconditional guarantee (compaction-triggered re-reads are best-effort, and the skill says which it is honoring); and a budget stop appends one `result=budget-stop` line, leaves statuses untouched, and is never folded into a fluent "all done" summary.
+
+**`/polytropos:escalate <task>`** — the per-task sibling of execute's escalation valve. Step 0 pins a **machine-checkable** success condition, and if the task genuinely has none the skill says so plainly rather than pretending a vibe is a verify. Then: attempt on the cheapest tier you'd actually trust; run the check yourself; on failure retry once on the *same* model with the exact failure output; only on a second failure escalate to a frontier subagent carrying **only** the task, the check, and the evidence from both attempts. Two cost levers in order of what you control: **scope** (hand it the diagnosis, not a blank re-attempt) and **effort** where the invocation exposes it. Re-verify the frontier output too; if even that fails, stop and report honestly.
+
+**`/polytropos:setup`** — wires `bin/statusline.py` into `~/.claude/settings.json` as the `statusLine` command: model name colour-coded by price tier, estimated session cost, context percentage, and 5h/7d rate-limit burn on subscription sessions. It edits user-level settings, so it verifies the script runs, shows you the exact block, warns if a `statusLine` key already exists, and writes **only** after explicit confirmation — and the command it writes must be a literal absolute path, because `${CLAUDE_PLUGIN_ROOT}` does not exist outside plugin context. It also offers a **separate** opt-in, never bundled with the statusline step: a `PostToolUse` hook (`bin/kit_verify_hook.py hook`) that blocks a task's `- status:` line from being edited to `done` without a verify-pass marker — and it tells you precisely what that does not cover (it fires on `Edit` only, so a `done` flip performed via `Write` is not enforced).
+
+### Evidence and memory
+
+**`/polytropos:memory`** — durable facts across sessions, with recall that is **pull-only, relevance-gated, and budget-capped**. Recall is the default operation: derive 5–15 salient keywords from the task at hand — never a whole prompt — and run `python3 bin/memory_recall.py --query "<keywords>"`. The effectiveness contract is the design: **never bulk-inject** the index, the store directory, or an uncapped fact set; expired facts are withheld; stale facts arrive down-ranked and flagged, and a flagged fact must be re-checked against reality before you act on it; and `no memory above the relevance gate for this query` is a **success**, not a failure — do not loosen the query to force a match. Saving is `memory_store.py add` (dedup-gated; on a duplicate, update rather than force), and `review` is a read-only staleness report that never writes. Worth remembering: preferences, decisions plus rationale, environment facts, corrections. Not worth remembering: anything the repo already records, secrets, and transient state.
+
+**`/polytropos:journal`** — the daily cross-tool work journal. `bin/journal_collect.py` is deterministic and **read-only** over `~/.claude`, `~/.copilot`, and `~/.codex`: it never calls a model, never touches the network, and writes only under the gitignored journal store. Its digest is **metadata-only** — counts, ids, titles, short strings — never transcript or message text. `bin/telemetry_snapshot.py` then persists the day's analytics, because the transcript directories the digest reads rotate and the snapshot is what survives. Summaries default to being written **in your current session** (already paid for) from the prompts `python3 bin/journal_summarize.py --dry-run` prints, which dispatches nothing; a headless run lets the script route a cheap/mid model itself with at most one escalation, exiting 3 if a document still failed. `python3 bin/journal_plan.py build` then writes the next-day runbook — one dated, checkable card per planned task with ready-to-paste commands per harness — and `check` / `done` / `defer` track it. It is **advisory only**: it prepares and tracks, and schedules or executes nothing. There are no Graph/OAuth/MCP connectors and the skill says there never will be by default; external-tool context arrives only as offline text you carry over by hand.
+
+**`/polytropos:repo-bench`** — measure models on a target repo's *own real work* and re-tier them from that evidence. Its governing rule is the **plan-first law**: `plan` mines the repo, resolves candidates, and prints the exact models × tasks matrix priced at run time, then stops and spends nothing; `run` without **both** `--live` and `--max-usd` refuses structurally. The skill says **never add `--live` yourself** — a ceiling must be confirmed by the user in *this* conversation, and a ceiling from a previous session or a guess at "what seems reasonable" does not count. Candidates work in history-free sandboxes with the reference tests withheld; four independent oracle classes grade them (tests, structural, blind LLM judge, cost/latency), and **`solved` means the tests oracle passed and nothing else, ever** — a judge grade never earns it and an unavailable oracle renders `n/a`, never a zero. Below the **evidence floor** a verdict is stamped `BELOW EVIDENCE FLOOR` and presented exactly that way, never softened to "preliminary"; `--min-tasks` can only raise the floor, and `apply` hard-refuses a below-floor verdict. `apply` is the only thing that ever changes routing and is always its own explicit action — no `--yes` flag exists, because running the command *is* the opt-in. Three legs of evidence are shown side by side and **never averaged**: the published prior, this repo's observed ledger outcomes, and this run's measurement; a disagreement prints `DISAGREEMENT — signal, not error` and is repeated verbatim.
+
+### Harness maintenance
+
+**`/polytropos:update`** — one freshness card across every harness install and data surface. `python3 bin/harness_update.py check` is strictly read-only and exits 3 on drift, naming which of its four sections drifted. The **check-first law** is binding: always run `check` and report its card, whatever the reason for invoking, and run `apply` only when the user has asked for a refresh in *this* conversation; when it is unclear, `apply --dry-run` shows the would-do plan. What `apply` can do is stated precisely and differs per channel — the Copilot home is overwritten in place; `~/.codex/prompts/*.md` are plugin-generated mirrors overwritten unconditionally with every differing destination listed; `AGENTS.md` and the Codex skill dirs are user-editable and **no-clobber**, reported `skip-differs` and preserved; project-scope agent TOMLs and the modern plugin component are outside apply's reach entirely. **`~/.claude` is never written, in any mode** — for a stale plugin cache the engine prints the remedy and never runs it. What `check` *cannot* do: it never auto-edits a pricing number or a docs snapshot table. Both `check --json` and `apply --json` embed absolute home paths, and the skill tells you to scrub them before pasting anywhere outward.
+
+**`/polytropos:graphify`** — a local knowledge graph of a repo, read offline. graphify is an **optional, external, user-installed CLI** (`uv tool install graphifyy`) on the same footing as `gh`: this skill never vendors it, never installs it, never assumes it is present, and its first step is an availability gate. A **local-only law** binds which subcommands may even be prescribed — the offline set (`update`, `cluster-only --no-label --no-viz`, `explain`, `god-nodes`, `affected`, `path`, `query`, `tree`, `diagnose`) — and names what is excluded and why: `extract` and `label` and any `--backend`/`--model` flag (the tool's largest spend and network surface), `add`/`clone`/`global` (network and writes outside the repo), `watch`, and the per-platform installers that rewrite a host repo's instruction files. Reading goes through `bin/graph_brief.py` and `bin/graph_ground.py`, which only read a `graph.json` — `graph_ground stamp` writes one provenance sidecar beside it and that is the single write. Its **measured limits are labeled rather than hidden**: dynamic loaders are invisible to AST extraction (this repo's own cross-module spine is absent from its own graph), hubs skew toward test fixtures on test-heavy repos, a graph with no sidecar reports freshness `unknown`, and **absence of an edge is never evidence of absence of a dependency**.
+
+### Repo analysis
+
+**`/polytropos:assess-improvement`** — a read-only assessment of whether a bounded improvement is worth *testing*. It is planning input, explicitly not a diagnosis engine, an evaluation record, a policy change, or authorization to modify anything. It treats target source as read-only, makes no network calls, invokes no paid provider, and grants no new live-action authority — a bounded action already authorized for the assessment may be cited as evidence with its scope and provenance recorded, but the skill itself authorizes nothing. It looks for a *small recurring pain signal* and keeps an **evidence ledger**, one row per material claim, with a categorical status from a fixed set — `observed`, `documented`, `inferred`, `unknown` / `unverified`, `insufficient-evidence` — and **no invented numeric probability**. It records each candidate's gated prerequisites (a new permission boundary, private data, clean evaluation partitions, held-out validation) rather than extrapolating past them, prefers narrow reversible testable candidates, and defines the evaluation before recommending promotion. A **whole-system mode** assesses the shared runtime and each harness independently before synthesizing, and forbids transferring a pricing, capability, or enforcement claim across harnesses. `no-fit` and "there is no supported intervention" are valid conclusions. It ships on **Claude Code, Cursor and Codex** (`skills/assess-improvement/`, `cursor/skills/assess-improvement/`, `codex/skills/assess-improvement/`); the Copilot bundle has no port.
+
+---
+
+## Functions — the sixty-nine engines
+
+`bin/` is one flat directory of single-purpose, **stdlib-only** Python (no pip, no requirements file, no pytest). Every script's own module docstring states what it is and what it refuses, and **that docstring is the authority** — the table below is a map, not a contract. `ls bin/*.py` is the real list; §4 of [docs/HOW-IT-WORKS.md](HOW-IT-WORKS.md) is the same partition with more depth. Nearly every script answers `--help`; the exceptions are `exec_policy.py` (a usage line), `proc_runner.py` (whose argv *is* the process to run), and `redact.py` (which reads stdin or a path). Several are libraries with no CLI at all.
+
+| Family | Engines | What the family owns |
+|---|---|---|
+| **Routing and cost (Claude)** | `routing_scorecard` `session_cost` `cost_report` `statusline` `agent_tracker` `context_weight` `routing_policy` `model_registry` `aesop_bridge` | Per-task routing evidence, transcript pricing, the ambient statusline and its subagent tracker, what filled the window, explicit (never learned) policy selection, and the ONE cross-harness reader of model ids and tiers — `model_registry`, which never reads a price |
+| **Benchmark and evaluation** | `bench_routing` `repo_bench` `workflow_eval` | A published benchmark prior joined against this repo's own ledger; models measured on a target repo's real work; whole workflows compared on held-out tasks. The last two spend only behind `--live` plus an explicit `--max-usd` |
+| **Kit contract and the four drivers** | `kit_contract` `claude_execute` `copilot_execute` `codex_execute` `cursor_execute` `copilot_ralph` `kit_scheduler` `attempt_ledger` `attempt_history` `kit_verify_hook` | `kit_contract` is the ONE kit contract; four headless drivers run over it plus a budget-capped Ralph goal loop; `attempt_ledger` records every dispatch before and after it runs; `kit_scheduler` adds opt-in bounded concurrency in isolated tree copies; `kit_verify_hook` refuses a `done` flip with no verify marker |
+| **Execution boundary** | `exec_policy` `proc_runner` `safe_paths` `runtime_data` `redact` | One place each: may this code run, how is a process bounded, may this path be written, where does runtime data live, what must not leave in plain text |
+| **Decision and improvement** | `decision_contract` `decision_policy` `decision_provider` `decision_eval` `decision_context` `improvement_loop` | The decision mechanism, with every live switch off |
+| **Training-data preparation** | `training_data` | Decision-time snapshots, the cause taxonomy, reviewed labels, eligibility, retention, revocation, grouped splits, a local export — collection not authorized, and no production call site |
+| **Copilot harness** | `copilot_pricing` `copilot_prefs` `copilot_usage` `copilot_statusline` | AI-Credit cost math, the single home for the user's own model pins and excludes, a read-only usage report over the Copilot home, and the Copilot-side statusline twin |
+| **Codex harness** | `codex_pricing` `codex_usage` `codex_policy` `codex_app_policy` `codex_legacy_migration` `codex_repo_bench` | Codex cost math and roster, a read-only usage report with an honest unpriced fallback, the central orchestrator/worker application policy, reversible legacy-copy retirement, and a planning-only repo benchmark that refuses live dispatch until it has a ceiling a ChatGPT-plan quota can honor |
+| **Cursor harness** | `cursor_adapter` | Identity probe before any dispatch, the host's own model list read at run time, the ownership-aware project install, ambient-file diagnosis, and a live smoke that is printed and never run |
+| **Install, capability, freshness** | `harness_select` `harness_adapter` `harness_update` `plugin_staleness` | What is installed where, what each harness may actually be relied on to do, and what has drifted. `harness_select` classifies every destination before writing and never overwrites what it does not own |
+| **Daily journal** | `journal_collect` `journal_sources` `journal_summarize` `journal_schedule` `journal_plan` `journal_askpack` `journal_advisor` | Read-only, JSONL-only ingestion into a metadata-only digest, a routed summarizer, a next-day runbook, an offline ask-the-tools prompt pack, and a launchd surface that never runs `launchctl` for you |
+| **Memory, lessons, telemetry** | `memory_store` `memory_recall` `lessons_store` `lessons_promote` `telemetry_snapshot` | Durable facts with pull-only budget-capped recall, scoped lessons that become rules only by recurrence or an explicit ask, and dated telemetry envelopes |
+| **Graph grounding** | `graph_brief` `graph_ground` | Read a graphify `graph.json`: an architect-grounding card, freshness against the working tree, bounded impact, a search fallback. Neither ever invokes graphify |
+| **Primitive model** | `primitives` | A read-only validator and preview over `primitives/*.json` — see [docs/PRIMITIVES.md](PRIMITIVES.md) |
+| **Generated output and the release gate** | `docs_build` `copilot_docs` `sync_pricing_refs` `sync_codex_surfaces` `release_gate` | Every generated surface has exactly one writer and a `check` that fails on drift. Edit the SOURCE and rebuild; never hand-edit the output |
+
+### The single-authority modules
+
+Eight of those engines exist specifically so that a decision is made in **one** place, and a second copy is a defect rather than a convenience:
+
+| Module | Sole authority for |
+|---|---|
+| `bin/kit_contract.py` | The kit contract: task parsing, graph validation, readiness, status transitions, budget admission, run ids, the role contracts, and the outcome vocabulary. Re-exported by every driver; a duplicated implementation fails `tests/test_kit_contract.py` |
+| `bin/attempt_ledger.py` | Every dispatch, recorded before and after it runs, append-only, outside the tree. `TASKS.md` status is a *projection* of it. A resumed run closes what died as `unknown` — never as success — and never replays it |
+| `bin/safe_paths.py` | Whether a path may be written, read, or deleted inside a caller-selected root. Walks directory-relative with `O_NOFOLLOW`, so a symlink swapped in mid-operation has nothing to redirect; refuses rather than falling back to the racy form. No destination path is hand-composed anywhere |
+| `bin/proc_runner.py` | Starting an external process: a validated working directory, bounded wall time and output, its own process group so nothing it spawned outlives it, and a name for each way a run can fail. There is no bare `subprocess.run` in this repo, because that inherits the launch directory and bounds none of it |
+| `bin/exec_policy.py` | Whether verification may run, and inside what. `--exec-mode trusted-host` is the sole opt-out and reports itself as one |
+| `bin/runtime_data.py` | Where every runtime store resolves — a per-user application-data directory, per checkout, `0700`/`0600`, deliberately outside the plugin tree |
+| `bin/model_registry.py` | Model ids and tiers, across harnesses. Never prices |
+| `bin/release_gate.py` | What the release claims, computed from the evidence rather than typed: the supported matrix, contract and package versions, each shared contract's stub-conformance tests beside the registry's installed-client verdict, and the packaging review |
+
+One more, narrower but in the same spirit: **`bin/redact.py`** is the only place this repo decides what must not leave a machine in plain text, and it reports findings by **kind and count, never by value**.
+
+---
+
+## The four harnesses, and what each is relied on for
+
+Everything that must mean the same thing on every harness comes from the kit contract. What stays per-harness is only what must: **its dispatch argv, its own loop, its escalation ladder, and its pricing file.** None of the four CLIs is ever invoked by a test, a kit verify command, or anything run during execution — those calls would spend the user's real credits against their live harness homes. `--dry-run` and `--demo` are the only sanctioned smoke paths, and they spawn nothing.
+
+- **Claude Code** (`skills/`, this plugin). Fifteen skills, the statusline, and `bin/claude_execute.py` as the headless driver beside the interactive `/polytropos:execute` loop.
+- **GitHub Copilot CLI** (`copilot/`). A cross-vendor `route` agent, an architect→execute→verify→escalate port (`bin/copilot_execute.py`), a budget-capped Ralph goal loop (`bin/copilot_ralph.py`), and AI-Credit cost math. Because Copilot has no `${CLAUDE_PLUGIN_ROOT}`-style runtime variable, the bundle's files carry a `{{POLYTROPOS_ROOT}}` placeholder that `bin/harness_select.py` resolves to an absolute path **at install time** — the only place that substitution ever happens.
+- **OpenAI Codex CLI** (`codex/`). Native `$skill` workflows packaged as a Codex plugin, with a **central application policy** that keeps the frontier model as reserved orchestrator and evidence-gated recovery while the cheap, mid, and strong workers implement. `bin/codex_execute.py` pins review and acceptance to `--sandbox read-only` and rejects any extra argument that would override it or displace the policy-selected model.
+- **Cursor CLI** (`cursor/`). The same kit contract through `agent -p`, driven by `bin/cursor_execute.py` on `bin/cursor_adapter.py`. What Cursor makes different is **identity before trust**: its CLI installs as a binary named `agent`, a name anything might carry, so the driver refuses to dispatch until the binary has identified itself — either `--version` names Cursor, or `about --format json` answers with Cursor's own schema. Anything else is refused *before* a claim, a ledger entry, or a file write. `review` runs under `--mode ask`, never `--force`. Cursor ships three products — IDE agent, CLI agent, cloud agents — and they are reported **separately**, because only the CLI is driven from here.
+
+### The capability registry — and why `unknown` means no
+
+`primitives/harness-capabilities.json` is the **operational** view: what a driver may rely on, right now, on this host. Each row carries **three independent answers** — does the product support it, has polytropos implemented it, has anyone *verified* it by running it — because collapsing them into one boolean is how a driver comes to believe it holds a control it does not. A capability nobody has run reports `verified: unknown`, and **a caller needing certainty must treat `unknown` as no**: `harness_adapter.requires` refuses an unrun row exactly as it refuses an absent one. A row becomes `supported` only when a person runs the client, records `verified_on` and `client_version` in the row, and commits that edit by hand.
+
+The census below is a **dated observation, not an assertion** — re-derive it rather than quoting it, with `python3 bin/harness_adapter.py`:
+
+| Executor | Client mode | Pricing file | Rows | `verified: supported` | `unsupported` | `unknown` |
+|---|---|---|---:|---:|---:|---:|
+| `claude-code` | cli (claude -p) | `data/pricing.json` | 12 | 6 | 1 | 5 |
+| `codex` | cli (codex exec --json) | `data/pricing.codex.json` | 14 | 5 | 0 | 9 |
+| `copilot` | cli (copilot -p) | `data/pricing.copilot.json` | 10 | 3 | 0 | 7 |
+| `stub` | none | — (no client) | 6 | 3 | 2 | 1 |
+| `cursor` | cli (agent -p) | `data/pricing.cursor.json` | 20 | 6 | 0 | 14 |
+| **total** | | | **62** | **23** | **3** | **36** |
+
+The four harnesses plus the `stub` conformance executor carry 62 rows over 27 distinct capability names. The direction of change matters more than the level: the `unknown` count went **up** when a new capability was added to every harness, because a capability nobody has run arrives as `unknown`, and the way to reduce that count is to run something and record it — never to assert it.
+
+**Two facts about Cursor are linked and must never be merged.** Cursor's **current CLI implementation is present and verified** — six dated `verified: supported` rows (`dispatch`, `identity_probe`, `read_only_dispatch`, `structured_events`, `durable_attempts`, `independent_review`) against a named client version — and nothing retires, reimplements, or reports it as absent. Cursor's **adaptive-decision profile is not**: that row is `implemented: unsupported` with `verified: unknown`, pending independent proof. The same `adaptive_decisions` row reads `unsupported`/`unknown` on every executor in the registry, Cursor included.
+
+One `unsupported` row is worth naming because it is a **measured host limitation** rather than a design choice: `claude-code.confined_dispatch`. On macOS, `sandbox-exec` blocks Keychain access and Claude Code keeps subscription credentials there, so a confined dispatch reports "Not logged in". It would work under API-key auth — but a boundary whose existence depends on how you happened to log in is not one this repo will claim. A different host could change that row. Only a change in this repository changes the design decisions beside it.
+
+---
+
+## Decision and improvement — a mechanism release, with every live switch off
+
+[docs/DECISION-IMPROVEMENT-V1-HANDOFF.md](DECISION-IMPROVEMENT-V1-HANDOFF.md) is the authority; read it before acting on any of this. Three words there are used precisely: **mechanical** means the code exists and is exercised by tests that construct their own inputs — it says nothing about whether the mechanism helps, and nothing about whether any production path calls it; **live-ready** describes nothing in this release; **unknown** means nobody has run the thing.
+
+What shipped is six library modules with no CLI of their own plus one CLI-bearing loop:
+
+| Module | What it decides |
+|---|---|
+| `bin/decision_contract.py` | What may be asked of a decision, answered, and recorded — strictly, with no invalid value normalised into validity |
+| `bin/decision_policy.py` | Which policy bundle a run is entitled to read, and what it falls back to. `SELECTION_MODES` holds `legacy` and `shadow`; `DEFERRED_MODES` holds `canary` and `active`, refused by name |
+| `bin/decision_provider.py` | One bounded request-to-result interface with two providers: a deterministic `rules` path, and `replay`, which incurs no new inference |
+| `bin/decision_eval.py` | The read-only prediction-time join — what was knowable when a decision was taken against what was observed after, with `insufficient-evidence` for thin or mismatched data |
+| `bin/decision_context.py` | Which files a failed attempt was not shown, as a bounded versioned manifest, under a policy of at most one approved repair, never changing model and context at once |
+| `bin/improvement_loop.py` | Bounded, falsifiable, **data-only** candidate drafts, validated through `workflow_eval` — it stores nothing and calls no model (`evidence` / `draft` / `demo`) |
+
+**None of it is live, and the refusals are derived rather than written down.** Four constants are `False`:
+
+| Constant | Value | What it means on its own |
+|---|---|---|
+| `workflow_eval.CONFINED_DISPATCH_WIRED` | `False` | A design decision, recorded once, reaching every harness. Because it is `False`, the activation gate refuses every transition to `canary` and `active`, and every run resolves to the legacy bundle. There is no partially available canary |
+| `training_data.COLLECTION_ENABLED` | `False` | The collection switch is shut, and every entry point re-derives it at call time |
+| `training_data.CAPTURE_WIRED` | `False` | A statement that no production path calls the capture hook — a different fact from the switch |
+| `improvement_loop.PROPOSER_WIRED` | `False` | The proposer is not wired to anything |
+
+No trial has been declared, no data has been collected, no vendor client has been run by any test or verify command or gate, and **this release makes no performance claim of any kind** — there is nothing it could make one from. A well-run trial that retains the baseline is a valid outcome; a mechanism release is valid without a figure. Routing policy still changes the way it always did: a reviewed, versioned, reversible proposal — `python3 bin/workflow_eval.py propose` → `review` → `apply`, with `rollback` appending a generation and deleting nothing, and `activation` reporting what is in force. Four properties hold across every rollback surface: a rollback **appends, never deletes**; an absent pointer *is* legacy and that is not an error; a store is copied, never relocated; and a rollback contacts nothing — it never reverses an external effect or refunds a call.
+
+Its companions: the offline conformance report [docs/DECISION-IMPROVEMENT-CONFORMANCE.md](DECISION-IMPROVEMENT-CONFORMANCE.md), whose third outcome `unavailable` **counts and names** every claim this host could not put to the test rather than omitting it — and where a check whose runner *raises* is a fail, never an honest gap, and a report in which nothing passed is refused rather than returned.
+
+## Training-data preparation — setup shipped, collection unauthorized, no training
+
+[docs/TRAINING-DATA-READINESS.md](TRAINING-DATA-READINESS.md) is the runbook. Three things are separate and blurring them is the easiest mistake here:
+
+- **What shipped** is the code in `bin/training_data.py` (`status` / `taxonomy` / `readiness` / `demo`): decision-time snapshots, the cause taxonomy, reviewed labels with eligibility and retention, revocation, grouped dataset splits, and a reproducible local export.
+- **What was not authorized** is collection. No scope has been declared and no eligible run has been collected from. A declared scope's `eligibility` defaults to `unknown`, and unknown use rights cannot persist a byte — only `approved` may. `build_dataset` requires an explicit store directory, so no export has a default location to fall into.
+- **What has not happened** is training. There is no trainer here; nothing downloads, uploads, fine-tunes, or evaluates a model, and no checkpoint exists.
+
+"Zero examples collected" is **the absence of a production call site** — not a gate met, and not a privacy achievement. Two of the guards above are runtime gates read at call time; the third fact is structural, and what actually keeps the hook uncalled is that the only call sites are its own offline `demo` and its tests.
+
+**Read `readiness_codes()`, never the gate tally.** `python3 bin/training_data.py readiness` prints eleven gates, and the tally is a property of the material handed in, not of the mechanism: the same report over fixture records reads more gates met, because most of those gates are answers about what they were given. What denies readiness *unconditionally* is the ten codes that ride on every report shape — `access-not-enforced`, `checkpoint-link-is-a-forward-declaration`, `digest-identifies-content-not-provenance`, `exposure-not-recorded-in-the-eval-store`, `label-agreement-counted-not-calibrated`, `no-transfer-and-no-training-performed`, `readiness-is-a-report-not-an-authorization`, `sampling-bias-not-estimable`, `synthetic-fixtures-are-not-readiness`, `training-sufficiency-not-established`. No branch can discharge one of them.
+
+**Redaction reaches two fields and not ten.** `training_data.REDACTED_FIELDS` names two that pass through `bin/redact.py` — an input entry's text, and a revocation's reason. `NOT_REDACTED_FIELDS` names ten that do not, and the first two of those are **a question's wording and its rubric**, copied verbatim into the model's input file because the stored digest is taken over the complete wording. So a credential shape typed into a question wording is stored and exported as typed, and the record's own redaction findings read empty for it. That gap is not described, it is *demonstrated* by a test that drives a synthetic credential shape through the sanctioned API. Findings ride on every record by **kind and count, never by value** — and **no sentence anywhere claims that no secret can get through**, because shape-matching cannot prove absence: a password that looks like a word, a customer name, or an address has no shape and is not caught.
+
+**Revocation removes nothing from a model.** Read from `training_data.REVOCATION_REACH`: an export manifest, a derived dataset, and a readiness report are marked `invalidated`; a trained checkpoint is marked `identified-only`, which means the checkpoint is *named*. Weights are not unlearned, exported copies are not recalled, downstream artifacts are not rebuilt, and byte erasure is not proven — deleting a file is not an erasure proof in a tree that is distributed, cached, and often backed up.
+
+One open operator obligation is stated as such rather than dressed as a closed gate: **recording an export's exposure in the evaluation store**. The training side is protected — `build_dataset` reads the exposure log and emits its own warnings — but the evaluation side has nothing to read, because nobody wrote the entry, and `training_data.py` must not write it (the evals store has exactly one writer). Every export manifest therefore carries `exposure-not-recorded-in-the-eval-store` and names the remedy.
+
+---
+
+## Security and privacy
+
+[SECURITY.md](../SECURITY.md) is the authority on what is and is not enforced; [docs/PRIVACY.md](PRIVACY.md) is the authority on what stays local. The summary below is a map to them, not a substitute.
+
+**The execution boundary.** On macOS, the kit drivers and the verify hook run each verify command under `sandbox-exec` (`bin/exec_policy.py`): writes limited to the workspace and a run-scoped scratch directory, network denied, credential stores unreadable, environment reduced to an allowlist. It is the **default** (`--exec-mode enforced`) and it **refuses to run rather than falling back** when no backend is available. `python3 bin/exec_policy.py check` reports which backend this host enforces and exits 3 when none does. **Linux and Windows have no backend implemented**, so `enforced` refuses there and only the explicit `--exec-mode trusted-host` runs — the named opt-out, which reports itself as one and enforces nothing. That is an honest gap, not a silent downgrade. And detecting a backend is not certifying one: `certify_profile` certifies nothing without a sentinel report, and no sentinel report exists here.
+
+**What is *not* a boundary** gets its own section in SECURITY.md, and the model dispatch itself is in it — for the measured Keychain reason above. A scheduler's isolated copy separates *writes*; it is not a sandbox. Do not rely on either.
+
+**Nine stores, all outside the tree.** Every local store is personal data, written by its own engine only: `memory`, `telemetry`, `journal`, `benchruns`, `prefs`, `trends`, `attempts`, `evals`, `training`. `python3 bin/runtime_data.py where` prints each one's resolved location — a per-user application-data directory, namespaced per checkout, created `0700` with `0600` files, deliberately outside the plugin tree, because this tree is distributed, cached, archived, and often sits in a cloud-synced folder. Being gitignored keeps a store out of a commit and out of nothing else. **A store that already exists inside the tree keeps being used** — nothing is relocated or deleted automatically, because an upgrade that moved a user's notes would be indistinguishable, from their side, from one that lost them. `migrate --store <name> --apply` copies out without overwriting a destination or deleting the original; `export` copies where you name; `forget` lists before it deletes and deletes only with `--apply`. None of them can do anything about copies a backup or a cloud sync already made, and the tool does not claim to.
+
+**Reading a harness home is read-only and JSONL-only.** The journal collector, the usage reports, and the context-weight engine read `~/.claude`, `~/.copilot`, and `~/.codex` strictly read-only at run time — never a SQLite open, never a write, never a CLI invocation to gather. The journal digest is metadata-only and its whole output tree is gitignored.
+
+**Redaction, honestly scoped.** User free text is redacted and bounded before it is persisted or sent to a model, through `bin/redact.py`, and findings are reported by **kind and count, never by value**. It is shape-matching, so it cannot prove absence — and **nothing in this repository says that no secret can get through**. The older, stronger-sounding claim was true only about git.
+
+**Context is never bulk-injected.** Memory recall is pull-only, relevance-gated, and budget-capped by design, and it carries each fact's provenance and scope so an imported or model-derived observation is rendered as reported text rather than an instruction. A fact scoped to another project or another provider is not returned at all.
+
+**A stored record is never hand-authored, backdated, or reconstructed from prose.** Telemetry envelopes are dated by **capture** date; honesty labels (estimated, unpriced, partial coverage) ride inside the record; and a reader with no store degrades with a note rather than rendering zeros as measurement.
+
+---
+
+## Keeping it current, and verifying it
+
+**The plugin cache compares versions, not contents.** `claude plugin install` is a no-op when already installed at user scope; `claude plugin update` re-copies the tree **only when the version differs**. So bumping `"version"` in `.claude-plugin/plugin.json` is not bookkeeping — it is the lever, and a cache can be arbitrarily stale at a current version because there is no content-addressed refresh. The remedy `bin/harness_update.py` prints for a stale Claude install is:
+
+```bash
+claude plugin marketplace update polytropos-local && claude plugin update polytropos@polytropos-local
+```
+
+It takes effect on restart, and **this repository never runs it for you** — `~/.claude` is never written by any engine here. The full bump-and-prune runbook, including looking at what the copy pulled in *before* deleting anything, is in [docs/PRIVACY.md](PRIVACY.md).
+
+**One freshness card for everything else:**
+
+```bash
+python3 bin/harness_update.py check     # all-harness freshness; exit 3 on drift
+python3 bin/harness_update.py demo      # the same card on a synthetic tree
+python3 bin/plugin_staleness.py         # is the installed Claude cache behind this checkout
+```
+
+**Verification — the offline chain, which spends nothing:**
+
+```bash
+python3 -m unittest discover -s tests   # FULL SUITE, stdlib unittest, from the repo root
+python3 bin/docs_build.py check         # docs-site freshness (exit 1 on drift); `build` regenerates
+python3 bin/copilot_docs.py check       # Copilot doc center freshness; `build` regenerates
+python3 bin/sync_codex_surfaces.py check  # Codex prompt mirrors
+python3 bin/sync_pricing_refs.py --check  # generated pricing mirrors under skills/*/references/
+python3 bin/release_gate.py check       # registry, contract ids, packaging, commands (exit 3)
+```
+
+Those five generator checks exist because **generated documentation is never hand-edited**: `docs-site/skills/` and `docs-site/deep-dives/` are written only by `bin/docs_build.py`, `copilot-docs/` only by `bin/copilot_docs.py`, and the marked block of `docs/RELEASE.md` only by `bin/release_gate.py build`. Edit the source — a `SKILL.md`, a `docs/*.md` (this page included), `README.md`, `SECURITY.md`, `docs-src/fragments/` — and run that generator's `build`; a drift test fails otherwise. The docs site is also the one surface with a non-stdlib toolchain, and it is **locked, not ranged**: `docs-src/requirements.txt` pins every transitive package with a sha256, CI installs with `--require-hashes`, and every Action is pinned to a full commit SHA.
+
+**Offline demos — every one synthetic, offline, and free:**
+
+```bash
+python3 bin/kit_contract.py demo          python3 bin/attempt_ledger.py demo
+python3 bin/kit_scheduler.py demo         python3 bin/attempt_history.py demo
+python3 bin/routing_scorecard.py --demo   python3 bin/routing_policy.py demo
+python3 bin/repo_bench.py demo            python3 bin/workflow_eval.py demo
+python3 bin/graph_ground.py demo          python3 bin/graph_brief.py demo
+python3 bin/context_weight.py demo        python3 bin/memory_recall.py --demo
+python3 bin/copilot_ralph.py --demo       python3 bin/training_data.py demo
+python3 bin/improvement_loop.py demo      python3 bin/harness_update.py demo
+```
+
+**The commands that could spend real money are gated, and none of them is run here.** `python3 bin/repo_bench.py plan` and `python3 bin/workflow_eval.py plan` price a matrix and dispatch nothing; only `run --live --max-usd <ceiling>` ever spends, the ceiling is re-checked before every single dispatch, and a run that hits it stops cleanly mid-matrix and labels the result `partial (cost-ceiling)` rather than silently completing. Each harness driver's `--dry-run` spawns nothing at all.
+
+---
+
+## Honesty conventions
+
+These are conventions this page holds itself to, and they are the reason some things below are commands rather than numbers.
+
+- **Numbers rot, so this page says how to measure.** Test counts, task tallies, and percentages appear here only when there is no command that would answer better. Where a count is stated, the command to re-derive it is stated beside it. A figure fixed on a page is wrong by the next commit.
+- **No live trial has run.** The decision-and-improvement release is a mechanism release and makes no performance claim; the workflow, benchmark, and driver commands that would spend real credits are prepared and unrun.
+- **`unknown` means no.** In the capability registry, a row nobody has run refuses exactly as an absent row does. Filling one in optimistically would make the file worse than not having it.
+- **A green suite says a unit works, never that anything calls it.** Where a capability exists, the question of which production path invokes it is answered by reading the chain — not inferred from a test that constructs it directly. That is why `CAPTURE_WIRED` is recorded as a separate fact from `COLLECTION_ENABLED`.
+- **Estimates are labeled as estimates.** Cost figures are client-side estimates from list prices, never bills; task-size profiles are priors, not measurements; every context-weight figure is labeled `est.` and is a rank and a magnitude, never an exact token count. Authoritative billing is the provider's own console.
+- **Measurement degrades rather than guessing.** A missing transcript, an un-attributable orchestrator turn, or a zero denominator renders `null` / `n/a` with a note — never a zero and never an estimated split.
+
+---
+
+## The key constraint to know
+
+Nothing in Claude Code can programmatically switch the **main session's** model — only you, via `/model`. What *can* be automated is delegation: the Agent tool accepts a `model` parameter, so `/route` offers to run a task in a subagent pinned to a lower tier, and a kit task's `model` field is passed as that parameter at dispatch, overriding the agent file's frontmatter. The same constraint blocks the strongest remaining multi-model trick — swapping the main-session model at context-compaction boundaries — which stays an upstream ask, documented in [docs/FUSION-TIER1.md](FUSION-TIER1.md) and [docs/FUSION-TIER2.md](FUSION-TIER2.md). Advisory routing is therefore a feature rather than a gap: the design pushes automation to where it is reliable — agent frontmatter and dispatch-time parameters.
+
+## Updating prices
+
+All Claude prices live in `data/pricing.json` — nothing else hard-codes them. When prices or models change, update that file from <https://platform.claude.com/docs/en/pricing.md> (or ask Claude to re-run the `/claude-api` skill and copy the current-models table). Bump `cached_date`. Then run `python3 bin/sync_pricing_refs.py` to refresh the generated mirrors under `skills/*/references/` — the test suite fails if they drift — and, **in the same edit**, update the Claude snapshot label in `README.md` (which `tests/test_harness_update.py` reads) and the Claude table on this page (which `tests/test_reference_doc.py` reads). Each of the other three files has its own runbook in its own partner document; `data/pricing.copilot.json`'s label lives in [docs/COPILOT-HARNESS.md](COPILOT-HARNESS.md).
+
+## When the frontier tier leaves the subscription
+
+Checklist:
+
+1. Set `billing_mode` to `"api"` in `data/pricing.json`.
+2. Flip your global default in `~/.claude/settings.json` to `opus` (or `sonnet`) and remove the standing `xhigh` effort default — set effort per task, not globally.
+3. Route *up* to the frontier tier deliberately: `/model fable` for a session, or `/polytropos:route` per task.
+4. Run `/polytropos:cost-report` after a couple of weeks to sanity-check where the money goes.
+
+The architect posture does not change — it just becomes the dollar-optimal shape as well, because frontier spend concentrates in the short planning phase while execution runs at the tiers below.
