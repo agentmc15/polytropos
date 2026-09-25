@@ -94,10 +94,10 @@ These are properties with code behind them, not conventions:
   exists, a private store without its root-anchored ignore rule, a tracked file under one, an
   unpinned workflow action, or a renamed command the checklist cites. `reverify` lists what a
   client release invalidates and edits nothing.
-- **Personal data stays local and gitignored.** The memory, telemetry, journal, benchmark, and
-  training stores are gitignored, written only by their own engines, and never bulk-injected
-  into a session's context. Journal and usage collection read home directories strictly
-  read-only.
+- **Personal data stays local and gitignored.** The memory, telemetry, journal, benchmark,
+  training, and dashboard stores are gitignored, written only by their own engines, and never
+  bulk-injected into a session's context. Journal and usage collection read home directories
+  strictly read-only.
 
 - **Installation does not overwrite what it does not own.** Every Copilot, Codex, and Cursor destination
   is classified before a byte is written — absent, already identical, written by this installer

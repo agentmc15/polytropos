@@ -28,6 +28,7 @@ therefore every kit task's verify command — if any of them ever becomes tracke
 | `attempts/` | attempt ledgers (a legacy in-tree location; the default home is outside the tree) |
 | `evals/` | workflow-evaluation runs: trial records, ledgers, sandboxes, dollar data |
 | `training/` | decision-time training snapshots: bounded redacted evidence, source ids, eligibility |
+| `dashboard/` | the built observability page (`index.html`) and its receipt (`build.json`): dollar figures, task titles, repo paths, namespace digests |
 | `value-report*.html` | generated value reports (dollars, session ids, machine paths) |
 
 Zero files under any of these have ever been committed, verified across the full git
@@ -35,9 +36,10 @@ history (`git log --all --diff-filter=A`) on 2026-07-25 for the first five, on
 2026-09-13 for the next three, and on 2026-09-19 for `training/` — which returned nothing
 because that store has never existed here: collection is off
 (`bin/training_data.py` ships `COLLECTION_ENABLED = False` and nothing calls its capture
-hook), so a checkout never creates the directory. The rule and the test are in place for the
-day somebody turns it on. `python3 bin/release_gate.py packaging` re-checks the ignore rules
-and the tracked tree on demand.
+hook), so a checkout never creates the directory. Same check on 2026-09-25 for `dashboard/`
+returned nothing, because the store did not exist before this kit. The rule and the test are
+in place for the day somebody turns it on. `python3 bin/release_gate.py packaging` re-checks
+the ignore rules and the tracked tree on demand.
 
 ## Where runtime data actually lives (since step 13)
 
@@ -152,7 +154,7 @@ Standing rules this creates:
 
 - **After every version bump / plugin refresh**: delete the personal store directories
   (every name in `runtime_data.STORES` — `journal/`, `prefs/`, `telemetry/`, `memory/`,
-  `trends/`, `benchruns/`, `attempts/`, `evals/`, `training/` — plus `value-report*.html`) from the fresh
+  `trends/`, `benchruns/`, `attempts/`, `evals/`, `training/`, `dashboard/` — plus `value-report*.html`) from the fresh
   cache copy, and remove stale version directories. Manual by design — repo code never
   touches `~/.claude`.
 - **Never sync, back up, or share `~/.claude`** without the same scrub; the cache holds
@@ -190,7 +192,7 @@ python3 bin/plugin_staleness.py --full
 # 5. prune: any legacy store directory step 4 listed inside the fresh copy, then every other
 #    version directory -- step 4's card prints one `rm -rf` line per superseded version
 C=~/.claude/plugins/cache/polytropos-local/polytropos
-rm -rf "$C/<new>"/{journal,telemetry,memory,prefs,trends,benchruns,attempts,evals,training} "$C/<new>"/value-report*.html
+rm -rf "$C/<new>"/{journal,telemetry,memory,prefs,trends,benchruns,attempts,evals,training,dashboard} "$C/<new>"/value-report*.html
 
 # 6. restart Claude Code; then, inside the new session, the update skill confirms the session
 #    runs the new copy (${CLAUDE_PLUGIN_ROOT} exists only in plugin context, not a plain shell):

@@ -441,8 +441,8 @@ family). The ones a reader of this guide is most likely to reach for directly:
   group), `bin/safe_paths.py` (the one place a path is judged safe to write, read, or delete) and
   `bin/redact.py` (the one place this repo decides what must not leave a machine in plain text —
   findings by kind and count, never by value).
-- `bin/runtime_data.py where` — where each personal store resolves: `memory`, `telemetry`,
-  `journal`, `benchruns`, `prefs`, `trends`, `attempts`, `evals`, `training`. All live **outside the
+- `bin/runtime_data.py where` — where each personal store resolves: `memory`, `telemetry`, `journal`,
+  `benchruns`, `prefs`, `trends`, `attempts`, `evals`, `training`, `dashboard`. All live **outside the
   plugin tree**, in a per-user application-data dir, per checkout, `0700`/`0600`, because this tree is
   distributed, cached and often cloud-synced. `migrate --store NAME --apply` copies an in-tree store
   out without relocating or deleting the original; `export` and `forget` list before they act.

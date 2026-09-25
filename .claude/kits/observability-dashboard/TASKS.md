@@ -55,7 +55,7 @@ Standing rules for every task:
 ### T1 — Register the `dashboard` store and carry its documentation consequences
 - id: T1
 - title: Register the `dashboard` store and carry its documentation consequences
-- status: pending
+- status: done
 - model: sonnet
 - depends: (none)
 
