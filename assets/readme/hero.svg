@@ -1,0 +1,56 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 520" role="img" aria-labelledby="title desc">
+  <title id="title">Polytropos — calibrated orchestration for coding work</title>
+  <desc id="desc">A colorful dark indigo banner showing a luminous routing compass and connected paths beside the Polytropos name and the words Plan clearly. Route wisely. Verify independently.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#111536"/>
+      <stop offset="0.52" stop-color="#1e2456"/>
+      <stop offset="1" stop-color="#101a36"/>
+    </linearGradient>
+    <linearGradient id="ring" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#67e8f9"/><stop offset="0.5" stop-color="#818cf8"/><stop offset="1" stop-color="#fb7185"/>
+    </linearGradient>
+    <linearGradient id="mark" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#2dd4bf"/><stop offset="0.55" stop-color="#818cf8"/><stop offset="1" stop-color="#fb923c"/>
+    </linearGradient>
+    <filter id="glow" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="9" result="blur"/><feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <pattern id="grid" width="36" height="36" patternUnits="userSpaceOnUse">
+      <path d="M36 0H0V36" fill="none" stroke="#a5b4fc" stroke-opacity=".08"/>
+    </pattern>
+  </defs>
+  <rect width="1200" height="520" rx="28" fill="url(#bg)"/>
+  <rect width="1200" height="520" rx="28" fill="url(#grid)"/>
+  <circle cx="1080" cy="60" r="220" fill="#0d9488" opacity=".12"/>
+  <circle cx="118" cy="485" r="230" fill="#f97316" opacity=".10"/>
+  <path d="M0 370C205 295 261 510 493 435S787 268 1200 370V520H0Z" fill="#0f1734" opacity=".52"/>
+  <g transform="translate(102 106)">
+    <circle cx="150" cy="150" r="126" fill="#111a3d" stroke="url(#ring)" stroke-width="3"/>
+    <circle cx="150" cy="150" r="96" fill="none" stroke="#c4b5fd" stroke-opacity=".22" stroke-width="1.5" stroke-dasharray="4 9"/>
+    <path d="M150 24V54M150 246v30M24 150h30M246 150h30" stroke="#f8fafc" stroke-opacity=".58" stroke-width="3" stroke-linecap="round"/>
+    <path d="M150 63 195 150 150 237 105 150Z" fill="url(#mark)" opacity=".95" filter="url(#glow)"/>
+    <path d="m150 84 23 66-23 48-23-48Z" fill="#f8fafc" opacity=".96"/>
+    <circle cx="150" cy="150" r="12" fill="#172554" stroke="#fbbf24" stroke-width="5"/>
+    <path d="M195 150h75l35-51" fill="none" stroke="#2dd4bf" stroke-width="3" stroke-linecap="round"/>
+    <circle cx="307" cy="96" r="9" fill="#2dd4bf"/>
+    <path d="M105 150H43L13 203" fill="none" stroke="#fb7185" stroke-width="3" stroke-linecap="round"/>
+    <circle cx="10" cy="208" r="9" fill="#fb7185"/>
+    <path d="M150 237v39l43 28" fill="none" stroke="#fbbf24" stroke-width="3" stroke-linecap="round"/>
+    <circle cx="198" cy="307" r="9" fill="#fbbf24"/>
+  </g>
+  <g font-family="Arial, Helvetica, sans-serif">
+    <text x="462" y="180" fill="#f8fafc" font-size="66" font-weight="700" letter-spacing="-2">polytropos</text>
+    <rect x="466" y="205" width="76" height="6" rx="3" fill="#2dd4bf"/>
+    <rect x="552" y="205" width="76" height="6" rx="3" fill="#818cf8"/>
+    <rect x="638" y="205" width="76" height="6" rx="3" fill="#fb7185"/>
+    <text x="462" y="278" fill="#dbeafe" font-size="27" font-weight="600">Plan clearly. Route wisely. Verify independently.</text>
+    <text x="462" y="325" fill="#a5b4d4" font-size="20">A durable wayfinding layer for reliable work across coding harnesses.</text>
+    <g transform="translate(462 372)">
+      <rect width="174" height="45" rx="22.5" fill="#172554" stroke="#67e8f9" stroke-opacity=".55"/>
+      <circle cx="24" cy="22.5" r="7" fill="#2dd4bf"/><text x="40" y="29" fill="#e0f2fe" font-size="16" font-weight="700">CALIBRATED</text>
+      <rect x="190" width="187" height="45" rx="22.5" fill="#172554" stroke="#fbbf24" stroke-opacity=".55"/>
+      <circle cx="214" cy="22.5" r="7" fill="#fbbf24"/><text x="230" y="29" fill="#fef3c7" font-size="16" font-weight="700">EVIDENCE-LED</text>
+    </g>
+  </g>
+</svg>
