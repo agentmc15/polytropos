@@ -69,9 +69,10 @@ and unimplemented modes stay visible rather than being presented as parity.
 
 ## Release 1 of the decision work, and what "Jev-free" means here
 
-The decision-and-improvement work ships as an offline edition. "Jev" is the optional provider a
-separately gated Release 2 would add; it does not exist in this tree, and the block below computes
-that rather than asserting it. `python3 bin/release_gate.py decision` walks the decision surface
+The decision-and-improvement work ships as an offline edition. A separately gated Release 2
+Jev adapter exists for offline preparation, but it is not registered for V1 decisions or dispatch.
+The block below computes the V1 path boundary rather than inferring it from the adapter's mere
+presence. `python3 bin/release_gate.py decision` walks the decision surface
 (`bin/decision_*.py`, `bin/improvement_loop.py`, `bin/workflow_eval.py`) and what starts a run (the
 four native drivers and `bin/kit_contract.py`) by AST: a network import, a name carrying the
 provider's token, or an environment read on the decision surface is a finding and fails `check`.
@@ -497,12 +498,12 @@ free text is redacted and bounded before it is persisted or dispatched and repor
 
 ### Decision and improvement (Release 1): what runs, and with what absent
 
-Release 1 is Jev-free by construction -- the optional provider a separately gated Release 2 would add does not exist in this tree. The columns below are read from the capability registry and from the constant in the module that owns each word (`decision_policy.SELECTION_MODES` and `DEFERRED_MODES`, `decision_provider.PROVIDER_MODES`, `workflow_eval.CONFINED_DISPATCH_WIRED` and `RUNTIME_REASONS`), never typed here.
+Release 1 is Jev-free by construction. A separately gated Release 2 offline adapter exists in this tree, but is not registered or reachable from the inspected V1 decision and driver paths. The columns below are read from the capability registry and from the constant in the module that owns each word (`decision_policy.SELECTION_MODES` and `DEFERRED_MODES`, `decision_provider.PROVIDER_MODES`, `workflow_eval.CONFINED_DISPATCH_WIRED` and `RUNTIME_REASONS`), never typed here.
 
 - this matrix makes NO performance claim. It reports what is available and on what evidence; no cell carries a gain, a ratio, a latency or a cost, no live trial has run, and a mechanism release is valid without one -- a well-run trial that retains the baseline is a valid outcome.
 - `canary` and `active` are UNAVAILABLE on every harness, and the refusal is machine-derived: `workflow_eval.CONFINED_DISPATCH_WIRED` is False, so `activation_decision` refuses every transition and `runtime_activation` resolves every run to legacy. Absent D23 evidence there is no such thing as a partially available canary.
 - Cursor's adaptive profile is `unsupported` pending independent proof, and that is a claim about the ADAPTIVE PROFILE ONLY. Cursor's current CLI implementation is present and verified -- its dispatch, identity probe, read-only dispatch, structured events, durable attempts and independent review all carry a dated `verified: supported` row against a named client version -- and nothing here reimplements it, retires it or reports it as absent.
-- V1 starts, decides and rolls back with every optional provider ABSENT. `rules` computes locally over the request's own state, `replay` reads a caller-selected local store and abstains on a miss, and a rollback names a fallback `decision_policy.resolve_bundle` chose and contacts nothing. No endpoint, key, SDK, model id or price for an optional provider appears anywhere in this repository, and none is guessed at here.
+- V1 starts, decides and rolls back with every optional provider ABSENT. `rules` computes locally over the request's own state, `replay` reads a caller-selected local store and abstains on a miss, and a rollback names a fallback `decision_policy.resolve_bundle` chose and contacts nothing. The inspected V1 decision and driver paths have no optional-provider import, endpoint, credential lookup, SDK or dispatch; the separately gated Release 2 offline adapter is outside those paths.
 - training-data collection is NOT a capability of any harness and has no registry row. `training_data.COLLECTION_ENABLED` and `CAPTURE_WIRED` are both False, there is no production call site -- the only call sites are the module's own offline `demo` and its tests -- and `build_dataset` requires an explicit `store_dir`. What ships is code that is present and unwired; `training/` in the packaging table means the store's ignore rule is present, never that a record, a dataset or an export manifest exists.
 
 | Harness | Client | OS | Adapter | Enforcement | Decision mode | Fallback |

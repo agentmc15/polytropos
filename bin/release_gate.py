@@ -679,12 +679,11 @@ NO_REAL_CLI_TESTS = (
 
 # ---- the decision-and-improvement matrix, and the Jev-free proof (D28) -------------------------
 #
-# Release 1 of the decision-and-improvement work is JEV-FREE by construction. "Jev" is the
-# optional provider a separately gated Release 2 would add; it does not exist in this tree, and
-# nothing this repository does on startup, in `rules` or `replay`, or on rollback needs an
-# import, a key, an SDK or a socket belonging to it or to any other vendor. This section is where
-# that claim is COMPUTED instead of asserted, beside a matrix of what each harness may actually
-# run.
+# Release 1 of the decision-and-improvement work is JEV-FREE by construction. The separately
+# gated Release 2 offline adapter exists, but it is outside the inspected V1 decision and driver
+# paths. V1 startup, `rules`, `replay`, and rollback need no optional-provider import, key, SDK
+# or socket. This section COMPUTES that path-scoped claim beside a matrix of what each harness
+# may actually run.
 #
 # WHAT IT COMPUTES, AND OUT OF WHAT.
 #
@@ -782,8 +781,9 @@ OPTIONAL_PROVIDER_ABSENT_LABEL = (
     "V1 starts, decides and rolls back with every optional provider ABSENT. `rules` computes "
     "locally over the request's own state, `replay` reads a caller-selected local store and "
     "abstains on a miss, and a rollback names a fallback `decision_policy.resolve_bundle` chose "
-    "and contacts nothing. No endpoint, key, SDK, model id or price for an optional provider "
-    "appears anywhere in this repository, and none is guessed at here")
+    "and contacts nothing. The inspected V1 decision and driver paths have no optional-provider "
+    "import, endpoint, credential lookup, SDK or dispatch; the separately gated Release 2 "
+    "offline adapter is outside those paths")
 
 ADAPTIVE_UNAVAILABLE_LABEL = (
     "`canary` and `active` are UNAVAILABLE on every harness, and the refusal is machine-derived: "
@@ -2299,8 +2299,9 @@ def render_decision(matrix, conformance, jev):
     rows, module constants and resolved test ids, and not one thing that depends on the host."""
     vocab = matrix["vocabulary"]
     out = ["### Decision and improvement (Release 1): what runs, and with what absent", "",
-           "Release 1 is Jev-free by construction -- the optional provider a separately gated "
-           "Release 2 would add does not exist in this tree. The columns below are read from the "
+           "Release 1 is Jev-free by construction. A separately gated Release 2 offline adapter "
+           "exists in this tree, but is not registered or reachable from the inspected V1 "
+           "decision and driver paths. The columns below are read from the "
            "capability registry and from the constant in the module that owns each word "
            "(`decision_policy.SELECTION_MODES` and `DEFERRED_MODES`, "
            "`decision_provider.PROVIDER_MODES`, `workflow_eval.CONFINED_DISPATCH_WIRED` and "
