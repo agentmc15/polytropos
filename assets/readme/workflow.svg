@@ -1,0 +1,66 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 570" role="img" aria-labelledby="title desc">
+  <title id="title">Polytropos workflow</title>
+  <desc id="desc">A workflow diagram showing a task entering route and policy, then either standard delivery through worker implementation and independent verification, or frontier planning when needed. Failed verification returns through evidence-based recovery to the routing decision.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#101633"/><stop offset="1" stop-color="#1d2657"/></linearGradient>
+    <linearGradient id="route" x1="0" x2="1"><stop stop-color="#6366f1"/><stop offset="1" stop-color="#2dd4bf"/></linearGradient>
+    <marker id="arrow" markerWidth="11" markerHeight="11" refX="8" refY="5.5" orient="auto"><path d="M0 0 10 5.5 0 11z" fill="#93a4cf"/></marker>
+    <marker id="coralArrow" markerWidth="11" markerHeight="11" refX="8" refY="5.5" orient="auto"><path d="M0 0 10 5.5 0 11z" fill="#fb7185"/></marker>
+  </defs>
+  <rect width="1200" height="570" rx="28" fill="url(#bg)"/>
+  <g font-family="Arial, Helvetica, sans-serif">
+    <text x="65" y="73" fill="#f8fafc" font-size="35" font-weight="700">A policy-routed workflow for dependable delivery</text>
+    <text x="65" y="108" fill="#b8c5e5" font-size="19">The same principles travel across harnesses: choose proportionate work, then prove it.</text>
+    <path d="M221 253H275" stroke="#93a4cf" stroke-width="4" marker-end="url(#arrow)"/>
+    <!-- Conditional planning branch: only tasks that need coordination enter this path. -->
+    <path d="M496 253H548" stroke="#fbbf24" stroke-width="4" marker-end="url(#arrow)"/>
+    <path d="M767 253H820" stroke="#fbbf24" stroke-width="4" marker-end="url(#arrow)"/>
+    <path d="M1004 253h55" stroke="#93a4cf" stroke-width="4" marker-end="url(#arrow)"/>
+    <!-- Default delivery bypasses frontier planning. -->
+    <path d="M386 330v62c0 20 16 36 36 36h362c20 0 36-16 36-36v-62" fill="none" stroke="#2dd4bf" stroke-width="4" marker-end="url(#arrow)"/>
+    <text x="520" y="416" fill="#99f6e4" font-size="16" font-weight="700">DEFAULT DELIVERY — BYPASS FRONTIER PLANNING</text>
+    <path d="M545 204c0-33 27-60 60-60h101c33 0 60 27 60 60" fill="none" stroke="#fbbf24" stroke-width="3" stroke-dasharray="7 7"/>
+    <text x="574" y="137" fill="#fde68a" font-size="16" font-weight="700">IF PLANNING IS NEEDED</text>
+    <g>
+      <rect x="65" y="194" width="156" height="118" rx="18" fill="#18224c" stroke="#67e8f9" stroke-width="2"/>
+      <circle cx="103" cy="234" r="17" fill="#164e63"/><path d="M95 234h16M103 226v16" stroke="#67e8f9" stroke-width="3" stroke-linecap="round"/>
+      <text x="130" y="239" fill="#f8fafc" font-size="22" font-weight="700">TASK</text><text x="91" y="279" fill="#b8c5e5" font-size="16">intent + context</text>
+    </g>
+    <g>
+      <rect x="275" y="176" width="221" height="154" rx="18" fill="#1d2454" stroke="url(#route)" stroke-width="3"/>
+      <text x="305" y="223" fill="#f8fafc" font-size="23" font-weight="700">ROUTE + POLICY</text>
+      <text x="305" y="255" fill="#b8c5e5" font-size="16">size the work • set effort</text>
+      <text x="305" y="282" fill="#b8c5e5" font-size="16">preserve boundaries</text>
+      <rect x="305" y="296" width="127" height="7" rx="3.5" fill="#2dd4bf"/>
+    </g>
+    <g>
+      <rect x="548" y="176" width="219" height="154" rx="18" fill="#292352" stroke="#fbbf24" stroke-width="3"/>
+      <text x="578" y="223" fill="#fff7ed" font-size="23" font-weight="700">FRONTIER PLAN</text>
+      <text x="578" y="255" fill="#ddd6fe" font-size="16">conditional coordination</text>
+      <text x="578" y="282" fill="#ddd6fe" font-size="16">coordination + acceptance</text>
+      <circle cx="730" cy="298" r="8" fill="#fbbf24"/>
+    </g>
+    <g>
+      <rect x="820" y="176" width="184" height="154" rx="18" fill="#163c4a" stroke="#2dd4bf" stroke-width="3"/>
+      <text x="847" y="223" fill="#f0fdfa" font-size="22" font-weight="700">WORKER</text>
+      <text x="847" y="249" fill="#f0fdfa" font-size="22" font-weight="700">IMPLEMENT</text>
+      <text x="847" y="282" fill="#bff5eb" font-size="16">focused delivery</text>
+    </g>
+    <g>
+      <rect x="1059" y="176" width="76" height="154" rx="18" fill="#1e2857" stroke="#a5b4fc" stroke-width="2"/>
+      <text x="1097" y="220" fill="#eef2ff" font-size="17" font-weight="700" text-anchor="middle">INDEP.</text>
+      <text x="1097" y="246" fill="#eef2ff" font-size="17" font-weight="700" text-anchor="middle">VERIFY</text>
+      <path d="m1085 278 9 9 17-20" fill="none" stroke="#67e8f9" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+    </g>
+    <g>
+      <rect x="430" y="470" width="470" height="65" rx="15" fill="#40213c" stroke="#fb7185" stroke-width="2"/>
+      <circle cx="464" cy="502" r="11" fill="#fb7185"/><text x="490" y="508" fill="#fff1f2" font-size="18" font-weight="700">Failure evidence → correct; escalate if needed.</text>
+    </g>
+    <!-- Failed verification enters recovery, then returns to the routing decision. -->
+    <path d="M1097 330v105c0 22-18 40-40 40H900" fill="none" stroke="#fb7185" stroke-width="4" stroke-dasharray="9 8" marker-end="url(#coralArrow)"/>
+    <text x="930" y="400" fill="#fecdd3" font-size="15" font-weight="700">VERIFY FAILS</text>
+    <path d="M430 502h-24c-22 0-40-18-40-40V336" fill="none" stroke="#fb7185" stroke-width="4" stroke-dasharray="9 8" marker-end="url(#coralArrow)"/>
+    <text x="67" y="470" fill="#fecdd3" font-size="15" font-weight="700">RECOVER → RE-ROUTE</text>
+    <text x="1059" y="366" fill="#b8c5e5" font-size="15">evidence</text>
+  </g>
+</svg>
