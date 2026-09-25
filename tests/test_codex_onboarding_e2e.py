@@ -98,7 +98,7 @@ class CodexOnboardingE2ETests(unittest.TestCase):
 
             migration.restore_legacy(repo, home, backup)
             self.assertEqual(route_prompt.read_bytes(), original_prompt)
-            self.assertEqual(len(list((home / "skills").glob("*/SKILL.md"))), 12)
+            self.assertEqual(len(list((home / "skills").glob("*/SKILL.md"))), 17)
 
     def test_fresh_relocated_clone_validates_and_plans_deterministically(self):
         with tempfile.TemporaryDirectory() as tmp_s:
@@ -106,7 +106,7 @@ class CodexOnboardingE2ETests(unittest.TestCase):
             repo, home = _relocated(base / "repo"), base / "home"
             skills = list((repo / "codex" / "skills").glob("*/SKILL.md"))
             agents = list((repo / "codex" / "agents").glob("*.toml"))
-            self.assertEqual(len(skills), 12)
+            self.assertEqual(len(skills), 17)
             self.assertEqual(len(agents), 4)
             plan = selector.plan_codex_setup(repo, home)
             self.assertEqual(plan["actions"][0]["state"], "up-to-date")
@@ -133,7 +133,7 @@ class CodexOnboardingE2ETests(unittest.TestCase):
             )
             selector.apply_codex_plan(first)
             self.assertEqual(len(list((repo / ".codex" / "agents").glob("*.toml"))), 4)
-            self.assertEqual(len(list((home / "skills").glob("*/SKILL.md"))), 12)
+            self.assertEqual(len(list((home / "skills").glob("*/SKILL.md"))), 17)
             self.assertEqual(len(list((home / "prompts").glob("*.md"))), 10)
             self.assertTrue((home / "AGENTS.md").is_file())
 

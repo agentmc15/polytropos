@@ -235,7 +235,7 @@ the smallest deterministic intervention that could falsify the hypothesis. **"Th
 intervention" is a good report**, and so are `no-fit` and `insufficient-evidence`. A
 whole-system mode assesses the shared runtime and each harness independently before synthesising,
 and refuses to transfer a pricing, capability, or enforcement claim across harnesses. Ships on
-Claude Code and Cursor (`cursor/skills/assess-improvement/`); its report template is
+Claude Code, Codex, and Cursor (`cursor/skills/assess-improvement/`); its report template is
 `skills/assess-improvement/references/assessment-template.md`. Worked output:
 [ASSESSMENTS/polytropos-decision-improvement-v1.md](https://github.com/agentmc15/polytropos/blob/main/docs/ASSESSMENTS/polytropos-decision-improvement-v1.md).
 
@@ -308,6 +308,10 @@ Sonnet, cyan = Haiku), effort, estimated session cost, context %, and — on sub
 (`${CLAUDE_PLUGIN_ROOT}` doesn't exist outside plugin context). Costs shown are client-side
 estimates, not bills.
 
+Codex ships a separate `$setup` skill for its native `/statusline` picker. That picker persists the
+chosen `tui.status_line` fields in `~/.codex/config.toml`; it never runs this Claude script, and the
+available native fields depend on the installed Codex client and account.
+
 ### `/polytropos:memory`
 Durable facts across sessions, engineered against the failure mode of memory systems: context
 bloat. `bin/memory_store.py` keeps one fact per file under the gitignored `memory/` store;
@@ -356,6 +360,11 @@ applied, and routing changes only via the explicit `apply` step writing a gitign
 finished run's conclusion, `list` enumerates runs in the store, and `demo` runs the full pipeline on
 a fixture repo with stub dispatch and spends nothing.
 
+The Codex `$repo-bench` port is planning-only: it can prepare the benchmark matrix and explain the
+workflow, but it structurally refuses `run --live` and live regrading. The current live engine and
+USD ceiling are Claude-specific, and an API-equivalent proxy under a ChatGPT plan is not a spend
+ceiling.
+
 ### `/polytropos:update`
 The all-harness freshness custodian. `bin/harness_update.py check` renders one read-only card —
 Claude plugin cache (via `bin/plugin_staleness.py`), Copilot bundle drift (per-file comparator),
@@ -367,6 +376,9 @@ prompts are plugin-owned mirrors (every differing rewrite listed) while `AGENTS.
 no-clobber, repo mirrors regenerate — and the Claude side is **print-only**: the
 `claude plugin update` remedy is shown, never executed, because repo code never writes
 `~/.claude`. `demo` exercises both paths on synthetic temp trees.
+
+The same check-first workflow ships as Codex `$update`, using the Codex bundle root and preserving
+the same ownership and no-clobber boundaries.
 
 ### `/polytropos:graphify`
 Repo analysis through a local knowledge graph. The external, user-installed graphify CLI
@@ -395,6 +407,9 @@ context-weight skill names it as a PREVENT-lever technique. graphify itself is i
 (`uv tool install graphifyy`), never vendored, never auto-installed, and never invoked by a test, a
 verify command, or kit execution; the skill prescribes its offline subcommand set only, and
 `/graphify-out/` stays gitignored.
+
+Codex ships the same bounded workflow as `$graphify`, with bundle-owned readers resolved from the
+installed Polytropos root and no Claude environment-variable dependency.
 
 ### Companion scripts no skill wraps
 
@@ -672,6 +687,12 @@ legacy copies reversibly. One rule overrides every dollar figure here: **a ChatG
 usage-limited, not token-billed**, so its cost is a labeled API-equivalent relative-burn proxy and
 never a bill — `billed_usd` stays null and a proxy dollar never enters a priced total. Full detail:
 [CODEX-HARNESS.md](codex-harness.md).
+
+The Codex skill roster also includes `$assess-improvement`, `$graphify`, `$setup`, `$update`, and a
+planning-only `$repo-bench` that refuses live dispatch. `$usage` and `$frontier-check` are the
+Codex-native equivalents of Claude's `cost-report` and `fable-check`. `$setup` uses the client-native
+`/statusline` picker and `tui.status_line` configuration; it does not reuse Claude's status-line
+script.
 
 #### Cursor's command-line agent
 The same kit contract driven through Cursor's headless CLI (`agent -p`) by `bin/cursor_execute.py` on

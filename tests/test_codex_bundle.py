@@ -56,7 +56,7 @@ EXPECTED_PROMPT_STEMS = {"route", "architect", "implementer", "verifier", "revie
 # The Codex desktop app reads Agent Skills under <codex-home>/skills/<name>/, NOT prompts. The
 # user-facing prompts are mirrored there as SKILL.md skill dirs so /usage etc. surface in the
 # desktop app's `/`-palette Skills section as well as the terminal CLI's prompt list. The four
-# ported capabilities plus the two workflow commands a user types (architect, route); the
+# legacy prompt mirrors plus the native Codex workflows; the
 # execution-loop roles (implementer/verifier/reviewer) are CLI-prompt-only dispatch targets, so
 # they are deliberately NOT skills.
 PORTED_SKILL_STEMS = ("usage", "journal", "frontier-check", "escalate")
@@ -64,7 +64,10 @@ WORKFLOW_SKILL_STEMS = ("architect", "route")
 EXPECTED_SKILL_STEMS = (
     set(PORTED_SKILL_STEMS)
     | set(WORKFLOW_SKILL_STEMS)
-    | {"effort", "execute", "doctor", "context-weight", "bench-routing", "memory"}
+    | {
+        "effort", "execute", "doctor", "context-weight", "bench-routing", "memory",
+        "assess-improvement", "graphify", "repo-bench", "setup", "update",
+    }
 )
 
 
@@ -234,7 +237,7 @@ class EffortPromptContractTests(unittest.TestCase):
 
 
 class SkillRosterTests(unittest.TestCase):
-    """codex/skills/ contains exactly the four ported skills, each a dir with a SKILL.md."""
+    """codex/skills/ contains the native Codex roster, each with a SKILL.md."""
 
     def test_skill_roster_matches_expected_stems(self):
         self.assertTrue(CODEX_SKILLS_DIR.is_dir(), f"missing {CODEX_SKILLS_DIR}")

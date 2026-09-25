@@ -5,7 +5,7 @@
 > Install the polytropos statusline (current model, live session cost, context usage, rate-limit burn) into the user's Claude Code settings. Use when the user asks to set up or enable the cost statusline.
 
 - **Source:** [skills/setup/SKILL.md](https://github.com/agentmc15/polytropos/blob/main/skills/setup/SKILL.md)
-- **Also available on:** this harness only — see the [parity matrix](../index.md)
+- **Also available on:** [OpenAI Codex CLI](../codex/setup.md)
 - **References shipped with the skill:** [references/kit-verify-hook.md](https://github.com/agentmc15/polytropos/blob/main/skills/setup/references/kit-verify-hook.md)
 
 ## In practice

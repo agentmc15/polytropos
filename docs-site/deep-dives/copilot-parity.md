@@ -53,7 +53,7 @@ one side and not the other shows up as a gap rather than silently matching.
 | `/polytropos:execute` | `/execute` skill driving `bin/copilot_execute.py` (skill only, no agent; serial — no parallel-subagent equivalent) |
 | `/polytropos:setup` (statusline) | already wired — settings.json `statusLine` → `bin/copilot_statusline.py`; no skill needed |
 | `/polytropos:memory` | no Copilot twin — the bundle ships no `memory` skill or agent (Codex has one: `codex/skills/memory/`) |
-| `/polytropos:graphify`, `/polytropos:repo-bench`, `/polytropos:update`, `/polytropos:assess-improvement` | no Copilot twin — Claude-side only; `assess-improvement` also ships for Cursor (`cursor/skills/assess-improvement/`) and for neither Copilot nor Codex |
+| `/polytropos:graphify`, `/polytropos:repo-bench`, `/polytropos:update`, `/polytropos:assess-improvement` | no Copilot twin; all four now ship as Codex-native skills, and `assess-improvement` also ships for Cursor. Codex `$repo-bench` is planning-only and refuses live dispatch. |
 | (no Claude twin) | `/effort` skill, or `copilot --agent effort` — Copilot's per-model Reasoning dial |
 | (no Claude twin) | `/budget` skill (skill only) — one-tier-lower dispatch, the `/budget` half of `bin/copilot_execute.py run --budget` |
 | (no Claude twin) | `/goliath` skill (skill only) — the Copilot-CLI-only five-role pipeline policy |

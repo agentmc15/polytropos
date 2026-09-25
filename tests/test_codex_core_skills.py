@@ -64,7 +64,7 @@ class CoreSkillTests(unittest.TestCase):
 
     def test_plugin_and_installer_discover_final_skills_including_core_pair(self):
         skills = sorted(path.parent.name for path in (ROOT / "codex" / "skills").glob("*/SKILL.md"))
-        self.assertEqual(len(skills), 12)
+        self.assertEqual(len(skills), 17)
         self.assertTrue({"execute", "doctor"}.issubset(skills))
         manifest = (ROOT / ".codex-plugin" / "plugin.json").read_text()
         self.assertIn('"skills": "./codex/skills/"', manifest)
