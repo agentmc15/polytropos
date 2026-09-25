@@ -8,7 +8,7 @@
 
 Polytropos is a cross-harness routing and workflow kit for coding agents. It helps you select an appropriate model before an expensive task, preserve a clear plan, and use independent verification with recovery based on evidence. Start in the CLI you already use.
 
-![Polytropos compass with colorful paths: plan clearly, route wisely, verify independently.](assets/readme/hero.svg)
+![Polytropos compass with colorful paths: plan clearly, route wisely, verify independently.](docs/assets/readme/hero.svg)
 
 ## Start here
 
@@ -26,7 +26,7 @@ Once installed, discover the workflows in your host: Claude uses `/polytropos:*`
 
 ## The workflow in one screen
 
-![The Polytropos workflow: route, plan, execute, independently verify, and recover only from recorded evidence.](assets/readme/workflow.svg)
+![The Polytropos workflow: route, plan, execute, independently verify, and recover only from recorded evidence.](docs/assets/readme/workflow.svg)
 
 Routine work can go straight from routing to a suitable worker. Complex work gets a planning pass; failed verification carries evidence into targeted recovery and another check. Routing is advice and a policy boundary, not a claim that every host dispatch is observed. Each harness records what it can know, keeps direct user-selected runs outside the policy boundary, and leaves unverified runtime facts marked as unknown.
 
