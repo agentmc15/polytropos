@@ -155,6 +155,12 @@ These are properties with code behind them, not conventions:
   it refuses to run rather than falling back when no backend is available. `--exec-mode
   trusted-host` is the named opt-out and reports itself as such.
 
+  The unreadable set is `_CONFIDENTIAL_HOME_PATHS` in `bin/exec_policy.py`, each entry
+  declared only when it exists. It includes `~/.config/polytropos/`, which is where a provider
+  key such as the TypeSafe Jev key belongs: outside every repo, because `claude plugin
+  update` copies the installing checkout wholesale, and out of reach of the code a verify
+  command runs.
+
   **Linux and Windows have no backend implemented**, so `enforced` refuses there and only the
   explicit trusted-host mode runs. That is an honest gap, not a silent downgrade.
 
