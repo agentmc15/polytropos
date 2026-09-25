@@ -23,7 +23,7 @@ That is the one-line version. The longer version is that polytropos is a **routi
 | Runtime stores, all outside the tree | 9 | `python3 bin/runtime_data.py where` |
 | Capability rows in the operational registry | 62 | `python3 bin/harness_adapter.py` |
 | Pipeline roles in the kit contract | 10 | `kit_contract.PIPELINE_ORDER` — 3 standing + 7 extended |
-| Plugin version | 0.6.3 | `.claude-plugin/plugin.json` |
+| Plugin version | 0.6.4 | `.claude-plugin/plugin.json` |
 
 > **Security posture — read before unattended use.** On macOS the kit drivers run each verify
 > command inside an OS boundary (`bin/exec_policy.py`, `sandbox-exec`): writes confined to the
