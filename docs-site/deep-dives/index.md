@@ -27,6 +27,7 @@
 | [polytropos — complete guide & cookbook](guide.md) |
 | [How polytropos works](how-it-works.md) |
 | [Jev access and conformance contract — Release 2 J01](jev-access-contract.md) |
+| [Jev as an outcome judge — preregistered, offline study](jev-judge-study.md) |
 | [The kit scheduler](kit-scheduler.md) |
 | [Memory skill](memory-skill.md) |
 | [Next-day runbook](next-day-runbook.md) |
