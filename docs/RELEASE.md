@@ -179,7 +179,7 @@ Contract versions are read from the module that owns each one; package versions 
 |---|---|
 | Claude Code plugin | polytropos 0.6.3 |
 | Local marketplace | polytropos-local |
-| Codex package | polytropos 0.5.0+codex.20260906003447 |
+| Codex package | polytropos 0.5.0+codex.20260925020824 |
 | Codex marketplace | polytropos-local |
 | Capability registry schema | polytropos-harness-capabilities/v1 |
 | Historical primitive matrix | polytropos-harness-matrix/v1 pinned at aesop 9c4108ee8ca3 (aesop's own pin: June–July 2026) |

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Codex Status Line Setup"
+  short_description: "Configure the native Codex CLI status line"
+  default_prompt: "Use $setup to configure and verify my Codex CLI status line."

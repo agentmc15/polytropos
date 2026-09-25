@@ -311,10 +311,10 @@ class CensusBumpTripwireTests(unittest.TestCase):
         self.assertEqual(len(md_sources), 34)
         page_map = docs_build.deep_dive_page_map(REPO_ROOT)
         self.assertEqual(len(page_map), 36)
-        # 79 since D30's V1 handoff (78 after D29's conformance report, 77 after D34's
-        # readiness runbook, 76 before).
+        # 84 after five Codex skill parity pages; 79 since D30's V1 handoff
+        # (78 after D29's conformance report, 77 after D34's readiness runbook, 76 before).
         # Unlike 34/36 above, this total is not a doc-only pin: every skill page counts too.
-        self.assertEqual(len(docs_build.expected_pages(REPO_ROOT)), 79)
+        self.assertEqual(len(docs_build.expected_pages(REPO_ROOT)), 84)
 
     def test_one_more_doc_breaks_the_pinned_counts(self):
         docs_build = _load("_t8_docs_build_copy", BIN_DIR / "docs_build.py")

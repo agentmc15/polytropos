@@ -1,0 +1,4 @@
+interface:
+  display_name: "Repository Benchmark"
+  short_description: "Plan Codex benchmarks on real repository work"
+  default_prompt: "Use $repo-bench to plan a Codex benchmark for this repository."

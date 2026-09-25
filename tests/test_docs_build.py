@@ -288,7 +288,7 @@ class LiveTreeInventoryTests(unittest.TestCase):
         # derived fact: re-derive it from `skill_inventory()` when a skill lands.
         self.assertEqual(harnesses.count("claude"), 15)
         self.assertEqual(harnesses.count("copilot"), 13)
-        self.assertEqual(harnesses.count("codex"), 12)
+        self.assertEqual(harnesses.count("codex"), 17)
         pairs = {(r["harness"], r["name"]) for r in records}
         self.assertIn(("claude", "route"), pairs)
         self.assertIn(("copilot", "budget"), pairs)

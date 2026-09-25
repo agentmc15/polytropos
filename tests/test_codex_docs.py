@@ -29,7 +29,7 @@ class CodexDocsTests(unittest.TestCase):
         guide = (ROOT / "docs" / "CODEX-HARNESS.md").read_text()
         skills = sorted(path.parent.name for path in (ROOT / "codex" / "skills").glob("*/SKILL.md"))
         agents = sorted(path.stem for path in (ROOT / "codex" / "agents").glob("*.toml"))
-        self.assertEqual(len(skills), 12)
+        self.assertEqual(len(skills), 17)
         self.assertEqual(len(agents), 4)
         for skill in skills:
             self.assertIn(f"`${skill}`", guide)
@@ -62,10 +62,10 @@ class CodexDocsTests(unittest.TestCase):
     def test_follow_on_section_is_future_tense_and_statusline_is_native(self):
         guide = (ROOT / "docs" / "CODEX-HARNESS.md").read_text()
         section = guide.split("## Good next Codex additions", 1)[1]
-        for phrase in ("repo-bench", "verify hook", "Automation templates", "Plugin icons", "context-fidelity"):
+        for phrase in ("verify hook", "Automation templates", "Plugin icons", "context-fidelity"):
             self.assertIn(phrase, section)
         self.assertIn("built-in `/statusline`", section)
-        self.assertIn("does not need to be ported", section)
+        self.assertIn("$setup", guide)
 
 
 if __name__ == "__main__":

@@ -69,6 +69,10 @@ codex plugin marketplace add "$PWD"
 codex plugin add polytropos@polytropos-local
 codex plugin list --marketplace polytropos-local --json
 
+# Inside Codex CLI, use $setup to configure the native /statusline picker. It writes
+# the selected tui.status_line fields to ~/.codex/config.toml; it does not use the
+# Claude bin/statusline.py command.
+
 # Preview the managed Codex application policy before writing anything. It configures
 # Astra as the parent orchestrator, Terra as the default worker, and Sol review roles;
 # the execution driver keeps Astra reserved for evidence-gated recovery.
@@ -79,7 +83,7 @@ python3 bin/codex_app_policy.py plan --repo-root . --codex-home <codex-home> --b
 python3 bin/harness_select.py install --harness codex --repo-root . --codex-home <codex-home> --components plugin,agents --agent-scope project --dry-run
 python3 bin/harness_select.py doctor --harness codex --repo-root . --codex-home <codex-home>
 
-# Statusline → run this skill inside a Claude Code session (writes an absolute
+# Claude statusline → run this skill inside a Claude Code session (writes an absolute
 # path into ~/.claude/settings.json, so it must be run here, not copied):
 #   /polytropos:setup
 ```
@@ -111,7 +115,7 @@ Everything else — pricing data, kits, docs, tests — lives inside the repos.
 
 ## Using it vs. developing it
 
-- **Just use it:** install the plugin (+ Copilot harness and statusline if you want them) and go.
+- **Just use it:** install the plugin (+ Copilot harness and the native statusline for your chosen client if you want them) and go.
 - **Develop it:** run the test suites before claiming any change done — `python3 -m unittest
   discover -s tests` here, `npm test` (plus `compile --check` and `doctor`) in aesop. Both repos
   track `main` and are fully pushed, so `git pull` gets you current.

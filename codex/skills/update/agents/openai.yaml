@@ -1,0 +1,4 @@
+interface:
+  display_name: "Polytropos Update"
+  short_description: "Check and refresh Polytropos harness installs"
+  default_prompt: "Use $update to check my Polytropos installs for drift before refreshing anything."

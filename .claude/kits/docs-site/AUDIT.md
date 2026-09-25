@@ -3,8 +3,9 @@
 Read against PLAN.md D1 (the three-way content rule) and GUARDRAILS.md. Every one of the
 39 SKILL.md files this pass covered was read in full. One later entry —
 `claude/assess-improvement` — was appended when that skill landed and was NOT read by this
-pass; it is labeled as such in place. **No skill file is edited by this task** — this is the
-disposition record that T9–T14 apply.
+pass; it is labeled as such in place. Five later Codex port entries are likewise labeled
+as addenda, not retroactive D1 measurements. **No skill file was edited by the original
+audit task** — this is the disposition record that T9–T14 applied.
 
 ## Method
 
@@ -50,10 +51,12 @@ disposition record that T9–T14 apply.
 
 ## Disposition summary
 
-34 `keep`, 3 `enrich`, 3 `relocate` — the expected shape. The robustness the user asked for
+39 `keep`, 3 `enrich`, 3 `relocate` — the current roster shape after five Codex port addenda.
+The original pass recorded 34/3/3. The robustness the user asked for
 lands in fragments and reference files, not in fatter skill cards. One of those `keep`s
 (`claude/assess-improvement`) is the unreviewed addendum described in Method, so the reviewed
-shape of this pass was 33/3/3.
+shape of that pass was 33/3/3. The five Codex `keep` addenda below mean only that the
+original audit did not alter their cards; they do not claim D1 review.
 
 - `enrich` (a missing ACTING fact, nothing else): `claude/cost-report`, `copilot/journal`,
   `codex/bench-routing`.
@@ -1315,3 +1318,52 @@ and the sentinel exposure.
   plus roster-wide checks; `tests/test_codex_usage.py` covers the engine whose branch strings
   this skill quotes. **`usage` is one of the seven mirrored stems** — any edit requires
   `python3 bin/sync_codex_surfaces.py build` in the same task.
+
+## Later Codex port addenda (not part of the original D1 reading)
+
+### codex/assess-improvement
+- verdict: keep
+- skill-md: added after the original audit; read-only, evidence-led Codex adaptation of the
+  Claude and Cursor card. No D1 disposition or body-budget judgment is asserted here.
+- references: `references/assessment-template.md`, shipped beside this Codex skill.
+- fragment-notes: generated page must retain the no-fit and insufficient-evidence outcomes.
+- sentinels: `tests/test_codex_portable_skills.py`, `tests/test_assessment_skill.py`, and the
+  Codex roster, metadata, and docs-site checks.
+
+### codex/graphify
+- verdict: keep
+- skill-md: added after the original audit; optional offline external-CLI workflow with
+  Codex-root resolution. No D1 disposition or body-budget judgment is asserted here.
+- references: none bundled with the skill; the deterministic readers are under `bin/`.
+- fragment-notes: generated page must keep the offline allowlist and freshness limits visible.
+- sentinels: `tests/test_codex_portable_skills.py` and the Codex roster, metadata, and docs-site
+  checks.
+
+### codex/repo-bench
+- verdict: keep
+- skill-md: added after the original audit; Codex task mining and estimate planning only.
+  Live candidate and judge dispatch are deliberately refused, not reviewed as a D1 port.
+- references: the Claude benchmark's existing root references are interpretive only; the Codex
+  planner lives in `bin/codex_repo_bench.py`.
+- fragment-notes: generated page must distinguish planning from unsupported live execution and
+  label every subscription dollar figure an API-equivalent proxy.
+- sentinels: `tests/test_codex_repo_bench.py` and the Codex roster, metadata, and docs-site
+  checks.
+
+### codex/setup
+- verdict: keep
+- skill-md: added after the original audit; configures native Codex `/statusline`, never the
+  Claude status-line command. No D1 disposition or body-budget judgment is asserted here.
+- references: none.
+- fragment-notes: generated page must identify `~/.codex/config.toml` as the Codex setting.
+- sentinels: `tests/test_codex_setup_update_skills.py` and the Codex roster, metadata, and
+  docs-site checks.
+
+### codex/update
+- verdict: keep
+- skill-md: added after the original audit; read-only check first and explicit apply through
+  `bin/harness_update.py`. No D1 disposition or body-budget judgment is asserted here.
+- references: none.
+- fragment-notes: generated page must preserve the no-clobber and scope limits of apply.
+- sentinels: `tests/test_codex_setup_update_skills.py` and the Codex roster, metadata, and
+  docs-site checks.

@@ -65,11 +65,10 @@ HARNESS_SKILL_ROOTS = {
     "cursor": ("cursor", "skills"),
 }
 
-#: Where D25 stages the card. Claude because `skills/` IS the plugin, Cursor because the
-#: acceptance requires the Cursor install to carry it. The other two are named in the brief as
-#: paths D25 MAY touch, and are deliberately left alone — see
-#: `test_the_two_unstaged_harness_rosters_are_untouched_and_say_so`.
+#: D25's original staging cohort. Codex gained a native adaptation later; the byte-for-byte
+#: historical card assertions below remain scoped to the original Claude and Cursor copies.
 STAGED_ON = frozenset({"claude", "cursor"})
+AVAILABLE_ON = STAGED_ON | {"codex"}
 
 #: The project-relative destinations a Cursor install must produce for this card. A literal,
 #: because the installed path IS the acceptance term — deriving it from BUNDLE would only
@@ -202,18 +201,15 @@ class SkillPackagingTests(unittest.TestCase):
         self.assertEqual(on_disk, rostered,
                          "a harness carries the card on disk without its roster naming it, "
                          "or names it without carrying it")
-        self.assertEqual(on_disk, set(STAGED_ON))
-        self.assertEqual(set(HARNESS_SKILL_ROOTS) - on_disk, {"copilot", "codex"})
+        self.assertEqual(on_disk, set(AVAILABLE_ON))
+        self.assertEqual(set(HARNESS_SKILL_ROOTS) - on_disk, {"copilot"})
 
-    def test_the_two_unstaged_harness_rosters_are_untouched_and_say_so(self):
-        """Copilot and Codex are named in the brief as paths D25 may touch. They are not
-        touched, and the evidence is their own rosters: neither names the card. Both rosters
-        are also internally consistent, which is what the bundle suites in the verify command
-        are standing guard over."""
+    def test_copilot_remains_unstaged_while_codex_has_a_native_card(self):
+        """The later Codex port changes the roster, while Copilot remains unstaged."""
         copilot = _copilot_roster()
         codex = _codex_roster()
         self.assertNotIn(SKILL_NAME, copilot)
-        self.assertNotIn(SKILL_NAME, codex)
+        self.assertIn(SKILL_NAME, codex)
 
         copilot_dirs = {p.name for p
                         in (REPO_ROOT / "copilot" / ".github" / "skills").iterdir()
@@ -390,12 +386,11 @@ class SkillPackagingTests(unittest.TestCase):
         self.assertEqual([p for p in stale if SKILL_NAME in p], [])
         self.assertEqual([p for p in unknown if SKILL_NAME in p], [])
 
-    def test_the_parity_page_publishes_the_claude_only_roster_asymmetry(self):
-        """The card ships on one of the three harnesses the site covers. The parity matrix has
-        to say so in its own row — an em dash in the Copilot and Codex cells — or the site
-        claims a coverage the rosters do not have."""
+    def test_the_parity_page_publishes_codex_and_claude_coverage(self):
+        """The generated parity matrix must reflect the later Codex port."""
         parity = (REPO_ROOT / "docs-site" / "skills" / "index.md").read_text(encoding="utf-8")
-        row = (f"| {SKILL_NAME} | [{SKILL_NAME}](claude/{SKILL_NAME}.md) | — | — |")
+        row = (f"| {SKILL_NAME} | [{SKILL_NAME}](claude/{SKILL_NAME}.md) | — | "
+               f"[{SKILL_NAME}](codex/{SKILL_NAME}.md) |")
         self.assertIn(row, parity)
 
     def test_the_site_nav_lists_the_page_once_and_the_audit_roster_covers_the_card(self):
