@@ -329,9 +329,13 @@ def run_verify(command, policy, cwd=None, mode="enforced", **kwargs):
 #: harness homes this repo itself reads elsewhere: a verify line is repo-authored, but it runs
 #: code the model just wrote, and "the test suite" is a fine place to hide an exfiltration.
 #: Only the ones that exist are declared, so the profile never names a path that is not there.
+#: `.config/polytropos` is where an operator keeps a provider key -- the TypeSafe Jev key lives
+#: there -- outside every repo, because `claude plugin update` copies the installing checkout
+#: wholesale; the code a verify command runs must not be able to read it either.
 _CONFIDENTIAL_HOME_PATHS = (
     ".ssh", ".aws", ".gnupg", ".netrc", ".config/gh", ".docker",
     ".claude", ".codex", ".copilot",
+    ".config/polytropos",
 )
 
 
