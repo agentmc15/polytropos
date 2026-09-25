@@ -8,9 +8,9 @@
 > companions [docs/DECISION-IMPROVEMENT-CONFORMANCE.md](docs/DECISION-IMPROVEMENT-CONFORMANCE.md)
 > and [docs/TRAINING-DATA-READINESS.md](docs/TRAINING-DATA-READINESS.md). Read that handoff before
 > acting on any decision, improvement, or training-data work: it is a mechanism release with every
-> live switch off and it makes no performance claim. The plugin version is now **0.6.3**
-> (`.claude-plugin/plugin.json` is the source of truth; `python3 bin/harness_update.py check`
-> reports what is installed against this checkout). Every figure in the body below is dated to when
+> live switch off and it makes no performance claim. The plugin version is whatever
+> `.claude-plugin/plugin.json` says (0.6.3 when this note was written); `python3
+> bin/harness_update.py check` reports what is installed against this checkout. Every figure in the body below is dated to when
 > it was written and should be re-derived, never quoted forward.
 
 **As of 2026-09-07.** Steps 01–15 are committed as a single change set on top of `fb40925`:

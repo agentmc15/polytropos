@@ -331,5 +331,59 @@ class ProfileRenderingTests(unittest.TestCase):
             self.assertEqual(env["TMPDIR"], os.path.realpath(scratch))
 
 
+class OperatorKeyDirTests(unittest.TestCase):
+    """`~/.config/polytropos` holds an operator's provider keys, outside every repo. The
+    default verify profile must refuse to let the code under test read it -- declared only when
+    it exists, like every other confidential home path."""
+
+    def test_the_operator_key_dir_is_denied_when_it_exists(self):
+        with tempfile.TemporaryDirectory() as td:
+            home = Path(td)
+            (home / ".config" / "polytropos").mkdir(parents=True)
+            self.assertIn(str(home / ".config" / "polytropos"), ep.default_deny_read(home=home))
+
+    def test_it_is_not_declared_when_absent(self):
+        with tempfile.TemporaryDirectory() as td:
+            home = Path(td)
+            (home / ".config").mkdir()
+            self.assertNotIn(str(home / ".config" / "polytropos"), ep.default_deny_read(home=home))
+
+
+@requires_sandbox
+class OperatorKeyEnforcementTests(unittest.TestCase):
+    """The kernel refuses the read -- not just the profile text. A sibling config dir stays
+    readable, so the refusal is the deny rule and not a sandbox that fails everything."""
+
+    MARKER = "SYNTHETIC-PROVIDER-KEY-NOT-A-REAL-SECRET"
+
+    def setUp(self):
+        self.td = Path(os.path.realpath(tempfile.mkdtemp()))
+        self.home = self.td / "home"
+        keydir = self.home / ".config" / "polytropos"
+        keydir.mkdir(parents=True)
+        self.key = keydir / ".env"
+        self.key.write_text(f"TYPESAFE_API_KEY={self.MARKER}\n")
+        other = self.home / ".config" / "other"
+        other.mkdir()
+        self.visible = other / "visible.txt"
+        self.visible.write_text(f"{self.MARKER}-visible\n")
+        self.ws = self.td / "workspace"
+        self.ws.mkdir()
+        self.scratch = self.td / "scratch"
+        self.scratch.mkdir()
+        self.policy = ep.ExecPolicy(self.ws, scratch=self.scratch,
+                                    deny_read=ep.default_deny_read(home=self.home), name="verify")
+
+    def test_a_verify_command_cannot_read_a_key_in_the_operator_key_dir(self):
+        result = ep.run_verify(f'cat "{self.key}"', self.policy, timeout=90)
+        self.assertNotEqual(result["rc"], 0, result["output"])
+        self.assertNotIn(self.MARKER, result["output"])
+
+    def test_a_sibling_config_dir_stays_readable(self):
+        result = ep.run_verify(f'cat "{self.visible}"', self.policy, timeout=90)
+        self.assertEqual(result["rc"], 0, result["output"])
+        self.assertIn(f"{self.MARKER}-visible", result["output"])
+
+
 if __name__ == "__main__":
     unittest.main()
