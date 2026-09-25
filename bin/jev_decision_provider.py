@@ -45,7 +45,8 @@ def _object(value, fields, field):
 
 
 def _probability(value, field):
-    if isinstance(value, bool) or not isinstance(value, (float, int)) or not math.isfinite(value):
+    if (isinstance(value, bool) or not isinstance(value, (float, int))
+            or (isinstance(value, float) and not math.isfinite(value))):
         raise _error("value-invalid", f"{field} must be a finite probability")
     if not 0 <= value <= 1:
         raise _error("value-invalid", f"{field} must be between zero and one")
@@ -104,8 +105,18 @@ def build_payload(request, *, model, endpoint):
     return {"state": dict(request.state), "model": model, "questions": questions}
 
 
+def serialize_payload(request, *, model, endpoint):
+    """Return canonical UTF-8 request bytes for offline review; never send them.
+
+    Use the V1 contract's canonical JSON form so the reviewed digest cannot
+    depend on dict construction order or a caller's formatter.
+    """
+    return _contract()._canonical(build_payload(request, model=model,
+                                                 endpoint=endpoint)).encode("utf-8")
+
+
 def map_response(request, response, *, model, endpoint):
-    """Map one synthetic/documented response to the V1 payload, then validate it."""
+    """Map a synthetic response; its model and usage are not live observations."""
     request = _request_guard(request)
     build_payload(request, model=model, endpoint=endpoint)
     data = _object(response, ("model", "answers", "usage"), "Jev response")
@@ -148,7 +159,8 @@ def map_response(request, response, *, model, endpoint):
                 raise _error("category-mismatch", f"{qid}.legend differs from the question rubric")
             indexed = _distribution(answer["probabilities"], indices, f"{qid}.probabilities")
             score = answer["score"]
-            if isinstance(score, bool) or not isinstance(score, (float, int)) or not math.isfinite(score):
+            if (isinstance(score, bool) or not isinstance(score, (float, int))
+                    or (isinstance(score, float) and not math.isfinite(score))):
                 raise _error("value-invalid", f"{qid}.score must be finite")
             if not 0 <= score <= len(indices) - 1:
                 raise _error("value-invalid", f"{qid}.score is out of range")
