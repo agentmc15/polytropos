@@ -308,7 +308,7 @@ POLYTROPOS_DATA_HOME="$(mktemp -d)" python3 -m unittest discover -s tests -v
 ### T3 — Rendering toolkit: tables, SVG charts with table twins, panel chrome, light/dark, phone width
 - id: T3
 - title: Rendering toolkit: tables, SVG charts with table twins, panel chrome, light/dark, phone width
-- status: pending
+- status: done
 - model: sonnet
 - depends: T2
 

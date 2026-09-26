@@ -53,6 +53,7 @@ import hashlib
 import html
 import importlib.util
 import json
+import math
 import os
 import re
 import stat
@@ -578,9 +579,9 @@ def _scrub_tree(value, home):
 def _collect_notes(global_notes, panels):
     """The page-wide note list: global notes, then each panel's, prefixed with its id."""
     notes = list(global_notes)
-    for panel in panels:
-        for note in panel.get("notes") or ():
-            notes.append(f"{panel.get('id')}: {note}")
+    for entry in panels:
+        for note in entry.get("notes") or ():
+            notes.append(f"{entry.get('id')}: {note}")
     return notes
 
 
@@ -638,19 +639,20 @@ def build_model(data_home, checkouts, opts, caps):
            "caps": caps, "now": now, "notes": notes}
     for pid, title, builder in PANELS:
         try:
-            panel = dict(builder(ctx))
+            entry = dict(builder(ctx))
         except Exception as exc:
-            panel = _failed_panel(pid, title, exc)
-        panel["id"] = pid
-        panel.setdefault("title", title)
-        panel["notes"] = [str(note) for note in panel.get("notes") or ()]
+            entry = _failed_panel(pid, title, exc)
+        entry["id"] = pid
+        entry.setdefault("title", title)
+        entry["notes"] = [str(note) for note in entry.get("notes") or ()]
         if pid == NAMESPACES_PANEL:
             # The classification's notes (the listing cap among them) belong to the panel that
             # shows the classes -- attached here, so a builder that raised cannot drop them.
-            panel["notes"] = class_notes + [note for note in panel["notes"]
+            entry["notes"] = class_notes + [note for note in entry["notes"]
                                             if note not in class_notes]
-        panel.setdefault("blocks", [])
-        model["panels"].append(panel)
+        entry.setdefault("blocks", [])
+        entry.setdefault("refresh_hint", None)  # T3: panel() renders this as a second meta line
+        model["panels"].append(entry)
     model["notes"] = _collect_notes(notes, model["panels"])
     model["caps"] = caps_report(caps, model["notes"])
     return model
@@ -749,7 +751,7 @@ PANELS = [
 
 
 # ---------------------------------------------------------------------------------------------
-# Rendering. Every string goes through `_h`; the model is scrubbed whole before any of it.
+# Rendering. Every plain string goes through `esc`; the model is scrubbed whole before any of it.
 
 # Text that must never appear in the page even as inert text, because the page is checked for it
 # mechanically (PLAN R5). Escaping leaves `=`, `(` and `@` alone, so data text gets these three
@@ -766,10 +768,113 @@ def _neutralize(match):
     return "&#64;" + text[1:]
 
 
-def _h(value):
-    """One value as page text: `unknown` for None, HTML-escaped, tripwires neutralised."""
-    text = "unknown" if value is None else _clean(str(value))
+def esc(value):
+    """One value as page text -- the ONE escaping path every renderer in this module uses, so
+    honesty rendering is written once (PLAN D7). HTML-escaped and tripwire-neutralised; `None`
+    is never a blank cell or a silent zero (PLAN R3) -- it is the literal word `unknown`, in a
+    span the stylesheet renders italic and muted but never hidden."""
+    if value is None:
+        return '<span class="unknown">unknown</span>'
+    text = _clean(str(value))
     return _TRIPWIRES.sub(_neutralize, html.escape(text, quote=True))
+
+
+# ---------------------------------------------------------------------------------------------
+# Formatters (PLAN D7a-d). Each wraps `esc` with one field's semantics; `None` is always
+# `unknown` and nothing here ever coerces an absent value into `0` or a blank cell.
+
+def _finite_float(v):
+    """`v` as a finite float, or `None` when it is not a number at all OR is NaN/±Infinity --
+    a corrupted ledger value (a JSON `NaN`/`Infinity`, or a string such as "nan", "Infinity" or
+    an overflowing "1e400", all of which `float()` accepts without raising) is treated exactly
+    like an unparsable one: every numeric formatter below falls back to the value's own escaped
+    text rather than crashing the panel or printing a unit on something that is not a real
+    number (PLAN R3)."""
+    try:
+        number = float(v)
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) else None
+
+
+def fmt_count(v):
+    """An integer count -> its digits, or `unknown` for `None` (PLAN R3). A non-finite or
+    unparsable value is not `unknown` (it IS present) -- it renders as its own escaped text."""
+    if v is None:
+        return esc(None)
+    if isinstance(v, int) and not isinstance(v, bool):
+        return esc(v)
+    number = _finite_float(v)
+    return esc(v) if number is None else esc(int(number))
+
+
+def fmt_usd(v, basis_label):
+    """`$` with two decimals, plus a REQUIRED basis label in a `<span class="label">` -- a
+    dollar can never appear without the basis it was measured under (PLAN D7a/b: no cell ever
+    sums two bases, and a basis-less dollar is never printed). `None` -> `unknown`, no `$` at
+    all. A non-finite or unparsable value gets no `$` either -- only its own escaped text,
+    basis label still beside it. `basis_label` has no default: a caller that forgot it fails
+    loudly, at the call site, rather than the page ever showing an unlabelled dollar."""
+    if v is None:
+        return esc(None)
+    number = _finite_float(v)
+    amount = esc(v) if number is None else f"${number:,.2f}"
+    return f'{amount} <span class="label">{esc(basis_label)}</span>'
+
+
+def fmt_credits(v):
+    """A credits amount -> two decimals, or `unknown` for `None`. No basis label: unlike a
+    dollar figure, a credits count is already one unit with nothing to conflate it with. A
+    non-finite or unparsable value renders as its own escaped text, no unit."""
+    if v is None:
+        return esc(None)
+    number = _finite_float(v)
+    return esc(v) if number is None else esc(f"{number:,.2f}")
+
+
+def fmt_seconds(v):
+    """A duration in seconds -> `<n>s`, or `unknown` for `None`. A non-finite or unparsable
+    value renders as its own escaped text, with no `s` suffix implying a real duration."""
+    if v is None:
+        return esc(None)
+    number = _finite_float(v)
+    if number is None:
+        return esc(v)
+    text = str(int(number)) if number == int(number) else f"{number:.1f}"
+    return esc(f"{text}s")
+
+
+def fmt_date(v):
+    """A date or timestamp exactly as the owner recorded it -> text, or `unknown` for `None`.
+    Never reformatted: a date string is the owner's own words, and this engine re-derives
+    nothing an owner already said (PLAN D2)."""
+    return esc(v)
+
+
+def _parse_date_like(value):
+    """A `YYYY-MM-DD` date or an ISO timestamp -> a `date`, or `None` when it is neither."""
+    if not isinstance(value, str) or not value.strip():
+        return None
+    text = value.strip()
+    try:
+        return datetime.strptime(text, "%Y-%m-%d").date()
+    except ValueError:
+        pass
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00")).date()
+    except ValueError:
+        return None
+
+
+def age_days(observed, today):
+    """Whole days from `observed` to `today` (each a `YYYY-MM-DD` date or an ISO timestamp) ->
+    an int, or `None` when either is missing or does not parse. The one date arithmetic this
+    engine does (PLAN D2, D7d): the age of an observation relative to the build."""
+    start = _parse_date_like(observed)
+    end = _parse_date_like(today)
+    if start is None or end is None:
+        return None
+    return (end - start).days
 
 
 STYLESHEET = """
@@ -810,79 +915,279 @@ a { color: var(--accent); }
 nav { padding: 8px 0; border-bottom: 1px solid var(--line); }
 section { padding: 8px 0 16px; border-bottom: 1px solid var(--line); }
 .meta, .notes { color: var(--muted); }
+.label { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: var(--muted); }
+.unknown { font-style: italic; color: var(--muted); }
+figure { margin: 16px 0; }
+figcaption { color: var(--muted); margin-top: 4px; }
+details { margin: 8px 0; }
+details > summary { cursor: pointer; }
+svg { width: 100%; height: auto; }
+.chart-bar { fill: var(--accent); }
+.chart-line { fill: none; stroke: var(--accent); stroke-width: 2; }
+.chart-label { fill: var(--fg); font-size: 10px; }
 """
 
 
-def _render_table(headers, rows, caption=None):
-    out = ['<div class="table-wrap">', "<table>"]
-    if caption:
-        out.append(f"<caption>{_h(caption)}</caption>")
-    out.append("<thead><tr>" + "".join(f"<th>{_h(cell)}</th>" for cell in headers)
-               + "</tr></thead>")
-    out.append("<tbody>")
+# A table cell is either a plain value (through `esc`, so a builder can never smuggle raw HTML
+# through a string) or a typed cell -- a dict carrying `fmt` -- dispatched to the matching
+# formatter below. `esc`/`fmt_usd`/`fmt_credits`/`fmt_count`/`fmt_seconds`/`fmt_date` already
+# return finished, escaped HTML (a styled unknown span, a dollar's basis-label span); running
+# THAT through `esc` again would show the span as literal tag soup instead of markup, which is
+# exactly the T3 red-team break this vocabulary exists to close. `CELL_FORMATS` is the toolkit
+# contract T4-T7 build their `rows` on: a cost/credits/count/seconds/date cell is always this
+# shape, never a pre-rendered string.
+CELL_FORMATS = {
+    "usd": lambda cell: fmt_usd(cell.get("value"), cell.get("basis")),
+    "credits": lambda cell: fmt_credits(cell.get("value")),
+    "count": lambda cell: fmt_count(cell.get("value")),
+    "seconds": lambda cell: fmt_seconds(cell.get("value")),
+    "date": lambda cell: fmt_date(cell.get("value")),
+}
+
+
+def _render_cell(cell):
+    """One table cell -> HTML, escaped exactly once. A typed cell's formatter output is already
+    escaped HTML and is used as-is; anything else -- including a plain string -- goes through
+    `esc`, so a builder cannot pass a pre-rendered `fmt_*` string as a cell (that would be
+    escaped a second time) and cannot smuggle raw HTML through a plain string either."""
+    if isinstance(cell, dict) and "fmt" in cell:
+        renderer = CELL_FORMATS.get(cell.get("fmt"))
+        if renderer is not None:
+            return renderer(cell)
+        return esc(f"cell: unrecognised fmt {cell.get('fmt')!r}")
+    return esc(cell)
+
+
+def html_table(headers, rows, caption=None, details=False):
+    """`headers`/`rows` (every cell through `_render_cell`: `esc` for a plain value, or the
+    matching formatter for a typed cell -- see `CELL_FORMATS`) -> one `<table>` in a `<div
+    class="table-wrap">`, so a wide table scrolls sideways and the PAGE never scrolls
+    horizontally at phone width (PLAN D9). `details=True` wraps it again in `<details><summary>
+    caption (N rows)</summary>...</details>` for a table too long to want open by default; the
+    caption then lives only in the summary, not duplicated as a `<caption>` too."""
+    rows = list(rows)
+    parts = ['<div class="table-wrap">', "<table>"]
+    if caption and not details:
+        parts.append(f"<caption>{esc(caption)}</caption>")
+    parts.append("<thead><tr>" + "".join(f"<th>{esc(cell)}</th>" for cell in headers)
+                 + "</tr></thead>")
+    parts.append("<tbody>")
     for row in rows:
-        out.append("<tr>" + "".join(f"<td>{_h(cell)}</td>" for cell in row) + "</tr>")
-    out.append("</tbody>")
-    out.append("</table>")
-    out.append("</div>")
-    return "\n".join(out)
+        parts.append("<tr>" + "".join(f"<td>{_render_cell(cell)}</td>" for cell in row)
+                     + "</tr>")
+    parts.append("</tbody>")
+    parts.append("</table>")
+    parts.append("</div>")
+    table_html = "\n".join(parts)
+    if details:
+        summary = f"{caption or 'table'} ({_plural(len(rows), 'row', 'rows')})"
+        return f"<details>\n<summary>{esc(summary)}</summary>\n{table_html}\n</details>"
+    return table_html
+
+
+# ---------------------------------------------------------------------------------------------
+# Charts (PLAN D9): an inline <svg> that is NEVER the only carrier of a value -- its
+# <figcaption> is an html_table of the exact same rows, in the same <figure>. Geometry lives in
+# an arbitrary internal coordinate system; the stylesheet's `svg { width: 100%; height: auto; }`
+# scales it to the column width, which is what keeps a chart phone-width.
+
+CHART_WIDTH = 400        # arbitrary viewBox units, wide enough for a label column plus bars
+BAR_ROW_HEIGHT = 18      # one bar's height
+BAR_ROW_GAP = 6          # gap above each bar, and below the last one
+BAR_LABEL_WIDTH = 130    # viewBox units reserved for the row label, left of the bars
+SPARK_HEIGHT = 60        # a sparkline is short and wide, not a full chart
+SPARK_PAD = 6            # inset so the line never touches the viewBox edge
+
+# Reset at the top of every `render_page` call so chart ids are assigned in document order from
+# zero every time -- otherwise two renders of the same model would not be byte-identical (D9).
+_chart_sequence = {"n": 0}
+
+
+def _reset_chart_sequence():
+    _chart_sequence["n"] = 0
+
+
+def _chart_ids():
+    """A fresh pair of element ids for one chart's <title>/<desc> -> (title_id, desc_id),
+    unique within one page render. A direct call (a test, or the Verify probe) just keeps
+    counting, which does not affect that one figure's own structure."""
+    _chart_sequence["n"] += 1
+    n = _chart_sequence["n"]
+    return f"chart-{n}-title", f"chart-{n}-desc"
+
+
+def _is_number(value):
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def svg_bars(rows, title, desc, label_key, value_key):
+    """A horizontal bar per row of `rows[i][value_key]`, labelled `rows[i][label_key]` -> one
+    `<figure>` holding an inline `<svg viewBox=… role="img" aria-labelledby=…>` (title, desc,
+    then the bars) and, as its `<figcaption>`, an `html_table` of the same rows -- the chart is
+    never the only place a number lives. A `None` value draws no bar and reads `unknown` in the
+    table twin."""
+    rows = list(rows)
+    title_id, desc_id = _chart_ids()
+    values = [row.get(value_key) if isinstance(row, dict) else None for row in rows]
+    numeric = [v for v in values if _is_number(v)]
+    max_value = max(numeric) if numeric else 0
+    plot_width = max(CHART_WIDTH - BAR_LABEL_WIDTH - 8, 1)
+    height = max(len(rows), 1) * (BAR_ROW_HEIGHT + BAR_ROW_GAP) + BAR_ROW_GAP
+    parts = [
+        f'<svg viewBox="0 0 {CHART_WIDTH} {height}" role="img" '
+        f'aria-labelledby="{title_id} {desc_id}">',
+        f'<title id="{title_id}">{esc(title)}</title>',
+        f'<desc id="{desc_id}">{esc(desc)}</desc>',
+    ]
+    for index, row in enumerate(rows):
+        label = row.get(label_key) if isinstance(row, dict) else None
+        value = values[index]
+        y = BAR_ROW_GAP + index * (BAR_ROW_HEIGHT + BAR_ROW_GAP)
+        parts.append(f'<text x="0" y="{y + BAR_ROW_HEIGHT - 5}" class="chart-label">'
+                     f'{esc(label)}</text>')
+        if _is_number(value) and max_value > 0:
+            width = max(round((value / max_value) * plot_width, 1), 0)
+            parts.append(f'<rect x="{BAR_LABEL_WIDTH}" y="{y}" width="{width}" '
+                         f'height="{BAR_ROW_HEIGHT}" class="chart-bar"></rect>')
+    parts.append("</svg>")
+    svg = "\n".join(parts)
+    table_rows = [[row.get(label_key) if isinstance(row, dict) else None,
+                  row.get(value_key) if isinstance(row, dict) else None] for row in rows]
+    table = html_table([label_key, value_key], table_rows, caption=title)
+    return f"<figure>\n{svg}\n<figcaption>\n{table}\n</figcaption>\n</figure>"
+
+
+def svg_sparkline(points, title, desc):
+    """A line through `points` (`(label, value)` pairs, oldest first) -> one `<figure>` holding
+    an inline `<svg>` (title, desc, then a polyline through the known values) and, as its
+    `<figcaption>`, an `html_table` of the same points. A `None` value breaks the line rather
+    than being interpolated across, and reads `unknown` in the table twin."""
+    points = list(points)
+    title_id, desc_id = _chart_ids()
+    values = [value for _label, value in points]
+    numeric = [v for v in values if _is_number(v)]
+    lo = min(numeric) if numeric else 0.0
+    hi = max(numeric) if numeric else 0.0
+    span = (hi - lo) or 1.0
+    steps = max(len(points) - 1, 1)
+    plot_w = CHART_WIDTH - 2 * SPARK_PAD
+    plot_h = SPARK_HEIGHT - 2 * SPARK_PAD
+    parts = [
+        f'<svg viewBox="0 0 {CHART_WIDTH} {SPARK_HEIGHT}" role="img" '
+        f'aria-labelledby="{title_id} {desc_id}">',
+        f'<title id="{title_id}">{esc(title)}</title>',
+        f'<desc id="{desc_id}">{esc(desc)}</desc>',
+    ]
+    segment = []
+    for index, value in enumerate(values):
+        if _is_number(value):
+            x = SPARK_PAD + (plot_w * index / steps)
+            y = SPARK_PAD + plot_h - ((value - lo) / span) * plot_h
+            segment.append(f"{x:.1f},{y:.1f}")
+        elif segment:
+            if len(segment) > 1:
+                parts.append(f'<polyline points="{" ".join(segment)}" class="chart-line">'
+                             f'</polyline>')
+            segment = []
+    if len(segment) > 1:
+        parts.append(f'<polyline points="{" ".join(segment)}" class="chart-line"></polyline>')
+    parts.append("</svg>")
+    svg = "\n".join(parts)
+    table = html_table(["label", "value"], [[label, value] for label, value in points],
+                       caption=title)
+    return f"<figure>\n{svg}\n<figcaption>\n{table}\n</figcaption>\n</figure>"
 
 
 def _render_block(block):
+    """One block dict -> HTML. The vocabulary is `p` / `list` / `table` (T2) plus, from T3,
+    `svg_bars` / `svg_sparkline`; an unrecognised type or shape renders a plain sentence
+    rather than raising, so one bad block cannot take its whole panel down with it."""
     if not isinstance(block, dict):
-        return f"<p>{_h('a block that is not a mapping was not rendered')}</p>"
+        return f"<p>{esc('a block that is not a mapping was not rendered')}</p>"
     kind = block.get("type")
     if kind == "p":
-        return f"<p>{_h(block.get('text'))}</p>"
+        return f"<p>{esc(block.get('text'))}</p>"
     if kind == "list":
         items = block.get("items") or []
         if not items:
-            return f'<p class="notes">{_h(block.get("empty") or "none")}</p>'
-        return ('<ul class="notes">\n' + "\n".join(f"<li>{_h(item)}</li>" for item in items)
+            return f'<p class="notes">{esc(block.get("empty") or "none")}</p>'
+        return ('<ul class="notes">\n' + "\n".join(f"<li>{esc(item)}</li>" for item in items)
                 + "\n</ul>")
     if kind == "table":
         rows = block.get("rows") or []
         if not rows and block.get("empty"):
-            return f"<p>{_h(block['empty'])}</p>"
-        return _render_table(block.get("headers") or [], rows, block.get("caption"))
-    return f"<p>{_h(f'a block of unknown type {kind!r} was not rendered')}</p>"
+            return f"<p>{esc(block['empty'])}</p>"
+        return html_table(block.get("headers") or [], rows, block.get("caption"),
+                          details=bool(block.get("details")))
+    if kind == "svg_bars":
+        rows = block.get("rows") or []
+        if not rows and block.get("empty"):
+            return f"<p>{esc(block['empty'])}</p>"
+        return svg_bars(rows, block.get("title") or "", block.get("desc") or "",
+                        block.get("label_key"), block.get("value_key"))
+    if kind == "svg_sparkline":
+        points = block.get("points") or []
+        if not points and block.get("empty"):
+            return f"<p>{esc(block['empty'])}</p>"
+        return svg_sparkline(points, block.get("title") or "", block.get("desc") or "")
+    return f"<p>{esc(f'a block of unknown type {kind!r} was not rendered')}</p>"
 
 
-def _render_section(panel):
-    pid = panel.get("id")
-    notes = panel.get("notes") or []
-    source = panel.get("source") or "unknown"
-    observed = panel.get("observed") or "unknown"
+def panel(pid, title, source, observed, age, notes, body_html, refresh_hint=None):
+    """The `<section id=…>` chrome every panel shares (PLAN D7d): an `<h2>`, a meta line
+    naming the source, the observed date (or "never captured"), and the age in days (or
+    "n/a" when `observed` is not a parseable date -- see `age_days`), an optional refresh
+    hint, then the notes -- rendered even when there are none, as "notes: none", so a reader
+    can always tell nothing-to-report from not-rendered -- then the body. `None`, an empty
+    string or a whitespace-only string all mean the same absence (PLAN D7d/GUARDRAILS: a
+    blank line is never how absence renders) and all print "never captured"."""
+    observed_absent = observed is None or (isinstance(observed, str) and not observed.strip())
+    observed_text = "never captured" if observed_absent else observed
+    age_text = _plural(age, "day", "days") if isinstance(age, int) else "n/a"
+    meta = f"source: {esc(source)} · observed: {esc(observed_text)} · age: {esc(age_text)}"
     parts = [
-        f'<section id="{_h(pid)}">',
-        f"<h2>{_h(panel.get('title') or pid)}</h2>",
-        f'<p class="meta">{_h(f"source: {source} · observed: {observed}")}</p>',
+        f'<section id="{esc(pid)}">',
+        f"<h2>{esc(title or pid)}</h2>",
+        f'<p class="meta">{meta}</p>',
     ]
+    if refresh_hint:
+        parts.append(f'<p class="meta">{esc(refresh_hint)}</p>')
+    notes = list(notes or ())
     if notes:
-        parts.append('<ul class="notes">\n' + "\n".join(f"<li>{_h(note)}</li>" for note in notes)
+        parts.append('<ul class="notes">\n' + "\n".join(f"<li>{esc(note)}</li>" for note in notes)
                      + "\n</ul>")
     else:
-        parts.append(f'<p class="notes">{_h("notes: none")}</p>')
-    parts.extend(_render_block(block) for block in panel.get("blocks") or ())
+        parts.append(f'<p class="notes">{esc("notes: none")}</p>')
+    if body_html:
+        parts.append(body_html)
     parts.append("</section>")
     return "\n".join(parts)
 
 
-def _render_nav(panels):
-    links = [f'<a href="#{_h(panel.get("id"))}">{_h(panel.get("title") or panel.get("id"))}</a>'
-             for panel in panels]
+def nav(panels):
+    """`<nav>` anchors for every registered panel, in order -- the page's only `href`s."""
+    links = [f'<a href="#{esc(p.get("id"))}">{esc(p.get("title") or p.get("id"))}</a>'
+             for p in panels]
     return '<nav aria-label="panels">' + " · ".join(links) + "</nav>"
 
 
 def render_page(model, home):
     """The whole page as one string. Deterministic for the same model except the one line that
-    carries `data-built-at`."""
+    carries `data-built-at` (chart ids are reset here for the same reason: PLAN D9)."""
+    _reset_chart_sequence()
     view = _scrub_tree(model, home)
-    panels = [panel for panel in view.get("panels") or () if isinstance(panel, dict)]
+    panels = [entry for entry in view.get("panels") or () if isinstance(entry, dict)]
     built_at = view.get("built_at")
     built_text = f"built {built_at or 'unknown'} — a static file: rebuild to refresh"
     primary_text = f"primary checkout: {view.get('primary_checkout') or 'unknown'}"
     data_home_text = f"data home: {view.get('data_home') or 'unknown'}"
+    sections = []
+    for entry in panels:
+        body_html = "\n".join(_render_block(block) for block in entry.get("blocks") or ())
+        observed = entry.get("observed")
+        sections.append(panel(entry.get("id"), entry.get("title") or entry.get("id"),
+                              entry.get("source"), observed, age_days(observed, built_at),
+                              entry.get("notes") or (), body_html, entry.get("refresh_hint")))
     lines = [
         "<!doctype html>",
         '<html lang="en">',
@@ -890,7 +1195,7 @@ def render_page(model, home):
         '<meta charset="utf-8">',
         f'<meta http-equiv="Content-Security-Policy" content="{CSP}">',
         '<meta name="viewport" content="width=device-width, initial-scale=1">',
-        f"<title>{_h(PAGE_TITLE)}</title>",
+        f"<title>{esc(PAGE_TITLE)}</title>",
         "<style>",
         STYLESHEET.strip("\n"),
         "</style>",
@@ -898,13 +1203,13 @@ def render_page(model, home):
         "<body>",
         '<div class="wrap">',
         "<header>",
-        f"<h1>{_h(PAGE_TITLE)}</h1>",
-        f'<p class="meta" data-built-at="{_h(built_at)}">{_h(built_text)}</p>',
-        f'<p class="meta">{_h(primary_text)} · {_h(data_home_text)}</p>',
+        f"<h1>{esc(PAGE_TITLE)}</h1>",
+        f'<p class="meta" data-built-at="{esc(built_at)}">{esc(built_text)}</p>',
+        f'<p class="meta">{esc(primary_text)} · {esc(data_home_text)}</p>',
         "</header>",
-        _render_nav(panels),
+        nav(panels),
         "<main>",
-        *(_render_section(panel) for panel in panels),
+        *sections,
         "</main>",
         "</div>",
         "</body>",
@@ -935,8 +1240,8 @@ def build_receipt(model, home, out_dir):
             "unmapped": {"count": len(classes.get("unmapped") or ())},
             "residue": {"count": residue.get("count"), "sample": list(residue.get("sample") or ())},
         },
-        "panels": [{key: panel.get(key) for key in ("id", "title", "source", "observed", "summary")}
-                   for panel in model.get("panels") or ()],
+        "panels": [{key: entry.get(key) for key in ("id", "title", "source", "observed", "summary")}
+                   for entry in model.get("panels") or ()],
         "caps": caps,
         "caps_hit": [row.get("name") for row in caps if row.get("hit")],
         "notes": list(model.get("notes") or ()),
@@ -959,8 +1264,8 @@ def summary_lines(receipt):
          f"{count('residue')} residue (heuristic: counted, never opened)"),
         "panels:",
     ]
-    for panel in receipt.get("panels") or ():
-        lines.append(f"  {str(panel.get('id')):<11} {panel.get('summary') or ''}")
+    for entry in receipt.get("panels") or ():
+        lines.append(f"  {str(entry.get('id')):<11} {entry.get('summary') or ''}")
     hit = receipt.get("caps_hit") or []
     lines.append(f"caps hit:   {', '.join(hit) if hit else 'none'}")
     lines.append(f"notes:      {len(receipt.get('notes') or ())} (in the page's bounds section and "

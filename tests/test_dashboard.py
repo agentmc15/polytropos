@@ -871,6 +871,427 @@ class RenderingTests(_WorldCase):
 
 
 # ---------------------------------------------------------------------------------------------
+# Rendering toolkit (T3): esc, the formatters, tables, charts and panel chrome. Every later
+# panel builds with these, so the honesty contract (PLAN D7) is written once and enforced here.
+
+class EscTests(unittest.TestCase):
+
+    def test_none_is_a_styled_unknown_span_never_blank(self):
+        self.assertEqual(db.esc(None), '<span class="unknown">unknown</span>')
+
+    def test_values_are_escaped_and_tripwires_neutralised(self):
+        self.assertEqual(db.esc('<script>&"'), "&lt;script&gt;&amp;&quot;")
+        self.assertIn("😀", db.esc("emoji 😀"))
+        self.assertEqual(db.esc("src=x href=y url(z) @import"),
+                         "src&#61;x href&#61;y url&#40;z) &#64;import")
+
+    def test_non_string_values_are_stringified_first(self):
+        self.assertEqual(db.esc(5), "5")
+        self.assertEqual(db.esc(1.5), "1.5")
+
+
+class FormatterTests(unittest.TestCase):
+
+    def test_fmt_count(self):
+        self.assertEqual(db.fmt_count(None), '<span class="unknown">unknown</span>')
+        self.assertEqual(db.fmt_count(0), "0")
+        self.assertEqual(db.fmt_count(42), "42")
+
+    def test_fmt_usd_requires_a_basis_label_and_never_prints_a_bare_dollar(self):
+        self.assertEqual(db.fmt_usd(None, "est."), '<span class="unknown">unknown</span>')
+        self.assertNotIn("$", db.fmt_usd(None, "est."))
+        rendered = db.fmt_usd(1.5, "est.")
+        self.assertIn("$1.50", rendered)
+        self.assertIn('<span class="label">est.</span>', rendered)
+        with self.assertRaises(TypeError):
+            db.fmt_usd(1.5)  # the basis label is required, never optional (PLAN D7a/b)
+
+    def test_fmt_usd_on_bad_input_still_carries_the_label_never_crashes_the_panel(self):
+        rendered = db.fmt_usd("not-a-number", "est.")
+        self.assertIn("not-a-number", rendered)
+        self.assertIn('<span class="label">est.</span>', rendered)
+
+    def test_fmt_credits_has_no_basis_label(self):
+        self.assertEqual(db.fmt_credits(None), '<span class="unknown">unknown</span>')
+        self.assertEqual(db.fmt_credits(2), "2.00")
+        self.assertEqual(db.fmt_credits(2.5), "2.50")
+
+    def test_fmt_seconds(self):
+        self.assertEqual(db.fmt_seconds(None), '<span class="unknown">unknown</span>')
+        self.assertEqual(db.fmt_seconds(3), "3s")
+        self.assertEqual(db.fmt_seconds(3.0), "3s")
+        self.assertEqual(db.fmt_seconds(3.5), "3.5s")
+
+    def test_fmt_date_passes_the_owners_text_through_unchanged(self):
+        self.assertEqual(db.fmt_date(None), '<span class="unknown">unknown</span>')
+        self.assertEqual(db.fmt_date("2026-09-06"), "2026-09-06")
+
+    def test_age_days_parses_dates_and_iso_timestamps(self):
+        self.assertEqual(db.age_days("2026-09-01", "2026-09-25"), 24)
+        self.assertEqual(db.age_days("2026-09-01T00:00:00Z", "2026-09-25T12:00:00Z"), 24)
+        self.assertEqual(db.age_days("2026-09-25", "2026-09-25"), 0)
+        self.assertIsNone(db.age_days(None, "2026-09-25"))
+        self.assertIsNone(db.age_days("2026-09-25", None))
+        self.assertIsNone(db.age_days("not a date", "2026-09-25"))
+        self.assertIsNone(db.age_days("2026-09-25", "not a date"))
+
+
+class HtmlTableTests(unittest.TestCase):
+
+    def test_basic_table_has_a_caption_wrap_div_and_escaped_cells(self):
+        rendered = db.html_table(["a", "b"], [[1, 2], [None, "x"]], caption="Cap")
+        self.assertIn('<div class="table-wrap">', rendered)
+        self.assertIn("<caption>Cap</caption>", rendered)
+        self.assertIn("<th>a</th><th>b</th>", rendered)
+        self.assertIn("<td>1</td><td>2</td>", rendered)
+        self.assertIn('<td><span class="unknown">unknown</span></td><td>x</td>', rendered)
+
+    def test_details_wraps_with_a_row_count_and_no_duplicate_caption(self):
+        rendered = db.html_table(["n"], [[1], [2], [3]], caption="Long table", details=True)
+        self.assertTrue(rendered.startswith("<details>"))
+        self.assertIn("<summary>Long table (3 rows)</summary>", rendered)
+        self.assertNotIn("<caption>", rendered)
+        self.assertIn('<div class="table-wrap">', rendered)
+
+    def test_details_row_count_is_singular_for_one_row(self):
+        rendered = db.html_table(["n"], [[1]], caption="One", details=True)
+        self.assertIn("(1 row)", rendered)
+
+    def test_cell_escaping_and_emoji(self):
+        rendered = db.html_table(["h"], [['<script>&"'], ["😀"]])
+        self.assertIn("&lt;script&gt;&amp;&quot;", rendered)
+        self.assertIn("😀", rendered)
+
+    def test_table_block_details_flag_is_honoured_by_the_generic_dispatcher(self):
+        rendered = db._render_block({"type": "table", "headers": ["n"], "rows": [[1], [2]],
+                                     "caption": "Big", "details": True})
+        self.assertTrue(rendered.startswith("<details>"))
+        self.assertIn("(2 rows)", rendered)
+
+
+class TypedCellTests(unittest.TestCase):
+    """A table cell is either a plain value (escaped exactly once, so a builder cannot smuggle
+    raw HTML through a string) or a typed `{"fmt": ...}` cell dispatched to its formatter,
+    whose own already-escaped HTML is used as-is rather than escaped a second time. This is the
+    fix for the T3 red-team's confirmed double-escaping break: T4's cost-by-basis table (and
+    every later panel) builds its `usd`/`credits` cells this way."""
+
+    def test_typed_usd_cell_renders_markup_once_not_as_escaped_text(self):
+        rendered = db.html_table(
+            ["basis", "amount"],
+            [["actual", {"fmt": "usd", "value": 1.5, "basis": "actual"}]])
+        self.assertIn('<td>$1.50 <span class="label">actual</span></td>', rendered)
+        self.assertNotIn("&lt;span", rendered)
+        self.assertNotIn("&quot;", rendered)
+
+    def test_typed_usd_cell_none_value_renders_the_styled_unknown_span_not_escaped_text(self):
+        rendered = db.html_table(
+            ["basis", "amount"],
+            [["estimated", {"fmt": "usd", "value": None, "basis": "estimated"}]])
+        self.assertIn('<td><span class="unknown">unknown</span></td>', rendered)
+        self.assertNotIn("&lt;span", rendered)
+
+    def test_credits_count_seconds_date_typed_cells_all_render_once(self):
+        rendered = db.html_table(
+            ["k", "v"],
+            [["credits", {"fmt": "credits", "value": 2.5}],
+             ["count", {"fmt": "count", "value": 7}],
+             ["seconds", {"fmt": "seconds", "value": 3.5}],
+             ["date", {"fmt": "date", "value": "2026-09-01"}]])
+        self.assertIn("<td>2.50</td>", rendered)
+        self.assertIn("<td>7</td>", rendered)
+        self.assertIn("<td>3.5s</td>", rendered)
+        self.assertIn("<td>2026-09-01</td>", rendered)
+        self.assertNotIn("&lt;span", rendered)
+        self.assertNotIn("&quot;", rendered)
+
+    def test_plain_string_cell_with_markup_is_still_escaped_exactly_once(self):
+        rendered = db.html_table(["h"], [["<b>not html</b>"]])
+        self.assertIn("<td>&lt;b&gt;not html&lt;/b&gt;</td>", rendered)
+        self.assertNotIn("<b>not html</b>", rendered)   # never rendered as a real tag
+        self.assertNotIn("&amp;lt;", rendered)          # and never escaped TWICE either
+
+    def test_unrecognised_fmt_key_renders_a_sentence_not_a_crash(self):
+        rendered = db.html_table(["h"], [[{"fmt": "bogus", "value": 1}]])
+        self.assertIn("unrecognised fmt", rendered)
+
+    def test_table_block_dispatch_supports_typed_cells_too(self):
+        rendered = db._render_block({"type": "table", "headers": ["b", "amt"],
+                                     "rows": [["actual", {"fmt": "usd", "value": 2,
+                                                          "basis": "actual"}]]})
+        self.assertIn('<span class="label">actual</span>', rendered)
+        self.assertNotIn("&lt;span", rendered)
+
+
+class NonFiniteFormatterTests(unittest.TestCase):
+    """NaN/±Infinity -- as floats (what a JSON NaN/Infinity/1e400 round-trips to) or as the
+    strings "nan"/"Infinity"/"-Infinity"/"1e400" (`float()` accepts every one of these without
+    raising) -- never crash a formatter and never earn a `$`, credits or seconds suffix; each
+    renders its own escaped, recorded text instead, exactly like an unparsable value already
+    did. This is the fix for the T3 red-team's confirmed non-finite breaks."""
+
+    NON_FINITE_VALUES = (float("nan"), float("inf"), float("-inf"),
+                        "nan", "Infinity", "-Infinity", "1e400")
+
+    # value -> the exact text every formatter falls back to (its own str(), verbatim -- a
+    # string form is never reinterpreted: "1e400" stays "1e400", never becomes "inf").
+    EXPECTED_TEXT = {
+        float("nan"): "nan", float("inf"): "inf", float("-inf"): "-inf",
+        "nan": "nan", "Infinity": "Infinity", "-Infinity": "-Infinity", "1e400": "1e400",
+    }
+
+    def test_fmt_usd_never_crashes_never_prints_a_dollar_keeps_the_basis_label(self):
+        for value, text in self.EXPECTED_TEXT.items():
+            with self.subTest(value=value):
+                rendered = db.fmt_usd(value, "est.")
+                self.assertEqual(rendered, f'{text} <span class="label">est.</span>')
+                self.assertNotIn("$", rendered)
+
+    def test_fmt_credits_never_crashes_and_renders_its_own_text_no_unit(self):
+        for value, text in self.EXPECTED_TEXT.items():
+            with self.subTest(value=value):
+                self.assertEqual(db.fmt_credits(value), text)
+
+    def test_fmt_count_never_crashes_and_renders_its_own_text(self):
+        for value, text in self.EXPECTED_TEXT.items():
+            with self.subTest(value=value):
+                self.assertEqual(db.fmt_count(value), text)
+
+    def test_fmt_seconds_never_crashes_and_never_gets_an_s_suffix(self):
+        for value, text in self.EXPECTED_TEXT.items():
+            with self.subTest(value=value):
+                rendered = db.fmt_seconds(value)
+                self.assertEqual(rendered, text)
+                self.assertFalse(rendered.endswith("s"), rendered)
+
+
+class ChartTests(unittest.TestCase):
+
+    def test_svg_bars_title_and_desc_are_the_first_children_and_carry_a_table_twin(self):
+        rows = [{"label": "sonnet", "value": 3}, {"label": "opus", "value": None}]
+        fig = db.svg_bars(rows, "Records", "Records by tier", "label", "value")
+        self.assertTrue(fig.startswith("<figure>"))
+        svg = fig.split("<svg", 1)[1]
+        first_mark = min((i for i in (svg.find("<rect"), svg.find("<text"))
+                          if i != -1), default=len(svg))
+        self.assertLess(svg.index("<title"), svg.index("<desc"))
+        self.assertLess(svg.index("<desc"), first_mark)
+        self.assertIn('role="img"', fig)
+        self.assertIn("aria-labelledby=", fig)
+        self.assertLess(fig.index("</svg>"), fig.index("<figcaption>"))
+        self.assertIn("<table>", fig.split("<figcaption>", 1)[1])
+        self.assertIn('<span class="unknown">unknown</span>', fig)  # opus's None value
+        self.assertTrue(fig.rstrip().endswith("</figure>"))
+
+    def test_svg_bars_none_value_draws_no_rect_for_that_row(self):
+        fig = db.svg_bars([{"label": "only-none", "value": None}], "T", "D", "label", "value")
+        self.assertNotIn("<rect", fig)
+
+    def test_svg_sparkline_structure_and_none_breaks_the_line(self):
+        fig = db.svg_sparkline([("d1", 1), ("d2", None), ("d3", 4)], "Spark", "Spark desc")
+        svg = fig.split("<svg", 1)[1]
+        self.assertLess(svg.index("<title"), svg.index("<desc"))
+        polyline = svg.find("<polyline")
+        if polyline != -1:
+            self.assertLess(svg.index("<desc"), polyline)
+        self.assertIn("<table>", fig.split("<figcaption>", 1)[1])
+        self.assertIn('<span class="unknown">unknown</span>', fig)
+
+    def test_chart_ids_are_unique_between_two_charts_in_one_render(self):
+        db._reset_chart_sequence()
+        fig1 = db.svg_bars([{"label": "a", "value": 1}], "T1", "D1", "label", "value")
+        fig2 = db.svg_bars([{"label": "b", "value": 1}], "T2", "D2", "label", "value")
+        id1 = re.search(r'<title id="([^"]+)"', fig1).group(1)
+        id2 = re.search(r'<title id="([^"]+)"', fig2).group(1)
+        self.assertNotEqual(id1, id2)
+
+
+class PanelChromeTests(unittest.TestCase):
+
+    def test_meta_line_names_source_observed_and_age(self):
+        section = db.panel("p1", "Panel One", "bin/owner.py", "2026-09-01", 5, [], "<p>body</p>")
+        self.assertIn('<section id="p1">', section)
+        self.assertIn("<h2>Panel One</h2>", section)
+        self.assertIn("source: bin/owner.py", section)
+        self.assertIn("observed: 2026-09-01", section)
+        self.assertIn("age: 5 days", section)
+        self.assertIn("<p>body</p>", section)
+
+    def test_observed_none_is_never_captured_and_age_none_is_n_a(self):
+        section = db.panel("p2", "P2", "src", None, None, [], "")
+        self.assertIn("observed: never captured", section)
+        self.assertIn("age: n/a", section)
+
+    def test_empty_or_whitespace_only_observed_is_also_never_captured_not_blank(self):
+        # PLAN D7(d)/GUARDRAILS: absence is a word, never a blank -- this is the fix for the
+        # T3 red-team's confirmed break where an empty/whitespace `observed` rendered blank.
+        for blank in ("", "   ", "\t\n"):
+            with self.subTest(observed=repr(blank)):
+                section = db.panel("p8", "P8", "src", blank, None, [], "")
+                self.assertIn("observed: never captured", section)
+
+    def test_age_one_day_is_singular(self):
+        section = db.panel("p3", "P3", "src", "2026-09-24", 1, [], "")
+        self.assertIn("age: 1 day", section)
+        self.assertNotIn("age: 1 days", section)
+
+    def test_notes_render_even_when_empty(self):
+        empty = db.panel("p4", "P4", "src", None, None, [], "")
+        self.assertIn('<p class="notes">notes: none</p>', empty)
+        with_notes = db.panel("p5", "P5", "src", None, None, ["a note"], "")
+        self.assertIn('<ul class="notes">', with_notes)
+        self.assertIn("<li>a note</li>", with_notes)
+
+    def test_refresh_hint_is_an_optional_second_meta_line(self):
+        with_hint = db.panel("p6", "P6", "src", None, None, [], "",
+                             refresh_hint="run X to refresh")
+        self.assertIn("run X to refresh", with_hint)
+        self.assertEqual(with_hint.count('<p class="meta">'), 2)
+        without_hint = db.panel("p7", "P7", "src", None, None, [], "")
+        self.assertEqual(without_hint.count('<p class="meta">'), 1)
+
+    def test_nav_renders_an_anchor_per_panel_falling_back_to_id_for_a_missing_title(self):
+        rendered = db.nav([{"id": "a", "title": "Alpha"}, {"id": "b", "title": None}])
+        self.assertIn('<a href="#a">Alpha</a>', rendered)
+        self.assertIn('<a href="#b">b</a>', rendered)
+
+
+class PanelDictContractTests(unittest.TestCase):
+
+    def test_build_model_adds_a_refresh_hint_key_defaulting_to_none(self):
+        model = db.build_model(None, [], {}, None)
+        self.assertTrue(model["panels"])
+        for entry in model["panels"]:
+            self.assertIn("refresh_hint", entry)
+            self.assertIsNone(entry["refresh_hint"])
+
+
+class ChartIntegrationTests(_WorldCase):
+    """`svg_bars`/`svg_sparkline` reached the way a real panel reaches them: as `blocks` in a
+    built page, dispatched by `_render_block` after the whole model has been scrubbed."""
+
+    @staticmethod
+    def _chart_blocks():
+        return [
+            {"type": "svg_bars", "title": "Bars", "desc": "Bars desc", "label_key": "label",
+             "value_key": "value",
+             "rows": [{"label": "x", "value": 3}, {"label": "y", "value": None}]},
+            {"type": "svg_sparkline", "title": "Spark", "desc": "Spark desc",
+             "points": [("d1", 1), ("d2", None), ("d3", 4)]},
+        ]
+
+    def test_every_svg_in_a_built_page_has_title_desc_first_and_a_table_twin(self):
+        def chart_panel(_ctx):
+            return {"source": "test fixture", "observed": "2026-09-01", "notes": [],
+                    "summary": "chart fixture", "blocks": self._chart_blocks()}
+
+        registry = [db.PANELS[0], ("charts", "Charts", chart_panel), db.PANELS[-1]]
+        with mock.patch.object(db, "PANELS", registry):
+            rc, out, _stdout, stderr = self.build()
+        self.assertEqual(rc, 0, stderr)
+        page = self.page(out)
+        self.assertEqual(re.findall(r'<section id="([^"]+)">', page),
+                         ["namespaces", "charts", "bounds"])
+        figures = page.split("<figure>")[1:]
+        self.assertEqual(len(figures), 2, figures)
+        for figure in figures:
+            body = figure.split("</figure>", 1)[0]
+            svg = body.split("<svg", 1)[1]
+            first_mark = min((i for i in (svg.find("<rect"), svg.find("<text"),
+                                          svg.find("<polyline")) if i != -1), default=len(svg))
+            self.assertLess(svg.index("<title"), svg.index("<desc"))
+            self.assertLess(svg.index("<desc"), first_mark)
+            self.assertLess(body.index("</svg>"), body.index("<figcaption>"))
+            self.assertIn("<table>", body.split("<figcaption>", 1)[1])
+        self.assertIn("unknown", page)
+        for bad in NETWORK_TRIPWIRES:
+            self.assertNotIn(bad, page)
+        self.assertNotIn("<link", page.lower())
+        hrefs = re.findall(r'href="([^"]*)"', page)
+        ids = set(re.findall(r'id="([^"]*)"', page))
+        self.assertTrue(hrefs)
+        for href in hrefs:
+            self.assertIn(href[1:], ids)
+
+    def test_two_renders_of_the_same_model_get_the_same_chart_ids(self):
+        def chart_panel(_ctx):
+            return {"source": "s", "observed": None, "notes": [], "summary": "",
+                    "blocks": self._chart_blocks()}
+
+        registry = [db.PANELS[0], ("charts", "Charts", chart_panel), db.PANELS[-1]]
+        with mock.patch.object(db, "PANELS", registry):
+            model = db.build_model(self.world["data_home"], [str(self.world["checkout"])],
+                                   {}, None)
+            page1 = db.render_page(model, _FAKE_HOME.name)
+            page2 = db.render_page(model, _FAKE_HOME.name)
+        self.assertEqual(page1, page2)
+        self.assertIn('id="chart-1-title"', page1)
+        self.assertIn('id="chart-2-title"', page1)
+
+
+class TypedCellIntegrationTests(_WorldCase):
+    """The typed-cell mechanism reached the way a real panel reaches it: as a `table` block's
+    row values in a page built through `build`, scrubbed then rendered exactly once -- this is
+    exactly the shape T4's cost-by-basis table builds (PLAN D3 row 1: cells through
+    `fmt_usd(value, basis)` / `fmt_credits`)."""
+
+    def test_a_typed_cell_in_a_built_page_renders_markup_once_not_escaped_text(self):
+        def cost_panel(_ctx):
+            return {"source": "test fixture", "observed": "2026-09-01", "notes": [],
+                    "summary": "cost fixture",
+                    "blocks": [{"type": "table", "headers": ["basis", "usd"],
+                               "rows": [["actual", {"fmt": "usd", "value": 1.5,
+                                                    "basis": "actual"}],
+                                       ["estimated", {"fmt": "usd", "value": None,
+                                                     "basis": "estimated"}]]}]}
+
+        registry = [db.PANELS[0], ("cost", "Cost", cost_panel), db.PANELS[-1]]
+        with mock.patch.object(db, "PANELS", registry):
+            rc, out, _stdout, stderr = self.build()
+        self.assertEqual(rc, 0, stderr)
+        page = self.page(out)
+        self.assertIn('<span class="label">actual</span>', page)
+        self.assertIn('<span class="unknown">unknown</span>', page)
+        self.assertNotIn("&lt;span", page)
+        self.assertNotIn("&quot;label&quot;", page)
+
+
+class StylesheetCompletionTests(_WorldCase):
+
+    def setUp(self):
+        super().setUp()
+        rc, out, _stdout, stderr = self.build("out", "--json")
+        self.assertEqual(rc, 0, stderr)
+        self.html = self.page(out)
+        self.style = self.html.split("<style>", 1)[1].split("</style>", 1)[0]
+
+    def test_new_rules_are_present(self):
+        for rule in (".label {", ".unknown {", "figure {", "figcaption {", "details {",
+                    "svg { width: 100%; height: auto; }"):
+            self.assertIn(rule, self.style)
+
+    def test_label_is_monospace_and_muted(self):
+        rule = self.style.split(".label {", 1)[1].split("}", 1)[0]
+        self.assertIn("monospace", rule)
+        self.assertIn("var(--muted)", rule)
+
+    def test_unknown_is_italic_muted_and_never_hidden(self):
+        rule = self.style.split(".unknown {", 1)[1].split("}", 1)[0]
+        self.assertIn("italic", rule)
+        self.assertIn("var(--muted)", rule)
+        self.assertNotIn("display:none", rule.replace(" ", ""))
+        self.assertNotIn("visibility:hidden", rule.replace(" ", ""))
+
+    def test_dark_scheme_still_declared_exactly_once(self):
+        self.assertEqual(self.style.count("prefers-color-scheme: dark"), 1)
+
+    def test_no_url_import_or_link_anywhere_on_the_page(self):
+        for bad in ("url(", "@import"):
+            self.assertNotIn(bad, self.html)
+        self.assertNotIn("<link", self.html.lower())
+
+
+# ---------------------------------------------------------------------------------------------
 # where and demo.
 
 class CliTests(unittest.TestCase):

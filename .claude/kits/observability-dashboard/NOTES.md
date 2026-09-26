@@ -95,3 +95,71 @@ agent: T2 id=acdf6423a3929781f role=red-team model=sonnet findings=5 confirmed=3
   every store writer fails when run from an unwritable working directory.
 agent: T2 id=a307190263eab1cf0 role=implementer model=opus
 outcome: T2 model=opus attempts=2 result=retry-pass review=revised run=2026-09-25-7e3a
+
+- T3 rendering toolkit, additions to the T2 contract (no owner involved -- T3 touches no
+  owner, so there is no owner-shape delta to record, only a toolkit-contract one): T2's `_h`
+  is renamed `esc` and gains one behaviour -- `None` now renders
+  `<span class="unknown">unknown</span>` (styled italic/muted by the new `.unknown` rule)
+  instead of the plain word, so every later panel gets the styled-unknown honesty rendering
+  for free; nothing outside this file called `_h`, so nothing else changed. The per-panel
+  dict gains an optional `refresh_hint` key (`build_model` defaults it to `None`), rendered
+  by the new `panel()` toolkit function as an optional second `<p class="meta">` line --
+  T6's stale-telemetry hint (PLAN D7d) is the first anticipated user. The `blocks` vocabulary
+  (`p` / `list` / `table`) gains `svg_bars` / `svg_sparkline` (raw rows/points + title/desc +
+  key names; rendered by `_render_block` at page-render time, AFTER the model is scrubbed --
+  never call `svg_bars`/`svg_sparkline` from inside a panel builder and store the result in a
+  `"p"` block, which would double-escape the markup) and `table` gains an optional `details`
+  bool for the `<details>` long-table wrap. Chart `<title>`/`<desc>` element ids come from a
+  module-level counter (`_chart_ids`) reset by `render_page` itself
+  (`_reset_chart_sequence`) so two renders of one model stay byte-identical (PLAN D9); a
+  direct `svg_bars`/`svg_sparkline` call outside `render_page` (as in a test, or the T3
+  Verify probe) just keeps counting, which does not affect that one figure's own structure.
+  `fmt_usd`'s `basis_label` has no default, by design: a caller that omits it fails loudly
+  with `TypeError` at the call site rather than the page ever showing a bare dollar.
+
+agent: T3 id=a63c06d92630fc56e role=implementer model=sonnet
+agent: T3 id=aa1bdad7e2228c859 role=verifier model=sonnet findings=1 confirmed=0 result=accepted
+agent: T3 id=a82e73acd8b5aa337 role=red-team model=sonnet findings=7 confirmed=4 marginal=4 result=accepted
+
+- T3 red-team adjudication. Confirmed, and sent back as T3's retry:
+  - Table cells re-escape formatter output, so `fmt_usd`'s basis label and the styled
+    `unknown` span show up as literal markup in the very tables T4-T7 are briefed to build.
+  - `fmt_seconds` and `fmt_count` raise on NaN or infinity. Plain `json.loads` yields those
+    from a corrupted ledger, and the error collapses the whole panel.
+  - `fmt_usd` and `fmt_credits` print `$nan` and `$inf`.
+  - An empty `observed` renders blank instead of "never captured".
+  Not confirmed:
+  - A bare-string row splits into characters: no caller does that.
+  - An all-non-positive bar series draws no bars: its table twin carries every value.
+  - A future-dated observation shows a negative age: that is true, not fabricated.
+
+- T3 retry, fixing the four confirmed breaks above -- toolkit-contract additions for T4-T7,
+  all inside `bin/dashboard.py`/`tests/test_dashboard.py`, no owner touched:
+  - **Typed cells**, the fix for the double-escaping break. A table cell is now either a
+    plain value (still through `esc`, exactly once -- a builder can never smuggle raw HTML
+    through a plain string) or a typed cell, a dict carrying `fmt`:
+    `{"fmt": "usd", "value": v, "basis": label}` (the only shape with a third key),
+    `{"fmt": "credits"|"count"|"seconds"|"date", "value": v}`. `CELL_FORMATS` maps each `fmt`
+    to its formatter; `_render_cell` dispatches a cell and is the ONLY thing `html_table` (and
+    so every `table` block) calls per cell now -- a formatter's own output is already-escaped
+    HTML and is used as-is, never escaped a second time. This is the shape T4's cost-by-basis
+    table (and every later panel with a dollar, credits, seconds or date cell) must build its
+    `rows` from; a `fmt_usd(...)`/`fmt_credits(...)` STRING is never itself a cell value --
+    that is exactly the break this replaces. `svg_bars`/`svg_sparkline` are unaffected: their
+    rows carry raw numbers/`None` for the chart geometry, never typed cells.
+  - **Non-finite numbers.** `_finite_float(v)` is the one place that turns `v` into a finite
+    float or `None` -- `None` for anything `float()` cannot parse AND for a float that parses
+    but is NaN or ±Infinity (`math.isfinite`). `fmt_usd`/`fmt_credits`/`fmt_count`/`fmt_seconds`
+    all route through it and, on `None`, fall back to the SAME branch an unparsable value
+    already used: the value's own escaped text, no `$`/credits/seconds suffix, `fmt_usd`'s
+    basis label still beside it. A string form (`"nan"`, `"Infinity"`, `"-Infinity"`,
+    `"1e400"`) renders ITSELF verbatim, never a reinterpretation -- `"1e400"` never becomes
+    `"inf"` -- because the fallback is `esc(v)` on the original argument, not on the parsed
+    float. `import math` added for `math.isfinite`; nothing else changed about the imports.
+  - **Empty `observed`.** `panel()` now treats `None`, `""` and a whitespace-only string as
+    the same absence and prints "never captured" for all three; `age_days`/`_parse_date_like`
+    already did this correctly (an empty string never parsed as a date) so only `panel()`'s
+    own display fallback needed the fix.
+  - The stale comment above `esc` ("every string goes through `_h`") is corrected to `esc`.
+agent: T3 id=a63c06d92630fc56e role=implementer model=sonnet
+outcome: T3 model=sonnet attempts=2 result=retry-pass review=revised run=2026-09-25-7e3a
