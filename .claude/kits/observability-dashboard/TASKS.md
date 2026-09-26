@@ -649,7 +649,7 @@ POLYTROPOS_DATA_HOME="$(mktemp -d)" python3 -m unittest discover -s tests -v
 ### T7 — Evals, policy, activation and training panel; the demo renders every panel
 - id: T7
 - title: Evals, policy, activation and training panel; the demo renders every panel
-- status: pending
+- status: done
 - model: sonnet
 - depends: T6
 

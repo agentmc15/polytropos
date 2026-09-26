@@ -134,6 +134,25 @@ MAX_DIGEST_BYTES = 256 * 1024
 # refusing a multi-MB payload with no bound at all.
 MAX_ENVELOPE_BYTES = 512 * 1024
 
+# T7: `workflow_eval.read_envelope` reads one run's whole `results.json`. A real run's envelope
+# holds every trial's full record (stages, oracles, robustness); MAX_EVAL_RUNS_RENDERED already
+# bounds how many runs are rendered in full, but each one read is still whole, so 4 MiB leaves
+# headroom for a busy run while refusing an unbounded or hostile one.
+MAX_EVAL_RESULTS_BYTES = 4 * 1024 * 1024
+
+# T7: `policy_report`/`approval_report`/`activation_report` each read one or more small
+# structured records (an applied policy, one proposal, one approval, one activation
+# generation) whole. 512 KiB matches MAX_ENVELOPE_BYTES's own reasoning: generous headroom for
+# any real one, a firm refusal of a multi-MB payload.
+MAX_PREFS_FILE_BYTES = 512 * 1024
+
+# T7: the bounded, no-follow walk of one namespace's prefs directory (`_prefs_prescan`) that
+# runs before any of the three report functions above -- a real prefs directory (one policy
+# file plus a handful of proposals/approvals/activation generations) holds well under 100
+# entries; 500 catches a hostile or corrupted tree without letting the pre-scan itself run
+# unbounded.
+MAX_PREFS_ENTRIES_SCANNED = 500
+
 # A local git read takes milliseconds; 20 s (attempt_ledger's git probe bound) stops a hung one.
 GIT_TIMEOUT_SECONDS = 20
 
@@ -153,6 +172,9 @@ CAP_NAMES = (
     "MAX_TELEMETRY_ENVELOPES_PER_SOURCE",
     "MAX_DIGEST_BYTES",
     "MAX_ENVELOPE_BYTES",
+    "MAX_EVAL_RESULTS_BYTES",
+    "MAX_PREFS_FILE_BYTES",
+    "MAX_PREFS_ENTRIES_SCANNED",
 )
 
 PAGE_TITLE = "polytropos observability dashboard"
@@ -330,6 +352,9 @@ def default_caps():
         "MAX_TELEMETRY_ENVELOPES_PER_SOURCE": MAX_TELEMETRY_ENVELOPES_PER_SOURCE,
         "MAX_DIGEST_BYTES": MAX_DIGEST_BYTES,
         "MAX_ENVELOPE_BYTES": MAX_ENVELOPE_BYTES,
+        "MAX_EVAL_RESULTS_BYTES": MAX_EVAL_RESULTS_BYTES,
+        "MAX_PREFS_FILE_BYTES": MAX_PREFS_FILE_BYTES,
+        "MAX_PREFS_ENTRIES_SCANNED": MAX_PREFS_ENTRIES_SCANNED,
     }
 
 
@@ -2638,6 +2663,557 @@ def build_journal_panel(ctx):
     }
 
 
+####################################################################################################
+# Evaluation runs, policy/approvals/activation, and training panels (T7): workflow_eval.py's
+# report functions per mapped namespace (PLAN D3 row 5) -- evals and prefs use ONLY the mapped
+# entries of read_namespaces (P1 fix round S6), each with its own qualified unmapped-store note;
+# training_data.status is per DISCOVERED CHECKOUT, not a namespace concept at all. This panel
+# never ranks, prices or judges: every label, verdict and figure is the owner's own, rendered
+# verbatim (`NOT_A_RANKING`, a below-floor label, `MECHANICS_NOT_PERFORMANCE_LABEL`-shaped
+# activation/approval labels). The link/size contract carried forward from T6 ("a link is noted
+# and its content is never rendered") is applied at TWO different grains because the owners
+# themselves differ: `workflow_eval.list_runs`/`read_envelope` read one independent RUN at a
+# time, so a linked or oversized run's own name is excluded and its siblings still render; the
+# three prefs report functions each read several files that make up ONE interrelated policy
+# record with no per-file name this dashboard may spell (`workflow_eval.POLICY_FILE` is the
+# trap `tests/test_workflow_eval.py::test_nothing_in_the_repository_reads_the_policy_file_
+# automatically` polices), so a link or an oversized file anywhere under one namespace's prefs
+# directory excludes all three reports for that namespace, never a single file within it.
+
+EVALS_PANEL = "evals"
+TRAINING_PANEL = "training"
+
+
+def _evals_prescan(we_mod, store_dir, caps, notes, label):
+    """A no-follow, stat-before-read scan of one evals store's own run directories and their
+    `results.json` files -> `(safe_names, [(run_name, reason)])`. `workflow_eval.list_runs`
+    reads every run's `results.json` whole, in one pass, with no per-run size check and no
+    `is_symlink` check of its own -- and its returned row carries no field that reliably maps
+    back to the directory a bad run came from (a linked file could declare an arbitrary
+    `run_id`), so a row cannot be safely dropped by identity after the fact. When this
+    pre-scan finds ANY bad run, the caller does not call `list_runs` on this store at all this
+    build (T4's own B3 precedent for an owner that reads N things whole in one uncontrollable
+    pass: skip the whole call, name what triggered it) -- MANIFEST_DIR is skipped here exactly
+    as the owner itself skips it. `safe_names` is every OTHER real, unlinked directory name
+    (whether or not it turns out to hold a `results.json`), read by T7 retry R2 as the
+    candidate set for `read_envelope`/`build_card`'s own per-run fallback when `list_runs`
+    itself raises for a reason this pre-scan does not check (a `results.json` that decodes but
+    is not a JSON object)."""
+    limit = cap_value(caps, "MAX_EVAL_RESULTS_BYTES")
+    safe, bad = [], []
+    try:
+        entries = sorted(Path(store_dir).iterdir(), key=lambda p: p.name)
+    except OSError as exc:
+        notes.append(f"{label}: evals store could not be listed ({type(exc).__name__})")
+        return [], [("<store>", f"could not be listed ({type(exc).__name__})")]
+    for entry in entries:
+        if entry.name == we_mod.MANIFEST_DIR:
+            continue
+        if entry.is_symlink():
+            bad.append((entry.name, "symlinked run directory"))
+            continue
+        if not _is_real_dir(entry):
+            continue  # list_runs itself notes "not an evaluation run"; nothing to pre-scan
+        results = entry / "results.json"
+        if results.is_symlink():
+            bad.append((entry.name, "symlinked results.json"))
+            continue
+        try:
+            size = results.lstat().st_size
+        except OSError:
+            safe.append(entry.name)  # no results.json here; read_envelope notes it naturally
+            continue
+        if size > limit:
+            # T7 retry V1: through `cap_note` like every other bound, so `caps_report`
+            # recognises the hit (its own "cap NAME (" prefix match) and `caps_hit`/the bounds
+            # row/`build.json` all say so -- plain note text does not register as a hit.
+            notes.append(cap_note(
+                caps, "MAX_EVAL_RESULTS_BYTES",
+                f"{label}: evals run {entry.name!r}'s results.json is {size} bytes — the "
+                f"whole run is excluded from this build, never read"))
+            bad.append((entry.name, f"results.json is {size} bytes (over "
+                                    f"MAX_EVAL_RESULTS_BYTES)"))
+            continue
+        safe.append(entry.name)
+    return safe, bad
+
+
+def _eval_ordered_run_ids(run_ids, caps, notes, label, by):
+    """The latest MAX_EVAL_RUNS_RENDERED run identifiers, newest first, with a cap note when
+    cut -- shared by the normal path (`list_runs` succeeded, identifiers are the owner's own
+    `run_id` field, `by="run id"`) and T7 retry R2's fallback path (`list_runs` raised,
+    identifiers are the pre-scan's own safe directory names, `by="directory name"`), which
+    differ only in WHERE the identifier came from."""
+    ordered = sorted((str(r) for r in run_ids), reverse=True)
+    limit = cap_value(caps, "MAX_EVAL_RUNS_RENDERED")
+    if len(ordered) > limit:
+        notes.append(cap_note(caps, "MAX_EVAL_RUNS_RENDERED",
+                              f"{label} holds more evaluation runs than were rendered in full; "
+                              f"only the latest {limit} (by {by}) are shown"))
+        ordered = ordered[:limit]
+    return ordered
+
+
+def _eval_run_card_blocks(we_mod, store_dir, run_id, label, notes):
+    """One run's card, from the owner's own `read_envelope` + `build_card`, or a note naming
+    the run and the exception type -- never propagating (T7 retry R1: the brief's own
+    `(OSError, ValueError, KeyError, TypeError)` tuple is too narrow, since a malformed field
+    a trial carries -- `oracles` not a dict -- can make `_variant_summary` raise an
+    `AttributeError` `build_card` never catches; this guard is UNCONDITIONAL so one run's
+    failure never reaches the per-namespace catch and erases every other run's card)."""
+    try:
+        envelope = we_mod.read_envelope(store_dir, run_id)
+        card = we_mod.build_card(envelope)
+    except Exception as exc:  # noqa: BLE001 -- this run's card only, never another's
+        notes.append(f"{label}: run {run_id!r} card unavailable ({type(exc).__name__})")
+        return [{"type": "p", "text": f"run {run_id}: not available this build — see the "
+                                      f"notes above"}]
+    return _eval_card_blocks(card)
+
+
+def _owner_totals_table(totals, caption):
+    """`spend`/`totals`-shaped nested dicts (basis -> {field: value, ...}, plus an optional
+    top-level `note`) as one key/value table, TASKS.md item 1's own wording: "a spend key that
+    names a basis keeps that basis word in its label". Every basis this dict actually carries
+    is read from the dict itself, never a hardcoded vocabulary -- a future basis is never
+    silently dropped. A field ending `usd` renders through `fmt_usd` with the BASIS word (not
+    this engine's own guess) as its label; `credits` and `n` get their own formatters; anything
+    else renders through `_owner_value_cell`. The owner's own explanatory `note` (e.g. "bases
+    are separate facts and are never summed") is rendered beneath the table, verbatim."""
+    if not isinstance(totals, dict):
+        return [{"type": "p", "text": f"{caption}: not recorded"}]
+    rows = []
+    for basis, sub in totals.items():
+        if basis == "note":
+            continue
+        if not isinstance(sub, dict):
+            rows.append([f"{basis}", _owner_value_cell(sub)])
+            continue
+        for field in sub:
+            value = sub.get(field)
+            label = f"{basis}.{field}"
+            if isinstance(field, str) and field.endswith("usd"):
+                cell = {"fmt": "usd", "value": value, "basis": str(basis)}
+            elif field == "credits":
+                cell = {"fmt": "credits", "value": value}
+            elif field == "n":
+                cell = {"fmt": "count", "value": value}
+            else:
+                cell = _owner_value_cell(value)
+            rows.append([label, cell])
+    blocks = [{"type": "table", "headers": ["basis.field", "value"], "rows": rows,
+              "caption": caption, "empty": f"{caption}: no bases recorded"}]
+    note = totals.get("note")
+    if isinstance(note, str) and note:
+        blocks.append({"type": "p", "text": note})
+    return blocks
+
+
+def _spend_table(spend):
+    """`card["spend"]` as a flat key/value table -- every field this dict carries, a `..._usd`
+    field through `fmt_usd` with the FIELD'S OWN NAME as its basis label (TASKS.md item 1: "a
+    spend key that names a basis keeps that basis word in its label")."""
+    if not isinstance(spend, dict):
+        return [{"type": "p", "text": "spend: not recorded"}]
+    rows = []
+    for field in spend:
+        value = spend.get(field)
+        if isinstance(field, str) and field.endswith("usd"):
+            cell = {"fmt": "usd", "value": value, "basis": field}
+        elif field in ("dispatched", "max_dispatches"):
+            cell = {"fmt": "count", "value": value}
+        else:
+            cell = _owner_value_cell(value)
+        rows.append([field, cell])
+    return [{"type": "table", "headers": ["field", "value"], "rows": rows, "caption": "spend",
+            "empty": "spend: no fields recorded"}]
+
+
+def _variant_table(variants):
+    """TASKS.md item 1: `variants` as a table of every key each summary carries -- the column
+    set is read from the summaries themselves (T5's `_first_seen_keys` idiom), so a future
+    `_variant_summary` field is never silently dropped. `below_floor` renders as plain text
+    (`_owner_value_cell` on a bool), like every other field here; nothing here re-derives a
+    rate, a rank or a verdict the owner did not already compute."""
+    fields = []
+    for v in variants:
+        if isinstance(v, dict):
+            for key in v:
+                if key not in fields:
+                    fields.append(key)
+    rows = []
+    for v in variants:
+        if not isinstance(v, dict):
+            rows.append([_owner_value_cell(v)])
+            continue
+        rows.append([_owner_value_cell(v.get(field)) for field in fields])
+    return {"type": "table", "headers": fields or ["variant"], "rows": rows,
+           "caption": "variants", "empty": "no variants recorded", "details": True}
+
+
+def _eval_card_blocks(card):
+    """TASKS.md item 1's per-run card: variants, spend, totals, sample, labels verbatim,
+    ranking only when the owner set it (else the exact line the brief pins), adjudications,
+    escaped_defects_total, untested_claims as a details list, notes."""
+    blocks = [{"type": "p", "parts": [
+        f"run ", card.get("run_id"), " — repo: ", card.get("repo"), "  harness: ",
+        card.get("harness"), "  repeats: ", _owner_value_cell(card.get("repeats")),
+        "  evidence floor: ", _owner_value_cell(card.get("evidence_floor"))]}]
+    blocks.append(_variant_table(card.get("variants") or []))
+    blocks.extend(_spend_table(card.get("spend")))
+    blocks.extend(_owner_totals_table(card.get("totals"), "totals (usage, by basis)"))
+    blocks.append({"type": "p", "parts": ["sample: ", _owner_value_cell(card.get("sample"))]})
+    blocks.append({"type": "list", "items": list(card.get("labels") or ()),
+                   "empty": "no labels recorded"})
+    ranking = card.get("ranking")
+    if ranking is not None:
+        blocks.append({"type": "p",
+                       "text": "ranking: " + " > ".join(str(v) for v in ranking)})
+    else:
+        blocks.append({"type": "p", "text": "ranking: none — the owner did not rank"})
+    blocks.append({"type": "p", "parts": [
+        "adjudications: ", _owner_value_cell(card.get("adjudications")),
+        "  escaped defects total: ", _owner_value_cell(card.get("escaped_defects_total"))]})
+    blocks.append({"type": "list", "items": list(card.get("untested_claims") or ()),
+                   "empty": "no untested claims recorded", "details": True,
+                   "caption": "untested claims"})
+    blocks.append({"type": "list", "items": list(card.get("notes") or ()),
+                   "empty": "no notes from this run's card"})
+    return blocks
+
+
+def _eval_runs_table(rows):
+    """TASKS.md item 1: the runs table -- run id, harness, repo (scrubbed at render time like
+    every other path on the page), trials, `spent_usd` through `fmt_usd` with the brief's own
+    basis wording, labels verbatim."""
+    table_rows = []
+    for row in rows:
+        labels = row.get("labels") or ()
+        table_rows.append([
+            row.get("run_id"), row.get("harness"), row.get("repo"),
+            _owner_value_cell(row.get("trials")),
+            {"fmt": "usd", "value": row.get("spent_usd"),
+             "basis": "as the evaluation recorded it"},
+            " | ".join(str(item) for item in labels) if labels else "—",
+        ])
+    return {"type": "table",
+           "headers": ["run id", "harness", "repo", "trials", "spent usd", "labels"],
+           "rows": table_rows, "caption": "evaluation runs", "empty": "no evaluation runs"}
+
+
+def _evals_namespace_section(ctx, we_mod, ns_row, notes):
+    """TASKS.md item 1, one mapped namespace -> blocks."""
+    label = _namespace_label(ns_row)
+    caps = ctx["caps"]
+    blocks = [{"type": "p", "text": f"Evaluation runs for {label}:"}]
+    store_dir, link_note = _guarded_store_dir(ctx["data_home"], ns_row, "evals")
+    if link_note:
+        notes.append(link_note)
+    if store_dir is None:
+        blocks.append({"type": "p", "text": "No evals store for this namespace."})
+        return blocks
+    safe_names, bad_runs = _evals_prescan(we_mod, store_dir, caps, notes, label)
+    if bad_runs:
+        for name, reason in bad_runs:
+            notes.append(f"{label}: evals run {name!r} excluded from this build ({reason})")
+        blocks.append({"type": "p", "text": "Evaluation runs not read this build — a linked or "
+                                            "oversized run was found in this namespace's evals "
+                                            "store (see the notes above); list_runs was not "
+                                            "called."})
+    else:
+        try:
+            rows, list_notes = we_mod.list_runs(store_dir)
+        except Exception as exc:
+            # T7 retry R2: `list_runs` itself can raise (a `results.json` that decodes but is
+            # not a JSON object -- `env.get("v")` then raises on a list/str/int/etc.), which
+            # the pre-scan above does not catch (it only checks links and size). The runs
+            # TABLE has no owner data to build from, but every pre-scanned-safe run still gets
+            # its own `read_envelope`/`build_card` attempt -- no fourth adapter, no parsing of
+            # results.json by this dashboard.
+            notes.append(f"{label}: evaluation runs unavailable ({type(exc).__name__})")
+            blocks.append({"type": "p", "text": f"the runs table is not available this build "
+                                                f"— workflow_eval.list_runs raised "
+                                                f"{type(exc).__name__} — see the notes above"})
+            for run_id in _eval_ordered_run_ids(safe_names, caps, notes, label,
+                                                "directory name"):
+                blocks.extend(_eval_run_card_blocks(we_mod, store_dir, run_id, label, notes))
+        else:
+            notes.extend(f"{label}: {note}" for note in list_notes)
+            blocks.append(_eval_runs_table(rows))
+            run_ids = [row.get("run_id") for row in rows]
+            for run_id in _eval_ordered_run_ids(run_ids, caps, notes, label, "run id"):
+                blocks.extend(_eval_run_card_blocks(we_mod, store_dir, run_id, label, notes))
+    manifest_dir = Path(store_dir) / we_mod.MANIFEST_DIR
+    if manifest_dir.is_symlink():
+        notes.append(f"{label}: manifests directory is a symlink — not followed, not counted")
+        blocks.append({"type": "p", "text": "manifests: unknown — see the notes above"})
+    elif manifest_dir.is_dir():
+        try:
+            names = [p.name for p in manifest_dir.iterdir() if p.suffix == ".json"]
+        except OSError as exc:
+            notes.append(f"{label}: manifests directory could not be listed "
+                         f"({type(exc).__name__})")
+            blocks.append({"type": "p", "text": "manifests: unknown — see the notes above"})
+        else:
+            blocks.append({"type": "p", "parts": [
+                "manifests (names only, never opened): ",
+                {"fmt": "count", "value": len(names)}]})
+    else:
+        blocks.append({"type": "p", "text": "manifests: no manifests directory."})
+    return blocks
+
+
+def _prefs_prescan(prefs_dir, caps, notes, label):
+    """A no-follow, bounded, recursive scan of everything under one namespace's prefs
+    directory (T6's link contract, generalized): if ANY entry anywhere in the tree is a
+    symlink, or any file exceeds MAX_PREFS_FILE_BYTES, the whole directory is untrusted for
+    this build and none of `policy_report`/`approval_report`/`activation_report` are called
+    over it -- each reads several files this dashboard does not enumerate by name (never
+    spelling `workflow_eval.POLICY_FILE`), so excluding by name is not possible; excluding the
+    whole directory is. Returns True when it is safe to call the three report functions."""
+    limit = cap_value(caps, "MAX_PREFS_FILE_BYTES")
+    entries_limit = cap_value(caps, "MAX_PREFS_ENTRIES_SCANNED")
+    seen = 0
+    stack = [Path(prefs_dir)]
+    while stack:
+        current = stack.pop()
+        try:
+            children = sorted(current.iterdir(), key=lambda p: p.name)
+        except OSError as exc:
+            notes.append(f"{label}: prefs directory could not be listed "
+                         f"({type(exc).__name__})")
+            return False
+        for child in children:
+            seen += 1
+            if seen > entries_limit:
+                notes.append(cap_note(
+                    caps, "MAX_PREFS_ENTRIES_SCANNED",
+                    f"{label}: the prefs directory holds more entries than were scanned; "
+                    f"policy/approval/activation are not read this build"))
+                return False
+            if child.is_symlink():
+                notes.append(f"{label}: prefs entry {child.name!r} is a symlink — not "
+                             f"followed; policy/approval/activation are not read this build")
+                return False
+            if _is_real_dir(child):
+                stack.append(child)
+                continue
+            try:
+                size = child.lstat().st_size
+            except OSError:
+                continue
+            if size > limit:
+                notes.append(cap_note(
+                    caps, "MAX_PREFS_FILE_BYTES",
+                    f"{label}: prefs file {child.name!r} is {size} bytes — "
+                    f"policy/approval/activation are not read this build"))
+                return False
+    return True
+
+
+def _policy_blocks(report):
+    """TASKS.md item 2: `policy_report` -- in force (version, defaults) or "none in force",
+    history_versions, a proposals table (id, status, run, decisions), consumption,
+    review_authority verbatim."""
+    policy = report.get("policy")
+    blocks = []
+    if isinstance(policy, dict):
+        blocks.append({"type": "p", "parts": [
+            "policy in force — version: ", _owner_value_cell(policy.get("version")),
+            "  defaults: ", _owner_value_cell(policy.get("defaults"))]})
+    else:
+        blocks.append({"type": "p", "text": "none in force."})
+    versions = report.get("history_versions") or ()
+    blocks.append({"type": "p", "parts": [
+        "history versions: ", ", ".join(str(v) for v in versions) if versions else "none"]})
+    prop_rows = [[_owner_value_cell(p.get("id")), _owner_value_cell(p.get("status")),
+                 _owner_value_cell(p.get("run")),
+                 (" | ".join(str(d) for d in (p.get("decisions") or ()))
+                  if p.get("decisions") else "—")]
+                for p in (report.get("proposals") or ())]
+    blocks.append({"type": "table", "headers": ["id", "status", "run", "decisions"],
+                   "rows": prop_rows, "caption": "policy proposals",
+                   "empty": "no proposals recorded", "details": True})
+    blocks.append({"type": "p", "parts": [
+        "consumption: ", _owner_value_cell(report.get("consumption"))]})
+    blocks.append({"type": "p", "parts": [report.get("review_authority")]})
+    return blocks
+
+
+def _approvals_blocks(report):
+    """TASKS.md item 2: `approval_report` -- table (id, state, granted, by, refusals) plus its
+    own `labels`, verbatim. An absent/empty approvals store is the owner's own empty shape
+    (`approvals: []`), rendered here as an empty table with its `labels` still shown."""
+    rows = [[_owner_value_cell(a.get("id")), _owner_value_cell(a.get("state")),
+            _owner_value_cell(a.get("granted")), _owner_value_cell(a.get("by")),
+            (" | ".join(str(r) for r in (a.get("refusals") or ())) if a.get("refusals")
+             else "—")]
+           for a in (report.get("approvals") or ())]
+    return [
+        {"type": "table", "headers": ["id", "state", "granted", "by", "refusals"],
+         "rows": rows, "caption": "approvals", "empty": "no approvals recorded",
+         "details": True},
+        {"type": "list", "items": list(report.get("labels") or ()),
+         "empty": "no labels recorded"},
+    ]
+
+
+def _activation_blocks(report):
+    """TASKS.md item 2: `activation_report` -- scopes table (scope key, generation, state,
+    unreadable, strays), `confined_dispatch_wired`, `unproven` codes, `labels` verbatim."""
+    rows = [[_owner_value_cell(s.get("scope_key")), _owner_value_cell(s.get("generation")),
+            _owner_value_cell(s.get("state")), _owner_value_cell(s.get("unreadable")),
+            (" | ".join(str(x) for x in (s.get("strays") or ())) if s.get("strays") else "—")]
+           for s in (report.get("scopes") or ())]
+    return [
+        {"type": "table",
+         "headers": ["scope key", "generation", "state", "unreadable", "strays"],
+         "rows": rows, "caption": "activation scopes",
+         "empty": "no activation scopes recorded", "details": True},
+        {"type": "p", "parts": [
+            "confined dispatch wired: ",
+            _owner_value_cell(report.get("confined_dispatch_wired"))]},
+        {"type": "list", "items": list(report.get("unproven") or ()),
+         "empty": "no unproven codes recorded"},
+        {"type": "list", "items": list(report.get("labels") or ()),
+         "empty": "no labels recorded"},
+    ]
+
+
+def _prefs_namespace_section(ctx, we_mod, ns_row, notes):
+    """TASKS.md item 2, one mapped namespace -> blocks. `prefs_dir` may be absent; the three
+    owner report functions tolerate that themselves (each does its own `Path.is_dir()` check
+    before reading anything), so an absent directory is handed to them rather than treated as
+    a reason to skip -- unlike a SYMLINKED one, which never reaches them."""
+    label = _namespace_label(ns_row)
+    caps = ctx["caps"]
+    blocks = [{"type": "p", "text": f"Policy, approvals and activation for {label}:"}]
+    prefs_dir = Path(ctx["data_home"]) / ns_row["namespace"] / "prefs"
+    if prefs_dir.is_symlink():
+        notes.append(f"{label}: prefs store is a symlink — not followed, not read")
+        blocks.append({"type": "p", "text": "Policy, approvals and activation not read this "
+                                            "build — the prefs store is a symlink."})
+        return blocks
+    if prefs_dir.is_dir() and not _prefs_prescan(prefs_dir, caps, notes, label):
+        blocks.append({"type": "p", "text": "Policy, approvals and activation not read this "
+                                            "build — see the notes above."})
+        return blocks
+    try:
+        blocks.extend(_policy_blocks(we_mod.policy_report(prefs_dir)))
+    except Exception as exc:  # PLAN D10: one report's failure never drops another
+        notes.append(f"{label}: policy report unavailable ({type(exc).__name__})")
+        blocks.append({"type": "p", "text": "policy: not available this build — see the "
+                                            "notes above"})
+    try:
+        blocks.extend(_approvals_blocks(we_mod.approval_report(prefs_dir)))
+    except Exception as exc:  # noqa: BLE001 -- this report only, never another
+        notes.append(f"{label}: approval report unavailable ({type(exc).__name__})")
+        blocks.append({"type": "p", "text": "approvals: not available this build — see the "
+                                            "notes above"})
+    try:
+        blocks.extend(_activation_blocks(we_mod.activation_report(prefs_dir)))
+    except Exception as exc:  # noqa: BLE001 -- this report only, never another
+        notes.append(f"{label}: activation report unavailable ({type(exc).__name__})")
+        blocks.append({"type": "p", "text": "activation: not available this build — see the "
+                                            "notes above"})
+    return blocks
+
+
+def build_evals_panel(ctx):
+    we_mod = _mod("workflow_eval")
+    source_text = ("bin/dashboard.py — workflow_eval.list_runs/read_envelope/build_card and "
+                  "policy_report/approval_report/activation_report per mapped namespace (PLAN "
+                  "D3 row 5), each store pre-scanned no-follow for a link or an oversized file "
+                  "before any owner call")
+    if ctx["data_home"] is None:
+        return {"source": source_text, "observed": None, "notes": [],
+               "summary": "no data home was given",
+               "blocks": [{"type": "p", "text": "No data home was given, so no evals or prefs "
+                                                "store could be read."}]}
+    ns_rows, cap_notes = read_namespaces(ctx)
+    notes = list(cap_notes)
+    mapped_rows = [row for row in ns_rows if row.get("mapped")]
+    blocks = []
+    for ns_row in mapped_rows:
+        label = _namespace_label(ns_row)
+        try:
+            blocks.extend(_evals_namespace_section(ctx, we_mod, ns_row, notes))
+        except Exception as exc:  # PLAN D10: one namespace's failure never blanks the panel
+            notes.append(f"evals for {label}: {type(exc).__name__}")
+            blocks.append({"type": "p", "text": f"Evaluation runs for {label}: not available "
+                                                f"this build — see the notes above"})
+        try:
+            blocks.extend(_prefs_namespace_section(ctx, we_mod, ns_row, notes))
+        except Exception as exc:  # noqa: BLE001 -- this namespace's prefs only
+            notes.append(f"prefs for {label}: {type(exc).__name__}")
+            blocks.append({"type": "p", "text": f"Policy, approvals and activation for "
+                                                f"{label}: not available this build — see the "
+                                                f"notes above"})
+    if not mapped_rows:
+        blocks.append({"type": "p", "text": "No mapped namespace to read evaluation runs or "
+                                            "policy from."})
+    notes.append(_unmapped_store_note(ctx["model"]["classes"], "evals", "evals"))
+    notes.append(_unmapped_store_note(ctx["model"]["classes"], "prefs", "prefs"))
+    notes = list(dict.fromkeys(notes))
+    return {
+        "source": source_text,
+        "observed": "live, at build time",
+        "notes": notes,
+        "summary": (f"evaluation runs and policy read for {len(mapped_rows)} mapped "
+                   f"namespace(s)" if mapped_rows else
+                   "no mapped namespace to read evaluation runs or policy from"),
+        "blocks": blocks,
+    }
+
+
+def build_training_panel(ctx):
+    """TASKS.md item 3: `training_data.status(repo_root=checkout)`, per DISCOVERED checkout --
+    not a namespace concept: the owner resolves its own store from the checkout path, and
+    reads no file at all (only a directory-existence check), so no link/size pre-scan applies
+    here."""
+    td_mod = _mod("training_data")
+    notes = []
+    checkouts = ctx.get("checkouts") or []
+    rows = []
+    detail_blocks = []
+    for checkout in checkouts:
+        try:
+            status = td_mod.status(repo_root=checkout)
+        except Exception as exc:  # PLAN D10: one checkout's failure never blanks the panel
+            notes.append(f"{checkout}: training status unavailable ({type(exc).__name__})")
+            rows.append([checkout, None, None, None, None, None, None])
+            continue
+        rows.append([
+            checkout, _owner_value_cell(status.get("collection_enabled")),
+            _owner_value_cell(status.get("capture_wired")), status.get("store_path"),
+            _owner_value_cell(status.get("store_origin")),
+            _owner_value_cell(status.get("store_exists")),
+            _owner_value_cell(status.get("eligible_to_persist")),
+        ])
+        detail_blocks.append({"type": "p", "text": f"To enable collection for {checkout}:"})
+        detail_blocks.append({"type": "list", "items": list(status.get("to_enable") or ()),
+                              "empty": "nothing recorded"})
+        detail_blocks.append({"type": "list", "items": list(status.get("notes") or ()),
+                              "empty": "no notes recorded"})
+    blocks = [{"type": "table",
+              "headers": ["checkout", "collection enabled", "capture wired", "store path",
+                          "store origin", "store exists", "eligible to persist"],
+              "rows": rows, "caption": "training data status per checkout",
+              "empty": "no checkout discovered", "details": True}]
+    blocks.extend(detail_blocks)
+    if not checkouts:
+        blocks.insert(0, {"type": "p", "text": "No checkout discovered to check training "
+                                               "status for."})
+    return {
+        "source": ("bin/dashboard.py — training_data.status(repo_root=<checkout>) per "
+                  "discovered checkout (PLAN D3 row 5)"),
+        "observed": "live, at build time",
+        "notes": notes,
+        "summary": f"training status checked for {len(checkouts)} checkout(s)",
+        "blocks": blocks,
+    }
+
+
 def _bounds_blocks(notes, report):
     """The bounds panel's body: every cap with hit / not hit, then every note of the build.
     Also how `render_build` rebuilds that body when a panel's rendering fails, so the failure
@@ -2680,6 +3256,8 @@ PANELS = [
     (KITS_PANEL, "Kits in flight", build_kits_panel),
     (TELEMETRY_PANEL, "Telemetry snapshots", build_telemetry_panel),
     (JOURNAL_PANEL, "Journal digests", build_journal_panel),
+    (EVALS_PANEL, "Evaluation runs and policy", build_evals_panel),
+    (TRAINING_PANEL, "Training data readiness", build_training_panel),
     (BOUNDS_PANEL, "Bounds and notes", build_bounds_panel),
 ]
 
@@ -3188,8 +3766,14 @@ def _render_block(block):
         items = _as_list(block.get("items") or None)
         if not items:
             return f'<p class="notes">{esc(block.get("empty") or "none")}</p>'
-        return ('<ul class="notes">\n' + "\n".join(f"<li>{esc(item)}</li>" for item in items)
-                + "\n</ul>")
+        list_html = ('<ul class="notes">\n'
+                    + "\n".join(f"<li>{esc(item)}</li>" for item in items) + "\n</ul>")
+        if block.get("details"):
+            # T7: a long list (untested claims) gets the same <details> wrap a long table
+            # already has, on the same terms as `html_table`'s own `details=True`.
+            summary = f"{block.get('caption') or 'items'} ({_plural(len(items), 'item', 'items')})"
+            return f"<details>\n<summary>{esc(summary)}</summary>\n{list_html}\n</details>"
+        return list_html
     if kind == "table":
         rows = _as_list(block.get("rows") or None)
         if not rows and block.get("empty"):
@@ -3640,13 +4224,15 @@ def synthetic_world(root, residue=30):
     unregistered `mystery/2026-01-01.json` source -- T6 item 3) and a journal store (two
     schema-1 digest days, one schema-99 day, and a canary string
     `CANARY-INBOX-TEXT-DO-NOT-RENDER` planted in one digest's never-read `inbox` -- T6 item 3);
-    `residue` residue namespaces each holding only `attempts/kit/events.jsonl` with one event,
-    and one unmapped namespace with a ledger carrying one corrupt line. Every value is
-    synthetic; nothing outside `root` is touched, and nothing here is oversized -- an over-size
-    ledger is a T4-test-only fixture, not a `demo`/`synthetic_world` one (TASKS.md item 5).
+    an evals store (one run `build_card` accepts, one foreign-version run, one non-run
+    directory, two manifest names) and an empty `prefs` dir (T7 item 4); `residue` residue
+    namespaces each holding only `attempts/kit/events.jsonl` with one event, and one unmapped
+    namespace with a ledger carrying one corrupt line. Every value is synthetic; nothing
+    outside `root` is touched, and nothing here is oversized -- an over-size ledger is a
+    T4-test-only fixture, not a `demo`/`synthetic_world` one (TASKS.md item 5).
     """
     rd, al, sp = _mod("runtime_data"), _mod("attempt_ledger"), _mod("safe_paths")
-    ts, jc = _mod("telemetry_snapshot"), _mod("journal_collect")
+    ts, jc, we = _mod("telemetry_snapshot"), _mod("journal_collect"), _mod("workflow_eval")
     root = Path(root)
     data_home = root / "data-home"
     checkout = root / "checkout"
@@ -3818,6 +4404,43 @@ def synthetic_world(root, residue=30):
                               "unpriced_sources": []}}),
         what="synthetic journal digest")
 
+    # T7 item 4: evals -- one run `build_card` can build a real card from (a single trial, a
+    # single variant, an explicit `evidence_floor` above that one trial's count so
+    # `below_floor` is deterministically True regardless of any owner default), one run whose
+    # envelope is a foreign schema version, one directory that is not a run at all, and two
+    # manifest names (counted, never opened). An empty `prefs` dir: the three report functions
+    # tolerate that themselves (TASKS.md item 2).
+    evals_dir = data_home / namespace / "evals"
+    good_run_dir = evals_dir / "run-2026-01-01-demo"
+    old_run_dir = evals_dir / "run-2026-01-02-oldversion"
+    not_a_run_dir = evals_dir / "not-a-run"
+    manifests_dir = evals_dir / we.MANIFEST_DIR
+    prefs_dir = data_home / namespace / "prefs"
+    for directory in (good_run_dir, old_run_dir, not_a_run_dir, manifests_dir, prefs_dir):
+        rd.ensure_private(directory)
+    good_envelope = {
+        "v": we.EVAL_VERSION, "run_id": "run-2026-01-01-demo", "repo": "demo-repo",
+        "harness": "claude", "registry": "demo-registry", "pricing_date": "2026-01-01",
+        "repeats": 1, "evidence_floor": 10,
+        "variants": [{"id": "v1"}],
+        "trials": [{"trial": "t1", "variant": "v1", "task_id": "task1", "solved": True}],
+        "spend": {"spent_usd": None, "ceiling_usd": 5.0, "dispatched": 2, "max_dispatches": 10,
+                  "overspent": False},
+        "totals": {"model-reported": {"n": 1, "usd": 0.5}, "estimated": {"n": 0, "usd": 0.0},
+                   "proxy": {"n": 0, "api_equivalent_usd": 0.0},
+                   "credits": {"n": 0, "credits": 0.0}, "unpriced": {"n": 0},
+                   "note": "bases are separate facts and are never summed"},
+        "labels": ["synthetic eval run"],
+    }
+    sp.confined_write_bytes(good_run_dir, "results.json", json.dumps(good_envelope),
+                            what="synthetic eval run")
+    sp.confined_write_bytes(
+        old_run_dir, "results.json",
+        json.dumps({"v": "polytropos.workflow-eval/99", "run_id": "run-2026-01-02-oldversion"}),
+        what="synthetic eval run (foreign version)")
+    sp.confined_write_bytes(manifests_dir, "m1.json", "{}", what="synthetic eval manifest")
+    sp.confined_write_bytes(manifests_dir, "m2.json", "{}", what="synthetic eval manifest")
+
     return {
         "root": root,
         "data_home": data_home,
@@ -3836,6 +4459,12 @@ def synthetic_world(root, residue=30):
         "telemetry_days": telemetry_days,
         "journal_dir": journal_dir,
         "journal_days": journal_days,
+        "evals_dir": evals_dir,
+        "good_run_dir": good_run_dir,
+        "old_run_dir": old_run_dir,
+        "not_a_run_dir": not_a_run_dir,
+        "manifests_dir": manifests_dir,
+        "prefs_dir": prefs_dir,
     }
 
 

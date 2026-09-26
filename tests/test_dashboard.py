@@ -206,7 +206,7 @@ class ClassificationTests(_WorldCase):
         self.assertEqual(mapped["namespace"], self.world["namespace"])
         self.assertEqual(mapped["kind"], "checkout")
         self.assertEqual(mapped["checkout"], str(self.world["checkout"]))
-        self.assertEqual(mapped["stores"], ["telemetry", "journal", "attempts"])
+        self.assertEqual(mapped["stores"], ["telemetry", "journal", "prefs", "attempts", "evals"])
         self.assertEqual(classes["unmapped"], [{"namespace": db.UNMAPPED_NAMESPACE,
                                                 "stores": ["attempts"]}])
         self.assertEqual(classes["residue"]["count"], 30)
@@ -1008,7 +1008,7 @@ class PageTests(_WorldCase):
             "residue": {**exact(30), "sample": sorted(self.world["residue"])[:3]}})
         self.assertEqual([panel["id"] for panel in receipt["panels"]],
                          ["namespaces", "attempts", "scorecard", "kits", "telemetry", "journal",
-                          "bounds"])
+                          "evals", "training", "bounds"])
         self.assertEqual([row["name"] for row in receipt["caps"]], list(db.CAP_NAMES))
         self.assertEqual(receipt["caps_hit"], [])
         self.assertEqual(receipt["page"], str(self.out / "index.html"))
@@ -1111,7 +1111,7 @@ class RenderingTests(_WorldCase):
         self.assertEqual(model["notes"][0], "a note")
         self.assertEqual([panel["id"] for panel in model["panels"]],
                          ["namespaces", "attempts", "scorecard", "kits", "telemetry", "journal",
-                          "bounds"])
+                          "evals", "training", "bounds"])
 
     def test_a_panel_builder_that_raises_is_a_note_not_an_exception(self):
         def broken(_ctx):
@@ -2778,9 +2778,10 @@ class SourceTests(unittest.TestCase):
             (db.MAX_NAMESPACES_LISTED, db.MAX_NAMESPACES_READ, db.MAX_LEDGER_BYTES,
              db.MAX_KITS_PER_DIR, db.MAX_TASKS_MD_BYTES, db.MAX_EVAL_RUNS_RENDERED,
              db.MAX_JOURNAL_DAYS, db.MAX_TELEMETRY_ENVELOPES_PER_SOURCE, db.MAX_DIGEST_BYTES,
-             db.MAX_ENVELOPE_BYTES, db.GIT_TIMEOUT_SECONDS),
+             db.MAX_ENVELOPE_BYTES, db.MAX_EVAL_RESULTS_BYTES, db.MAX_PREFS_FILE_BYTES,
+             db.MAX_PREFS_ENTRIES_SCANNED, db.GIT_TIMEOUT_SECONDS),
             (5000, 32, 8 * 1024 * 1024, 100, 1024 * 1024, 10, 60, 120, 256 * 1024, 512 * 1024,
-             20))
+             4 * 1024 * 1024, 512 * 1024, 500, 20))
         self.assertEqual(db.PLUGIN_ROOT, BIN_DIR.parent)
         self.assertEqual(db.default_caps(), {name: getattr(db, name) for name in db.CAP_NAMES})
         self.assertEqual(db.STORE_NAME, "dashboard")
@@ -3012,8 +3013,10 @@ class TelemetryPanelTests(_WorldCase):
         self.assertNotIn("<td>cost_report</td>", section)
         self.assertIn("<td>codex_usage</td>", section)
         bounds = _section(page, "bounds")
-        self.assertIn("<td>MAX_ENVELOPE_BYTES</td>", bounds)
-        self.assertIn("<td>hit</td>", bounds)
+        # T7 retry V2: the row's OWN status cell, not just that some row somewhere says "hit".
+        self.assertIn(f"<td>MAX_ENVELOPE_BYTES</td><td>{db.MAX_ENVELOPE_BYTES}</td>"
+                      f"<td>hit</td>", bounds)
+        self.assertIn("MAX_ENVELOPE_BYTES", self.receipt(out)["caps_hit"])
 
 
 # ---------------------------------------------------------------------------------------------
@@ -3134,11 +3137,302 @@ class JournalPanelTests(_WorldCase):
         self.assertIn("2099-01-01", section)
         self.assertIn("skipped, never read", section)
         bounds = _section(page, "bounds")
-        self.assertIn("<td>MAX_DIGEST_BYTES</td>", bounds)
-        self.assertIn("<td>hit</td>", bounds)
+        # T7 retry V2: the row's OWN status cell, not just that some row somewhere says "hit".
+        self.assertIn(f"<td>MAX_DIGEST_BYTES</td><td>{db.MAX_DIGEST_BYTES}</td><td>hit</td>",
+                      bounds)
+        self.assertIn("MAX_DIGEST_BYTES", self.receipt(out)["caps_hit"])
         # the healthy schema-1 days are unaffected.
         self.assertIn("$1.23", section)
         self.assertIn(self.world["journal_days"][0], section)
+
+
+# ---------------------------------------------------------------------------------------------
+# Evaluation runs, policy/approvals/activation panel (T7 items 1-2).
+
+class EvalsPanelTests(_WorldCase):
+
+    def test_the_version_99_run_appears_only_through_the_owners_note(self):
+        rc, out, _stdout, stderr = self.build()
+        self.assertEqual(rc, 0, stderr)
+        page = self.page(out)
+        section = _section(page, "evals")
+        self.assertIn("run-2026-01-02-oldversion: not a polytropos.workflow-eval/1 envelope",
+                      section)
+        self.assertNotIn("<td>run-2026-01-02-oldversion</td>", section)
+
+    def test_not_a_ranking_appears_for_a_single_repeat_run(self):
+        rc, out, _stdout, stderr = self.build()
+        self.assertEqual(rc, 0, stderr)
+        we = db._mod("workflow_eval")
+        section = _section(self.page(out), "evals")
+        self.assertIn(we.NOT_A_RANKING, section)
+
+    def test_ranking_none_appears_and_no_ranking_list_does(self):
+        rc, out, _stdout, stderr = self.build()
+        self.assertEqual(rc, 0, stderr)
+        section = _section(self.page(out), "evals")
+        self.assertIn("ranking: none — the owner did not rank", section)
+        self.assertNotIn("ranking: v1", section)
+
+    def test_a_below_floor_variant_renders_the_owners_label(self):
+        rc, out, _stdout, stderr = self.build()
+        self.assertEqual(rc, 0, stderr)
+        section = _section(self.page(out), "evals")
+        self.assertIn("v1: BELOW EVIDENCE FLOOR (n=1 &lt; 10)", section)
+
+    def test_spent_usd_none_renders_unknown(self):
+        rc, out, _stdout, stderr = self.build()
+        self.assertEqual(rc, 0, stderr)
+        section = _section(self.page(out), "evals")
+        self.assertIn(f"<td>run-2026-01-01-demo</td><td>claude</td><td>demo-repo</td>"
+                      f"<td>1</td><td>{UNKNOWN_SPAN}</td>", section)
+
+    def test_the_not_a_run_directory_is_noted_never_rendered_as_a_run(self):
+        rc, out, _stdout, stderr = self.build()
+        self.assertEqual(rc, 0, stderr)
+        section = _section(self.page(out), "evals")
+        self.assertIn("not-a-run: not an evaluation run", section)
+
+    def test_manifests_are_counted_by_name_never_opened(self):
+        rc, out, _stdout, stderr = self.build()
+        self.assertEqual(rc, 0, stderr)
+        section = _section(self.page(out), "evals")
+        self.assertIn("manifests (names only, never opened): 2", section)
+
+    def test_approvals_absent_renders_the_owners_empty_shape_without_error(self):
+        rc, out, _stdout, stderr = self.build()
+        self.assertEqual(rc, 0, stderr)
+        page = self.page(out)
+        section = _section(page, "evals")
+        self.assertIn("no approvals recorded", section)
+        self.assertNotIn("Traceback", page)
+        self.assertNotIn("not available this build", section)
+
+    def test_unmapped_namespace_showing_an_evals_or_prefs_store_is_counted_and_noted(self):
+        extra1 = "extra-unmapped-evals-0000dead"
+        extra2 = "extra-unmapped-prefs-0000beef"
+        (self.world["data_home"] / extra1 / "evals").mkdir(parents=True)
+        (self.world["data_home"] / extra2 / "prefs").mkdir(parents=True)
+        rc, out, _stdout, stderr = self.build()
+        self.assertEqual(rc, 0, stderr)
+        section = _section(self.page(out), "evals")
+        self.assertIn("unmapped namespace(s) show a evals store", section)
+        self.assertIn("unmapped namespace(s) show a prefs store", section)
+        self.assertNotIn(extra1, section)
+        self.assertNotIn(extra2, section)
+
+    def test_max_eval_runs_rendered_cap_lowered_leaves_a_note(self):
+        checkouts = [str(self.world["checkout"])]
+        model = db.build_model(self.world["data_home"], checkouts, {"notes": []},
+                               {"MAX_EVAL_RUNS_RENDERED": 0})
+        evals = next(p for p in model["panels"] if p["id"] == "evals")
+        self.assertTrue(any(note.startswith("cap MAX_EVAL_RUNS_RENDERED (0) reached")
+                            for note in evals["notes"]), evals["notes"])
+        page = db.render_page(model, _FAKE_HOME.name)
+        section = _section(page, "evals")
+        # the run row still appears in the runs TABLE; no per-run card was built for it.
+        self.assertIn("run-2026-01-01-demo", section)
+        self.assertNotIn("variants (1 row)", section)
+
+    def test_a_malformed_trial_field_is_a_note_not_a_crash_for_the_whole_namespace(self):
+        # T7 retry R1: a trial whose `oracles` is a truthy string makes the owner's
+        # `_variant_summary` do `(r.get("oracles") or {}).get(...)`, which calls `.get` ON
+        # THE STRING and raises `AttributeError` -- outside the brief's own pinned
+        # `(OSError, ValueError, KeyError, TypeError)` tuple.
+        we = db._mod("workflow_eval")
+        bad_run = self.world["evals_dir"] / "run-2026-01-05-oraclesstr"
+        bad_run.mkdir(parents=True)
+        envelope = {
+            "v": we.EVAL_VERSION, "run_id": "run-2026-01-05-oraclesstr", "repo": "demo-repo",
+            "harness": "claude", "repeats": 1, "evidence_floor": 10,
+            "variants": [{"id": "v1"}],
+            "trials": [{"trial": "t1", "variant": "v1", "task_id": "task1", "solved": True,
+                       "oracles": "not-a-dict"}],
+            "labels": ["synthetic eval run 2"],
+        }
+        (bad_run / "results.json").write_text(json.dumps(envelope))
+        rc, out, _stdout, stderr = self.build()
+        self.assertEqual(rc, 0, stderr)
+        page = self.page(out)
+        section = _section(page, "evals")
+        # the good run's own card still renders in full ...
+        self.assertIn("v1: BELOW EVIDENCE FLOOR", section)
+        self.assertIn("<td>run-2026-01-01-demo</td>", section)
+        # ... and the bad run gets its own note naming it and the exception type, never a
+        # panel-wide "not available" fallback that would mean the whole section was lost.
+        # (the run id is `!r`-quoted then HTML-escaped, so the apostrophes become `&#x27;`.)
+        self.assertIn("run-2026-01-05-oraclesstr", section)
+        self.assertIn("card unavailable (AttributeError)", section)
+        # never the PANEL-WIDE fallback (`build_evals_panel`'s own per-namespace catch): its
+        # own text names the checkout right after "Evaluation runs for", which would only
+        # appear if the per-namespace catch fired and erased this whole section.
+        self.assertNotIn(f"Evaluation runs for {self.world['checkout']}: not available",
+                        section)
+
+    def test_list_runs_raising_falls_back_to_per_run_reads_for_the_good_runs(self):
+        # T7 retry R2: a `results.json` that is valid JSON but not an object (`[1, 2, 3]`)
+        # makes the owner's `list_runs` raise `AttributeError` (`env.get("v")` on a list) --
+        # verified directly that `read_envelope` on the SAME run does not raise.
+        second_run = self.world["evals_dir"] / "run-2026-01-03-second"
+        second_run.mkdir(parents=True)
+        good2 = dict(json.loads((self.world["good_run_dir"] / "results.json").read_text()))
+        good2["run_id"] = "run-2026-01-03-second"
+        (second_run / "results.json").write_text(json.dumps(good2))
+        bad_run = self.world["evals_dir"] / "run-2026-01-04-notadict"
+        bad_run.mkdir(parents=True)
+        (bad_run / "results.json").write_text(json.dumps([1, 2, 3]))
+        rc, out, _stdout, stderr = self.build()
+        self.assertEqual(rc, 0, stderr)
+        page = self.page(out)
+        section = _section(page, "evals")
+        self.assertIn("the runs table is not available this build — workflow_eval.list_runs "
+                      "raised AttributeError", section)
+        # both GOOD runs' own cards still render, from the owner's own read_envelope/build_card
+        # over the pre-scan's safe directory names, never a re-parse of results.json here.
+        self.assertIn("run run-2026-01-01-demo — repo", section)
+        self.assertIn("run run-2026-01-03-second — repo", section)
+        # the bad (non-object) run gets its own note (apostrophes render as `&#x27;`).
+        self.assertIn("run-2026-01-04-notadict", section)
+        self.assertIn("card unavailable (AttributeError)", section)
+
+    def test_a_symlinked_eval_run_directory_is_excluded_with_a_note(self):
+        secret_dir = self.tmp / "outside-eval-secret"
+        secret_dir.mkdir()
+        marker = "EVAL-LEAK-MARKER-abc1"
+        (secret_dir / "results.json").write_text(json.dumps({
+            "v": db._mod("workflow_eval").EVAL_VERSION, "run_id": "leaky-run",
+            "labels": [marker]}))
+        os.symlink(secret_dir, self.world["evals_dir"] / "leaky", target_is_directory=True)
+        rc, out, _stdout, stderr = self.build()
+        self.assertEqual(rc, 0, stderr)
+        page = self.page(out)
+        section = _section(page, "evals")
+        self.assertNotIn(marker, page)
+        self.assertIn("leaky", section)
+        self.assertIn("symlinked run directory", section)
+        self.assertIn("list_runs was not called", section)
+        # the whole store is excluded this build -- see the module's own docstring for why a
+        # bad run cannot be safely dropped from `list_runs`'s own output after the fact.
+        self.assertNotIn("run-2026-01-01-demo", section)
+
+    def test_a_symlinked_results_json_excludes_the_whole_store_with_a_note(self):
+        outside = self.tmp / "outside-results.json"
+        outside.write_text(json.dumps({
+            "v": db._mod("workflow_eval").EVAL_VERSION, "run_id": "fake",
+            "labels": ["FABRICATED-EVAL-LABEL"]}))
+        run_dir = self.world["evals_dir"] / "run-2099-01-01-linked"
+        run_dir.mkdir()
+        (run_dir / "results.json").symlink_to(outside)
+        rc, out, _stdout, stderr = self.build()
+        self.assertEqual(rc, 0, stderr)
+        page = self.page(out)
+        section = _section(page, "evals")
+        self.assertNotIn("FABRICATED-EVAL-LABEL", page)
+        self.assertIn("symlinked results.json", section)
+
+    def test_an_oversized_results_json_excludes_the_whole_store_with_a_note(self):
+        junk = "C" * (db.MAX_EVAL_RESULTS_BYTES + 1024)
+        run_dir = self.world["evals_dir"] / "run-2099-02-02-huge"
+        run_dir.mkdir()
+        (run_dir / "results.json").write_text(json.dumps({
+            "v": db._mod("workflow_eval").EVAL_VERSION, "run_id": "huge", "junk": junk}))
+        rc, out, _stdout, stderr = self.build()
+        self.assertEqual(rc, 0, stderr)
+        page = self.page(out)
+        section = _section(page, "evals")
+        self.assertNotIn("C" * 100, page)
+        self.assertIn("MAX_EVAL_RESULTS_BYTES", page)
+        bounds = _section(page, "bounds")
+        # T7 retry V1/V2: the row's OWN status cell must read "hit" (V1's own fix routes the
+        # exclusion through `cap_note`), not just that the row exists -- it renders on every
+        # build regardless.
+        self.assertIn(f"<td>MAX_EVAL_RESULTS_BYTES</td><td>{db.MAX_EVAL_RESULTS_BYTES}</td>"
+                      f"<td>hit</td>", bounds)
+        self.assertIn("MAX_EVAL_RESULTS_BYTES", self.receipt(out)["caps_hit"])
+
+    def test_a_symlinked_prefs_entry_excludes_all_three_reports_with_a_note(self):
+        outside = self.tmp / "outside-prefs-file.json"
+        outside.write_text(json.dumps({"leak": "PREFS-LEAK-MARKER-77"}))
+        (self.world["prefs_dir"] / "linked.json").symlink_to(outside)
+        rc, out, _stdout, stderr = self.build()
+        self.assertEqual(rc, 0, stderr)
+        page = self.page(out)
+        section = _section(page, "evals")
+        self.assertNotIn("PREFS-LEAK-MARKER-77", page)
+        self.assertIn("prefs entry", section)
+        self.assertIn("is a symlink", section)
+        self.assertIn("policy/approval/activation are not read this build", section)
+        self.assertNotIn("none in force.", section)  # the whole prefs section was skipped
+        self.assertIn("run-2026-01-01-demo", section)  # evals runs are unaffected
+
+    def test_an_oversized_prefs_file_excludes_all_three_reports_with_a_note(self):
+        junk = "D" * (db.MAX_PREFS_FILE_BYTES + 1024)
+        (self.world["prefs_dir"] / "huge.json").write_text(junk)
+        rc, out, _stdout, stderr = self.build()
+        self.assertEqual(rc, 0, stderr)
+        page = self.page(out)
+        section = _section(page, "evals")
+        self.assertNotIn("D" * 100, page)
+        self.assertIn("MAX_PREFS_FILE_BYTES", page)
+        bounds = _section(page, "bounds")
+        # T7 retry V2: the row's OWN status cell, not just that the row exists.
+        self.assertIn(f"<td>MAX_PREFS_FILE_BYTES</td><td>{db.MAX_PREFS_FILE_BYTES}</td>"
+                      f"<td>hit</td>", bounds)
+        self.assertIn("MAX_PREFS_FILE_BYTES", self.receipt(out)["caps_hit"])
+
+    def test_max_prefs_entries_scanned_cap_lowered_leaves_a_note(self):
+        (self.world["prefs_dir"] / "one-entry.json").write_text("{}")
+        checkouts = [str(self.world["checkout"])]
+        model = db.build_model(self.world["data_home"], checkouts, {"notes": []},
+                               {"MAX_PREFS_ENTRIES_SCANNED": 0})
+        evals = next(p for p in model["panels"] if p["id"] == "evals")
+        self.assertTrue(any(note.startswith("cap MAX_PREFS_ENTRIES_SCANNED (0) reached")
+                            for note in evals["notes"]), evals["notes"])
+
+    def test_totals_and_spend_tables_carry_the_basis_word_in_their_label(self):
+        rc, out, _stdout, stderr = self.build()
+        self.assertEqual(rc, 0, stderr)
+        section = _section(self.page(out), "evals")
+        self.assertIn('<span class="label">model-reported</span>', section)
+        self.assertIn('<span class="label">ceiling_usd</span>', section)
+
+    def test_no_data_home_evals_panel_is_a_plain_note(self):
+        model = db.build_model(None, [], {}, None)
+        evals = next(p for p in model["panels"] if p["id"] == "evals")
+        self.assertIsNone(evals["observed"])
+        self.assertIn("no evals or prefs store could be read", evals["blocks"][0]["text"])
+
+
+# ---------------------------------------------------------------------------------------------
+# Training data readiness panel (T7 item 3).
+
+class TrainingPanelTests(_WorldCase):
+
+    def test_training_switches_render_false_false(self):
+        rc, out, _stdout, stderr = self.build()
+        self.assertEqual(rc, 0, stderr)
+        section = _section(self.page(out), "training")
+        self.assertIn("<td>False</td><td>False</td>", section)
+
+    def test_evals_and_training_panel_ids_are_in_the_model(self):
+        checkouts = [str(self.world["checkout"])]
+        model = db.build_model(self.world["data_home"], checkouts, {"notes": []}, None)
+        ids = [p["id"] for p in model["panels"]]
+        self.assertIn("evals", ids)
+        self.assertIn("training", ids)
+
+    def test_a_raising_status_call_is_a_note_not_a_crash(self):
+        with mock.patch.object(db._mod("training_data"), "status",
+                               side_effect=RuntimeError("boom")):
+            rc, out, _stdout, stderr = self.build()
+        self.assertEqual(rc, 0, stderr)
+        section = _section(self.page(out), "training")
+        self.assertIn("training status unavailable (RuntimeError)", section)
+
+    def test_no_checkouts_training_panel_is_a_plain_note(self):
+        model = db.build_model(self.world["data_home"], [], {"notes": []}, None)
+        training = next(p for p in model["panels"] if p["id"] == "training")
+        self.assertIn("No checkout discovered", training["blocks"][0]["text"])
 
 
 if __name__ == "__main__":

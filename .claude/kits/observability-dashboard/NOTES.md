@@ -973,3 +973,276 @@ agent: T6 id=a354c8e19bbc8cdae role=implementer model=sonnet
   is not a list. Verified: `python3 bin/telemetry_snapshot.py --list --store-dir <tmp>` over
   one envelope with `"labels": 42` exits 1 with `TypeError: 'int' object is not iterable`.
 outcome: T6 model=sonnet attempts=2 result=retry-pass review=revised run=2026-09-25-7e3a
+
+## T7 — evaluation runs, policy/approvals/activation, and training panel
+
+- Owner shapes read directly from `bin/workflow_eval.py` (7,845 lines) and
+  `bin/training_data.py` (4,898 lines): no delta from the brief. `list_runs` does its OWN
+  `env.get("v") != EVAL_VERSION` gate internally and excludes a foreign-version run from its
+  `rows` before this dashboard ever sees it -- confirming "the version-99 run appears only
+  through the owner's note" is the OWNER's own behavior, not something this task needed to
+  add. `build_card` does NOT itself gate on version (it always stamps its own output "v":
+  EVAL_VERSION regardless of the input envelope), so the version gate that matters is entirely
+  `list_runs`'s. `policy_report`/`approval_report`/`activation_report` each tolerate an absent
+  `prefs_dir` themselves (their own `Path.is_dir()` checks), returning their own empty shapes
+  rather than raising -- confirmed by reading `_prefs_paths`/`read_policy`/`policy_report`
+  directly, not assumed.
+- Panel structure: PINNED_PANEL_ORDER (`tests/test_dashboard.py`) pins exactly two new ids,
+  `evals` and `training` -- not three -- so TASKS.md item 1 (evaluation runs) and item 2
+  (policy/approvals/activation) are both rendered inside ONE `evals` panel, per mapped
+  namespace, in that order; `training` is its own panel, per DISCOVERED CHECKOUT (not a
+  namespace concept: `training_data.status` resolves its own store from a checkout path and
+  reads no file at all, only a directory-existence check, so no link/size pre-scan applies to
+  it).
+- The three guard edits the dispatch named, made and verified green (`test_decision_evaluation_manifest.py`,
+  `test_training_data.py` x2 -- 47, 239 and 52 tests respectively, all still OK):
+  - `tests/test_decision_evaluation_manifest.py::test_the_evals_store_has_exactly_one_engine_naming_it`:
+    `naming` now `["dashboard.py", "runtime_data.py", "workflow_eval.py"]`, with the comment
+    "`bin/dashboard.py` (the observability-dashboard kit, T7) is the one sanctioned exception:
+    it READS every checkout's evals store through this owner's own
+    `list_runs`/`read_envelope`/`build_card` functions and writes one only as a temp-root
+    fixture (`synthetic_world`), never a real store."
+  - `tests/test_training_data.py::test_the_training_store_has_exactly_one_engine_naming_it`:
+    `naming` now `["dashboard.py", "runtime_data.py", "training_data.py"]`, with the comment
+    "`bin/dashboard.py` (the observability-dashboard kit, T7) is the one sanctioned exception:
+    it READS every checkout's training status through this owner's own `status()` function
+    and writes one only as a temp-root fixture (`synthetic_world`), never a real store."
+  - `tests/test_training_data.py::test_no_production_path_calls_the_capture_hook`: `naming`
+    now `{"dashboard.py", "release_gate.py"}`, and the companion loop (`capture_hook`,
+    `collection_scope`, `persist(`, `snapshot(`) now asserts against `dashboard.py`'s own
+    text too, not only `release_gate.py`'s -- confirmed clean by grep before the first test
+    run, not discovered by a failure.
+  - Verified, separately: `bin/dashboard.py` contains neither the literal string
+    `"routing-policy.json"` (`workflow_eval.POLICY_FILE`'s value -- the trap
+    `test_nothing_in_the_repository_reads_the_policy_file_automatically` actually greps for,
+    confirmed by reading that test, not assumed) nor any of the four capture-hook substrings.
+  - The T7 fixture (below) also ripples `ClassificationTests
+    .test_synthetic_world_is_one_mapped_one_unmapped_thirty_residue`'s `mapped["stores"]`
+    assertion a second time this kit, now `["telemetry", "journal", "prefs", "attempts",
+    "evals"]` (sorted by `runtime_data.STORES`'s own index), and the panel-id lists in
+    `PageTests.test_json_flag_prints_the_receipt_the_store_holds` and
+    `RenderingTests.test_model_is_json_serializable` (both now end `..., "evals", "training",
+    "bounds"`) -- the same expected, paired-edit ripple T5 and T6 each hit once already.
+- Toolkit extension, no owner touched: a `list` block gains an optional `details`/`caption`
+  pair, wrapping in `<details><summary>caption (N items)</summary>...</details>` on the same
+  terms `html_table`'s own `details=True` already does for a long table -- TASKS.md item 1's
+  "`untested_claims` as a `details` list" needed it and nothing before T7 did.
+- Links and sizes, at two different grains, because the owners genuinely differ (this is a
+  design decision, not a literal reading of "a link excludes that run OR THAT REPORT" -- both
+  readings were considered and the reasoning for each is recorded here):
+  - **Evals: per RUN.** `list_runs` reads every run's `results.json` whole, in one
+    uncontrollable pass, and its returned row carries NO field that reliably maps back to the
+    directory a bad run came from -- a linked file can declare an arbitrary `run_id`, so a row
+    cannot be safely dropped from `list_runs`'s own output after the call by matching identity.
+    Reimplementing `list_runs`'s classification logic myself to get row-to-directory fidelity
+    would also be a FOURTH thin adapter, which PLAN D3 closes off by name ("Three thin adapters
+    exist and no more"). So `_evals_prescan` runs BEFORE `list_runs` is ever called: it finds
+    every symlinked run directory, symlinked `results.json`, or `results.json` over
+    `MAX_EVAL_RESULTS_BYTES`, and if it finds ANY, `list_runs` is not called on that store AT
+    ALL this build (T4's own B3 precedent -- an owner that reads N things whole in one pass
+    with no per-item control is guarded by skipping the whole call, never a part of it). This
+    is MORE conservative than excluding only the one bad run, and is recorded here as the
+    reason, not left as a silent narrowing.
+  - **Prefs: per NAMESPACE'S WHOLE prefs directory.** `policy_report`/`approval_report`/
+    `activation_report` each read several files (an applied policy, proposals, approvals,
+    activation generations) that together make up ONE interrelated policy record, and this
+    dashboard has no name it may spell for any of them (`workflow_eval.POLICY_FILE` is the
+    trap). `_prefs_prescan` is therefore a bounded, no-follow, RECURSIVE walk of the whole
+    prefs directory (capped by the new `MAX_PREFS_ENTRIES_SCANNED`, since nothing before T7
+    bounded a walk by entry count rather than by byte size or item count): any symlink, or any
+    file over `MAX_PREFS_FILE_BYTES`, anywhere in the tree excludes all three report calls for
+    that namespace, with a note.
+- Three new caps, registered in `CAP_NAMES`/`default_caps()` (13 total now; paired edit in
+  `SourceTests.test_pinned_constants`): `MAX_EVAL_RESULTS_BYTES` (4 MiB -- a real run's
+  envelope holds every trial's full record, stages and oracles included, so it is more
+  generous than a telemetry envelope's own 512 KiB), `MAX_PREFS_FILE_BYTES` (512 KiB, the same
+  reasoning as `MAX_ENVELOPE_BYTES`: a small structured record, generous headroom), and
+  `MAX_PREFS_ENTRIES_SCANNED` (500, bounding `_prefs_prescan`'s own walk).
+- Manifests: counted by `Path.iterdir()` name/suffix only under `store_dir/MANIFEST_DIR`,
+  never opened; the directory itself is checked for `is_symlink()` first (a linked manifests
+  dir is a note, not a count) matching the same convention as everything else this task
+  pre-scans.
+- Tests, by name, for TASKS.md item 5's list: the version-99 run through the owner's note only
+  (`EvalsPanelTests.test_the_version_99_run_appears_only_through_the_owners_note`);
+  `NOT_A_RANKING` for a single-repeat run
+  (`EvalsPanelTests.test_not_a_ranking_appears_for_a_single_repeat_run`); `ranking: none` with
+  no ranking list (`EvalsPanelTests.test_ranking_none_appears_and_no_ranking_list_does`); the
+  owner's below-floor label
+  (`EvalsPanelTests.test_a_below_floor_variant_renders_the_owners_label`); `spent_usd` `None`
+  rendering `unknown` (`EvalsPanelTests.test_spent_usd_none_renders_unknown`); training
+  switches `False`/`False` (`TrainingPanelTests.test_training_switches_render_false_false`);
+  approvals absent rendering the owner's empty shape without error
+  (`EvalsPanelTests.test_approvals_absent_renders_the_owners_empty_shape_without_error`); and
+  every panel id reaching `build_model` including under `demo`
+  (`TrainingPanelTests.test_evals_and_training_panel_ids_are_in_the_model`, and the Verify
+  block's own `demo`/probe run, replayed standalone: `python3 bin/dashboard.py demo` prints
+  one summary line each for `evals` and `training`). Additional contract tests, citing the
+  link/size/unmapped-store points above:
+  `EvalsPanelTests.test_a_symlinked_eval_run_directory_is_excluded_with_a_note`,
+  `EvalsPanelTests.test_a_symlinked_results_json_excludes_the_whole_store_with_a_note`,
+  `EvalsPanelTests.test_an_oversized_results_json_excludes_the_whole_store_with_a_note`,
+  `EvalsPanelTests.test_a_symlinked_prefs_entry_excludes_all_three_reports_with_a_note`,
+  `EvalsPanelTests.test_an_oversized_prefs_file_excludes_all_three_reports_with_a_note`,
+  `EvalsPanelTests.test_max_prefs_entries_scanned_cap_lowered_leaves_a_note`,
+  `EvalsPanelTests.test_max_eval_runs_rendered_cap_lowered_leaves_a_note`,
+  `EvalsPanelTests.test_manifests_are_counted_by_name_never_opened`,
+  `EvalsPanelTests.test_the_not_a_run_directory_is_noted_never_rendered_as_a_run`,
+  `EvalsPanelTests.test_unmapped_namespace_showing_an_evals_or_prefs_store_is_counted_and_noted`,
+  `EvalsPanelTests.test_totals_and_spend_tables_carry_the_basis_word_in_their_label`,
+  `TrainingPanelTests.test_a_raising_status_call_is_a_note_not_a_crash`.
+- Verify run from the repo root, the exact TASKS.md block as a script with `set -e`:
+  `POLYTROPOS_DATA_HOME="$(mktemp -d)" python3 -m unittest discover -s tests -p
+  'test_dashboard.py' -v` (232 tests, OK), `python3 bin/dashboard.py demo` (exit 0, one line
+  per panel confirmed by a standalone re-run), the task's own `python3 -` probe (`T7 probe
+  OK`), and the full suite under an isolated `POLYTROPOS_DATA_HOME` (5,902 tests, OK, 2
+  skipped) all exited 0. The three guard test files
+  (`test_decision_evaluation_manifest.py`, `test_training_data.py`, `test_workflow_eval.py`)
+  were also run standalone before and after the guard edits.
+agent: T7 id=a354c8e19bbc8cdae role=implementer model=sonnet
+agent: T7 id=aab89db3bbbc63473 role=verifier model=sonnet findings=2 confirmed=2 result=accepted
+
+- T7 verifier adjudication. The verdict was FAIL on two claims, both confirmed by the
+  orchestrator's replay of `verifier-T7-capcheck.py`:
+  - (1) `_evals_prescan` records an oversized `results.json` as plain note text, never through
+    `cap_note()`. `caps_report` recognises a hit only by the `cap NAME (` prefix, so the cap
+    that excluded the run reads "not hit": `caps_hit` is `[]`, and the summary says "0 of 13
+    caps hit" (PLAN D5).
+  - (2) `test_an_oversized_results_json_excludes_the_whole_store_with_a_note` asserts only
+    that the cap's bounds row exists. That row renders on every build, so the test could
+    never catch (1).
+  Everything else in T7 checked out, including the three guard edits (exact sets, the
+  capture-hook companion loop extended, nothing else loosened), the POLICY_FILE trap and
+  the mapped-only reads. The red-team runs before the retry, so both layers' findings go
+  into T7's one retry.
+agent: T7 id=a4e31f578a6bf355e role=red-team model=sonnet findings=2 confirmed=2 marginal=2 result=accepted
+
+- T7 red-team adjudication. Both breaks were replayed by the orchestrator and are confirmed;
+  neither was raised by an earlier layer.
+  - (1) A trial whose `oracles` is not a dict makes the owner's `_variant_summary` raise
+    `AttributeError` inside `build_card`. The per-run guard catches only `(OSError, ValueError,
+    KeyError, TypeError)`, the tuple copied from the brief, so the per-namespace catch erases
+    the whole evals section: both runs vanish.
+  - (2) A `results.json` that is valid JSON but not an object makes the owner's `list_runs`
+    raise `AttributeError`. That was verified directly: `workflow_eval.list_runs` raises,
+    while `read_envelope` on the same run does not. The store's runs table becomes one note,
+    and every good run's card disappears with it. The retry falls back to the owner's own
+    per-run functions (`read_envelope` plus `build_card`, each guarded) over the run
+    directories the no-follow pre-scan found. The runs table is noted as unavailable because
+    the owner's `list_runs` raised. There is no fourth adapter and no re-implementation.
+- Owner defects for the user (the owner is untouchable here):
+  - `workflow_eval.list_runs` raises `AttributeError` when any run's `results.json` is valid
+    JSON but not an object, so one such file hides the whole store from every caller.
+  - `workflow_eval._variant_summary` raises `AttributeError` on a trial whose `oracles` is
+    not a dict.
+
+### T7 retry (attempt 2) — one verifier finding and two red-team breaks fixed
+
+- V1 -- `MAX_EVAL_RESULTS_BYTES` must register as hit. Replayed `verifier-T7-capcheck.py`
+  first and confirmed `caps_hit: []` / "0 of 13 caps hit" for an oversized run before touching
+  any code: `_evals_prescan` appended `f"results.json is {size} bytes (over
+  MAX_EVAL_RESULTS_BYTES)"` as plain text into its own `bad` list, never through `cap_note()`,
+  so `caps_report`'s own `cap NAME (` prefix match never fired. Fixed in `_evals_prescan`
+  (`bin/dashboard.py`): the oversized branch now calls `cap_note(caps, "MAX_EVAL_RESULTS_BYTES",
+  ...)` and appends that note to `notes` directly, exactly like `_telemetry_prescan`'s and
+  `_prefs_prescan`'s own oversized-file branches already did (a comparison that would have
+  caught this the first time, recorded for next time: when three sibling pre-scans exist,
+  diff them against each other, not just against the brief). Replayed
+  `verifier-T7-capcheck.py` again after the fix: `caps_hit: ['MAX_EVAL_RESULTS_BYTES']`, "1 of
+  13 caps hit", and the bounds row itself now reads
+  `<tr><td>MAX_EVAL_RESULTS_BYTES</td><td>4194304</td><td>hit</td></tr>`.
+- V2 -- make the cap tests able to fail. Audited every test in `tests/test_dashboard.py` that
+  reads the bounds section's HTML or the receipt for a cap hit. Four asserted only that a row
+  or a name existed -- true on EVERY build regardless of whether the cap fired, which is
+  exactly how V1's bug passed review the first time -- and are now tightened to assert the
+  row's own concatenated `<td>NAME</td><td>VALUE</td><td>hit</td>` string (the same tight
+  pattern `ClassificationTests.test_lowered_listing_cap_is_noted_on_its_panel_in_bounds_and_in_the_receipt`
+  already used) AND that `build.json`'s `caps_hit` names the cap:
+  `TelemetryPanelTests.test_an_oversized_envelope_file_skips_only_its_source`,
+  `JournalPanelTests.test_an_oversized_digest_json_is_capped_and_never_read`,
+  `EvalsPanelTests.test_an_oversized_results_json_excludes_the_whole_store_with_a_note` (the
+  one the verifier named directly), and
+  `EvalsPanelTests.test_an_oversized_prefs_file_excludes_all_three_reports_with_a_note` (this
+  one's underlying `_prefs_prescan` code was already correct -- it already called `cap_note`
+  -- but its OWN test had the identical assertion weakness, so it is tightened for the same
+  reason: a test that cannot fail proves nothing about the code it sits over, whether or not
+  that code happens to be right today). Every other cap-related test in the file already
+  asserted against the model's own `notes` list or an exact `caps_hit`/row string directly
+  (`ClassificationTests`, `AttemptsPanelSectionGuardTests`, `KitsInFlightTests`,
+  `JournalPanelTests.test_max_journal_days_cap_lowered_to_one_leaves_a_note`,
+  `EvalsPanelTests.test_max_eval_runs_rendered_cap_lowered_leaves_a_note`,
+  `EvalsPanelTests.test_max_prefs_entries_scanned_cap_lowered_leaves_a_note`, among others) and
+  needed no change; read each one before deciding, not assumed clean from its name.
+- R1 -- one malformed run must never blank the namespace's evals. Replayed
+  `redteam-T7-oraclesstring.py` first and confirmed the whole evals section vanished (both
+  runs) before touching any code: a trial whose `oracles` is a truthy string makes the owner's
+  `_variant_summary` do `(r.get("oracles") or {}).get("tests", {})` -- a truthy string short-
+  circuits the `or {}`, so `.get` is called ON THE STRING, raising `AttributeError`, which the
+  brief's own `(OSError, ValueError, KeyError, TypeError)` tuple does not catch. Fixed by
+  extracting the per-run read+card step into a new `_eval_run_card_blocks` helper
+  (`bin/dashboard.py`) whose guard is unconditional `except Exception` -- reused by both the
+  normal path and R2's fallback path below, so the fix lives in exactly one place. Audited the
+  rest of T7's code for the same narrow-tuple shape: `_prefs_namespace_section`'s three report
+  calls, `build_training_panel`'s `status()` call, and `build_evals_panel`'s two per-namespace
+  calls were already bare `except Exception`; the per-run card guard (copied from the brief's
+  own pinned tuple) was the only narrow one. Test:
+  `EvalsPanelTests.test_a_malformed_trial_field_is_a_note_not_a_crash_for_the_whole_namespace`.
+- R2 -- when `list_runs` raises, fall back to its per-run functions. Replayed
+  `redteam-T7-listjson.py` first and confirmed both the runs table and every good run's card
+  vanished, replaced by one `evaluation runs unavailable (AttributeError)` note, before
+  touching any code -- verified directly that `read_envelope` on the SAME run does not raise
+  (only `list_runs` does, since its own `env.get("v")` call assumes an object). Fixed:
+  `_evals_prescan` now returns `(safe_names, bad)` instead of just `bad` -- `safe_names` is
+  every real, unlinked run directory name the pre-scan already walked past, independent of
+  whatever `list_runs` does with them. `_evals_namespace_section`'s `except Exception` around
+  `list_runs` (unchanged from T7's first pass; already unconditional) now, instead of setting
+  `rows = []` and losing everything, keeps the "evaluation runs unavailable
+  (`<ExceptionType>`)" note, renders a plain-text stand-in for the table naming that the owner's
+  `list_runs` itself raised, and calls the new `_eval_run_card_blocks` helper directly over
+  `safe_names` (newest directory name first, through the new shared `_eval_ordered_run_ids`
+  helper, bounded by `MAX_EVAL_RUNS_RENDERED` with its own cap note when cut -- the SAME cap
+  the normal path uses, just keyed by directory name instead of the envelope's own `run_id`
+  field). Neither `_evals_prescan` nor the fallback path parses `results.json` itself:
+  `read_envelope`/`build_card` are still the only things that ever open one, so this is not a
+  fourth thin adapter (PLAN D3's "three... and no more" stands). Confirmed by replay: the
+  fixture's `not-a-run` directory (no `results.json` at all) falls into `safe_names` too and
+  surfaces its own honest `FileNotFoundError` note through the very same fallback path,
+  rather than `list_runs`'s own "not an evaluation run" wording -- a fact recorded here
+  because it is a real, if minor, behavioral difference between the normal and fallback
+  paths, not hidden. A second such difference, also confirmed by replay and also left as is:
+  the fixture's own foreign-version run (`"v": "polytropos.workflow-eval/99"`) is normally
+  excluded before any card is attempted (`list_runs`'s own version gate), but in the fallback
+  path it has no results.json content this pre-scan checks against a version, so
+  `build_card` is attempted on it too and renders a mostly-`unknown`/"not recorded" card
+  (nothing fabricated -- every absent owner field renders its own honest absence) rather than
+  being excluded. Re-adding a version check here to match the normal path's filtering would
+  duplicate `list_runs`'s own gate, which is exactly the "no fourth adapter" line R2 draws;
+  left as a documented trade-off of the fallback path rather than silently patched over. Test:
+  `EvalsPanelTests.test_list_runs_raising_falls_back_to_per_run_reads_for_the_good_runs`.
+- Verify run from the repo root, the exact TASKS.md block as a script with `set -e`:
+  `POLYTROPOS_DATA_HOME="$(mktemp -d)" python3 -m unittest discover -s tests -p
+  'test_dashboard.py' -v` (234 tests, OK), `python3 bin/dashboard.py demo` (exit 0),
+  the task's own `python3 -` probe (`T7 probe OK`), and the full suite under an isolated
+  `POLYTROPOS_DATA_HOME` all exited 0. All three repro scripts
+  (`verifier-T7-capcheck.py`, `redteam-T7-oraclesstring.py`, `redteam-T7-listjson.py`) were
+  replayed directly against the fixed tree, not just the new/tightened `unittest` tests, and
+  came back clean.
+agent: T7 id=a354c8e19bbc8cdae role=implementer model=sonnet
+
+- T7 retry adjudication. The orchestrator replayed all three repros against the retry:
+  - the cap-hit repro now gives `caps_hit: ['MAX_EVAL_RESULTS_BYTES']`, and the bounds row
+    reads "hit";
+  - the malformed-oracles repro keeps the runs table and the good run's card, and notes the
+    bad run;
+  - the list-JSON repro keeps the good runs through the per-run fallback.
+  The four cap tests that asserted only a row's presence now assert the row's value and
+  "hit" cell plus `caps_hit`.
+- Orchestrator finding, queued for the Phase 2 fix round and not on any agent line. The
+  implementer's own replay found that R2's fallback path (used only when the owner's
+  `list_runs` raises) runs `build_card` on the fixture's foreign-version run
+  (`polytropos.workflow-eval/99`) too, rendering a mostly-`unknown` card. PLAN D3 says an
+  unknown-version run renders only the owner's note, "and render nothing else about that
+  run". The likely fix is a version gate in the fallback: compare the envelope's `v` with
+  `workflow_eval.EVAL_VERSION`, read from the owner as data, the D2 thin-adapter
+  allowance. That is a check on an owner-returned envelope, not a fourth file parser.
+  It waits for the phase review because T7's two attempts are spent.
+outcome: T7 model=sonnet attempts=2 result=retry-pass review=revised run=2026-09-25-7e3a
