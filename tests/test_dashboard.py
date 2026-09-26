@@ -47,6 +47,8 @@ db = _load("dashboard")
 rd = _load("runtime_data")
 ah = _load("attempt_history")
 al = _load("attempt_ledger")
+rs = _load("routing_scorecard")
+kc = _load("kit_contract")
 
 _DATA_HOME = None
 _FAKE_HOME = None
@@ -994,7 +996,7 @@ class PageTests(_WorldCase):
             "listing": "complete", "mapped": exact(1), "unmapped": exact(1),
             "residue": {**exact(30), "sample": sorted(self.world["residue"])[:3]}})
         self.assertEqual([panel["id"] for panel in receipt["panels"]],
-                         ["namespaces", "attempts", "bounds"])
+                         ["namespaces", "attempts", "scorecard", "kits", "bounds"])
         self.assertEqual([row["name"] for row in receipt["caps"]], list(db.CAP_NAMES))
         self.assertEqual(receipt["caps_hit"], [])
         self.assertEqual(receipt["page"], str(self.out / "index.html"))
@@ -1091,7 +1093,7 @@ class RenderingTests(_WorldCase):
         self.assertEqual(json.loads(json.dumps(model))["schema_version"], 1)
         self.assertEqual(model["notes"][0], "a note")
         self.assertEqual([panel["id"] for panel in model["panels"]],
-                         ["namespaces", "attempts", "bounds"])
+                         ["namespaces", "attempts", "scorecard", "kits", "bounds"])
 
     def test_a_panel_builder_that_raises_is_a_note_not_an_exception(self):
         def broken(_ctx):
@@ -1833,31 +1835,38 @@ class AttemptsHistoryTests(_AttemptsCase):
         line = next(b for b in attempts["blocks"]
                     if b.get("type") == "p" and b.get("parts")
                     and b["parts"][0] == "records: ")
-        # 3 ledger records (T1 pass, T2 open, T3 estimated-cost) + 3 notes records (demo-kit
-        # T1 pass, notes-kit T1 pass, notes-kit T2 blocked) -- attempt_history's own split.
+        # 3 ledger records (T1 pass, T2 open, T3 estimated-cost) + 6 notes records (demo-kit
+        # T1 pass, notes-kit T1 pass, notes-kit T2 blocked, scorecard-demo SC1/SC2/SC3 -- T5's
+        # own kit; its `agent:` lines are not attempt_history's grammar and add no records) --
+        # attempt_history's own split.
         self.assertEqual(line["parts"], [
-            "records: ", {"fmt": "count", "value": 6}, "  by source: ",
+            "records: ", {"fmt": "count", "value": 9}, "  by source: ",
             "ledger", ": ", {"fmt": "count", "value": 3}, "  ",
-            "notes", ": ", {"fmt": "count", "value": 3}, "  "])
+            "notes", ": ", {"fmt": "count", "value": 6}, "  "])
 
     def test_coverage_line_reports_kits_with_ledger_notes_and_role_use(self):
         attempts = self.panel(self.model())
         line = next(b for b in attempts["blocks"]
                     if b.get("type") == "p" and b.get("parts")
                     and b["parts"][0] == "coverage — kits: ")
+        # T5 adds a third `.claude/kits` kit (scorecard-demo, with a NOTES.md) -- kits: 2 -> 3,
+        # with_notes: 2 -> 3; it has no ledger of its own, so with_ledger is unchanged.
         self.assertEqual(line["parts"], [
-            "coverage — kits: ", {"fmt": "count", "value": 2},
+            "coverage — kits: ", {"fmt": "count", "value": 3},
             "  with ledger: ", {"fmt": "count", "value": 1},
-            "  with notes: ", {"fmt": "count", "value": 2},
+            "  with notes: ", {"fmt": "count", "value": 3},
             "  with role-use: ", {"fmt": "count", "value": 0}])
 
     def test_by_harness_tier_table_joins_results_as_text_pairs(self):
         attempts = self.panel(self.model())
         table = self.table(attempts, "records by harness and tier")
         rows = {(r[0], r[1]): (r[2]["value"], r[3]) for r in table["rows"]}
-        # demo-kit's/notes-kit's own outcome lines resolve model=sonnet to claude/sonnet; the
-        # ledger's own SYNTHETIC_MODEL is unregistered, so harness and tier both stay unknown.
-        self.assertEqual(rows[("claude", "sonnet")], (3, "blocked: 1, pass: 2"))
+        # demo-kit's/notes-kit's/scorecard-demo's own outcome lines resolve model=sonnet to
+        # claude/sonnet and model=haiku to claude/haiku; the ledger's own SYNTHETIC_MODEL is
+        # unregistered, so harness and tier both stay unknown there.
+        self.assertEqual(rows[("claude", "sonnet")],
+                         (5, "blocked: 1, pass: 3, retry-pass: 1"))
+        self.assertEqual(rows[("claude", "haiku")], (1, "pass: 1"))
         self.assertEqual(rows[("unknown", "unknown")], (3, "dispatched: 1, open: 1, pass: 1"))
 
     def test_bar_chart_of_records_by_harness_tier_has_a_table_twin_and_counts_only(self):
@@ -1867,7 +1876,7 @@ class AttemptsHistoryTests(_AttemptsCase):
         self.assertEqual(chart["label_key"], "label")
         self.assertEqual(chart["value_key"], "value")
         self.assertEqual(sorted(row["label"] for row in chart["rows"]),
-                         ["claude/sonnet", "unknown/unknown"])
+                         ["claude/haiku", "claude/sonnet", "unknown/unknown"])
         self.assertTrue(all(isinstance(row["value"], int) for row in chart["rows"]))
         page = db.render_page(model, _FAKE_HOME.name)
         section = _section(page, "attempts")
@@ -1886,12 +1895,13 @@ class AttemptsHistoryTests(_AttemptsCase):
         for cell in values.values():
             self.assertEqual(cell["fmt"], "count")
             self.assertIsInstance(cell["value"], int)
-        # cross-checked against the fixture by hand: 6 records, of which 3 carry a cost-free
-        # ledger/notes split and 4 carry no duration (only the two ledger finishes do).
+        # cross-checked against the fixture by hand: 9 records (3 ledger + 6 notes, T5 added
+        # scorecard-demo's SC1/SC2/SC3), of which only one ledger record (T3) carries a cost or
+        # a duration, and notes-source records never count toward `observed_model` unknown.
         self.assertEqual({k: v["value"] for k, v in values.items()},
-                         {"harness": 3, "tier": 3, "observed_model": 3, "cost": 5, "duration": 4,
-                          "acceptance_ref": 6, "policy_ref": 6, "decision_ref": 6,
-                          "admission_ref": 6})
+                         {"harness": 3, "tier": 3, "observed_model": 3, "cost": 8, "duration": 7,
+                          "acceptance_ref": 9, "policy_ref": 9, "decision_ref": 9,
+                          "admission_ref": 9})
 
     def test_failure_classes_table_is_empty_and_says_so(self):
         model = self.model()
@@ -2217,6 +2227,366 @@ class AttemptsPanelSectionGuardTests(_AttemptsCase):
         self.assertIn("residue namespaces", section)
 
 
+class _ScorecardCase(_WorldCase):
+    """Shared helpers for the routing-scorecard and kits-in-flight panel tests (T5): every
+    figure comes from `routing_scorecard.assemble_history_card`/`scan_kits`/`build_roles_card`
+    or `kit_contract.parse_tasks`/`validate_graph`/`graph_state` (PLAN D2, D3 rows 2 and 6)."""
+
+    def model(self, caps=None, checkouts=None, opts_extra=None):
+        # GUARDRAILS: every build a test runs passes an empty temp `--projects-dir`, never the
+        # real default -- `self.projects` (from `_WorldCase.setUp`) is that empty temp dir.
+        opts = {"notes": [], "projects_dir": str(self.projects), "no_transcripts": False,
+               "git": False}
+        opts.update(opts_extra or {})
+        return db.build_model(self.world["data_home"],
+                              checkouts if checkouts is not None
+                              else [str(self.world["checkout"])],
+                              opts, caps)
+
+    def panel(self, model, pid):
+        return next(p for p in model["panels"] if p["id"] == pid)
+
+    def table(self, panel, caption):
+        return next(b for b in panel["blocks"]
+                    if b.get("type") == "table" and b.get("caption") == caption)
+
+
+class ScorecardTokensTests(_ScorecardCase):
+    """TASKS.md T5 item 1: the kits-dir tokens."""
+
+    def test_tokens_contain_both_labels_matching_label_re(self):
+        entries = db._scorecard_kits_dirs([str(self.world["checkout"])])
+        base = Path(self.world["checkout"]).name
+        self.assertEqual([e["label"] for e in entries], [base, f"{base}-codex"])
+        for entry in entries:
+            self.assertRegex(entry["label"], rs._LABEL_RE)
+            self.assertTrue(Path(entry["path"]).is_dir())
+
+    def test_a_checkout_with_no_kits_dir_contributes_nothing_and_is_never_passed(self):
+        empty_checkout = self.tmp / "no-kits-here"
+        empty_checkout.mkdir()
+        self.assertEqual(db._scorecard_kits_dirs([str(empty_checkout)]), [])
+        model = self.model(checkouts=[str(empty_checkout)])
+        scorecard = self.panel(model, "scorecard")
+        kits_panel = self.panel(model, "kits")
+        self.assertEqual(scorecard["summary"], db._NO_KITS_DIRS_TEXT)
+        self.assertEqual(scorecard["blocks"], [{"type": "p", "text": db._NO_KITS_DIRS_TEXT}])
+        self.assertEqual(kits_panel["summary"], db._NO_KITS_DIRS_TEXT)
+        # never reaching the owner at all: no ValueError note, because assemble_history_card
+        # was never called with a nonexistent path.
+        self.assertEqual(scorecard["notes"], [])
+
+    def test_scorecard_labels_and_coverage_come_from_the_fixture_not_the_real_repo(self):
+        # T5 retry V2 (verifier findings 1, 2): built from INSIDE the synthetic checkout, so
+        # --no-git's primary checkout is the fixture itself, never this real repo -- the
+        # `-codex` label must come from the fixture alone, not the real repo's own tracked
+        # `.claude/kits`/`tasks/kits`, and the checkouts list must hold only the fixture.
+        original_cwd = os.getcwd()
+        os.chdir(self.world["checkout"])
+        try:
+            out = self.tmp / "v2-out"
+            rc, _stdout, stderr = _run(
+                ["build", "--data-home", str(self.world["data_home"]), "--out-dir", str(out),
+                 "--projects-dir", str(self.projects), "--no-git"])
+        finally:
+            os.chdir(original_cwd)
+        self.assertEqual(rc, 0, stderr)
+        page = self.page(out)
+        section = _section(page, "scorecard")
+        base = Path(self.world["checkout"]).name
+        self.assertIn(f"{base}-codex", section)
+        receipt = self.receipt(out)
+        self.assertEqual(receipt["checkouts"],
+                         [os.path.realpath(str(self.world["checkout"]))])
+
+        # The dollars block's own "coverage" label: this fixture never carries a `session:`
+        # line anywhere, so `dollars` stays the owner's quality-only `None` in a live build --
+        # proving "coverage" live would mean faking a transcript file AND letting
+        # session_cost.py's subagent-discovery glob touch real `/tmp`/`/private/tmp`
+        # (`_TMP_BASES`), which this kit's own real-filesystem test discipline rules out.
+        # Proven instead through the full `build_model`/render path (not a direct
+        # `_dollars_blocks` call, which `test_dollars_carry_the_full_coverage_and_
+        # counterfactual_label_on_every_figure` already covers) by patching the owner call to
+        # return a hand-built priced card, so the label is confirmed to reach the actual
+        # rendered scorecard section.
+        priced_card = {
+            "tiers": {}, "kits": [], "roles": {}, "reroutes": {}, "notes": [],
+            "dollars": {
+                "actual_usd": 1.23, "counterfactual_usd": 4.56, "delta_usd": 3.33,
+                "ratio": 3.71,
+                "counterfactual_model": {"key": "frontier-x", "display": "Frontier X"},
+                "coverage": "partial", "kits_with_sessions": 1, "kits_total": 2,
+                "sessions_priced": 1, "sessions_found": 2, "pricing_cached": "2026-09-25"},
+        }
+        real_rs = db._mod("routing_scorecard")
+        with mock.patch.object(real_rs, "assemble_history_card",
+                               lambda *a, **k: priced_card):
+            model = self.model()
+        page2 = db.render_page(model, _FAKE_HOME.name)
+        self.assertIn("coverage", _section(page2, "scorecard"))
+
+
+class ScorecardHistoryCardTests(_ScorecardCase):
+    """TASKS.md T5 item 2: the history card's tiers/kits/dollars/roles/reroutes blocks."""
+
+    def test_dollars_block_carries_the_owners_quality_only_wording(self):
+        ts = _load("telemetry_snapshot")
+        page = db.render_page(self.model(), _FAKE_HOME.name)
+        section = _section(page, "scorecard")
+        self.assertIn(ts._DOLLARS_QUALITY_ONLY_NOTE, section)
+
+    def test_no_transcripts_adds_the_skip_note_and_uses_a_temp_dir(self):
+        model = self.model(opts_extra={"no_transcripts": True})
+        scorecard = self.panel(model, "scorecard")
+        self.assertTrue(any(n.startswith("transcript pricing skipped (--no-transcripts)")
+                            for n in scorecard["notes"]), scorecard["notes"])
+
+    def test_rates_see_note_appears_iff_no_tier_carries_a_rate_key(self):
+        # The real card: every tier carries first_try_rate/escalation_rate -- no note.
+        page = db.render_page(self.model(), _FAKE_HOME.name)
+        self.assertNotIn("rates: see", _section(page, "scorecard"))
+        # A synthetic count-only card (a future owner shape, TASKS.md item 2's own scenario):
+        # the note appears, and the dashboard never computes the missing rate itself.
+        counts_only_card = {"tiers": {"sonnet": {"pinned": 3, "first_try": 2}}}
+        blocks = db._tiers_table_and_chart(counts_only_card, rs)
+        self.assertTrue(any(b.get("type") == "p"
+                            and str(b.get("text", "")).startswith("rates: see")
+                            for b in blocks), blocks)
+
+    def test_tiers_table_renders_owner_rates_verbatim_not_through_fmt_count(self):
+        model = self.model()
+        scorecard = self.panel(model, "scorecard")
+        table = self.table(scorecard, "tiers")
+        rows = {row[0]: row for row in table["rows"]}
+        fields = table["headers"][1:]
+        sonnet = dict(zip(fields, rows["sonnet"][1:]))
+        # 6 with_outcome, 4 first-try -> 0.6666666666666666, the owner's own unrounded float,
+        # never reshaped by fmt_count (which would print a whole-number rate as a bare int).
+        self.assertEqual(sonnet["first_try_rate"], 4 / 6)
+        haiku = dict(zip(fields, rows["haiku"][1:]))
+        self.assertEqual(haiku["first_try_rate"], 1.0)
+        # opus has no outcomes at all: with_outcome is a real, verified zero (a typed count
+        # cell), but its rate is genuinely unmeasured -- a plain `None`, never a fabricated 0.
+        opus = dict(zip(fields, rows["opus"][1:]))
+        self.assertEqual(opus["with_outcome"], {"fmt": "count", "value": 0})
+        self.assertIsNone(opus["first_try_rate"])
+
+    def test_history_kits_table_is_namespaced_and_cost_is_unknown_without_sessions(self):
+        model = self.model()
+        scorecard = self.panel(model, "scorecard")
+        table = self.table(scorecard, "kits")
+        kit_names = [row[0] for row in table["rows"]]
+        base = Path(self.world["checkout"]).name
+        self.assertIn(f"{base}/{db.SCORECARD_KIT}", kit_names)
+        self.assertIn(f"{base}-codex/{db.CODEX_DEMO_KIT}", kit_names)
+        for row in table["rows"]:
+            self.assertEqual(row[-1], {"fmt": "usd", "value": None,
+                                       "basis": "actual, priced sessions"})
+
+    def test_dollars_carry_the_full_coverage_and_counterfactual_label_on_every_figure(self):
+        # A hand-built priced card (TASKS.md item 2's exact dollars shape) -- a direct unit
+        # test of the label text, since none of this kit's fixtures carry a `session:` line
+        # (dollars stays None there; the quality-only path is covered above).
+        priced_card = {"dollars": {
+            "actual_usd": 1.23, "counterfactual_usd": 4.56, "delta_usd": 3.33, "ratio": 3.71,
+            "counterfactual_model": {"key": "frontier-x", "display": "Frontier X"},
+            "coverage": "partial", "kits_with_sessions": 1, "kits_total": 2,
+            "sessions_priced": 1, "sessions_found": 2, "pricing_cached": "2026-09-25",
+        }, "notes": []}
+        blocks = db._dollars_blocks(priced_card)
+        parts = blocks[0]["parts"]
+        label = ("actual vs all-Frontier X counterfactual over priced sessions only — "
+                 "coverage partial")
+        dollar_cells = [p for p in parts if isinstance(p, dict) and p.get("fmt") == "usd"]
+        self.assertEqual(len(dollar_cells), 3)
+        for cell in dollar_cells:
+            self.assertEqual(cell["basis"], label)
+        self.assertEqual([c["value"] for c in dollar_cells], [1.23, 4.56, 3.33])
+
+    def test_verifier_and_reviewer_by_tier_tables_render_owner_values_verbatim(self):
+        # T5 retry V1: the per-tier evidence PLAN D14 cites, not left off as a "scope choice".
+        model = self.model()
+        scorecard = self.panel(model, "scorecard")
+        for role_name in ("verifier", "reviewer"):
+            table = self.table(scorecard, f"role: {role_name} by tier")
+            self.assertEqual(table["headers"],
+                             ["tier", "events", "with_precision", "findings", "confirmed",
+                              "precision"])
+            rows = {row[0]: row for row in table["rows"]}
+            self.assertEqual(set(rows), set(rs.LIVE_TIER_ORDER))
+            # scorecard-demo's two `agent: … role=verifier …` lines are both on model=sonnet.
+            if role_name == "verifier":
+                sonnet = dict(zip(table["headers"][1:], rows["sonnet"][1:]))
+                self.assertEqual(sonnet["events"], {"fmt": "count", "value": 2})
+            # a tier with no events for this role: a real, verified zero for `events`, but a
+            # genuinely unmeasured `precision` -- plain `None`, never a fabricated 0.
+            haiku = dict(zip(table["headers"][1:], rows["haiku"][1:]))
+            self.assertEqual(haiku["events"], {"fmt": "count", "value": 0})
+            self.assertIsNone(haiku["precision"])
+        page = db.render_page(model, _FAKE_HOME.name)
+        section = _section(page, "scorecard")
+        self.assertIn("role: verifier by tier", section)
+        self.assertIn("role: reviewer by tier", section)
+        self.assertIn('<span class="unknown">unknown</span>', section)
+
+
+class ScorecardRolesValueTests(_ScorecardCase):
+    """TASKS.md T5 item 3: the per-role value card, the `run_roles` bare shape."""
+
+    def test_aggregate_table_has_the_owners_below_floor_wording(self):
+        model = self.model()
+        scorecard = self.panel(model, "scorecard")
+        table = self.table(scorecard, "aggregate role value")
+        self.assertTrue(any("insufficient sample" in row[0] for row in table["rows"]),
+                        table["rows"])
+
+    def test_per_kit_roster_is_a_details_table(self):
+        model = self.model()
+        scorecard = self.panel(model, "scorecard")
+        # one "per-kit roster" table per kits dir (checkout, checkout-codex).
+        tables = [b for b in scorecard["blocks"]
+                 if b.get("type") == "table" and b.get("caption") == "per-kit roster"]
+        self.assertEqual(len(tables), 2, tables)
+        for table in tables:
+            self.assertTrue(table["details"])
+            self.assertEqual(table["headers"], ["kit", "roster label", "roster size"])
+        all_kits = [row[0] for table in tables for row in table["rows"]]
+        self.assertIn(db.SCORECARD_KIT, all_kits)
+        self.assertIn(db.CODEX_DEMO_KIT, all_kits)
+
+
+class KitsInFlightTests(_ScorecardCase):
+    """TASKS.md T5 item 4: kits in flight, through `kit_contract` only."""
+
+    def test_demo_kits_show_with_correct_counts_and_graph_state(self):
+        model = self.model()
+        kits_panel = self.panel(model, "kits")
+        table = kits_panel["blocks"][0]
+        self.assertEqual(table["headers"],
+                         ["checkout label", "kit", "pending", "in-progress", "done",
+                          "blocked", "graph state"])
+        rows = {(r[0], r[1]): r for r in table["rows"]}
+        base = Path(self.world["checkout"]).name
+
+        def counts(row):
+            return [c["value"] for c in row[2:6]]
+
+        self.assertEqual(counts(rows[(base, db.DEMO_KIT)]), [0, 1, 1, 0])
+        self.assertEqual(rows[(base, db.DEMO_KIT)][6], "interrupted")
+        self.assertEqual(counts(rows[(base, db.NOTES_KIT)]), [0, 0, 1, 1])
+        self.assertEqual(rows[(base, db.NOTES_KIT)][6], "waiting")
+        self.assertEqual(counts(rows[(base, db.SCORECARD_KIT)]), [0, 0, 3, 0])
+        self.assertEqual(rows[(base, db.SCORECARD_KIT)][6], "complete")
+        codex_label = f"{base}-codex"
+        self.assertEqual(counts(rows[(codex_label, db.CODEX_DEMO_KIT)]), [0, 0, 1, 0])
+        self.assertEqual(rows[(codex_label, db.CODEX_DEMO_KIT)][6], "complete")
+
+    def test_max_kits_per_dir_cap_lowered_is_noted(self):
+        model = self.model(caps={"MAX_KITS_PER_DIR": 1})
+        kits_panel = self.panel(model, "kits")
+        self.assertTrue(any(n.startswith("cap MAX_KITS_PER_DIR (1) reached")
+                            for n in kits_panel["notes"]), kits_panel["notes"])
+
+    def test_a_kit_with_an_invalid_status_is_a_note_not_a_crash(self):
+        bad_kit = self.world["kits_dir"] / "bad-status-kit"
+        bad_kit.mkdir()
+        (bad_kit / "TASKS.md").write_text(
+            "# TASKS — bad-status-kit\n\n### BX1 — a task with no status\n- model: sonnet\n")
+        model = self.model()
+        kits_panel = self.panel(model, "kits")
+        self.assertTrue(any("bad-status-kit" in n and "ValueError" in n
+                            for n in kits_panel["notes"]), kits_panel["notes"])
+        table = kits_panel["blocks"][0]
+        self.assertNotIn("bad-status-kit", [row[1] for row in table["rows"]])
+        # every other kit still renders.
+        self.assertIn(db.SCORECARD_KIT, [row[1] for row in table["rows"]])
+
+    def test_two_checkouts_colliding_on_a_label_are_renamed_and_noted(self):
+        # T5 retry R2: the kits panel must use the SAME owner resolution
+        # (routing_scorecard.resolve_kits_dirs) the scorecard panel already relies on via
+        # assemble_history_card, not its own unresolved `_scorecard_kits_dirs` list. The
+        # fixture checkout's OWN basename is "checkout", so its `tasks/kits` label is already
+        # "checkout-codex" (it holds `codex-demo`) -- a second checkout literally named
+        # "checkout-codex" collides with that label on its `.claude/kits`.
+        checkout_b = self.tmp / "checkout-codex"
+        kit_b = checkout_b / ".claude" / "kits" / "some-kit"
+        kit_b.mkdir(parents=True)
+        (kit_b / "TASKS.md").write_text(
+            "# TASKS\n\n### CB1 — a task\n- status: done\n- model: sonnet\n")
+        model = self.model(checkouts=[str(self.world["checkout"]), str(checkout_b)])
+        kits_panel = self.panel(model, "kits")
+        labels = {row[0] for row in kits_panel["blocks"][0]["rows"]}
+        self.assertIn("checkout-codex", labels)
+        self.assertIn("checkout-codex-2", labels)
+        self.assertTrue(any("duplicate kits-dir label" in n and "checkout-codex" in n
+                            for n in kits_panel["notes"]), kits_panel["notes"])
+        self.assertIn("some-kit", [row[1] for row in kits_panel["blocks"][0]["rows"]])
+
+    def test_a_symlinked_kit_dir_is_skipped_and_noted_never_read(self):
+        # T5 retry R3: the kits panel never follows a symlinked kit dir (the namespace
+        # classifier's own os.lstat/is_symlink convention); the scorecard's owner DOES follow
+        # it, so the scorecard panel notes that difference by name.
+        outside = self.tmp / "escape-hatch-target"
+        outside.mkdir()
+        sentinel = "SENTINEL-ESCAPE-HATCH-TITLE-9f3c"
+        (outside / "TASKS.md").write_text(
+            f"# TASKS\n\n### ES1 — {sentinel}\n- status: done\n- model: sonnet\n")
+        os.symlink(outside, self.world["kits_dir"] / "escape-hatch")
+        model = self.model()
+        kits_panel = self.panel(model, "kits")
+        self.assertNotIn("escape-hatch",
+                         [row[1] for row in kits_panel["blocks"][0]["rows"]])
+        self.assertTrue(any("escape-hatch" in n and "symlinked" in n
+                            for n in kits_panel["notes"]), kits_panel["notes"])
+        page = db.render_page(model, _FAKE_HOME.name)
+        self.assertNotIn(sentinel, page)
+        scorecard = self.panel(model, "scorecard")
+        self.assertTrue(any("escape-hatch" in n and "routing_scorecard follows" in n
+                            for n in scorecard["notes"]), scorecard["notes"])
+
+    def test_oversized_tasks_md_is_skipped_via_stat_alone_and_never_opened(self):
+        # T5 retry R4: os.stat gates the read; chmod 0 proves the file is never opened for
+        # content (only stat, which needs no read permission on the file itself).
+        big_kit_dir = self.world["kits_dir"] / "big-tasks-kit"
+        big_kit_dir.mkdir()
+        tasks_md = big_kit_dir / "TASKS.md"
+        head = "# TASKS\n\n### BG1 — a task\n- status: done\n- model: sonnet\n".encode("utf-8")
+        tasks_md.write_bytes(head + b"x" * (db.MAX_TASKS_MD_BYTES + 1 - len(head)))
+        self.assertEqual(tasks_md.stat().st_size, db.MAX_TASKS_MD_BYTES + 1)
+        if os.geteuid() != 0:
+            _chmod_restorable(self, tasks_md, 0)
+        model = self.model()
+        kits_panel = self.panel(model, "kits")
+        marker = f"cap MAX_TASKS_MD_BYTES ({db.MAX_TASKS_MD_BYTES}) reached"
+        self.assertTrue(any(n.startswith(marker) and "big-tasks-kit" in n
+                            for n in kits_panel["notes"]), kits_panel["notes"])
+        self.assertFalse(any("could not be read" in n or "could not be stat" in n
+                             for n in kits_panel["notes"]), kits_panel["notes"])
+        self.assertNotIn("big-tasks-kit",
+                         [row[1] for row in kits_panel["blocks"][0]["rows"]])
+
+
+class EscControlCharacterTests(_ScorecardCase):
+    """T5 retry R1: `esc` neutralises bidi-override and other control characters."""
+
+    def test_bidi_override_in_a_kit_name_is_neutralised_everywhere_on_the_page(self):
+        bidi_dir = self.world["kits_dir"] / "demo‮<done>-kit"
+        bidi_dir.mkdir()
+        (bidi_dir / "TASKS.md").write_text(
+            "# TASKS\n\n### BX1 — a task\n- status: done\n- model: sonnet\n")
+        page = db.render_page(self.model(), _FAKE_HOME.name)
+        self.assertNotIn("‮", page)
+        self.assertIn("⟨U+202E⟩", page)
+
+    def test_an_arabic_letter_in_a_kit_name_renders_as_is(self):
+        arabic_dir = self.world["kits_dir"] / "عربي-kit"
+        arabic_dir.mkdir()
+        (arabic_dir / "TASKS.md").write_text(
+            "# TASKS\n\n### AR1 — a task\n- status: done\n- model: sonnet\n")
+        page = db.render_page(self.model(), _FAKE_HOME.name)
+        self.assertIn("عربي-kit", page)
+
+
 class StylesheetCompletionTests(_WorldCase):
 
     def setUp(self):
@@ -2388,9 +2758,9 @@ class SourceTests(unittest.TestCase):
         self.assertEqual(db.RESIDUE_NAMESPACE_RE.pattern, r"^tmp[a-z0-9_]{8}-[0-9a-f]{8}$")
         self.assertEqual(
             (db.MAX_NAMESPACES_LISTED, db.MAX_NAMESPACES_READ, db.MAX_LEDGER_BYTES,
-             db.MAX_KITS_PER_DIR, db.MAX_EVAL_RUNS_RENDERED, db.MAX_JOURNAL_DAYS,
-             db.MAX_TELEMETRY_ENVELOPES_PER_SOURCE, db.GIT_TIMEOUT_SECONDS),
-            (5000, 32, 8 * 1024 * 1024, 100, 10, 60, 120, 20))
+             db.MAX_KITS_PER_DIR, db.MAX_TASKS_MD_BYTES, db.MAX_EVAL_RUNS_RENDERED,
+             db.MAX_JOURNAL_DAYS, db.MAX_TELEMETRY_ENVELOPES_PER_SOURCE, db.GIT_TIMEOUT_SECONDS),
+            (5000, 32, 8 * 1024 * 1024, 100, 1024 * 1024, 10, 60, 120, 20))
         self.assertEqual(db.PLUGIN_ROOT, BIN_DIR.parent)
         self.assertEqual(db.default_caps(), {name: getattr(db, name) for name in db.CAP_NAMES})
         self.assertEqual(db.STORE_NAME, "dashboard")

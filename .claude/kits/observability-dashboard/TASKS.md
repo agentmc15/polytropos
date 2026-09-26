@@ -470,7 +470,7 @@ POLYTROPOS_DATA_HOME="$(mktemp -d)" python3 -m unittest discover -s tests -v
 ### T5 — Routing scorecard panel and kits in flight
 - id: T5
 - title: Routing scorecard panel and kits in flight
-- status: pending
+- status: done
 - model: sonnet
 - depends: T4
 

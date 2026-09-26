@@ -116,6 +116,11 @@ MAX_JOURNAL_DAYS = 60
 # Telemetry envelopes listed per source: about four months of daily captures.
 MAX_TELEMETRY_ENVELOPES_PER_SOURCE = 120
 
+# T5 retry R4: `kit_contract.parse_tasks` reads a whole TASKS.md; the largest real one in this
+# repo (`repo-bench`) is about 144 KiB, so 1 MiB leaves roughly 7x headroom for a busy kit
+# while still refusing a corrupted or hostile file with no bound at all.
+MAX_TASKS_MD_BYTES = 1 * 1024 * 1024
+
 # A local git read takes milliseconds; 20 s (attempt_ledger's git probe bound) stops a hung one.
 GIT_TIMEOUT_SECONDS = 20
 
@@ -129,6 +134,7 @@ CAP_NAMES = (
     "MAX_NAMESPACES_READ",
     "MAX_LEDGER_BYTES",
     "MAX_KITS_PER_DIR",
+    "MAX_TASKS_MD_BYTES",
     "MAX_EVAL_RUNS_RENDERED",
     "MAX_JOURNAL_DAYS",
     "MAX_TELEMETRY_ENVELOPES_PER_SOURCE",
@@ -180,6 +186,53 @@ NOTES_KIT_NOTES_MD = f"""# NOTES — notes-kit (synthetic)
 
 outcome: T1 model=sonnet attempts=1 result=pass review=clean run={DEMO_RUN}
 outcome: T2 model=sonnet attempts=1 result=blocked review=none run={DEMO_RUN}
+"""
+
+# T5: a third kit for the routing scorecard's history card -- three `outcome:` lines across two
+# tiers (sonnet, haiku) so the tiers table has more than one row of data.
+SCORECARD_KIT = "scorecard-demo"
+SCORECARD_TASKS_MD = """# TASKS — scorecard-demo (synthetic)
+
+## Phase 1 — synthetic
+
+### SC1 — a synthetic sonnet task, first try
+- status: done
+- model: sonnet
+
+### SC2 — a synthetic sonnet task, needing a retry
+- status: done
+- model: sonnet
+
+### SC3 — a synthetic haiku task, first try
+- status: done
+- model: haiku
+"""
+SCORECARD_NOTES_MD = """# NOTES — scorecard-demo (synthetic)
+
+## Outcome ledger
+outcome: SC1 model=sonnet attempts=1 result=pass review=clean
+outcome: SC2 model=sonnet attempts=2 result=retry-pass review=clean
+outcome: SC3 model=haiku attempts=1 result=pass review=clean
+
+## Agent ledger
+agent: SC1 id=sc-verif-1 role=verifier model=sonnet findings=2 confirmed=1
+agent: SC2 id=sc-verif-2 role=verifier model=sonnet findings=1 confirmed=1
+"""
+
+# T5: a Codex planning kit under `tasks/kits/` so the `-codex` scorecard label appears -- one
+# task, one `outcome:` line.
+CODEX_DEMO_KIT = "codex-demo"
+CODEX_DEMO_TASKS_MD = """# TASKS — codex-demo (synthetic)
+
+## Phase 1 — synthetic
+
+### CD1 — a synthetic codex-planned task
+- status: done
+- model: sonnet
+"""
+CODEX_DEMO_NOTES_MD = """# NOTES — codex-demo (synthetic)
+
+outcome: CD1 model=sonnet attempts=1 result=pass review=clean
 """
 
 
@@ -256,6 +309,7 @@ def default_caps():
         "MAX_NAMESPACES_READ": MAX_NAMESPACES_READ,
         "MAX_LEDGER_BYTES": MAX_LEDGER_BYTES,
         "MAX_KITS_PER_DIR": MAX_KITS_PER_DIR,
+        "MAX_TASKS_MD_BYTES": MAX_TASKS_MD_BYTES,
         "MAX_EVAL_RUNS_RENDERED": MAX_EVAL_RUNS_RENDERED,
         "MAX_JOURNAL_DAYS": MAX_JOURNAL_DAYS,
         "MAX_TELEMETRY_ENVELOPES_PER_SOURCE": MAX_TELEMETRY_ENVELOPES_PER_SOURCE,
@@ -1432,6 +1486,457 @@ def build_attempts_panel(ctx):
     }
 
 
+####################################################################################################
+# Routing scorecard panel (T5): the cross-kit history card and the per-role value card, through
+# `routing_scorecard.assemble_history_card`/`scan_kits`/`build_roles_card` only (PLAN D2, D3 row
+# 2, D7, D15). No figure here is priced, ranked, classified or re-derived -- a rate/ratio the
+# owner computed renders as the owner's own value, never through `fmt_count` (a whole-number
+# rate must keep its own decimal shape, not collapse to a bare count).
+
+SCORECARD_PANEL = "scorecard"
+KITS_PANEL = "kits"
+
+
+def _sanitize_label(name):
+    """A checkout basename as a token label safe for `routing_scorecard._LABEL_RE`
+    (`^[A-Za-z0-9][A-Za-z0-9._-]*$`, TASKS.md item 1): every character outside its class
+    becomes `-`, and a result that still would not start with `[A-Za-z0-9]` (an empty name, or
+    one starting with `.`/`-`/`_`) is prefixed with `k` so the label always matches."""
+    safe = "".join(ch if re.match(r"[A-Za-z0-9._-]", ch) else "-" for ch in name) or "k"
+    if not re.match(r"[A-Za-z0-9]", safe[0]):
+        safe = "k" + safe
+    return safe
+
+
+def _scorecard_kits_dirs(checkouts):
+    """Every kits dir that exists under a discovered checkout -> `[{"label", "path"}]`, in
+    checkout order (TASKS.md item 1): `<checkout>/.claude/kits` labelled with the checkout's
+    own basename, `<checkout>/tasks/kits` labelled `<basename>-codex`. A checkout with neither
+    directory contributes nothing -- a fact about the checkout, not a degraded scan. Duplicate
+    labels across checkouts are the owner's own problem to resolve (`resolve_kits_dirs` renames
+    and notes); this helper does not dedupe."""
+    found = []
+    for checkout in checkouts or ():
+        base = _sanitize_label(Path(checkout).name or "checkout")
+        claude_kits = Path(checkout) / ".claude" / "kits"
+        if claude_kits.is_dir():
+            found.append({"label": base, "path": claude_kits})
+        codex_kits = Path(checkout) / "tasks" / "kits"
+        if codex_kits.is_dir():
+            found.append({"label": f"{base}-codex", "path": codex_kits})
+    return found
+
+
+_NO_KITS_DIRS_TEXT = "no kits directories found in the discovered checkouts"
+
+
+def _owner_value_cell(value):
+    """One owner-emitted field value as a table cell, generically: a nested dict of small
+    counts (a tier's `reroutes`, a role's `results`/`by_kind`/`by_kit`) becomes joined
+    `key: n` text; a bool or a plain int becomes a typed count cell; anything else (a rate or
+    ratio float, `None`, a string) is a plain cell -- `esc` renders it verbatim, never reshaped
+    by `fmt_count`'s float formatting, so a whole-number rate keeps its own decimal shape
+    rather than reading like a bare count (PLAN D2: never re-derive a rate)."""
+    if isinstance(value, dict):
+        return ", ".join(f"{k}: {v}" for k, v in sorted(value.items())) or "—"
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        return {"fmt": "count", "value": value}
+    return value
+
+
+def _first_seen_keys(mapping_of_dicts, order):
+    """Every key seen across `mapping_of_dicts[k]` for `k` in `order`, first-seen order -- the
+    column set for a table whose rows are heterogeneous small dicts (TASKS.md item 2: "every
+    key each tier dict carries")."""
+    fields = []
+    for key in order:
+        for field in (mapping_of_dicts.get(key) or {}):
+            if field not in fields:
+                fields.append(field)
+    return fields
+
+
+def _tiers_table_and_chart(card, rs):
+    """TASKS.md item 2: the `tiers` table, every key each tier dict carries, rendered as-is,
+    plus its bar-chart twin (first-try/retry/escalated/blocked per tier). No rate is computed
+    here -- `first_try_rate`/`escalation_rate` are the owner's own values (PLAN D2)."""
+    tiers = card.get("tiers") or {}
+    order = [t for t in rs.LIVE_TIER_ORDER if t in tiers] or sorted(tiers)
+    fields = _first_seen_keys(tiers, order)
+    rows = [[tier] + [_owner_value_cell(tiers[tier].get(field)) for field in fields]
+            for tier in order]
+    blocks = [{"type": "table", "headers": ["tier"] + fields, "rows": rows,
+              "caption": "tiers", "empty": "no tiers recorded"}]
+    if not any(field.endswith("_rate") for field in fields):
+        # TASKS.md item 2: a future count-only card gets this note instead of a computed rate
+        # -- the dashboard never divides.
+        blocks.append({"type": "p",
+                       "text": "rates: see `python3 bin/routing_scorecard.py --history`"})
+    chart_fields = [f for f in ("first_try", "retry_pass", "escalated_pass", "blocked")
+                    if f in fields]
+    chart_rows = [{"label": f"{tier}/{field}", "value": tiers[tier].get(field)}
+                  for tier in order for field in chart_fields]
+    blocks.append({"type": "svg_bars", "title": "first-try/retry/escalated/blocked per tier",
+                   "desc": "one bar per tier and result kind; counts only, never summed across "
+                           "tiers", "label_key": "label", "value_key": "value",
+                   "value_header": "count", "rows": chart_rows,
+                   "empty": "no tier result counts to chart"})
+    return blocks
+
+
+def _history_kits_table(card):
+    """TASKS.md item 2: the `kits` table. `cost` is the owner's per-kit `kit_cost_summary`
+    dict or None; its `actual_usd` renders through a typed `usd` cell, never a bare float."""
+    rows = []
+    for row in card.get("kits") or ():
+        cost = row.get("cost") or {}
+        rows.append([
+            row.get("kit"), {"fmt": "count", "value": row.get("tasks")},
+            {"fmt": "count", "value": row.get("with_outcome")},
+            {"fmt": "count", "value": row.get("first_try_pass")},
+            {"fmt": "count", "value": row.get("retry_pass")},
+            {"fmt": "count", "value": row.get("escalated_pass")},
+            {"fmt": "count", "value": row.get("blocked")},
+            {"fmt": "count", "value": len(row.get("sessions") or ())},
+            {"fmt": "usd", "value": cost.get("actual_usd"), "basis": "actual, priced sessions"},
+        ])
+    return {"type": "table",
+           "headers": ["kit", "tasks", "with outcome", "first-try pass", "retry pass",
+                       "escalated pass", "blocked", "sessions", "cost"],
+           "rows": rows, "caption": "kits", "empty": "no kits recorded", "details": True}
+
+
+def _dollars_blocks(card):
+    """TASKS.md item 2: the `dollars` block. `None` renders the owner's OWN explanatory note
+    from `card["notes"]` (never a fabricated reason); otherwise `actual_usd`/`counterfactual_usd`/
+    `delta_usd` each carry the SAME basis label -- the exact wording TASKS.md item 2 pins,
+    "actual vs all-<display> counterfactual over priced sessions only — coverage <coverage>" --
+    so the coverage and counterfactual-model facts ride beside every dollar figure itself, never
+    only in a separate sentence a reader could miss; `ratio` renders as the owner's own value
+    (never through `fmt_count`)."""
+    dollars = card.get("dollars")
+    if dollars is None:
+        note = next((n for n in (card.get("notes") or ()) if "dollars n/a" in n), None)
+        return [{"type": "p", "text": note or
+                "dollars unavailable — the owner recorded no explanatory note"}]
+    cf = dollars.get("counterfactual_model") or {}
+    label = (f"actual vs all-{cf.get('display')} counterfactual over priced sessions only — "
+            f"coverage {dollars.get('coverage')}")
+    parts = [
+        "actual ", {"fmt": "usd", "value": dollars.get("actual_usd"), "basis": label},
+        "  counterfactual ", {"fmt": "usd", "value": dollars.get("counterfactual_usd"),
+                              "basis": label},
+        "  delta ", {"fmt": "usd", "value": dollars.get("delta_usd"), "basis": label},
+        "  ratio ", _owner_value_cell(dollars.get("ratio")),
+        "  kits with sessions ", {"fmt": "count", "value": dollars.get("kits_with_sessions")},
+        "/", {"fmt": "count", "value": dollars.get("kits_total")},
+        "  sessions priced ", {"fmt": "count", "value": dollars.get("sessions_priced")},
+        "/", {"fmt": "count", "value": dollars.get("sessions_found")},
+        "  pricing cached ", {"fmt": "date", "value": dollars.get("pricing_cached")},
+    ]
+    return [{"type": "p", "parts": parts}]
+
+
+def _role_block_rows(d):
+    """One `card["roles"][name]` dict -> `[field, value]` rows, every value through
+    `_owner_value_cell`. `by_tier` is rendered separately, as its own per-tier table
+    (`_role_by_tier_table`) -- V1: it is the per-tier evidence PLAN D14 cites, not a scope
+    choice to leave off the page."""
+    return [[field, _owner_value_cell(value)] for field, value in (d or {}).items()
+           if field != "by_tier"]
+
+
+def _role_by_tier_table(role_name, by_tier, rs):
+    """T5 retry V1: `roles[role_name]["by_tier"]` -- every `LIVE_TIER_ORDER` tier's own
+    `{events, with_precision, findings, confirmed, precision}`, rendered verbatim (a `None`
+    precision is the styled unknown through `_owner_value_cell`, never a fabricated 0) -- the
+    per-tier evidence PLAN D14 cites for the verifier/reviewer model pins."""
+    by_tier = by_tier or {}
+    order = [t for t in rs.LIVE_TIER_ORDER if t in by_tier] or sorted(by_tier)
+    fields = _first_seen_keys(by_tier, order)
+    rows = [[tier] + [_owner_value_cell((by_tier[tier] or {}).get(field)) for field in fields]
+            for tier in order]
+    return {"type": "table", "headers": ["tier"] + fields, "rows": rows,
+           "caption": f"role: {role_name} by tier", "empty": "no tiers recorded"}
+
+
+def _card_roles_blocks(card, rs):
+    """TASKS.md item 2: `roles`, the history card's own role-quality block -- one small table
+    per role it carries (verifier, escalation, reviewer, architect), including the architect's
+    brief-defect kinds (`by_kind`), plus a per-tier table for every role that carries a
+    `by_tier` breakdown (verifier, reviewer -- V1)."""
+    roles = card.get("roles") or {}
+    blocks = [{"type": "p", "text": "Role quality (the history card's own roles block; "
+                                    "implementer quality is in the tiers table above):"}]
+    for role_name in ("verifier", "escalation", "reviewer", "architect"):
+        role_dict = roles.get(role_name) or {}
+        blocks.append({"type": "table", "headers": ["field", "value"],
+                       "rows": _role_block_rows(role_dict),
+                       "caption": f"role: {role_name}", "empty": "no evidence recorded"})
+        if "by_tier" in role_dict:
+            blocks.append(_role_by_tier_table(role_name, role_dict.get("by_tier"), rs))
+    return blocks
+
+
+def _reroutes_block(card):
+    reroutes = card.get("reroutes") or {}
+    return {"type": "p", "parts": [
+        "reroutes — events: ", {"fmt": "count", "value": reroutes.get("events")},
+        "  applied: ", {"fmt": "count", "value": reroutes.get("applied")},
+        "  advisory: ", {"fmt": "count", "value": reroutes.get("advisory")}]}
+
+
+def _routing_history_card_blocks(card, rs):
+    # `card["generated_at"]` is the owner's own `datetime.now()` read (routing_scorecard's,
+    # not this engine's `--now`-controlled clock) -- rendering it would make the page
+    # non-deterministic a second way beyond the dashboard's own build-time line, against PLAN
+    # D9 ("deterministic ... except the build-time line"). Left out of the headline for
+    # exactly that reason; the kit count is the stable, owner-enumerated field instead.
+    blocks = [{"type": "p", "parts": [
+        "routing history — ", {"fmt": "count", "value": len(card.get("kits") or ())},
+        " kit(s)"]}]
+    blocks.extend(_tiers_table_and_chart(card, rs))
+    blocks.append(_history_kits_table(card))
+    blocks.extend(_dollars_blocks(card))
+    blocks.extend(_card_roles_blocks(card, rs))
+    blocks.append(_reroutes_block(card))
+    blocks.append({"type": "list", "items": list(card.get("notes") or ()),
+                  "empty": "no notes from the history card"})
+    return blocks
+
+
+def _history_card_section(ctx, rs, kits_dirs, notes):
+    """TASKS.md item 2: one `assemble_history_card` call over every discovered kits dir's
+    token together (the owner's own namespacing joins them). `--no-transcripts` prices from an
+    empty temp dir created for this build and removed after (never the real projects dir)."""
+    tokens = [f"{e['label']}={e['path']}" for e in kits_dirs]
+    opts = ctx.get("opts") or {}
+    no_transcripts = bool(opts.get("no_transcripts"))
+    projects_dir = opts.get("projects_dir")
+    tmp_holder = None
+    if no_transcripts:
+        tmp_holder = tempfile.TemporaryDirectory(prefix="polytropos-dashboard-no-transcripts-")
+        projects_dir = tmp_holder.name
+        notes.append("transcript pricing skipped (--no-transcripts): dollars render as the "
+                     "owner's quality-only label")
+    try:
+        try:
+            card = rs.assemble_history_card(
+                tokens, projects_dir=str(projects_dir) if projects_dir else None)
+        except ValueError as exc:
+            notes.append(f"routing history unavailable: {type(exc).__name__}")
+            return [{"type": "p", "text": "not available this build — see the notes above"}]
+    finally:
+        if tmp_holder is not None:
+            tmp_holder.cleanup()
+    return _routing_history_card_blocks(card, rs)
+
+
+def _roles_card_blocks(roles_card):
+    """TASKS.md item 3: `aggregate` as a table of the owner's values verbatim (a role's
+    dispatch count below `min_dispatches` is labelled the owner's own way, in the role name
+    cell -- never a coerced "insufficient sample" cell value), `min_dispatches`, `notes`, and
+    the per-kit sections as a `details` table (kit, roster label, roster size)."""
+    agg = roles_card.get("aggregate") or {}
+    agg_roles = agg.get("roles") or {}
+    blocks = [{"type": "p", "parts": [
+        "aggregate roster ", agg.get("roster_label"), " (",
+        ", ".join(agg.get("roster") or ()) or "none", ")  min dispatches: ",
+        {"fmt": "count", "value": roles_card.get("min_dispatches")}]}]
+    agg_rows = []
+    for role in sorted(agg_roles):
+        b = agg_roles[role] or {}
+        label = f"{role} (insufficient sample)" if b.get("insufficient_sample") else role
+        agg_rows.append([
+            label, _owner_value_cell(b.get("dispatches")), _owner_value_cell(b.get("findings")),
+            _owner_value_cell(b.get("confirmed")), _owner_value_cell(b.get("precision")),
+            _owner_value_cell(b.get("marginal")), _owner_value_cell(b.get("marginal_unmeasured")),
+            _owner_value_cell(b.get("marginal_rate")),
+            {"fmt": "usd", "value": b.get("dollars_usd"), "basis": "per role"},
+        ])
+    blocks.append({"type": "table",
+                   "headers": ["role", "dispatches", "findings", "confirmed", "precision",
+                               "marginal", "marginal unmeasured", "marginal rate", "dollars"],
+                   "rows": agg_rows, "caption": "aggregate role value",
+                   "empty": "no role-quality evidence recorded"})
+    kit_rows = [[k.get("kit"), k.get("roster_label"),
+                {"fmt": "count", "value": k.get("roster_size")}]
+               for k in roles_card.get("kits") or ()]
+    blocks.append({"type": "table", "headers": ["kit", "roster label", "roster size"],
+                   "rows": kit_rows, "caption": "per-kit roster", "details": True,
+                   "empty": "no kits scanned"})
+    blocks.append({"type": "list", "items": list(roles_card.get("notes") or ()),
+                  "empty": "no notes from the roles card"})
+    return blocks
+
+
+def _roles_value_section(rs, kits_dirs, notes):
+    """TASKS.md item 3: the `run_roles` bare shape, once per kits dir -- `scan_kits` then
+    `build_roles_card` with no `dollars_kit` (T5 never passes `--session`)."""
+    blocks = [{"type": "p", "text": "Per-role value (routing_scorecard.scan_kits / "
+                                    "build_roles_card, the bare shape), once per kits dir:"}]
+    for entry in kits_dirs:
+        label, path = entry["label"], entry["path"]
+        blocks.append({"type": "p", "text": f"Roles for {label}:"})
+        try:
+            records, scan_notes = rs.scan_kits(path)
+            roles_card = rs.build_roles_card(records, path, extra_notes=scan_notes)
+        except Exception as exc:  # PLAN D10: an owner that raises is a note, never a crash
+            notes.append(f"roles value unavailable for {label}: {type(exc).__name__}")
+            blocks.append({"type": "p", "text": "not available this build — see the notes "
+                                                "above"})
+            continue
+        blocks.extend(_roles_card_blocks(roles_card))
+    return blocks
+
+
+def _symlinked_kit_names(path):
+    """Every symlinked entry directly under `path` -> a sorted list of names (T5 retry R3): a
+    shallow listing only, never followed. `routing_scorecard.scan_kits` walks with
+    `Path.iterdir()`/`is_dir()`, which DOES follow a symlink -- unlike the kits-in-flight
+    panel, which refuses to (`_is_real_dir`). This is only ever used to NAME that difference in
+    a note; the dashboard never reads what a symlink here points to."""
+    try:
+        return sorted(p.name for p in Path(path).iterdir() if p.is_symlink())
+    except OSError:
+        return []
+
+
+def build_scorecard_panel(ctx):
+    rs = _mod("routing_scorecard")
+    kits_dirs = _scorecard_kits_dirs(ctx["checkouts"])
+    source = ("bin/dashboard.py — routing_scorecard.assemble_history_card / scan_kits / "
+              "build_roles_card over every discovered checkout's kits dir")
+    if not kits_dirs:
+        return {"source": source, "observed": "live, at build time", "notes": [],
+               "summary": _NO_KITS_DIRS_TEXT,
+               "blocks": [{"type": "p", "text": _NO_KITS_DIRS_TEXT}]}
+    notes = []
+    for entry in kits_dirs:
+        symlinked = _symlinked_kit_names(entry["path"])
+        if symlinked:
+            notes.append(f"{entry['label']}: symlinked kit dir(s) {', '.join(symlinked)} — "
+                         f"routing_scorecard follows these, unlike the kits-in-flight panel")
+    history_blocks = _guarded_section(
+        lambda: _history_card_section(ctx, rs, kits_dirs, notes), "history", notes)
+    roles_blocks = _guarded_section(
+        lambda: _roles_value_section(rs, kits_dirs, notes), "roles value", notes)
+    return {
+        "source": source, "observed": "live, at build time", "notes": notes,
+        "summary": f"history + roles value over {len(kits_dirs)} kits dir(s)",
+        "blocks": history_blocks + roles_blocks,
+    }
+
+
+####################################################################################################
+# Kits in flight panel (T5): per checkout's kits dir, through `kit_contract.parse_tasks` /
+# `validate_graph` / `graph_state` only (PLAN D2, D3 row 6).
+
+def _kits_panel_dirs(checkouts, rs):
+    """T5 retry R2: the kits panel's own kits dirs, labelled through the SAME owner resolution
+    `assemble_history_card` uses internally (`routing_scorecard.resolve_kits_dirs`) -- never
+    `_scorecard_kits_dirs`'s raw, unresolved list, whose own docstring says it does not dedupe.
+    Two checkouts that would otherwise collide on one label are renamed and noted by the owner,
+    exactly as the scorecard panel already shows them -> `(entries, notes)`."""
+    found = _scorecard_kits_dirs(checkouts)
+    if not found:
+        return [], []
+    tokens = [f"{e['label']}={e['path']}" for e in found]
+    return rs.resolve_kits_dirs(tokens)
+
+
+def build_kits_panel(ctx):
+    kc = _mod("kit_contract")
+    rs = _mod("routing_scorecard")
+    kits_dirs, resolve_notes = _kits_panel_dirs(ctx["checkouts"], rs)
+    source = ("bin/dashboard.py — kit_contract.parse_tasks/validate_graph/graph_state per kit "
+             "dir under each discovered checkout's kits dir, labelled through "
+             "routing_scorecard.resolve_kits_dirs")
+    if not kits_dirs:
+        return {"source": source, "observed": "live, at build time", "notes": [],
+               "summary": _NO_KITS_DIRS_TEXT,
+               "blocks": [{"type": "p", "text": _NO_KITS_DIRS_TEXT}]}
+    notes = list(resolve_notes)
+    rows = []
+    for entry in kits_dirs:
+        label, path = entry["label"], entry["path"]
+        try:
+            candidates = sorted(Path(path).iterdir(), key=lambda p: p.name)
+        except OSError as exc:
+            notes.append(f"kits in flight for {label}: could not be listed "
+                         f"({type(exc).__name__})")
+            continue
+        # R3: a symlinked kit dir is skipped with a note and never read -- the namespace
+        # classifier's own `os.lstat`/`is_symlink` convention (`_is_real_dir`), never
+        # `Path.is_dir()`, which follows the link.
+        kit_dirs = []
+        for candidate in candidates:
+            if candidate.is_symlink():
+                notes.append(f"kits in flight for {label}: {candidate.name} is a symlinked "
+                             f"kit dir — skipped, never read")
+                continue
+            if _is_real_dir(candidate):
+                kit_dirs.append(candidate)
+        limit = cap_value(ctx["caps"], "MAX_KITS_PER_DIR")
+        if len(kit_dirs) > limit:
+            notes.append(cap_note(
+                ctx["caps"], "MAX_KITS_PER_DIR",
+                f"{label} holds more kit dirs than were read; only the first {limit} "
+                f"(sorted by name) are shown"))
+            kit_dirs = kit_dirs[:limit]
+        for kit_dir in kit_dirs:
+            tasks_md = kit_dir / "TASKS.md"
+            if not tasks_md.is_file():
+                continue
+            # R4: size-gated by `os.stat` alone, before any read -- an over-cap TASKS.md is
+            # skipped and never opened, the same discipline T4 applies to a ledger file.
+            try:
+                size = os.stat(tasks_md).st_size
+            except OSError as exc:
+                notes.append(f"kits in flight for {label}/{kit_dir.name}: TASKS.md could not "
+                             f"be stat'd ({type(exc).__name__})")
+                continue
+            if size > cap_value(ctx["caps"], "MAX_TASKS_MD_BYTES"):
+                notes.append(cap_note(
+                    ctx["caps"], "MAX_TASKS_MD_BYTES",
+                    f"{label}/{kit_dir.name}'s TASKS.md is {size} bytes — skipped, never "
+                    f"read"))
+                continue
+            try:
+                text = tasks_md.read_text(encoding="utf-8", errors="replace")
+                tasks = kc.parse_tasks(text)
+            except ValueError as exc:
+                notes.append(f"kits in flight for {label}/{kit_dir.name}: "
+                             f"{type(exc).__name__}")
+                continue
+            except OSError as exc:
+                notes.append(f"kits in flight for {label}/{kit_dir.name}: could not be read "
+                             f"({type(exc).__name__})")
+                continue
+            counts = {status: 0 for status in kc.STATUSES}
+            for t in tasks:
+                if t.get("status") in counts:
+                    counts[t["status"]] += 1
+            try:
+                state = kc.graph_state(tasks, kc.validate_graph(tasks)).get("state")
+            except Exception as exc:  # PLAN D10: never a crash for one kit's graph
+                notes.append(f"kits in flight for {label}/{kit_dir.name}: graph state "
+                             f"unavailable ({type(exc).__name__})")
+                state = None
+            rows.append([label, kit_dir.name]
+                       + [{"fmt": "count", "value": counts[s]} for s in kc.STATUSES]
+                       + [state])
+    return {
+        "source": source, "observed": "live, at build time", "notes": notes,
+        "summary": f"{len(rows)} kit(s) across {len(kits_dirs)} kits dir(s)",
+        "blocks": [{"type": "table",
+                   "headers": ["checkout label", "kit"] + list(kc.STATUSES) + ["graph state"],
+                   "rows": rows, "empty": "no kits found", "details": True}],
+    }
+
+
 def _bounds_blocks(notes, report):
     """The bounds panel's body: every cap with hit / not hit, then every note of the build.
     Also how `render_build` rebuilds that body when a panel's rendering fails, so the failure
@@ -1470,6 +1975,8 @@ BOUNDS_PANEL = "bounds"
 PANELS = [
     (NAMESPACES_PANEL, "Namespaces in the data home", build_namespaces_panel),
     (ATTEMPTS_PANEL, "Attempts", build_attempts_panel),
+    (SCORECARD_PANEL, "Routing scorecard", build_scorecard_panel),
+    (KITS_PANEL, "Kits in flight", build_kits_panel),
     (BOUNDS_PANEL, "Bounds and notes", build_bounds_panel),
 ]
 
@@ -1482,6 +1989,22 @@ PANELS = [
 # neutralised with character references -- the browser shows the same characters.
 _TRIPWIRES = re.compile(r"(?i)(?:src|href)=|url\(|@import")
 
+# T5 retry R1: Unicode's own bidi-override and directional-formatting characters -- ALM
+# (U+061C), LRM/RLM (U+200E/F), the LRE/RLE/PDF/LRO/RLO block (U+202A-U+202E) and the
+# LRI/RLI/FSI/PDI block (U+2066-U+2069) -- can make a task title or a kit name DISPLAY
+# differently from its actual bytes (PLAN D13's "unicode in a task title" attack; the
+# 2026-09-25 red-team's confirmed break: a kit named with U+202E rendered a fabricated
+# "<done>" in reverse-written text). Every other C0 (U+0000-U+001F) and C1 (U+0080-U+009F)
+# control character is neutralised the same way, except tab and newline, which the page's own
+# whitespace handling already carries safely. An ordinary right-to-left LETTER (Arabic,
+# Hebrew, ...) or an emoji is untouched -- neither is in this set.
+_BIDI_CONTROLS = ("؜‎‏" + "".join(chr(c) for c in range(0x202a, 0x202f))
+                 + "".join(chr(c) for c in range(0x2066, 0x206a)))
+_OTHER_CONTROLS = ("".join(chr(c) for c in range(0x00, 0x20) if c not in (0x09, 0x0a))
+                  + "".join(chr(c) for c in range(0x80, 0xa0)))
+NEUTRALISED_CONTROLS = _BIDI_CONTROLS + _OTHER_CONTROLS
+_CONTROL_CHARS_RE = re.compile("[" + re.escape(NEUTRALISED_CONTROLS) + "]")
+
 
 def _neutralize(match):
     text = match.group(0)
@@ -1492,14 +2015,24 @@ def _neutralize(match):
     return "&#64;" + text[1:]
 
 
+def _neutralize_control(match):
+    """One bidi-override or other control character -> a visible marker naming its code point
+    (R1) -- `⟨U+202E⟩`, never the raw character itself."""
+    return f"⟨U+{ord(match.group(0)):04X}⟩"
+
+
 def esc(value):
     """One value as page text -- the ONE escaping path every renderer in this module uses, so
-    honesty rendering is written once (PLAN D7). HTML-escaped and tripwire-neutralised; `None`
-    is never a blank cell or a silent zero (PLAN R3) -- it is the literal word `unknown`, in a
-    span the stylesheet renders italic and muted but never hidden."""
+    honesty rendering is written once (PLAN D7). Every bidi-override or other control
+    character is replaced by a visible code-point marker before anything else runs (R1: a raw
+    directional override must never reach the page, escaped or not -- escaping alone leaves it
+    live). HTML-escaped and tripwire-neutralised; `None` is never a blank cell or a silent zero
+    (PLAN R3) -- it is the literal word `unknown`, in a span the stylesheet renders italic and
+    muted but never hidden."""
     if value is None:
         return '<span class="unknown">unknown</span>'
     text = _clean(str(value))
+    text = _CONTROL_CHARS_RE.sub(_neutralize_control, text)
     return _TRIPWIRES.sub(_neutralize, html.escape(text, quote=True))
 
 
@@ -2412,12 +2945,26 @@ def synthetic_world(root, residue=30):
     kits_dir = checkout / ".claude" / "kits"
     kit_dir = kits_dir / DEMO_KIT
     notes_kit_dir = kits_dir / NOTES_KIT
-    for directory in (data_home, kit_dir, notes_kit_dir, checkout / "tasks" / "kits"):
+    scorecard_kit_dir = kits_dir / SCORECARD_KIT
+    codex_kits_dir = checkout / "tasks" / "kits"
+    codex_demo_dir = codex_kits_dir / CODEX_DEMO_KIT
+    for directory in (data_home, kit_dir, notes_kit_dir, scorecard_kit_dir, codex_kits_dir,
+                      codex_demo_dir):
         rd.ensure_private(directory)
     sp.confined_write_bytes(kit_dir, "TASKS.md", DEMO_TASKS_MD, what="synthetic kit")
     sp.confined_write_bytes(kit_dir, "NOTES.md", DEMO_NOTES_MD, what="synthetic kit")
     sp.confined_write_bytes(notes_kit_dir, "TASKS.md", NOTES_KIT_TASKS_MD, what="synthetic kit")
     sp.confined_write_bytes(notes_kit_dir, "NOTES.md", NOTES_KIT_NOTES_MD, what="synthetic kit")
+    # T5 item 5: a third `.claude/kits` kit (tiers table data) and a `tasks/kits/codex-demo`
+    # kit (the `-codex` scorecard label).
+    sp.confined_write_bytes(scorecard_kit_dir, "TASKS.md", SCORECARD_TASKS_MD,
+                            what="synthetic kit")
+    sp.confined_write_bytes(scorecard_kit_dir, "NOTES.md", SCORECARD_NOTES_MD,
+                            what="synthetic kit")
+    sp.confined_write_bytes(codex_demo_dir, "TASKS.md", CODEX_DEMO_TASKS_MD,
+                            what="synthetic kit")
+    sp.confined_write_bytes(codex_demo_dir, "NOTES.md", CODEX_DEMO_NOTES_MD,
+                            what="synthetic kit")
 
     namespace = rd.project_namespace(checkout)
     ledger = al.AttemptLedger(data_home / namespace / al.STORE, DEMO_KIT)
@@ -2459,6 +3006,9 @@ def synthetic_world(root, residue=30):
         "kits_dir": kits_dir,
         "kit_dir": kit_dir,
         "notes_kit_dir": notes_kit_dir,
+        "scorecard_kit_dir": scorecard_kit_dir,
+        "codex_kits_dir": codex_kits_dir,
+        "codex_demo_dir": codex_demo_dir,
         "namespace": namespace,
         "ledger": ledger.events_path,
         "residue": residue_names,
