@@ -161,6 +161,27 @@ DEMO_NOTES_MD = f"""# NOTES — demo-kit (synthetic)
 outcome: T1 model=sonnet attempts=1 result=pass review=clean run={DEMO_RUN}
 """
 
+# T4: a second, ledger-less kit so `notes`-source records exist independent of any ledger join
+# (TASKS.md item 5) -- one `pass`, one `blocked`, mirroring `attempt_history.py`'s own demo kit B.
+NOTES_KIT = "notes-kit"
+NOTES_KIT_TASKS_MD = """# TASKS — notes-kit (synthetic)
+
+## Phase 1 — synthetic
+
+### T1 — a synthetic task recorded only in NOTES.md
+- status: done
+- model: sonnet
+
+### T2 — a synthetic task recorded only in NOTES.md, blocked
+- status: blocked
+- model: sonnet
+"""
+NOTES_KIT_NOTES_MD = f"""# NOTES — notes-kit (synthetic)
+
+outcome: T1 model=sonnet attempts=1 result=pass review=clean run={DEMO_RUN}
+outcome: T2 model=sonnet attempts=1 result=blocked review=none run={DEMO_RUN}
+"""
+
 
 # ---------------------------------------------------------------------------------------------
 # Sibling modules -- loaded lazily by absolute path and cached (the telemetry_snapshot shape).
@@ -873,6 +894,15 @@ def _count_text(entry, noun):
     return f"unknown {noun}"
 
 
+def _is_exact_zero(entry):
+    """Whether a qualified class count is a verified zero -- `{"count": 0, "qualifier":
+    "exact"}`. Used to say "empty" in words instead of printing "0" for every class at once
+    (R3): GUARDRAILS keeps a zero standing in for an owner's own state off the page, and that
+    applies to a genuine zero exactly as it does to an unknown one."""
+    return (isinstance(entry, dict) and entry.get("qualifier") == "exact"
+            and entry.get("count") == 0)
+
+
 # Why the listing did not reach everything, said once above the table.
 _LISTING_SENTENCES = {
     "truncated": ("The data-home listing stopped at its cap (MAX_NAMESPACES_LISTED), so the "
@@ -918,6 +948,12 @@ def build_namespaces_panel(ctx):
     if listing == "absent":
         blocks = [{"type": "p", "parts": ["Data home ", data_home, ": absent — no namespaces."]}]
         summary = f"data home absent — no namespaces {across}"
+    elif listing == "complete" and all(_is_exact_zero(counts[name]) for name in CLASS_NAMES):
+        # R3c: a data home that exists but holds nothing is "empty" in words, never "0 mapped ·
+        # 0 unmapped · 0 residue" -- a zero for one class inside a non-empty census still reads
+        # as a count (the `else` branch below), only the all-zero case gets this sentence.
+        blocks = [{"type": "p", "parts": ["Data home ", data_home, ": empty — no namespaces."]}]
+        summary = f"data home empty — no namespaces {across}"
     else:
         parts = ["Data home ", data_home, ": "]
         for index, name in enumerate(CLASS_NAMES):
@@ -964,6 +1000,438 @@ def build_namespaces_panel(ctx):
     }
 
 
+####################################################################################################
+# T4: namespaces read in depth for ledger facts (item 3), mapped first then unmapped by name
+# (PLAN D4, D5; P1 fix round S6). `read_namespaces` is the one bounded, ordered list later panels
+# (T6, T7) also read facts from directly: they use only its mapped entries and each notes the
+# unmapped count their own store's shallow listing shows (S6); T4's ledger facts use the whole
+# list.
+
+def read_namespaces(ctx):
+    """Mapped namespaces (as classified), then unmapped ones by name -> (rows, notes), bounded by
+    MAX_NAMESPACES_READ. Each row is the classification's own dict for that namespace plus
+    `"mapped": bool`, so a caller can tell the two apart without re-deriving it -- a mapped row
+    also carries `checkout`/`kind`; an unmapped row carries only `namespace`/`stores`. A note is
+    appended, once, when the cap cuts the combined list. The mapped rows are never among the ones
+    a cut drops: they are complete-or-a-lower-bound already, from the classification's own
+    by-name lookups (PLAN D5), and they are listed first."""
+    classes = ctx["model"]["classes"]
+    mapped = [dict(row, mapped=True) for row in classes.get("mapped") or ()]
+    unmapped = [dict(row, mapped=False) for row in classes.get("unmapped") or ()]
+    combined = mapped + unmapped
+    limit = cap_value(ctx["caps"], "MAX_NAMESPACES_READ")
+    notes = []
+    if len(combined) > limit:
+        notes.append(cap_note(
+            ctx["caps"], "MAX_NAMESPACES_READ",
+            f"{len(combined)} namespaces are mapped or unmapped ({len(mapped)} mapped, "
+            f"{len(unmapped)} unmapped); only the first {limit} (mapped first, then unmapped by "
+            f"name) were read for ledger facts"))
+    return combined[:limit], notes
+
+
+####################################################################################################
+# Attempts panel (T4): the ledger and its history projection, through the owners only
+# (attempt_history.join_kits/summarize, attempt_ledger.AttemptLedger). No figure here is priced,
+# ranked or classified again, and no cell adds two bases, two harnesses or two owners together
+# (PLAN D2, D3 row 1, D7a; R4) -- this file has no `sum(` call anywhere in it.
+
+ATTEMPTS_PANEL = "attempts"
+
+
+def _history_targets(classes):
+    """Every mapped (checkout, kind) whose kits dir exists on disk -> a list of `{"label",
+    "kits_dir", "namespace"}`, in the classification's own mapped order (PLAN D4: the two
+    namespace roots per checkout, `C` and `C/tasks/kits`). A checkout with neither directory
+    contributes nothing -- a fact about the checkout, not a degraded scan."""
+    targets = []
+    for row in classes.get("mapped") or ():
+        checkout, namespace, kind = row.get("checkout"), row.get("namespace"), row.get("kind")
+        if not checkout or not namespace:
+            continue
+        if kind == "checkout":
+            kits_dir, label = Path(checkout) / ".claude" / "kits", str(checkout)
+        elif kind == "codex-kits":
+            kits_dir, label = Path(checkout) / "tasks" / "kits", f"{checkout} (tasks/kits)"
+        else:
+            continue
+        if kits_dir.is_dir():
+            targets.append({"label": label, "kits_dir": kits_dir, "namespace": namespace})
+    return targets
+
+
+def _kits_dir_oversized(kits_dir, store, caps, kc):
+    """The first kit under `kits_dir` whose ledger file exceeds MAX_LEDGER_BYTES ->
+    `(kit_name, size)`, or None. Checked before `attempt_history.join_kits` is ever called: that
+    owner hands every kit's ledger to `AttemptLedger.events()` in full and has no per-kit size
+    guard of its own (P1 fix round B3). `kit_contract.open_ledger`'s constructor only validates
+    the name and composes a path -- no file is opened by this check, only stat'd."""
+    limit = cap_value(caps, "MAX_LEDGER_BYTES")
+    try:
+        kit_dirs = sorted((p for p in Path(kits_dir).iterdir() if p.is_dir()),
+                          key=lambda p: p.name)
+    except OSError:
+        return None  # join_kits will meet the same failure and note it itself
+    for kit_dir in kit_dirs:
+        if not (kit_dir / "TASKS.md").is_file():
+            continue
+        try:
+            ledger = kc.open_ledger(kit_dir, store=store)
+            size = os.stat(ledger.events_path).st_size
+        except Exception:  # noqa: BLE001 -- an unopenable ledger is join_kits's own note to make
+            continue
+        if size > limit:
+            return kit_dir.name, size
+    return None
+
+
+def _harness_tier_rows(by_harness):
+    """`card["by_harness"]` flattened to one row per (harness, tier) -> `[(harness, tier,
+    records, results_text)]`, sorted for a deterministic render. `results_text` joins the tier's
+    own `results` dict as `result: n` pairs (TASKS.md item 2) as plain text: every value in it is
+    a count `summarize` produced by incrementing, never None or NaN, so no typed cell is needed
+    to keep it honest."""
+    rows = []
+    for harness in sorted(by_harness or {}):
+        tiers = (by_harness[harness] or {}).get("tiers") or {}
+        for tier in sorted(tiers):
+            t = tiers[tier] or {}
+            results = t.get("results") or {}
+            text = ", ".join(f"{result}: {n}" for result, n in sorted(results.items()))
+            rows.append((harness, tier, t.get("records", 0), text or "—"))
+    return rows
+
+
+def _cost_rows(by_basis, bases):
+    """One row per basis in `attempt_history.COST_BASES` (read the tuple, never retyped) ->
+    typed cells only: `n`, then the owner's own `usd`/`credits` through `fmt_usd(value, basis)` /
+    `fmt_credits`. Every basis in the tuple gets a row whether or not any record carried it -- a
+    basis with nothing recorded is `n=0`, `usd`/`credits` None, which renders `unknown`, never a
+    zero standing in for "not observed" (PLAN R3)."""
+    rows = []
+    for basis in bases:
+        t = (by_basis or {}).get(basis) or {}
+        rows.append([basis, {"fmt": "count", "value": t.get("n", 0)},
+                    {"fmt": "usd", "value": t.get("usd"), "basis": basis},
+                    {"fmt": "credits", "value": t.get("credits")}])
+    return rows
+
+
+def _duration_rows(by_basis, bases):
+    """One row per basis in `attempt_history.DURATION_BASES` (read the tuple, never retyped) ->
+    typed cells only, on the same terms as `_cost_rows`."""
+    rows = []
+    for basis in bases:
+        t = (by_basis or {}).get(basis) or {}
+        rows.append([basis, {"fmt": "count", "value": t.get("n", 0)},
+                    {"fmt": "seconds", "value": t.get("seconds")}])
+    return rows
+
+
+def _history_card_blocks(card, ah):
+    """One history join's card (`attempt_history.summarize`) -> the blocks TASKS.md item 2
+    describes, verbatim owner fields only. There is no total row: every basis, harness and tier
+    renders on its own row, and the owner's own never-summed note is printed beneath its table."""
+    blocks = []
+    by_source = card.get("by_source") or {}
+    parts = ["records: ", {"fmt": "count", "value": card.get("records", 0)}, "  by source: "]
+    for source in sorted(by_source):
+        parts += [source, ": ", {"fmt": "count", "value": by_source[source]}, "  "]
+    blocks.append({"type": "p", "parts": parts})
+
+    cov = card.get("coverage") or {}
+    blocks.append({"type": "p", "parts": [
+        "coverage — kits: ", {"fmt": "count", "value": cov.get("kits")},
+        "  with ledger: ", {"fmt": "count", "value": cov.get("kits_with_ledger")},
+        "  with notes: ", {"fmt": "count", "value": cov.get("kits_with_notes")},
+        "  with role-use: ", {"fmt": "count", "value": cov.get("kits_with_role_use")}]})
+
+    ht_rows = _harness_tier_rows(card.get("by_harness"))
+    blocks.append({"type": "table", "headers": ["harness", "tier", "records", "results"],
+                   "rows": [[h, t, {"fmt": "count", "value": n}, r] for h, t, n, r in ht_rows],
+                   "caption": "records by harness and tier",
+                   "empty": "no harness or tier recorded a record"})
+    blocks.append({"type": "svg_bars", "title": "records by harness/tier",
+                  "desc": "one bar per harness and tier; counts only, never a sum across them",
+                  "label_key": "label", "value_key": "value", "value_header": "records",
+                  "rows": [{"label": f"{h}/{t}", "value": n} for h, t, n, _r in ht_rows],
+                  "empty": "no harness or tier recorded a record"})
+
+    unknown_rows = [[field, {"fmt": "count", "value": n}]
+                    for field, n in (card.get("unknown") or {}).items()]
+    blocks.append({"type": "table", "headers": ["field", "unknown count"], "rows": unknown_rows,
+                   "caption": "unknown, counted — never filled in",
+                   "empty": "the owner recorded no fields"})
+
+    fc_rows = [[cls, {"fmt": "count", "value": n}]
+              for cls, n in sorted((card.get("failure_classes") or {}).items())]
+    blocks.append({"type": "table", "headers": ["failure class", "count"], "rows": fc_rows,
+                   "caption": "failure classes", "empty": "no failure classes recorded"})
+
+    cost = card.get("cost") or {}
+    blocks.append({"type": "table", "headers": ["basis", "n", "usd", "credits"],
+                   "rows": _cost_rows(cost.get("by_basis"), ah.COST_BASES),
+                   "caption": "cost by basis"})
+    blocks.append({"type": "p", "text": cost.get("note") or ""})
+
+    duration = card.get("duration") or {}
+    blocks.append({"type": "table", "headers": ["basis", "n", "seconds"],
+                   "rows": _duration_rows(duration.get("by_basis"), ah.DURATION_BASES),
+                   "caption": "duration by basis"})
+    blocks.append({"type": "p", "text": duration.get("note") or ""})
+
+    latest_rows = []
+    for key, entry in sorted((card.get("latest") or {}).items()):
+        kit, _sep, task = str(key).partition("/")
+        latest_rows.append([kit, task, (entry or {}).get("result"), (entry or {}).get("run")])
+    blocks.append({"type": "table", "headers": ["kit", "task", "result", "run"],
+                   "rows": latest_rows, "caption": "latest per task", "details": True,
+                   "empty": "no task has a recorded verdict yet"})
+
+    blocks.append({"type": "p", "parts": [
+        "lineage chains: ", {"fmt": "count", "value": len(card.get("lineage") or [])}]})
+
+    blocks.append({"type": "list", "items": list(card.get("notes") or ()),
+                  "empty": "no notes from this history join"})
+    return blocks
+
+
+def _history_section_blocks(ctx, ah, al, kc, notes):
+    """TASKS.md items 1-2: the history projection per mapped checkout with a kits dir, and its
+    rendering -> (blocks, targets found). An owner that raises, or a kits dir this build must not
+    open in full (P1 fix round B3), becomes a note -- never a crash and never a guess at the
+    numbers it would have shown (PLAN D10)."""
+    classes = ctx["model"]["classes"]
+    data_home = ctx["data_home"]
+    targets = _history_targets(classes)
+    blocks = [{"type": "p", "text": (
+        "Every figure below is an owner's own return value: attempt_history.join_kits/summarize "
+        "per mapped checkout with a kits directory, and attempt_ledger.AttemptLedger read "
+        "directly per namespace further down this panel. Nothing here is priced, ranked or "
+        "classified again, and no basis, harness or owner is combined with another.")}]
+    if data_home is None:
+        blocks.append({"type": "p", "text": "No data home was given, so no checkout's history "
+                                             "could be joined."})
+        return blocks, targets
+    if not targets:
+        blocks.append({"type": "p", "text": "No mapped checkout has a .claude/kits or "
+                                             "tasks/kits directory yet — no history projection "
+                                             "to show."})
+        return blocks, targets
+    for target in targets:
+        label, kits_dir, namespace = target["label"], target["kits_dir"], target["namespace"]
+        blocks.append({"type": "p", "text": f"History for {label}:"})
+        store = Path(data_home) / namespace / al.STORE
+        oversized = _kits_dir_oversized(kits_dir, store, ctx["caps"], kc)
+        if oversized is not None:
+            kit_name, size = oversized
+            notes.append(cap_note(
+                ctx["caps"], "MAX_LEDGER_BYTES",
+                f"history for {label} was not joined this build — kit {kit_name}'s ledger is "
+                f"{size} bytes"))
+            blocks.append({"type": "p", "text": "not joined this build — see the notes above"})
+            continue
+        try:
+            records, join_notes, coverage = ah.join_kits(kits_dir, store=store)
+            card = ah.summarize(records, join_notes, coverage)
+        except Exception as exc:  # PLAN D10: an owner that raises is a note, never a crash
+            notes.append(f"attempt history unavailable for {label}: {type(exc).__name__}")
+            blocks.append({"type": "p", "text": "not available this build — see the notes "
+                                                "above"})
+            continue
+        blocks.extend(_history_card_blocks(card, ah))
+    return blocks, targets
+
+
+# The event kinds `attempt_ledger.py` itself ever writes (`run.started`, `attempt.started`,
+# `attempt.finished`, `verify.finished`, `task.projected`, `claim.taken`, `claim.released`,
+# `claim.broken`) are always one or more lowercase words joined by dots. A `kind` outside that
+# shape is free text from a tampered or corrupted line, and GUARDRAILS keeps free text that is
+# not a title, name, label or note off the page -- this is none of those (R2).
+KIND_SHAPE_RE = re.compile(r"\A[a-z][a-z0-9]*(?:\.[a-z][a-z0-9]*)*\Z")
+
+# Twice the longest real kind ("attempt.finished", 17 chars) with room for one more dotted
+# segment -- long enough for any kind this ledger writes, far too short for a payload (R2).
+MAX_KIND_CHARS = 40
+
+# What every kind failing the shape or length check is counted as -- one fixed label, never the
+# value itself, so a 20,000-character or markup-carrying `kind` never reaches the page (R2).
+OTHER_KIND_LABEL = "other kinds (not rendered)"
+
+
+def _kind_label(kind):
+    """One event's raw `kind` field -> a safe histogram key: itself when it is a short,
+    name-shaped string (`KIND_SHAPE_RE`, `MAX_KIND_CHARS`), else `OTHER_KIND_LABEL` -- never the
+    raw value. A non-string `kind` (a dict or list a malformed line can carry, which would also
+    be unhashable used bare as a dict key) is counted under the same label rather than raising
+    (R1, R2)."""
+    if isinstance(kind, str) and 0 < len(kind) <= MAX_KIND_CHARS and KIND_SHAPE_RE.match(kind):
+        return kind
+    return OTHER_KIND_LABEL
+
+
+def _safe_ts(value):
+    """A ledger event's `ts` field as a date-cell value: itself when it is a string, else None.
+    A non-string `ts` (a tampered or malformed line) is unknown, never stringified and shown as
+    though it were a real timestamp (R1)."""
+    return value if isinstance(value, str) else None
+
+
+def _one_ledger_fact(attempts_root, ns_name, ledger_name, al):
+    """One ledger-facts row (TASKS.md item 3), read through `attempt_ledger.AttemptLedger` only.
+    Never raises on a malformed `kind` or `ts` (R1a): each event's `kind` is counted through
+    `_kind_label`, which never uses the raw value as a dict key, and `ts` is read through
+    `_safe_ts`. Anything else that goes wrong is the caller's job to contain per row (R1b). The
+    ledger's `report`, `tail`, `prompt_sha`, `verify_sha` and `note` fields are never read here."""
+    ledger = al.AttemptLedger(attempts_root, ledger_name)
+    events = ledger.events()
+    kinds = {}
+    for ev in events:
+        label = _kind_label(ev.get("kind") if isinstance(ev, dict) else None)
+        kinds[label] = kinds.get(label, 0) + 1
+    kinds_text = ", ".join(f"{kind}: {n}" for kind, n in sorted(kinds.items())) or "—"
+    open_n = len(ledger.open_attempts())
+    claims_dir = attempts_root / ledger_name / al.CLAIMS_DIR
+    claim_count = len(os.listdir(claims_dir)) if claims_dir.is_dir() else 0
+    first_ts = _safe_ts(events[0].get("ts")) if events else None
+    last_ts = _safe_ts(events[-1].get("ts")) if events else None
+    return [ns_name, ledger_name, {"fmt": "count", "value": len(events)},
+           {"fmt": "count", "value": ledger.corrupt}, kinds_text,
+           {"fmt": "count", "value": open_n},
+           {"fmt": "date", "value": first_ts}, {"fmt": "date", "value": last_ts},
+           {"fmt": "count", "value": claim_count}]
+
+
+def _ledger_fact_rows(data_home, ns_row, caps, al, notes):
+    """Every `attempts/<ledger>` subdir of one namespace -> its rows for the ledger-facts table.
+    A namespace with no attempts store contributes nothing -- a fact about the namespace, not a
+    degraded scan. A ledger over MAX_LEDGER_BYTES is skipped by its `os.stat` size alone and is
+    never opened for read (TASKS.md item 3); anything else that goes wrong reading one ledger is
+    a note for that row only."""
+    ns_name = ns_row.get("namespace")
+    stores = ns_row.get("stores")
+    if stores is None:
+        notes.append(f"ledger facts for {ns_name}: its store listing failed, so whether it holds "
+                     f"an attempts store is unknown")
+        return []
+    if "attempts" not in stores:
+        return []
+    attempts_root = Path(data_home) / ns_name / al.STORE
+    sub_names, error = _one_listing(attempts_root)
+    if error is not None:
+        notes.append(f"ledger facts for {ns_name}: its attempts store could not be listed "
+                     f"({error})")
+        return []
+    limit = cap_value(caps, "MAX_LEDGER_BYTES")
+    rows = []
+    for ledger_name in sorted(sub_names):
+        if not _is_real_dir(attempts_root / ledger_name):
+            continue
+        events_path = attempts_root / ledger_name / al.EVENTS_FILE
+        try:
+            size = os.stat(events_path).st_size
+        except FileNotFoundError:
+            continue
+        except OSError as exc:
+            notes.append(f"ledger facts for {ns_name}/{ledger_name}: could not be stat'd "
+                         f"({type(exc).__name__})")
+            continue
+        if size > limit:
+            notes.append(cap_note(
+                caps, "MAX_LEDGER_BYTES",
+                f"ledger {ns_name}/{ledger_name} is {size} bytes — skipped, never read"))
+            continue
+        try:
+            rows.append(_one_ledger_fact(attempts_root, ns_name, ledger_name, al))
+        except Exception as exc:  # PLAN D10, R1b: any failure reading one ledger is a note for
+            # that row only, naming the exception TYPE only -- every other ledger still renders.
+            notes.append(f"ledger facts for {ns_name}/{ledger_name}: {type(exc).__name__}")
+    return rows
+
+
+def _ledger_facts_blocks(ctx, al, notes):
+    """TASKS.md item 3: raw ledger facts for every namespace `read_namespaces` bounds to, mapped
+    then unmapped -- the only place an unmapped namespace's own ledger is read at all (PLAN D4)."""
+    data_home = ctx["data_home"]
+    if data_home is None:
+        return [{"type": "p", "text": "No data home was given, so no ledger could be read "
+                                       "directly."}]
+    ns_rows, cap_notes = read_namespaces(ctx)
+    notes.extend(cap_notes)
+    rows = []
+    for ns_row in ns_rows:
+        rows.extend(_ledger_fact_rows(data_home, ns_row, ctx["caps"], al, notes))
+    return [
+        {"type": "p", "text": ("Ledger facts, read directly from each namespace's attempts "
+                               "store (attempt_ledger.AttemptLedger), independent of any "
+                               "checkout match above:")},
+        {"type": "table",
+         "headers": ["namespace", "ledger", "events", "corrupt lines", "kind histogram",
+                     "open attempts", "first ts", "last ts", "claim files"],
+         "rows": rows, "empty": "no ledger found"},
+    ]
+
+
+_RESIDUE_TEXT = ("residue namespaces (heuristic: tempfile-shaped name holding only an attempts "
+                 "store) — counted, not opened, excluded from every figure above")
+
+
+def _residue_line_block(classes):
+    """TASKS.md item 4: the one residue line, its count read only through `class_count`. An
+    absent data home gets its own sentence with no count at all; an exact zero (a data home
+    that exists and simply has none) is worded without a digit either -- GUARDRAILS: absence
+    renders as text, never `0`, and that holds for a verified zero exactly as it does for an
+    unknown one (R3b). Anything else (a positive exact count, or a lower bound) is the qualified
+    count cell, as before."""
+    entry = class_count(classes, "residue")
+    if classes.get("listing") == "absent":
+        return {"type": "p", "text": "No data home, so no residue namespaces to count."}
+    if entry.get("qualifier") == "exact" and entry.get("count") == 0:
+        return {"type": "p", "text": f"No {_RESIDUE_TEXT}."}
+    return {"type": "p", "parts": [_count_cell(entry), f" {_RESIDUE_TEXT}"]}
+
+
+def _guarded_section(builder, section_name, notes):
+    """Run one Attempts sub-section builder, contained on its own (R1c): a failure becomes one
+    fallback block plus a note naming the section and the exception TYPE only (never the
+    message, which can carry a path) -- the other sections are built by their own separate call
+    and are never affected."""
+    try:
+        return builder()
+    except Exception as exc:  # noqa: BLE001 -- contained per section, never the whole panel
+        notes.append(f"{section_name} section could not be built ({type(exc).__name__})")
+        return [{"type": "p", "text": f"The {section_name} section could not be built this "
+                                      f"build — see the notes above."}]
+
+
+def build_attempts_panel(ctx):
+    ah, al = _mod("attempt_history"), _mod("attempt_ledger")
+    kc = _mod("kit_contract")
+    notes = []
+    targets = []
+
+    def _history():
+        nonlocal targets
+        blocks, targets = _history_section_blocks(ctx, ah, al, kc, notes)
+        return blocks
+
+    history_blocks = _guarded_section(_history, "history", notes)
+    ledger_blocks = _guarded_section(
+        lambda: _ledger_facts_blocks(ctx, al, notes), "ledger facts", notes)
+    residue_blocks = _guarded_section(
+        lambda: [_residue_line_block(ctx["model"]["classes"])], "residue", notes)
+    blocks = history_blocks + ledger_blocks + residue_blocks
+    return {
+        "source": ("bin/dashboard.py — attempt_history.join_kits/summarize per mapped checkout's "
+                  "kits dir, attempt_ledger.AttemptLedger per namespace read"),
+        "observed": "live, at build time",
+        "notes": notes,
+        "summary": (f"history joined for {len(targets)} checkout target(s); ledger facts read "
+                   f"directly per namespace"),
+        "blocks": blocks,
+    }
+
+
 def _bounds_blocks(notes, report):
     """The bounds panel's body: every cap with hit / not hit, then every note of the build.
     Also how `render_build` rebuilds that body when a panel's rendering fails, so the failure
@@ -1001,6 +1469,7 @@ BOUNDS_PANEL = "bounds"
 # exactly those ids; `bounds` stays last because it reports every other panel's notes.
 PANELS = [
     (NAMESPACES_PANEL, "Namespaces in the data home", build_namespaces_panel),
+    (ATTEMPTS_PANEL, "Attempts", build_attempts_panel),
     (BOUNDS_PANEL, "Bounds and notes", build_bounds_panel),
 ]
 
@@ -1732,6 +2201,9 @@ def summary_lines(receipt):
     listing = classes.get("listing")
     if listing == "absent":
         namespaces = "namespaces: data home absent — no namespaces"
+    elif listing == "complete" and all(_is_exact_zero(classes.get(name))
+                                       for name in CLASS_NAMES):
+        namespaces = "namespaces: data home empty — no namespaces"
     else:
         namespaces = ("namespaces: "
                       + " · ".join(_count_text(classes.get(name), name) for name in CLASS_NAMES)
@@ -1923,11 +2395,15 @@ def assemble_build(cwd, data_home=None, out_dir=None, flags=(), git=True, projec
 def synthetic_world(root, residue=30):
     """A synthetic data home and checkout under `root` -> dict of paths.
 
-    `root/checkout` holds `.claude/kits/demo-kit/{TASKS,NOTES}.md` and an empty `tasks/kits/`;
-    `root/data-home` holds the checkout's mapped namespace with a ledger (a finished, verified,
-    projected attempt and one started attempt that never finished), `residue` residue
-    namespaces each holding only `attempts/kit/events.jsonl` with one event, and one unmapped
-    namespace with a ledger. Every value is synthetic; nothing outside `root` is touched.
+    `root/checkout` holds `.claude/kits/demo-kit/{TASKS,NOTES}.md`,
+    `.claude/kits/notes-kit/{TASKS,NOTES}.md` (a second, ledger-less kit -- T4 item 5) and an
+    empty `tasks/kits/`; `root/data-home` holds the checkout's mapped namespace with a ledger (a
+    finished, verified, projected attempt; a second finished attempt carrying an `estimated`
+    cost; and one started attempt that never finished), `residue` residue namespaces each
+    holding only `attempts/kit/events.jsonl` with one event, and one unmapped namespace with a
+    ledger carrying one corrupt line. Every value is synthetic; nothing outside `root` is
+    touched, and nothing here is oversized -- an over-size ledger is a T4-test-only fixture, not
+    a `demo`/`synthetic_world` one (TASKS.md item 5).
     """
     rd, al, sp = _mod("runtime_data"), _mod("attempt_ledger"), _mod("safe_paths")
     root = Path(root)
@@ -1935,10 +2411,13 @@ def synthetic_world(root, residue=30):
     checkout = root / "checkout"
     kits_dir = checkout / ".claude" / "kits"
     kit_dir = kits_dir / DEMO_KIT
-    for directory in (data_home, kit_dir, checkout / "tasks" / "kits"):
+    notes_kit_dir = kits_dir / NOTES_KIT
+    for directory in (data_home, kit_dir, notes_kit_dir, checkout / "tasks" / "kits"):
         rd.ensure_private(directory)
     sp.confined_write_bytes(kit_dir, "TASKS.md", DEMO_TASKS_MD, what="synthetic kit")
     sp.confined_write_bytes(kit_dir, "NOTES.md", DEMO_NOTES_MD, what="synthetic kit")
+    sp.confined_write_bytes(notes_kit_dir, "TASKS.md", NOTES_KIT_TASKS_MD, what="synthetic kit")
+    sp.confined_write_bytes(notes_kit_dir, "NOTES.md", NOTES_KIT_NOTES_MD, what="synthetic kit")
 
     namespace = rd.project_namespace(checkout)
     ledger = al.AttemptLedger(data_home / namespace / al.STORE, DEMO_KIT)
@@ -1949,6 +2428,13 @@ def synthetic_world(root, residue=30):
     ledger.record_projected(DEMO_RUN, "T1", "done", result="pass", outcome_line=True)
     ledger.record_started(DEMO_RUN, "T2", "initial", SYNTHETIC_MODEL,
                           prompt="synthetic prompt", verify_cmd="synthetic verify")
+    # T4 item 5: a record whose finished event carries a cost (`attempt_history.ledger_records`
+    # derives basis `estimated` for any `cost_source` other than `parsed`, per the P1 fix round's
+    # S5 reading) -- T1 above stays the record with no cost at all.
+    third = ledger.record_started(DEMO_RUN, "T3", "initial", SYNTHETIC_MODEL,
+                                  prompt="synthetic prompt", verify_cmd="synthetic verify")
+    ledger.record_finished(DEMO_RUN, "T3", third, "ok", 0, "synthetic report", duration_s=2.0,
+                           cost_usd=0.05, cost_source="estimated")
 
     residue_names = []
     for index in range(residue):
@@ -1961,6 +2447,10 @@ def synthetic_world(root, residue=30):
     other = al.AttemptLedger(data_home / UNMAPPED_NAMESPACE / al.STORE, "other-kit")
     started = other.record_started(DEMO_RUN, "T1", "initial", SYNTHETIC_MODEL)
     other.record_finished(DEMO_RUN, "T1", started, "ok", 0, "synthetic report")
+    # T4 item 5: one corrupt line in an unmapped namespace's ledger, appended beside the ledger's
+    # own valid writes through the same confined-append path `AttemptLedger.append` uses.
+    sp.confined_append_bytes(other.root, f"{other.namespace}/{al.EVENTS_FILE}",
+                             b"not-json-at-all\n", what="synthetic corrupt ledger line")
 
     return {
         "root": root,
@@ -1968,6 +2458,7 @@ def synthetic_world(root, residue=30):
         "checkout": checkout,
         "kits_dir": kits_dir,
         "kit_dir": kit_dir,
+        "notes_kit_dir": notes_kit_dir,
         "namespace": namespace,
         "ledger": ledger.events_path,
         "residue": residue_names,

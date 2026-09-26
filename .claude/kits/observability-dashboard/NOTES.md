@@ -348,3 +348,123 @@ semantics stay the same.
   synthetic data home. Re-run from inside the synthetic checkout, the probe passed.
 agent: P1fix id=a224ace9a6e243f0d role=implementer model=opus
 reviewer: P1 model=opus findings=10 confirmed=10 result=accepted
+
+## T4 — attempts panel
+
+- No owner-shape delta against `bin/attempt_history.py` or `bin/attempt_ledger.py`: every
+  function, field and label the brief and the P1 fix round named (`join_kits`, `summarize`,
+  `COST_BASES`, `DURATION_BASES`, `AttemptLedger.events`/`.open_attempts`/`.corrupt`,
+  `attempt_ledger.STORE`/`EVENTS_FILE`/`CLAIMS_DIR`, `kit_contract.open_ledger`) matched on
+  read. S5's reading (a ledger's `cost_usd`/`cost_source`, basis `estimated` for anything but
+  `parsed`) and B3's reading (`open_ledger`'s constructor only validates the name and composes
+  a path, so a size check can call it before ever reading the file) both held exactly as
+  written; the fixture and the oversize pre-check in `_kits_dir_oversized` and
+  `_ledger_fact_rows` rely on that.
+- `read_namespaces(ctx)` is the S6 helper: mapped rows (carrying `checkout`/`kind`) first, then
+  unmapped rows (carrying only `namespace`/`stores`) by name, each tagged `"mapped": bool`,
+  bounded by `MAX_NAMESPACES_READ` with one cap note when cut. T4's ledger facts
+  (`_ledger_facts_blocks`) read the whole list; T6 and T7 are told to use only the mapped
+  entries.
+- The `store` passed to `attempt_history.join_kits` and read directly for ledger facts is the
+  same path either way, `<data_home>/<namespace>/attempts` (`attempt_ledger.STORE`), using
+  the namespace `classify_namespaces` already resolved for that row -- for a `codex-kits` row
+  this is `project_namespace(checkout/"tasks"/"kits")`, which is exactly what
+  `kit_contract.open_ledger` resolves to via `attempt_ledger.kit_repo_root` for a kit under
+  `tasks/kits/<slug>`. Verified directly: a synthetic kit written under a mapped `tasks/kits`
+  namespace shows up as a second "History for ... (tasks/kits)" target
+  (`AttemptsHistoryTests.test_codex_kits_root_is_a_second_history_target_with_its_own_label`).
+- `synthetic_world` gained, for this task: a second, ledger-less kit `notes-kit` whose
+  `NOTES.md` carries one `pass` and one `blocked` outcome line; a third demo-kit ledger record
+  (`T3`) whose finished event carries `cost_usd`/`cost_source="estimated"`, so the cost-by-basis
+  table has a non-empty basis to show beside the untouched no-cost `T1`; and one corrupt line
+  appended to the unmapped namespace's own ledger file, through the same
+  `safe_paths.confined_append_bytes` path `AttemptLedger.append` itself uses. The over-size-
+  ledger case stayed test-only, per the brief: two dedicated tests
+  (`AttemptsHistoryTests.test_oversize_kit_ledger_skips_that_historys_join_and_is_never_opened`,
+  `AttemptsLedgerFactsTests.test_oversize_ledger_row_is_skipped_never_read_and_others_still_show`)
+  grow a ledger file to `MAX_LEDGER_BYTES + 1` bytes and `chmod 0` it before building, proving
+  the skip comes from `os.stat` alone and the file is never opened for read.
+- Verify run from the repo root: the `sum(` grep, `tests/test_dashboard.py` alone, the task's
+  own `python3 -` probe, and the full suite under an isolated `POLYTROPOS_DATA_HOME` all exited
+  0 (exact counts are not quoted here since they change with each retry -- see the run's own
+  Verify output for the number that applied to it).
+
+### T4 retry (attempt 2) — red-team and reviewer findings, fixed
+
+- R1 (containment). `_one_ledger_fact` no longer builds its kind histogram from the raw `kind`
+  value: every event's `kind` goes through the new `_kind_label` first (below), which is always
+  a short, hashable string, so a dict- or list-typed `kind` (a malformed or tampered line) can
+  no longer raise `TypeError` from being used bare as a dict key. `ts` goes through the new
+  `_safe_ts`, which reads a non-string `ts` as unknown rather than stringifying it into
+  something that looks like a real timestamp. `_ledger_fact_rows`'s per-ledger `try/except`
+  widened from `(safe_paths.SafePathError, attempt_ledger.LedgerError, OSError)` to a bare
+  `Exception`, naming only the exception type -- one bad ledger is a note for that row, every
+  other ledger in the table still renders. Inside `build_attempts_panel`, the history section,
+  the ledger-facts section and the residue line are now each built through a new
+  `_guarded_section` helper with their own `try/except`; a failure in one produces a note
+  naming that section and the exception type and leaves a one-line fallback block in its place,
+  and the other two sections are unaffected (verified directly: patching each of
+  `_ledger_facts_blocks` and `_residue_line_block` to raise a sentinel-text `RuntimeError` left
+  the sentinel text off the page and the other two sections rendering their real content, and
+  the same repro for the corrupted `kind` line the red-team found -- appending a `{"kind":
+  {"n": 1}}` event to the mapped namespace's `demo-kit` ledger -- no longer collapses the panel
+  to the "could not be built" stub). Tests: `AttemptsLedgerFactsTests
+  .test_a_malformed_kind_in_the_mapped_or_unmapped_ledger_never_blanks_the_panel`,
+  `AttemptsPanelSectionGuardTests.test_a_raising_section_is_a_note_naming_the_section_the_others_still_render`.
+- R2 (bounded kind rendering). New module constants `KIND_SHAPE_RE` (the dotted-lowercase-words
+  shape every kind `attempt_ledger.py` itself writes actually has -- `run.started`,
+  `attempt.finished`, `task.projected`, …), `MAX_KIND_CHARS` (40, twice the longest real kind
+  with room for one more segment) and `OTHER_KIND_LABEL` ("other kinds (not rendered)"), plus
+  `_kind_label(kind)`, which renders a kind only when it matches both, and counts everything
+  else -- a non-string, an over-length string, one that does not look like a kind this ledger
+  writes -- under the fixed label instead. Test:
+  `AttemptsLedgerFactsTests.test_a_long_or_markup_kind_is_counted_under_the_other_kinds_label_and_never_rendered`.
+- R3 (absent/empty renders as text, never a zero). Reverted the attempt-1 narrowing of
+  `ClassificationCompletenessTests.test_an_absent_data_home_renders_absent_never_zeros` back to
+  its original page-and-stdout-wide scope -- that narrowing was the wrong fix; the right one is
+  that nothing on the page or in the terminal ever prints "0 mapped"/"0 unmapped"/"0 residue"
+  for an absent OR an empty-but-existing data home. `_residue_line_block` now has three
+  branches: `classes["listing"] == "absent"` -> "No data home, so no residue namespaces to
+  count." (no count at all); an exact `class_count` of zero -> "No residue namespaces
+  (heuristic: …)." (no digit); anything else -> the qualified count cell as before, so
+  "30 residue namespaces (…)" and "at least 4 residue namespaces (…)" are unchanged. The new
+  `_is_exact_zero(entry)` helper is also used by `build_namespaces_panel` (a `complete` listing
+  whose mapped/unmapped/residue are all exact zero now renders "Data home <path>: empty — no
+  namespaces." instead of the "0 mapped · 0 unmapped · 0 residue." line) and by `summary_lines`
+  (the matching "namespaces: data home empty — no namespaces" line) -- a zero for ONE class
+  inside a non-empty census (`"1 mapped · 0 unmapped · 30 residue"`) is untouched; only the
+  all-zero case takes the new sentence. Tests:
+  `ClassificationCompletenessTests.test_an_absent_data_home_renders_absent_never_zeros` (scope
+  restored) and the new
+  `ClassificationCompletenessTests.test_an_empty_but_existing_data_home_renders_text_never_zeros`.
+- R4 (stale citation). This section now cites tests by name only, never by line number, in
+  both the original entry above and this one.
+agent: T4 id=a354c8e19bbc8cdae role=implementer model=sonnet
+agent: T4 id=ac82545e9c21ffbec role=verifier model=sonnet findings=1 confirmed=1 result=accepted
+agent: T4 id=ade756007d059b4e8 role=red-team model=sonnet findings=2 confirmed=2 marginal=2 result=accepted
+
+- T4 adjudication. The verifier passed T4, and my own verify run was green. There are four
+  findings; together they are T4's one retry.
+  - Red-team break 1, confirmed and reproduced by the orchestrator: one ledger line whose
+    `kind` is a list or dict makes `_one_ledger_fact` raise `TypeError`. That exception is
+    outside the per-row except, so `build_model` replaces the whole attempts panel with its
+    "could not be built" stub. On the fixture the panel shrank from about 5.4 KB to 316 bytes,
+    healthy primary-checkout history included, and the note names no namespace. The fix
+    contains a failure per row and per section.
+  - Red-team break 2, confirmed: a raw `kind` string reaches the page verbatim and unbounded.
+    It is escaped, but it is free text from a tampered file (GUARDRAILS: free text that is
+    not a title, name, label or note stays off the page, and PLAN D5 bounds everything). The
+    fix renders only short, name-shaped kinds and counts every other kind without rendering it.
+  - Verifier finding, confirmed: a NOTES line cited `tests/test_dashboard.py:1815` for a test
+    that sits elsewhere. From now on NOTES cites tests by name, not by line.
+  - Orchestrator finding, not on any agent line. The implementer narrowed the P1 fix round's
+    absent-data-home guard so that the attempts panel's residue line could print
+    "0 residue namespaces" for a data home that does not exist. That runs against GUARDRAILS
+    ("absence … never `0`"), the P1 fix-round contract ("absent … the page renders the word")
+    and PLAN Done-means 2, whose build over an empty `mktemp -d` data home must render every
+    absent state as text. The same probe showed the namespaces panel printing
+    "0 mapped · 0 unmapped · 0 residue" for an empty but existing data home. The fix restores
+    the guard to page-wide scope, extends it to the empty data home, and renders both states
+    as text. A zero count of one class inside a non-empty census stays a count.
+agent: T4 id=a354c8e19bbc8cdae role=implementer model=sonnet
+outcome: T4 model=sonnet attempts=2 result=retry-pass review=revised run=2026-09-25-7e3a

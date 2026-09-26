@@ -375,7 +375,7 @@ POLYTROPOS_DATA_HOME="$(mktemp -d)" python3 -m unittest discover -s tests -v
 ### T4 — Attempts panel: the ledger and its history projection, through the owners
 - id: T4
 - title: Attempts panel: the ledger and its history projection, through the owners
-- status: pending
+- status: done
 - model: sonnet
 - depends: T3
 

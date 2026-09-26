@@ -45,6 +45,8 @@ def _load(name):
 
 db = _load("dashboard")
 rd = _load("runtime_data")
+ah = _load("attempt_history")
+al = _load("attempt_ledger")
 
 _DATA_HOME = None
 _FAKE_HOME = None
@@ -488,6 +490,28 @@ class ClassificationCompletenessTests(_WorldCase):
         page = self.page(out)
         self.assertIn(f"Data home {nowhere}: absent — no namespaces.", page)
         self.assertIn("namespaces: data home absent — no namespaces", stdout)
+        # Page-wide and stdout-wide: an absent data home renders as text everywhere on the page,
+        # never a zero -- the attempts panel's own residue line (T4) says "No data home, so no
+        # residue namespaces to count." for this exact listing state (see NOTES.md, T4 retry).
+        for text in (page, stdout):
+            for wrong in ("0 mapped", "0 unmapped", "0 residue"):
+                self.assertNotIn(wrong, text)
+
+    def test_an_empty_but_existing_data_home_renders_text_never_zeros(self):
+        empty_home = self.tmp / "empty-home"
+        empty_home.mkdir()
+        out = self.tmp / "out"
+        argv = self.build_argv(out)
+        argv[argv.index("--data-home") + 1] = str(empty_home)
+        rc, stdout, stderr = _run(argv)
+        self.assertEqual(rc, 0, stderr)
+        self.assertEqual(self.receipt(out)["classes"], {
+            "listing": "complete", "mapped": exact(0), "unmapped": exact(0),
+            "residue": {**exact(0), "sample": []}})
+        page = self.page(out)
+        self.assertIn(f"Data home {empty_home}: empty — no namespaces.", page)
+        self.assertIn("namespaces: data home empty — no namespaces", stdout)
+        self.assertIn("No residue namespaces (heuristic:", page)
         for text in (page, stdout):
             for wrong in ("0 mapped", "0 unmapped", "0 residue"):
                 self.assertNotIn(wrong, text)
@@ -969,7 +993,8 @@ class PageTests(_WorldCase):
         self.assertEqual(receipt["classes"], {
             "listing": "complete", "mapped": exact(1), "unmapped": exact(1),
             "residue": {**exact(30), "sample": sorted(self.world["residue"])[:3]}})
-        self.assertEqual([panel["id"] for panel in receipt["panels"]], ["namespaces", "bounds"])
+        self.assertEqual([panel["id"] for panel in receipt["panels"]],
+                         ["namespaces", "attempts", "bounds"])
         self.assertEqual([row["name"] for row in receipt["caps"]], list(db.CAP_NAMES))
         self.assertEqual(receipt["caps_hit"], [])
         self.assertEqual(receipt["page"], str(self.out / "index.html"))
@@ -1065,7 +1090,8 @@ class RenderingTests(_WorldCase):
                                {"notes": ["a note"]}, None)
         self.assertEqual(json.loads(json.dumps(model))["schema_version"], 1)
         self.assertEqual(model["notes"][0], "a note")
-        self.assertEqual([panel["id"] for panel in model["panels"]], ["namespaces", "bounds"])
+        self.assertEqual([panel["id"] for panel in model["panels"]],
+                         ["namespaces", "attempts", "bounds"])
 
     def test_a_panel_builder_that_raises_is_a_note_not_an_exception(self):
         def broken(_ctx):
@@ -1742,6 +1768,453 @@ class RenderContainmentTests(_WorldCase):
         self.assertEqual(page3, page4)  # re-rendering the noted model adds nothing twice
         self.assertEqual(noted_again["notes"].count(f"broken: {self.NOTE}"), 1)
         self.assertNotIn(f"broken: {self.NOTE}", model["notes"])
+
+
+class _AttemptsCase(_WorldCase):
+    """Shared helpers for the attempts-panel tests (T4): the ledger and its history projection,
+    rendered from `attempt_history.join_kits`/`summarize` and `attempt_ledger.AttemptLedger`
+    only (PLAN D2, D3 row 1, D7a-c)."""
+
+    def model(self, caps=None, checkouts=None):
+        return db.build_model(self.world["data_home"],
+                              checkouts if checkouts is not None
+                              else [str(self.world["checkout"])],
+                              {"notes": []}, caps)
+
+    def panel(self, model):
+        return next(p for p in model["panels"] if p["id"] == "attempts")
+
+    def table(self, attempts, caption):
+        return next(b for b in attempts["blocks"]
+                    if b.get("type") == "table" and b.get("caption") == caption)
+
+    def ledger_facts_table(self, attempts):
+        return next(b for b in attempts["blocks"]
+                    if b.get("type") == "table"
+                    and b.get("headers", [])[:2] == ["namespace", "ledger"])
+
+
+class ReadNamespacesTests(_AttemptsCase):
+    """`read_namespaces` (P1 fix round S6): mapped first, then unmapped by name, bounded by
+    MAX_NAMESPACES_READ -- the contract T6/T7 also build on."""
+
+    def ctx(self, caps=None):
+        caps = {**db.default_caps(), **(caps or {})}
+        return {"model": self.model(caps), "caps": caps}
+
+    def test_mapped_first_then_unmapped_by_name(self):
+        rows, notes = db.read_namespaces(self.ctx())
+        self.assertEqual(notes, [])
+        self.assertEqual([row["mapped"] for row in rows], [True, False])
+        self.assertEqual(rows[0]["namespace"], self.world["namespace"])
+        self.assertEqual(rows[0]["checkout"], str(self.world["checkout"]))
+        self.assertEqual(rows[1]["namespace"], db.UNMAPPED_NAMESPACE)
+        self.assertNotIn("checkout", rows[1])
+
+    def test_cap_lowered_to_one_keeps_the_mapped_row_first_and_notes_the_cut(self):
+        rows, notes = db.read_namespaces(self.ctx({"MAX_NAMESPACES_READ": 1}))
+        self.assertEqual(len(rows), 1)
+        self.assertTrue(rows[0]["mapped"])
+        self.assertEqual(rows[0]["namespace"], self.world["namespace"])
+        self.assertEqual(len(notes), 1)
+        self.assertTrue(notes[0].startswith("cap MAX_NAMESPACES_READ (1) reached"))
+
+    def test_cap_not_hit_when_the_combined_list_fits(self):
+        rows, notes = db.read_namespaces(self.ctx())
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(notes, [])
+
+
+class AttemptsHistoryTests(_AttemptsCase):
+    """TASKS.md T4 items 1-2: the history projection per mapped checkout with a kits dir."""
+
+    def test_records_and_by_source_line_is_the_owners_own_split(self):
+        attempts = self.panel(self.model())
+        line = next(b for b in attempts["blocks"]
+                    if b.get("type") == "p" and b.get("parts")
+                    and b["parts"][0] == "records: ")
+        # 3 ledger records (T1 pass, T2 open, T3 estimated-cost) + 3 notes records (demo-kit
+        # T1 pass, notes-kit T1 pass, notes-kit T2 blocked) -- attempt_history's own split.
+        self.assertEqual(line["parts"], [
+            "records: ", {"fmt": "count", "value": 6}, "  by source: ",
+            "ledger", ": ", {"fmt": "count", "value": 3}, "  ",
+            "notes", ": ", {"fmt": "count", "value": 3}, "  "])
+
+    def test_coverage_line_reports_kits_with_ledger_notes_and_role_use(self):
+        attempts = self.panel(self.model())
+        line = next(b for b in attempts["blocks"]
+                    if b.get("type") == "p" and b.get("parts")
+                    and b["parts"][0] == "coverage — kits: ")
+        self.assertEqual(line["parts"], [
+            "coverage — kits: ", {"fmt": "count", "value": 2},
+            "  with ledger: ", {"fmt": "count", "value": 1},
+            "  with notes: ", {"fmt": "count", "value": 2},
+            "  with role-use: ", {"fmt": "count", "value": 0}])
+
+    def test_by_harness_tier_table_joins_results_as_text_pairs(self):
+        attempts = self.panel(self.model())
+        table = self.table(attempts, "records by harness and tier")
+        rows = {(r[0], r[1]): (r[2]["value"], r[3]) for r in table["rows"]}
+        # demo-kit's/notes-kit's own outcome lines resolve model=sonnet to claude/sonnet; the
+        # ledger's own SYNTHETIC_MODEL is unregistered, so harness and tier both stay unknown.
+        self.assertEqual(rows[("claude", "sonnet")], (3, "blocked: 1, pass: 2"))
+        self.assertEqual(rows[("unknown", "unknown")], (3, "dispatched: 1, open: 1, pass: 1"))
+
+    def test_bar_chart_of_records_by_harness_tier_has_a_table_twin_and_counts_only(self):
+        model = self.model()
+        attempts = self.panel(model)
+        chart = next(b for b in attempts["blocks"] if b.get("type") == "svg_bars")
+        self.assertEqual(chart["label_key"], "label")
+        self.assertEqual(chart["value_key"], "value")
+        self.assertEqual(sorted(row["label"] for row in chart["rows"]),
+                         ["claude/sonnet", "unknown/unknown"])
+        self.assertTrue(all(isinstance(row["value"], int) for row in chart["rows"]))
+        page = db.render_page(model, _FAKE_HOME.name)
+        section = _section(page, "attempts")
+        self.assertEqual(section.count("<figure>"), 1)
+        figure = section.split("<figure>", 1)[1].split("</figure>", 1)[0]
+        self.assertIn("<table>", figure.split("<figcaption>", 1)[1])
+
+    def test_unknown_table_has_every_key_including_the_four_provenance_refs(self):
+        attempts = self.panel(self.model())
+        table = self.table(attempts, "unknown, counted — never filled in")
+        self.assertEqual(table["headers"], ["field", "unknown count"])
+        values = {row[0]: row[1] for row in table["rows"]}
+        self.assertEqual(list(values), ["harness", "tier", "observed_model", "cost", "duration",
+                                        "acceptance_ref", "policy_ref", "decision_ref",
+                                        "admission_ref"])
+        for cell in values.values():
+            self.assertEqual(cell["fmt"], "count")
+            self.assertIsInstance(cell["value"], int)
+        # cross-checked against the fixture by hand: 6 records, of which 3 carry a cost-free
+        # ledger/notes split and 4 carry no duration (only the two ledger finishes do).
+        self.assertEqual({k: v["value"] for k, v in values.items()},
+                         {"harness": 3, "tier": 3, "observed_model": 3, "cost": 5, "duration": 4,
+                          "acceptance_ref": 6, "policy_ref": 6, "decision_ref": 6,
+                          "admission_ref": 6})
+
+    def test_failure_classes_table_is_empty_and_says_so(self):
+        model = self.model()
+        attempts = self.panel(model)
+        table = self.table(attempts, "failure classes")
+        self.assertEqual(table["rows"], [])
+        page = db.render_page(model, _FAKE_HOME.name)
+        self.assertIn("no failure classes recorded", _section(page, "attempts"))
+
+    def test_every_cost_basis_has_a_row_and_a_costless_basis_is_unknown_not_zero(self):
+        model = self.model()
+        attempts = self.panel(model)
+        table = self.table(attempts, "cost by basis")
+        self.assertEqual([row[0] for row in table["rows"]], list(ah.COST_BASES))
+        by_basis = {row[0]: row for row in table["rows"]}
+        self.assertEqual(by_basis["estimated"][1], {"fmt": "count", "value": 1})
+        self.assertEqual(by_basis["estimated"][2],
+                         {"fmt": "usd", "value": 0.05, "basis": "estimated"})
+        self.assertIsNone(by_basis["estimated"][3]["value"])  # no credits basis in this fixture
+        for basis in ("billed", "credits", "proxy", "model-reported"):
+            self.assertEqual(by_basis[basis][1], {"fmt": "count", "value": 0})
+            self.assertIsNone(by_basis[basis][2]["value"])
+            self.assertEqual(by_basis[basis][2]["basis"], basis)
+        page = db.render_page(model, _FAKE_HOME.name)
+        section = _section(page, "attempts")
+        self.assertIn('$0.05 <span class="label">estimated</span>', section)
+        self.assertIn('<span class="unknown">unknown</span>', section)
+        for basis in ah.COST_BASES:
+            self.assertIn(basis, section)
+
+    def test_every_duration_basis_has_a_row(self):
+        attempts = self.panel(self.model())
+        table = self.table(attempts, "duration by basis")
+        self.assertEqual([row[0] for row in table["rows"]], list(ah.DURATION_BASES))
+        by_basis = {row[0]: row for row in table["rows"]}
+        self.assertEqual(by_basis["process-wall"][1], {"fmt": "count", "value": 2})
+        self.assertEqual(by_basis["process-wall"][2], {"fmt": "seconds", "value": 3.0})
+        self.assertIsNone(by_basis["decision-latency"][2]["value"])
+
+    def test_owner_never_summed_note_appears_beneath_both_tables(self):
+        page = db.render_page(self.model(), _FAKE_HOME.name)
+        section = _section(page, "attempts")
+        self.assertEqual(section.count(ah.cost_totals([])["note"]), 2)
+
+    def test_no_total_row_anywhere_in_the_attempts_section(self):
+        page = db.render_page(self.model(), _FAKE_HOME.name)
+        self.assertNotIn("total", _section(page, "attempts").lower())
+
+    def test_no_sum_call_anywhere_in_dashboard_py(self):
+        text = DASHBOARD_PATH.read_text(encoding="utf-8")
+        self.assertEqual(re.findall(r"^\s*[^#]*\bsum\(", text, re.MULTILINE), [])
+
+    def test_latest_details_table_has_kit_task_result_run_columns(self):
+        attempts = self.panel(self.model())
+        table = self.table(attempts, "latest per task")
+        self.assertTrue(table["details"])
+        self.assertEqual(table["headers"], ["kit", "task", "result", "run"])
+        rows = {(r[0], r[1]): (r[2], r[3]) for r in table["rows"]}
+        self.assertEqual(rows[(db.DEMO_KIT, "T1")], ("pass", db.DEMO_RUN))
+        self.assertEqual(rows[(db.NOTES_KIT, "T1")], ("pass", db.DEMO_RUN))
+        self.assertEqual(rows[(db.NOTES_KIT, "T2")], ("blocked", db.DEMO_RUN))
+
+    def test_lineage_chain_count_line(self):
+        attempts = self.panel(self.model())
+        line = next(b for b in attempts["blocks"]
+                    if b.get("type") == "p" and b.get("parts")
+                    and b["parts"][0] == "lineage chains: ")
+        self.assertEqual(line["parts"], ["lineage chains: ", {"fmt": "count", "value": 0}])
+
+    def test_card_notes_list_renders_even_when_empty(self):
+        attempts = self.panel(self.model())
+        notes_block = next(b for b in attempts["blocks"] if b.get("type") == "list")
+        self.assertEqual(notes_block["items"], [])
+        self.assertEqual(notes_block["empty"], "no notes from this history join")
+
+    def test_codex_kits_root_is_a_second_history_target_with_its_own_label(self):
+        tasks_kits = self.world["checkout"] / "tasks" / "kits"
+        codex_ns = rd.project_namespace(tasks_kits)
+        codex_kit_dir = tasks_kits / "codex-slug"
+        codex_kit_dir.mkdir(parents=True)
+        (codex_kit_dir / "TASKS.md").write_text("# TASKS\n")
+        store = self.world["data_home"] / codex_ns / "attempts"
+        ledger = al.AttemptLedger(store, "codex-slug")
+        started = ledger.record_started("run-codex", "T1", "initial", "fake-cheap")
+        ledger.record_finished("run-codex", "T1", started, "ok", 0, "ok")
+        attempts = self.panel(self.model())
+        labels = [b["text"] for b in attempts["blocks"]
+                 if b.get("type") == "p" and str(b.get("text", "")).startswith("History for")]
+        self.assertEqual(len(labels), 2)
+        self.assertEqual(labels[0], f"History for {self.world['checkout']}:")
+        self.assertEqual(labels[1], f"History for {self.world['checkout']} (tasks/kits):")
+
+    def test_no_kits_dir_at_all_is_an_absence_sentence_not_an_error(self):
+        import shutil
+        shutil.rmtree(self.world["kits_dir"])
+        attempts = self.panel(self.model())
+        self.assertIn("no history projection to show",
+                      " ".join(b.get("text", "") for b in attempts["blocks"]
+                              if b.get("type") == "p"))
+
+    def test_a_raising_join_kits_is_a_note_never_a_crash(self):
+        real_ah = db._mod("attempt_history")
+
+        def broken_join_kits(kits_dir, store=None, registry=None):
+            raise RuntimeError("boom")
+
+        with mock.patch.object(real_ah, "join_kits", broken_join_kits):
+            model = self.model()
+        attempts = self.panel(model)
+        expected = f"attempt history unavailable for {self.world['checkout']}: RuntimeError"
+        self.assertIn(expected, attempts["notes"])
+        page = db.render_page(model, _FAKE_HOME.name)
+        self.assertIn('<section id="attempts">', page)
+
+    def test_oversize_kit_ledger_skips_that_historys_join_and_is_never_opened(self):
+        events_path = (self.world["data_home"] / self.world["namespace"] / "attempts" /
+                      db.DEMO_KIT / "events.jsonl")
+        current = events_path.stat().st_size
+        with open(events_path, "ab") as fh:
+            fh.write(b"x" * (db.MAX_LEDGER_BYTES + 1 - current))
+        self.assertEqual(events_path.stat().st_size, db.MAX_LEDGER_BYTES + 1)
+        if os.geteuid() != 0:
+            _chmod_restorable(self, events_path, 0)  # proves it is stat'd, never opened
+        attempts = self.panel(self.model())
+        marker = f"cap MAX_LEDGER_BYTES ({db.MAX_LEDGER_BYTES}) reached"
+        history_note = next(n for n in attempts["notes"]
+                            if n.startswith(marker) and "was not joined" in n)
+        self.assertIn(db.DEMO_KIT, history_note)
+        self.assertNotIn("<traceback", history_note)
+        skip_text = " ".join(b.get("text", "") for b in attempts["blocks"]
+                             if b.get("type") == "p")
+        self.assertIn("not joined this build", skip_text)
+
+
+class AttemptsLedgerFactsTests(_AttemptsCase):
+    """TASKS.md T4 items 3-4: raw ledger facts per namespace read, and the residue line."""
+
+    def test_open_attempts_is_one_for_the_demo_kit(self):
+        attempts = self.panel(self.model())
+        rows = self.ledger_facts_table(attempts)["rows"]
+        row = next(r for r in rows if r[0] == self.world["namespace"] and r[1] == db.DEMO_KIT)
+        self.assertEqual(row[5], {"fmt": "count", "value": 1})  # open attempts: T2 never finished
+        self.assertEqual(row[2], {"fmt": "count", "value": 7})  # events
+        self.assertEqual(row[3], {"fmt": "count", "value": 0})  # corrupt lines
+
+    def test_the_corrupt_line_in_the_unmapped_ledger_is_counted(self):
+        attempts = self.panel(self.model())
+        rows = self.ledger_facts_table(attempts)["rows"]
+        row = next(r for r in rows if r[0] == db.UNMAPPED_NAMESPACE)
+        self.assertEqual(row[3], {"fmt": "count", "value": 1})
+        # confirmed independently through the owner's own ledger, never a dashboard re-count.
+        ledger = al.AttemptLedger(self.world["data_home"] / db.UNMAPPED_NAMESPACE / al.STORE,
+                                  "other-kit")
+        ledger.events()
+        self.assertEqual(ledger.corrupt, 1)
+
+    def test_claim_files_present_and_kind_histogram_are_rendered(self):
+        attempts = self.panel(self.model())
+        rows = self.ledger_facts_table(attempts)["rows"]
+        row = next(r for r in rows if r[0] == self.world["namespace"] and r[1] == db.DEMO_KIT)
+        self.assertEqual(row[4], "attempt.finished: 2, attempt.started: 3, "
+                                 "task.projected: 1, verify.finished: 1")
+        self.assertEqual(row[8], {"fmt": "count", "value": 0})
+        self.assertEqual(row[6]["fmt"], "date")
+        self.assertIsNotNone(row[6]["value"])
+        self.assertEqual(row[7]["fmt"], "date")
+
+    def _append_event(self, path, **fields):
+        event = {"v": al.LEDGER_VERSION, "ts": "2026-09-25T00:00:00Z"}
+        event.update(fields)
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(event) + "\n")
+
+    def test_a_malformed_kind_in_the_mapped_or_unmapped_ledger_never_blanks_the_panel(self):
+        """T4 retry R1: a dict- or list-typed `kind` must not raise (unhashable as a dict key)
+        and must not take the whole panel down with it -- the other ledger's rows, and the
+        history section's cost table, still render."""
+        mapped_events = (self.world["data_home"] / self.world["namespace"] / "attempts" /
+                         db.DEMO_KIT / "events.jsonl")
+        self._append_event(mapped_events, kind={"n": 1})
+        unmapped_events = (self.world["data_home"] / db.UNMAPPED_NAMESPACE / "attempts" /
+                           "other-kit" / "events.jsonl")
+        self._append_event(unmapped_events, kind=["a", "b"])
+        model = self.model()
+        attempts = self.panel(model)
+        rows = {r[1]: r for r in self.ledger_facts_table(attempts)["rows"]}
+        self.assertIn(f"{db.OTHER_KIND_LABEL}: 1", rows[db.DEMO_KIT][4])
+        self.assertIn(f"{db.OTHER_KIND_LABEL}: 1", rows["other-kit"][4])
+        # the rest of the panel is untouched: the cost table (history section) still renders.
+        self.table(attempts, "cost by basis")
+        page = db.render_page(model, _FAKE_HOME.name)
+        section = _section(page, "attempts")
+        self.assertIn(db.OTHER_KIND_LABEL, section)
+        self.assertIn("cost by basis", section)
+
+    def test_a_long_or_markup_kind_is_counted_under_the_other_kinds_label_and_never_rendered(self):
+        """T4 retry R2: a kind outside the shape/length `attempt_ledger.py` itself ever writes
+        is counted under `OTHER_KIND_LABEL` and never reaches the page as its own text."""
+        long_kind = "x" * 20000
+        markup_kind = "<script>alert(1)</script>"
+        events_path = (self.world["data_home"] / self.world["namespace"] / "attempts" /
+                      db.DEMO_KIT / "events.jsonl")
+        self._append_event(events_path, kind=long_kind)
+        self._append_event(events_path, kind=markup_kind)
+        model = self.model()
+        attempts = self.panel(model)
+        rows = {r[1]: r for r in self.ledger_facts_table(attempts)["rows"]}
+        self.assertIn(f"{db.OTHER_KIND_LABEL}: 2", rows[db.DEMO_KIT][4])
+        page = db.render_page(model, _FAKE_HOME.name)
+        self.assertNotIn(long_kind, page)
+        self.assertNotIn(markup_kind, page)
+        self.assertNotIn("<script>alert", page)
+
+    def test_residue_namespaces_contribute_nothing_to_records_or_ledger_facts(self):
+        model = self.model()
+        attempts = self.panel(model)
+        namespaces_seen = {row[0] for row in self.ledger_facts_table(attempts)["rows"]}
+        self.assertEqual(namespaces_seen, {self.world["namespace"], db.UNMAPPED_NAMESPACE})
+        page = db.render_page(model, _FAKE_HOME.name)
+        section = _section(page, "attempts")
+        for residue_name in self.world["residue"]:
+            self.assertNotIn(residue_name, section)
+
+    def test_residue_line_reads_class_count_and_matches_the_brief_wording(self):
+        classes = self.model()["classes"]
+        page = db.render_page(self.model(), _FAKE_HOME.name)
+        section = _section(page, "attempts")
+        expected = db._count_cell(db.class_count(classes, "residue"))
+        self.assertEqual(expected, {"fmt": "count", "value": 30, "qualifier": "exact"})
+        self.assertIn(
+            "30 residue namespaces (heuristic: tempfile-shaped name holding only an attempts "
+            "store) — counted, not opened, excluded from every figure above", section)
+
+    def test_max_namespaces_read_cap_lowered_to_one_is_noted_on_page_and_receipt(self):
+        model = self.model(caps={"MAX_NAMESPACES_READ": 1})
+        attempts = self.panel(model)
+        marker = "cap MAX_NAMESPACES_READ (1) reached"
+        self.assertTrue(any(n.startswith(marker) for n in attempts["notes"]), attempts["notes"])
+        rows = self.ledger_facts_table(attempts)["rows"]
+        self.assertEqual({row[0] for row in rows}, {self.world["namespace"]})
+        page = db.render_page(model, _FAKE_HOME.name)
+        self.assertIn(marker, page)
+        receipt = db.build_receipt(model, _FAKE_HOME.name, self.tmp / "out")
+        self.assertIn("MAX_NAMESPACES_READ", receipt["caps_hit"])
+        self.assertTrue(any(marker in n for n in receipt["notes"]), receipt["notes"])
+
+    def test_oversize_ledger_row_is_skipped_never_read_and_others_still_show(self):
+        events_path = (self.world["data_home"] / db.UNMAPPED_NAMESPACE / "attempts" /
+                      "other-kit" / "events.jsonl")
+        current = events_path.stat().st_size
+        with open(events_path, "ab") as fh:
+            fh.write(b"x" * (db.MAX_LEDGER_BYTES + 1 - current))
+        if os.geteuid() != 0:
+            _chmod_restorable(self, events_path, 0)  # proves it is stat'd, never opened
+        attempts = self.panel(self.model())
+        marker = f"cap MAX_LEDGER_BYTES ({db.MAX_LEDGER_BYTES}) reached"
+        note = next(n for n in attempts["notes"]
+                   if n.startswith(marker) and "never read" in n)
+        self.assertIn(f"{db.UNMAPPED_NAMESPACE}/other-kit", note)
+        rows = self.ledger_facts_table(attempts)["rows"]
+        self.assertNotIn(db.UNMAPPED_NAMESPACE, [r[0] for r in rows])
+        self.assertIn(self.world["namespace"], [r[0] for r in rows])  # unaffected
+
+    def test_no_data_home_is_an_absence_sentence_for_both_sub_sections(self):
+        model = db.build_model(None, [str(self.world["checkout"])], {"notes": []}, None)
+        attempts = self.panel(model)
+        texts = [b.get("text") for b in attempts["blocks"] if b.get("type") == "p"]
+        self.assertIn("No data home was given, so no checkout's history could be joined.",
+                      texts)
+        self.assertIn("No data home was given, so no ledger could be read directly.", texts)
+
+    def test_full_build_probe_matches_the_task_verify_block(self):
+        rc, out, _stdout, stderr = self.build()
+        self.assertEqual(rc, 0, stderr)
+        page = self.page(out)
+        for basis in ah.COST_BASES:
+            self.assertIn(basis, page)
+        self.assertIn("bases are separate facts and are never summed together", page)
+        self.assertIn("unknown", page)
+        self.assertIn("residue namespaces", page)
+        section = _section(page, "attempts")
+        self.assertNotIn("total", section.lower())
+
+
+class AttemptsPanelSectionGuardTests(_AttemptsCase):
+    """T4 retry R1c: the history section, the ledger-facts section and the residue line are
+    each built in their own guard inside `build_attempts_panel` -- a failure in one is a note
+    naming that section, and the other two still render their real content."""
+
+    def test_a_raising_section_is_a_note_naming_the_section_the_others_still_render(self):
+        sentinel = "SENTINEL-DO-NOT-LEAK-92f1"
+
+        def broken(*_a, **_k):
+            raise RuntimeError(sentinel)
+
+        for target in ("_ledger_facts_blocks", "_residue_line_block"):
+            with self.subTest(target=target):
+                with mock.patch.object(db, target, broken):
+                    model = self.model()
+                attempts = self.panel(model)
+                self.assertTrue(any(sentinel not in n and "RuntimeError" in n
+                                    for n in attempts["notes"]), attempts["notes"])
+                self.assertFalse(any(sentinel in n for n in attempts["notes"]))
+                page = db.render_page(model, _FAKE_HOME.name)
+                self.assertNotIn(sentinel, page)
+                self.assertIn("cost by basis", _section(page, "attempts"))
+
+    def test_a_raising_history_section_leaves_ledger_facts_and_residue_intact(self):
+        sentinel = "SENTINEL-HISTORY-7a3c"
+
+        def broken(*_a, **_k):
+            raise RuntimeError(sentinel)
+
+        with mock.patch.object(db, "_history_section_blocks", broken):
+            model = self.model()
+        attempts = self.panel(model)
+        self.assertTrue(any("history section" in n and "RuntimeError" in n
+                            for n in attempts["notes"]), attempts["notes"])
+        page = db.render_page(model, _FAKE_HOME.name)
+        self.assertNotIn(sentinel, page)
+        section = _section(page, "attempts")
+        self.assertIn("Ledger facts, read directly", section)
+        self.assertIn("residue namespaces", section)
 
 
 class StylesheetCompletionTests(_WorldCase):
