@@ -163,3 +163,188 @@ agent: T3 id=a82e73acd8b5aa337 role=red-team model=sonnet findings=7 confirmed=4
   - The stale comment above `esc` ("every string goes through `_h`") is corrected to `esc`.
 agent: T3 id=a63c06d92630fc56e role=implementer model=sonnet
 outcome: T3 model=sonnet attempts=2 result=retry-pass review=revised run=2026-09-25-7e3a
+
+## Phase 1 review (reviewer opus ae70fd6f3998a5d4d, security-auditor sonnet a91561ce96a7b8719)
+
+agent: P1 id=a91561ce96a7b8719 role=security-auditor model=sonnet findings=0 confirmed=0 marginal=0 result=accepted
+
+- Security auditor: a clean pass. No subprocess or network path beyond the two git verbs, no
+  write outside the store or `--out-dir`, no harness-home or `*.db` read, the exact CSP and
+  none of the banned tokens on a fixture-built page, no injection surface yet. Its full-suite
+  run hit one ERROR, `test_kit_scheduler.SecurityTests.test_a_worker_cannot_reach_the_main_tree_or_another_copy`,
+  in a module this kit never touches. That test passed 34/34 in isolation three times, and the
+  reviewer's full-suite run a few minutes earlier was clean. So it is recorded as a flake
+  under a loaded machine (two review agents and Codex's own suite were running at once), not
+  as a Phase 1 defect. Snapshots taken before and after both read-only dispatches are
+  byte-identical.
+- Reviewer verdict `revised` with ten findings, counted as the verdict tiered them. Its eight
+  "Notes (carry forward)" are not counted. The orchestrator re-read the code for each finding
+  and confirms all ten:
+  - B1 (`classify_namespaces` has no complete/cut/failed state): a cut or failed listing
+    renders `0` and "No namespace in this data home for …" as facts. Fixed in the P1 fix
+    round.
+  - B2 (a typed `usd` cell with a blank or missing basis prints a dollar): fixed in the fix
+    round. This corrects the T3 line above and commit 46d3da2, whose "a caller that omits
+    it fails loudly" held only for direct `fmt_usd` calls, which the typed-cell contract
+    now forbids in tables.
+  - B3 (T4 item 1 prescribes `attempt_history.join_kits`, which hands every kit ledger to
+    `events()` in full T+1 times with no size check, against PLAN D5's `MAX_LEDGER_BYTES`):
+    a brief defect, recorded below. T4 honours D5 as follows. Before calling `join_kits`
+    for a kits dir, `os.stat` each kit's ledger file at `kit_contract.open_ledger(kit_dir,
+    store=<ns>/attempts).events_path`; the constructor only validates the name and composes
+    a path, which was verified by reading `AttemptLedger.__init__`. If any file exceeds
+    `MAX_LEDGER_BYTES`, skip that whole kits dir with a note naming the kit and the size.
+    `join_kits` has no per-kit exclusion, and its coverage must come from the owner, so
+    rebuilding it per kit would copy owner logic.
+  - B4 (T7 trips a third guard, and there is a trap): see the T7 note below.
+  - S1 (`fmt_count` truncates `0.9` to `0` and `True` to `1`): fixed in the fix round.
+  - S2 (`render_page` does not contain a failure, so one malformed block kills the build):
+    fixed in the fix round.
+  - S3 (the T4–T7 briefs say "through `fmt_usd(...)`", which predates T3's typed cells): the
+    typed-cell contract in the T3 notes supersedes that wording in all four briefs, and the
+    semantics (the basis always beside the dollar) are unchanged. The fix round adds a
+    page-wide tripwire test that fails if a fixture-built page contains `&lt;span` or
+    `&amp;lt;`.
+  - S4 (chart twins print raw numbers with fixed headers; `_is_number` accepts NaN and
+    infinity): fixed in the fix round with a typed-cell template for the twin's value column.
+    Standing rule from here on: every figure (dollar, credits, seconds, count, date) lives in
+    a table's typed cell or a chart twin, never in `p` or `list` text built with an f-string
+    (PLAN R3).
+  - S5 (T4 item 5's fixture wording, "finished event carries `cost` with basis
+    `estimated`"): the ledger records `cost_usd` plus `cost_source`, and
+    `attempt_history.ledger_records` derives the basis, with `estimated` meaning any source
+    other than `parsed`. The T4 fixture writes those two fields; a literal `cost` dict
+    would be silently ignored. A brief defect, recorded below.
+  - S6 (PLAN D4 reads unmapped namespaces "only through the ledger owner with shallow
+    stats", while the T6 and T7 briefs read telemetry, journal, evals and prefs "per read
+    namespace", which T4 item 3 defines as mapped plus unmapped): the PLAN decision governs.
+    T4 introduces one `read_namespaces(ctx)` helper that returns the bounded, ordered list
+    (mapped first, then unmapped by name, with the `MAX_NAMESPACES_READ` note). T4's ledger
+    facts use the whole list. T6 and T7 use only its mapped entries, and each of those panels
+    carries a note counting the unmapped namespaces whose one shallow listing shows that
+    panel's store, stating that they are not read (PLAN D4) and that adding the checkout's
+    path to the dashboard's `config.json` `checkouts` list maps them. Brief defects, recorded
+    below. Case variants matter here: on this machine `…/Developer/…` and `…/developer/…` hash
+    to different namespaces, so the real build can show a store as unmapped.
+- Three reviewer notes are cheap and plainly right, so the fix round folds them in as
+  orchestrator choices (not counted as findings):
+  - a known, non-zero, sub-cent dollar never renders as `$0.00`;
+  - the engine's source guard also bans `webbrowser`, `os.system`, `os.popen`, `socket` and
+    `urllib`;
+  - the `docs/PRIVACY.md` sentence "The rule and the test are in place for the day somebody
+    turns it on" moves back beside the training store it describes, instead of reading as
+    though it meant the dashboard.
+- T7 (B4) now faces three guards and one trap, not two:
+  - `tests/test_decision_evaluation_manifest.py` and `tests/test_training_data.py` each pin
+    the owners that may name the `evals` or `training` store (known since T2).
+  - `tests/test_training_data.py::test_no_production_path_calls_the_capture_hook` asserts
+    `release_gate.py` is the only `bin/*.py` that names `training_data` at all. T7's
+    required `training_data.status(...)` call trips it.
+  - The trap: `tests/test_workflow_eval.py::test_nothing_in_the_repository_reads_the_policy_file_automatically`
+    fails if any other `bin/*.py` contains `workflow_eval.POLICY_FILE`. The dashboard never
+    spells it, fixtures included; the owners' report functions take `prefs_dir` and resolve
+    the file themselves.
+  - Plan for T7, still the default put to the user: add `dashboard.py` to each guard's
+    expected set with a comment. Because T7's `synthetic_world` writes evals fixtures, the
+    comment says "reads every checkout's store through the owner, and writes one only as a
+    temp-root fixture", not "read-only consumer". The capture-hook guard's companion
+    assertions (no `capture_hook`, `collection_scope`, `persist(` or `snapshot(`) are
+    extended to `dashboard.py`, so a second importer is pinned to the same read-only use.
+- Budget honesty: the fix round is an implementer dispatch with no `outcome:` line, so the
+  budget grammar cannot count it (the graph-convergence `P34fix` precedent). Counted by hand
+  it is the run's seventh implementer dispatch against the cap of 22.
+defect: T4 kind=contradictory-acceptance
+defect: T4 kind=stale-pin
+defect: T6 kind=contradictory-acceptance
+defect: T7 kind=contradictory-acceptance
+
+## P1 fix round — contract changes for T4–T7
+
+The fix round changed `bin/dashboard.py`, `tests/test_dashboard.py` and `docs/PRIVACY.md`
+(with its generated mirror) and touched no owner. What follows is the contract later panels
+build on. Where it differs from a T4–T7 brief's wording, this section wins, and the brief's
+semantics stay the same.
+
+- **Namespace classes say how complete they are (F1).** `model["classes"]` keeps its row lists,
+  `mapped` (namespace, checkout, kind, stores) and `unmapped` (namespace, stores), and adds
+  four things. `listing` is one of `LISTING_STATES` (`complete | truncated | failed | absent`).
+  `counts` maps each of `CLASS_NAMES` to `{"count", "qualifier"}`, with the qualifier drawn
+  from `COUNT_QUALIFIERS` (`exact | lower_bound | unknown`). `residue` is now `{"count",
+  "qualifier", "sample"}`. `by_checkout` lists, for each checkout, whether its namespace is
+  `mapped`, definitively `absent`, or `unknown`. `count` is None exactly when the qualifier is
+  `unknown`, and a lower bound of 0 is always `unknown`.
+  - Mapped namespaces are looked up by name with `os.lstat`, outside `MAX_NAMESPACES_LISTED`,
+    so the mapped rows are complete whenever the lookups succeeded, however the listing went.
+  - The listing loop skips every expected name, not only the mapped ones. So an expected name
+    is never counted as unmapped or residue, and a link at an expected name is noted once.
+  - A data home that cannot be examined (for example, an unsearchable parent) is `unknown`,
+    never `absent`.
+- **Showing a class count.** Read it only through `class_count(classes, name)`. `len()` of a
+  class list is what the listing saw, and that is not the count when the listing was cut or
+  failed. T4's residue line takes its number from `class_count(classes, "residue")`: a lower
+  bound reads "at least N", and an unknown count renders the word, never a 0. T6 and T7 each
+  count the unmapped namespaces whose listing shows their store (review finding S6). That
+  count comes from the listing, so it carries the unmapped qualifier: "at least N" when the
+  listing was cut, and unknown when it failed.
+- **Qualified count cell.** `{"fmt": "count", "value": n, "qualifier": q}` renders as `N`,
+  `at least N`, or the styled `unknown`. A `count` cell without a `qualifier` is `exact`, as
+  before. `fmt_count` never truncates. A bool renders as `True`/`False`, an int as its
+  digits, and a finite float as its own shortest text (`2.0` gives `2`, `0.9` gives `0.9`).
+  Anything else, a string included, renders as its own escaped text and is never
+  reinterpreted as a number.
+- **Sentences that carry a figure or the styled unknown.** A `p` block may carry `parts`
+  instead of `text`: a list of plain values and typed cells, each rendered exactly once
+  through `_render_cell`. This is how the namespaces counts line holds `at least N` and the
+  `unknown` span. It extends the standing rule that a figure lives in a typed cell, never in
+  f-string text.
+- **Dollars (F2, F7).** A `usd` cell needs a non-blank `basis`. With none, or a blank one, the
+  amount renders WITHOUT `$`, followed by the label `basis missing`. `None` still renders as
+  `unknown` alone. A known non-zero amount that two decimals would show as `0.00` renders
+  its own digits instead (`$0.004`, and `$-0.004` for a negative). Zero stays `$0.00`.
+  `_finite_float` now also treats an int too large for a float as not finite, so such a value
+  renders as its own text instead of raising.
+- **Charts (F6).** Only a finite real number reaches the geometry. NaN and ±Infinity draw
+  nothing, break nothing else, and appear in the twin as their own text. `svg_bars` and
+  `svg_sparkline`, and their blocks through the same keys, take two optional parameters:
+  - `value_header` (default `"value"` for the sparkline; for `svg_bars` the default is
+    `value_key`, the header it printed before, which differs from the brief's literal
+    `"value"`);
+  - `value_cell`, a typed-cell template such as `{"fmt": "usd", "basis": "est."}`. T6's
+    dollar sparklines must pass one, so every twin figure carries its basis.
+- **Rendering failures are contained per panel (F4).** Two public functions changed:
+  - `render_build(model, home)` returns `(page, model)`. A panel whose blocks or chrome raise
+    becomes a fallback section: its id, its escaped title and "this panel could not be
+    rendered (<ExceptionType>)". That note reaches the page-wide notes, the bounds section
+    (whose body is rebuilt by `_bounds_blocks`) and build.json. The panel's `summary`
+    becomes "could not be rendered (see notes)".
+  - `render_page` wraps `render_build`, and `assemble_build` now builds the receipt after the
+    page.
+
+  Malformed block fields render as their own text instead of raising (`_as_list`, `_as_row`,
+  `_as_pair`, `_field`). A builder's `notes` given as a bare string is kept as one note.
+- **Standing tripwires every later task re-runs.**
+  - `PageWideEscapingTests` (F5) fails if a page built from `synthetic_world` holds
+    `&lt;span` or `&amp;lt;`. Never store formatter output as a cell, list item or `p` text.
+  - The engine source guard (F8) now also bans `webbrowser`, `os.system`, `os.popen`,
+    `socket` and `urllib`.
+- **The receipt's `classes`, pinned for T8's skill:** `{"listing": …, "mapped": {"count",
+  "qualifier"}, "unmapped": {"count", "qualifier"}, "residue": {"count", "qualifier",
+  "sample"}}` and nothing else. The terminal summary follows the page's rules: `N`,
+  `at least N` or `unknown` for each class, and "data home absent — no namespaces" for an
+  absent data home.
+
+- Orchestrator verification of the fix round, run from the repo root:
+  - the dashboard suite, the T2 and T3 verify blocks (their shared full-suite step run once
+    at the end), the `sum(` grep, and `docs_build`, `copilot_docs`, `sync_codex_surfaces` and
+    `release_gate` `check`, then the full suite with an isolated data home: all exit 0;
+  - an independent probe through `main(["build", …])`: listing cap 0, data home at mode 0300
+    and 0000, an absent data home, basis-less and blank-basis `usd` cells, `fmt_count` on
+    floats and bools, sub-cent dollars, NaN and infinity in both charts, a typed `usd` twin,
+    and a registered panel whose chart renderer raises a sentinel. The sentinel never
+    appears; the fallback section, the bounds line and the receipt note do.
+
+  My first probe run failed on a true statement. With `--no-git` the working directory (the
+  real repo) is the primary checkout, and the page rightly said it has no namespace in the
+  synthetic data home. Re-run from inside the synthetic checkout, the probe passed.
+agent: P1fix id=a224ace9a6e243f0d role=implementer model=opus
+reviewer: P1 model=opus findings=10 confirmed=10 result=accepted

@@ -208,6 +208,22 @@ def _blank(value):
     return value is not None and not str(value).strip()
 
 
+def _as_list(value):
+    """A field that should hold a list -> a list. `None` is empty and a list or tuple is itself;
+    a string, a mapping or any other single value is ONE item that renders as its own text; a set
+    is sorted (PLAN D9: the same input renders the same bytes) and any other iterable is drained.
+    A malformed field renders what is there rather than raising (PLAN D10)."""
+    if value is None:
+        return []
+    if isinstance(value, (list, tuple)):
+        return list(value)
+    if isinstance(value, (set, frozenset)):
+        return sorted(value, key=str)
+    if isinstance(value, (str, bytes, dict)) or not hasattr(value, "__iter__"):
+        return [value]
+    return list(value)
+
+
 # ---------------------------------------------------------------------------------------------
 # Bounds. Caps travel as a dict so a test can lower one; hitting one leaves a note, and the note
 # is the single record of the hit.
@@ -379,6 +395,17 @@ def discover_checkouts(cwd, flags=(), config=(), git=True, runner=None):
 # ---------------------------------------------------------------------------------------------
 # Namespaces: roots, and the three classes (PLAN D4).
 
+# The namespace classes, in the order the page, the summary and the receipt list them.
+CLASS_NAMES = ("mapped", "unmapped", "residue")
+
+# How far the one data-home listing got. `absent`: the data home does not exist or is not a
+# directory, so there is nothing to list and every count is an exact zero.
+LISTING_STATES = ("complete", "truncated", "failed", "absent")
+
+# What a class count claims: every one there is, at least that many, or nothing at all.
+COUNT_QUALIFIERS = ("exact", "lower_bound", "unknown")
+
+
 def namespace_roots(checkout):
     """The roots a checkout's engines namespace the data home by -> [(root, kind)].
 
@@ -390,8 +417,143 @@ def namespace_roots(checkout):
     return [(base, "checkout"), (base / "tasks" / "kits", "codex-kits")]
 
 
-def _empty_classes():
-    return {"mapped": [], "unmapped": [], "residue": {"count": 0, "sample": []}}
+def _is_count(value):
+    """A non-negative int that is not a bool: the only thing a class count can be."""
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
+
+
+def _qualified(count, qualifier):
+    """A class count and what it claims -> {"count", "qualifier"}. `count` is None exactly when
+    the qualifier is `unknown`, and a lower bound of 0 is `unknown`: it says nothing (PLAN R3 --
+    an unknown is never rendered as a zero)."""
+    if qualifier == "lower_bound" and count <= 0:
+        qualifier = "unknown"
+    if qualifier not in ("exact", "lower_bound"):
+        return {"count": None, "qualifier": "unknown"}
+    return {"count": count, "qualifier": qualifier}
+
+
+def class_count(classes, name):
+    """The count of class `name` (one of CLASS_NAMES) with its qualifier -> {"count": int|None,
+    "qualifier": "exact"|"lower_bound"|"unknown"}. THE way to show a class count: the `len()` of
+    a class list is only what was seen, which is not the count when the listing was cut or
+    failed. Anything malformed reads as unknown, never as a zero."""
+    counts = classes.get("counts") if isinstance(classes, dict) else None
+    entry = counts.get(name) if isinstance(counts, dict) else None
+    if isinstance(entry, dict) and _is_count(entry.get("count")):
+        count, qualifier = entry["count"], entry.get("qualifier")
+        if qualifier == "exact" or (qualifier == "lower_bound" and count > 0):
+            return {"count": count, "qualifier": qualifier}
+    return {"count": None, "qualifier": "unknown"}
+
+
+def _unknown_classes(checkouts=()):
+    """The classes when nothing could be classified (no data home given, or classification
+    raised): no rows, every count unknown, every checkout's namespace unknown -- never zeros."""
+    unknown = {"count": None, "qualifier": "unknown"}
+    return {
+        "listing": "failed",
+        "mapped": [],
+        "unmapped": [],
+        "residue": {**unknown, "sample": []},
+        "counts": {name: dict(unknown) for name in CLASS_NAMES},
+        "by_checkout": [{"checkout": os.fspath(checkout), "state": "unknown"}
+                        for checkout in checkouts or ()],
+    }
+
+
+def _finish_classes(listing, mapped, unmapped, residue_seen, sample, lookups, checkout_names):
+    """The classes dict from what the lookups and the listing established.
+
+    mapped is `exact` when every lookup by name succeeded (found, or definitively not there),
+    otherwise a lower bound. unmapped and residue come only from the listing: `exact` when it was
+    complete (or the data home is absent), a lower bound when it was cut, `unknown` when it
+    failed. A checkout is `mapped` when one of its namespaces was found, `absent` when every
+    lookup for it definitively found none, and `unknown` otherwise.
+    """
+    mapped_qualifier = "lower_bound" if "unknown" in lookups.values() else "exact"
+    listed_qualifier = {"complete": "exact", "absent": "exact",
+                        "truncated": "lower_bound"}.get(listing, "unknown")
+    counts = {
+        "mapped": _qualified(len(mapped), mapped_qualifier),
+        "unmapped": _qualified(len(unmapped), listed_qualifier),
+        "residue": _qualified(residue_seen, listed_qualifier),
+    }
+    by_checkout = []
+    for checkout, names in checkout_names:
+        states = [lookups.get(name, "unknown") for name in names]
+        state = "mapped" if "found" in states else "unknown" if "unknown" in states else "absent"
+        by_checkout.append({"checkout": checkout, "state": state})
+    return {
+        "listing": listing,
+        "mapped": mapped,
+        "unmapped": unmapped,
+        "residue": {**counts["residue"], "sample": list(sample)},
+        "counts": counts,
+        "by_checkout": by_checkout,
+    }
+
+
+def _examine_data_home(home_text):
+    """What the data home is -> ("directory" | "absent" | "unknown", detail).
+
+    A link to a directory is followed here -- the data home is the root the user chose; only the
+    entries inside it are never followed. `absent` means it does not exist or is not a
+    directory. `unknown` means it could not be examined (the detail is the error type) and is
+    never reported as absent: `os.path.isdir` would say False for a permission error, and that
+    False would read as "no namespaces".
+    """
+    try:
+        mode = os.stat(home_text).st_mode
+    except (FileNotFoundError, NotADirectoryError):
+        return "absent", ("is not a directory" if os.path.lexists(home_text) else "does not exist")
+    except OSError as exc:
+        return "unknown", type(exc).__name__
+    if not stat.S_ISDIR(mode):
+        return "absent", "is not a directory"
+    return "directory", None
+
+
+def _lookup_namespace(home_text, name):
+    """One expected namespace looked up by name, without following a link -> (state, error
+    type). `found`: a real directory. `not-a-directory`: a link, file or anything else, which is
+    not a namespace. `absent`: definitively nothing by that name. `unknown`: the lookup failed."""
+    try:
+        mode = os.lstat(os.path.join(home_text, name)).st_mode
+    except FileNotFoundError:
+        return "absent", None
+    except OSError as exc:
+        return "unknown", type(exc).__name__
+    return ("found" if stat.S_ISDIR(mode) else "not-a-directory"), None
+
+
+def _list_data_home(home_text, caps, notes):
+    """The one bounded `os.scandir` of the data home -> (listing state, [(name, is_dir)])."""
+    limit = cap_value(caps, "MAX_NAMESPACES_LISTED")
+    entries = []
+    listing = "complete"
+    try:
+        with os.scandir(home_text) as found:
+            for entry in found:
+                if len(entries) >= limit:
+                    listing = "truncated"
+                    break
+                try:
+                    is_dir = entry.is_dir(follow_symlinks=False)
+                except OSError:
+                    is_dir = False
+                entries.append((entry.name, is_dir))
+    except OSError as exc:
+        notes.append(f"data home {home_text} could not be listed ({type(exc).__name__}) — whether "
+                     f"it holds unmapped or residue namespaces is unknown")
+        return "failed", []
+    if listing == "truncated":
+        notes.append(cap_note(
+            caps, "MAX_NAMESPACES_LISTED",
+            f"the data home {home_text} holds more entries than were listed; the unmapped and "
+            f"residue figures on this page cover only the entries listed, and the mapped "
+            f"namespaces were looked up by name, outside this cap"))
+    return listing, entries
 
 
 def _one_listing(path):
@@ -453,81 +615,97 @@ def _legacy_notes(checkouts):
 def classify_namespaces(data_home, checkouts, caps):
     """Sort the data home's namespaces into mapped | unmapped | residue -> (classes, notes).
 
-    One bounded `os.scandir` of the data home; an entry that is not a directory without
-    following links is skipped with a note. A namespace named by hashing a checkout root is
-    `mapped`; otherwise one `os.listdir` decides residue (RESIDUE_NAMESPACE_RE and nothing but
-    an `attempts` store) -- a residue namespace is counted and never opened again -- and
-    anything else is `unmapped`. Degraded paths are notes: an absent data home, one that is a
-    file, one that cannot be listed.
+    Two steps, and the classes say how complete each was (PLAN D5, D7c):
+
+    1. Every expected namespace -- `runtime_data.project_namespace` of each `namespace_roots`
+       root, at most two per checkout -- is looked up BY NAME with `os.lstat`, outside the
+       listing cap. A real directory is `mapped` and gets its one shallow listing for its
+       stores; a link or other non-directory is not a namespace (skipped with a note); a lookup
+       that fails is unknown (a note naming the error type). So the mapped class is exact
+       whenever the lookups succeeded, however the listing went.
+    2. One bounded `os.scandir` of the data home for everything else. An expected name is
+       skipped (step 1 decided it); an entry that is not a directory without following links
+       is skipped with a note; one `os.listdir` decides residue (RESIDUE_NAMESPACE_RE and
+       nothing but an `attempts` store) -- a residue namespace is counted and never opened
+       again -- and anything else is `unmapped`.
+
+    `classes["listing"]` is one of LISTING_STATES; `classes["counts"]` gives each class its
+    count and qualifier (read them through `class_count`); `classes["by_checkout"]` says per
+    checkout whether its namespace is mapped, definitively absent, or unknown. Degraded paths
+    are notes, never exceptions and never zeros.
     """
     rd = _mod("runtime_data")
-    classes = _empty_classes()
     notes = []
     expected = {}
+    checkout_names = []
     for checkout in checkouts or ():
+        names = []
         for root, kind in namespace_roots(checkout):
-            expected.setdefault(rd.project_namespace(root), (os.fspath(checkout), kind))
+            name = rd.project_namespace(root)
+            names.append(name)
+            expected.setdefault(name, (os.fspath(checkout), kind))
+        checkout_names.append((os.fspath(checkout), names))
     notes.extend(_legacy_notes(checkouts))
 
     home_text = os.fspath(data_home)
-    if not os.path.isdir(home_text):
-        state = "is not a directory" if os.path.lexists(home_text) else "does not exist"
-        notes.append(f"data home {home_text} {state} — no namespaces were classified")
-        return classes, notes
+    home_state, detail = _examine_data_home(home_text)
+    if home_state == "absent":
+        notes.append(f"data home {home_text} {detail} — it holds no namespaces")
+        lookups = {name: "absent" for name in expected}
+        return _finish_classes("absent", [], [], 0, [], lookups, checkout_names), notes
+    if home_state == "unknown":
+        notes.append(f"data home {home_text} could not be examined ({detail}) — whether it holds "
+                     f"namespaces is unknown")
+        lookups = {name: "unknown" for name in expected}
+        return _finish_classes("failed", [], [], 0, [], lookups, checkout_names), notes
 
-    limit = cap_value(caps, "MAX_NAMESPACES_LISTED")
-    entries = []
-    truncated = False
-    try:
-        with os.scandir(home_text) as listing:
-            for entry in listing:
-                if len(entries) >= limit:
-                    truncated = True
-                    break
-                try:
-                    is_dir = entry.is_dir(follow_symlinks=False)
-                except OSError:
-                    is_dir = False
-                entries.append((entry.name, is_dir))
-    except OSError as exc:
-        notes.append(f"data home {home_text} could not be listed ({type(exc).__name__}) — no "
-                     f"namespaces were classified")
-        return _empty_classes(), notes
-    if truncated:
-        notes.append(cap_note(
-            caps, "MAX_NAMESPACES_LISTED",
-            f"the data home {home_text} holds more entries than were listed; every namespace "
-            f"count on this page is a lower bound"))
+    mapped, skipped, lookups, failed = [], [], {}, {}
+    for name in sorted(expected):
+        state, error = _lookup_namespace(home_text, name)
+        lookups[name] = state
+        if state == "found":
+            checkout, kind = expected[name]
+            path = os.path.join(home_text, name)
+            names, list_error = _one_listing(path)
+            mapped.append({"namespace": name, "checkout": checkout, "kind": kind,
+                           "stores": _stores(path, name, names, list_error, notes)})
+        elif state == "not-a-directory":
+            skipped.append(name)
+        elif state == "unknown":
+            failed[name] = error
+    if failed:
+        notes.append(
+            f"{_plural(len(failed), 'expected namespace', 'expected namespaces')} could not be "
+            f"looked up by name ({', '.join(sorted(set(failed.values())))}) — whether "
+            f"{'it exists' if len(failed) == 1 else 'they exist'} is unknown: "
+            f"{_sample(sorted(failed))}"
+        )
 
-    skipped = []
-    residue = classes["residue"]
+    listing, entries = _list_data_home(home_text, caps, notes)
+    unmapped, residue_seen, sample = [], 0, []
     for name, is_dir in sorted(entries):
+        if name in expected:
+            continue  # looked up by name above: mapped, not a namespace, absent or unknown there
         if not is_dir:
             skipped.append(name)
             continue
         path = os.path.join(home_text, name)
         names, error = _one_listing(path)
-        if name in expected:
-            checkout, kind = expected[name]
-            classes["mapped"].append({
-                "namespace": name, "checkout": checkout, "kind": kind,
-                "stores": _stores(path, name, names, error, notes),
-            })
-        elif (error is None and RESIDUE_NAMESPACE_RE.fullmatch(name)
-              and set(names) <= RESIDUE_STORES):
-            residue["count"] += 1
-            if len(residue["sample"]) < SAMPLE_SIZE:
-                residue["sample"].append(name)
+        if (error is None and RESIDUE_NAMESPACE_RE.fullmatch(name)
+                and set(names) <= RESIDUE_STORES):
+            residue_seen += 1
+            if len(sample) < SAMPLE_SIZE:
+                sample.append(name)
         else:
-            classes["unmapped"].append({
-                "namespace": name, "stores": _stores(path, name, names, error, notes),
-            })
+            unmapped.append({"namespace": name,
+                             "stores": _stores(path, name, names, error, notes)})
     if skipped:
         notes.append(
             f"{_plural(len(skipped), 'data-home entry', 'data-home entries')} skipped: not a "
             f"directory without following links ({_sample(skipped)})"
         )
-    return classes, notes
+    return (_finish_classes(listing, mapped, unmapped, residue_seen, sample, lookups,
+                            checkout_names), notes)
 
 
 # ---------------------------------------------------------------------------------------------
@@ -615,13 +793,13 @@ def build_model(data_home, checkouts, opts, caps):
     notes = [str(note) for note in opts.get("notes") or ()]
     data_home = None if data_home is None or _blank(data_home) else Path(data_home)
     if data_home is None:
-        classes = _empty_classes()
+        classes = _unknown_classes(checkouts)
         class_notes = ["no data home was given — nothing was classified"]
     else:
         try:
             classes, class_notes = classify_namespaces(data_home, checkouts, caps)
         except Exception as exc:
-            classes = _empty_classes()
+            classes = _unknown_classes(checkouts)
             class_notes = [f"namespace classification failed ({type(exc).__name__}); nothing "
                            f"was classified"]
     model = {
@@ -644,7 +822,8 @@ def build_model(data_home, checkouts, opts, caps):
             entry = _failed_panel(pid, title, exc)
         entry["id"] = pid
         entry.setdefault("title", title)
-        entry["notes"] = [str(note) for note in entry.get("notes") or ()]
+        # A malformed `notes` (a string, a number) is kept as its text, never a crash (D10).
+        entry["notes"] = [str(note) for note in _as_list(entry.get("notes") or None)]
         if pid == NAMESPACES_PANEL:
             # The classification's notes (the listing cap among them) belong to the panel that
             # shows the classes -- attached here, so a builder that raised cannot drop them.
@@ -677,76 +856,152 @@ def _stores_text(stores):
     return ", ".join(stores) if stores else "none"
 
 
+def _count_cell(entry):
+    """A qualified class count as a typed cell: `N`, `at least N`, or the styled `unknown`."""
+    return {"fmt": "count", "value": entry.get("count"), "qualifier": entry.get("qualifier")}
+
+
+def _count_text(entry, noun):
+    """A qualified class count as plain text (summaries, the terminal) -> `N noun`, `at least N
+    noun`, or `unknown noun`. Anything malformed is `unknown`, never a zero."""
+    entry = entry if isinstance(entry, dict) else {}
+    count, qualifier = entry.get("count"), entry.get("qualifier")
+    if _is_count(count) and qualifier == "exact":
+        return f"{count} {noun}"
+    if _is_count(count) and qualifier == "lower_bound" and count > 0:
+        return f"at least {count} {noun}"
+    return f"unknown {noun}"
+
+
+# Why the listing did not reach everything, said once above the table.
+_LISTING_SENTENCES = {
+    "truncated": ("The data-home listing stopped at its cap (MAX_NAMESPACES_LISTED), so the "
+                  "unmapped and residue figures cover only the entries it reached; the mapped "
+                  "namespaces were looked up by name, outside that cap."),
+    "failed": ("The data home could not be listed, so whether it holds unmapped or residue "
+               "namespaces is unknown (see the notes)."),
+}
+
+# The table's empty text says "none found" only when the listing could have found one.
+_EMPTY_TABLE_TEXT = {
+    "complete": "No namespaces were found in the data home.",
+    "absent": "No namespaces were found in the data home.",
+    "truncated": ("No namespace was found among the entries the capped listing reached; the data "
+                  "home holds more entries than were listed (see the notes)."),
+}
+_EMPTY_TABLE_UNKNOWN = ("No namespace can be shown: the data home could not be listed, and no "
+                        "checkout's namespace was found by name (see the notes).")
+
+
 def build_namespaces_panel(ctx):
     model = ctx["model"]
     classes = model["classes"]
-    mapped, unmapped, residue = classes["mapped"], classes["unmapped"], classes["residue"]
+    listing = classes.get("listing")
+    counts = {name: class_count(classes, name) for name in CLASS_NAMES}
+    residue = counts["residue"]
     rows = []
-    for row in mapped:
+    for row in classes.get("mapped") or ():
         rows.append([row["namespace"], "mapped", f"{row['checkout']} ({row['kind']})",
                      _stores_text(row["stores"])])
-    for row in unmapped:
+    for row in classes.get("unmapped") or ():
         rows.append([row["namespace"], "unmapped", "—", _stores_text(row["stores"])])
     if residue["count"]:
-        rows.append([f"{_plural(residue['count'], 'namespace', 'namespaces')}, e.g. "
-                     f"{_sample(residue['sample'])}",
-                     "residue (heuristic)", "—",
+        how_many = _plural(residue["count"], "namespace", "namespaces")
+        if residue["qualifier"] == "lower_bound":
+            how_many = f"at least {how_many}"
+        sample = (classes.get("residue") or {}).get("sample") or ()
+        rows.append([f"{how_many}, e.g. {_sample(sample)}", "residue (heuristic)", "—",
                      "at most an attempts store — listed once, never opened"])
-    counts = (f"{len(mapped)} mapped · {len(unmapped)} unmapped · "
-              f"{residue['count']} residue")
     checkouts = model["checkouts"]
-    with_namespace = {row["checkout"] for row in mapped}
-    without = [checkout for checkout in checkouts if checkout not in with_namespace]
-    blocks = [
-        {"type": "p", "text": f"Data home {model['data_home'] or 'unknown'}: {counts}."},
+    across = f"across {_plural(len(checkouts), 'checkout', 'checkouts')}"
+    data_home = model["data_home"]
+    if listing == "absent":
+        blocks = [{"type": "p", "parts": ["Data home ", data_home, ": absent — no namespaces."]}]
+        summary = f"data home absent — no namespaces {across}"
+    else:
+        parts = ["Data home ", data_home, ": "]
+        for index, name in enumerate(CLASS_NAMES):
+            parts += ([" · "] if index else []) + [_count_cell(counts[name]), f" {name}"]
+        blocks = [{"type": "p", "parts": parts + ["."]}]
+        summary = " · ".join(_count_text(counts[name], name) for name in CLASS_NAMES)
+        summary += f" {across}"
+        if listing != "complete":
+            summary += f" (data-home listing {listing})"
+    if data_home is None:
+        blocks.append({"type": "p", "text": "No data home was given, so nothing was listed or "
+                                            "looked up."})
+    elif listing in _LISTING_SENTENCES:
+        blocks.append({"type": "p", "text": _LISTING_SENTENCES[listing]})
+    blocks += [
         {"type": "p", "text": RESIDUE_RULE},
         {"type": "table", "headers": ["namespace", "class", "checkout / kind", "stores present"],
-         "rows": rows, "empty": "No namespaces were found in the data home."},
+         "rows": rows, "empty": _EMPTY_TABLE_TEXT.get(listing, _EMPTY_TABLE_UNKNOWN)},
         {"type": "p", "text": (f"Checkouts mapped by hashing their roots "
                                f"({len(checkouts)}): {', '.join(checkouts) or 'none'}.")},
     ]
-    if without:
+    # "No namespace … for X" only when every lookup for X definitively found none; a checkout
+    # missing from `by_checkout` is unknown, never absent.
+    states = {entry.get("checkout"): entry.get("state")
+              for entry in classes.get("by_checkout") or () if isinstance(entry, dict)}
+    absent = [checkout for checkout in checkouts if states.get(checkout) == "absent"]
+    unknown = [checkout for checkout in checkouts
+               if states.get(checkout) not in ("absent", "mapped")]
+    if absent:
         blocks.append({"type": "p", "text": ("No namespace in this data home for: "
-                                             f"{', '.join(without)}.")})
+                                             f"{', '.join(absent)}.")})
+    if unknown:
+        blocks.append({"type": "p", "text": ("It is unknown whether this data home holds a "
+                                             f"namespace for: {', '.join(unknown)} — it could "
+                                             "not be looked up (see the notes).")})
     return {
-        "source": ("bin/dashboard.py — one shallow listing of the data home, namespaces mapped "
-                   "through runtime_data.project_namespace"),
+        "source": ("bin/dashboard.py — each checkout's namespaces looked up by name, then one "
+                   "shallow listing of the data home, namespaces mapped through "
+                   "runtime_data.project_namespace"),
         "observed": "live, at build time",
         "notes": [],
-        "summary": f"{counts} across {_plural(len(checkouts), 'checkout', 'checkouts')}",
+        "summary": summary,
         "blocks": blocks,
     }
+
+
+def _bounds_blocks(notes, report):
+    """The bounds panel's body: every cap with hit / not hit, then every note of the build.
+    Also how `render_build` rebuilds that body when a panel's rendering fails, so the failure
+    note reaches this section too."""
+    rows = [[row.get("name"), row.get("value"), "hit" if row.get("hit") else "not hit"]
+            for row in report if isinstance(row, dict)]
+    return [
+        {"type": "p", "text": ("Every scan behind this page is bounded. A cap that was hit cut "
+                               "something short and left a note below; “not hit” means nothing "
+                               "was cut at that bound in this build.")},
+        {"type": "table", "headers": ["cap", "value", "status"], "rows": rows},
+        {"type": "p", "text": f"Notes from this build, every panel's included ({len(notes)}):"},
+        {"type": "list", "items": list(notes), "empty": "notes: none"},
+    ]
 
 
 def build_bounds_panel(ctx):
     notes = _collect_notes(ctx["notes"], ctx["model"]["panels"])
     report = caps_report(ctx["caps"], notes)
     hit = [row["name"] for row in report if row["hit"]]
-    blocks = [
-        {"type": "p", "text": ("Every scan behind this page is bounded. A cap that was hit cut "
-                               "something short and left a note below; “not hit” means nothing "
-                               "was cut at that bound in this build.")},
-        {"type": "table", "headers": ["cap", "value", "status"],
-         "rows": [[row["name"], row["value"], "hit" if row["hit"] else "not hit"]
-                  for row in report]},
-        {"type": "p", "text": f"Notes from this build, every panel's included ({len(notes)}):"},
-        {"type": "list", "items": notes, "empty": "notes: none"},
-    ]
     return {
         "source": "bin/dashboard.py — this build's own bounds and notes",
         "observed": "this build",
         "notes": [],
         "summary": f"{len(hit)} of {len(report)} caps hit",
-        "blocks": blocks,
+        "blocks": _bounds_blocks(notes, report),
     }
 
+
+# The panel that lists every cap and every note; always last.
+BOUNDS_PANEL = "bounds"
 
 # The registry, consumed in order. The panel ids and their page order are PINNED for the whole
 # kit (TASKS.md, T2 brief item 5): later tasks insert their builders between these two, under
 # exactly those ids; `bounds` stays last because it reports every other panel's notes.
 PANELS = [
     (NAMESPACES_PANEL, "Namespaces in the data home", build_namespaces_panel),
-    ("bounds", "Bounds and notes", build_bounds_panel),
+    (BOUNDS_PANEL, "Bounds and notes", build_bounds_panel),
 ]
 
 
@@ -789,36 +1044,88 @@ def _finite_float(v):
     an overflowing "1e400", all of which `float()` accepts without raising) is treated exactly
     like an unparsable one: every numeric formatter below falls back to the value's own escaped
     text rather than crashing the panel or printing a unit on something that is not a real
-    number (PLAN R3)."""
+    number (PLAN R3). An int too large for a float (`float()` raises OverflowError on one) is
+    not a finite float either."""
     try:
         number = float(v)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return None
     return number if math.isfinite(number) else None
 
 
-def fmt_count(v):
-    """An integer count -> its digits, or `unknown` for `None` (PLAN R3). A non-finite or
-    unparsable value is not `unknown` (it IS present) -- it renders as its own escaped text."""
-    if v is None:
+def _float_text(number):
+    """A finite float as its own shortest decimal text (`repr`, which round-trips), a trailing
+    `.0` dropped so an integral value reads as the integer it is: 2.0 -> `2`, 0.9 -> `0.9`, and
+    1e+23 stays `1e+23` rather than growing digits the value never had. Negative zero is `0`."""
+    if number == 0:
+        return "0"
+    text = repr(number)
+    return text[:-2] if text.endswith(".0") else text
+
+
+def fmt_count(v, qualifier="exact"):
+    """A count -> text that never truncates (PLAN R3). `None` -> `unknown`; a bool -> `True` /
+    `False`; an int -> its digits; a finite float -> its own shortest decimal text (`2.0` ->
+    `2`, `0.9` -> `0.9`, never rounded to an int). A non-finite float, a string or anything else
+    is not `unknown` (it IS present) and renders as its own escaped text -- a string is never
+    reinterpreted as a number.
+
+    `qualifier` (a typed count cell's optional `qualifier` key) says what the count claims:
+    `exact` (the default) as above; `lower_bound` -> `at least N` for an int N > 0 (a lower
+    bound of 0 says nothing, so it is `unknown`); `unknown`, or anything unrecognised ->
+    `unknown` whatever the value, because a count must never claim more than it knows."""
+    if qualifier == "lower_bound":
+        if isinstance(v, int) and not isinstance(v, bool) and v > 0:
+            return esc(f"at least {v}")
         return esc(None)
-    if isinstance(v, int) and not isinstance(v, bool):
+    if qualifier != "exact" or v is None:
+        return esc(None)
+    if isinstance(v, bool):
+        return esc("True" if v else "False")
+    if isinstance(v, int):
         return esc(v)
-    number = _finite_float(v)
-    return esc(v) if number is None else esc(int(number))
+    if isinstance(v, float) and math.isfinite(v):
+        return esc(_float_text(v))
+    return esc(v)
+
+
+# What stands in for the basis when a caller gave none: the amount then gets no `$` at all.
+BASIS_MISSING = "basis missing"
+
+
+def _usd_amount(number):
+    """A finite dollar amount as text, without the `$` -> two decimals with thousands separators;
+    zero is `0.00`. A known non-zero amount that two decimals would round to `0.00` shows its
+    own shortest digits instead (0.004 -> `0.004`, -0.004 -> `-0.004`, 1e-05 -> `1e-05`), so a
+    real sub-cent figure never reads as zero, in either direction (PLAN R3)."""
+    if number == 0:
+        return "0.00"
+    text = f"{number:,.2f}"
+    if text.lstrip("-") == "0.00":
+        return repr(number)
+    return text
 
 
 def fmt_usd(v, basis_label):
-    """`$` with two decimals, plus a REQUIRED basis label in a `<span class="label">` -- a
-    dollar can never appear without the basis it was measured under (PLAN D7a/b: no cell ever
-    sums two bases, and a basis-less dollar is never printed). `None` -> `unknown`, no `$` at
-    all. A non-finite or unparsable value gets no `$` either -- only its own escaped text,
-    basis label still beside it. `basis_label` has no default: a caller that forgot it fails
-    loudly, at the call site, rather than the page ever showing an unlabelled dollar."""
+    """`$` and the amount, plus the basis label in a `<span class="label">` -- a dollar never
+    appears without the basis it was measured under (PLAN D7a/b: no cell ever sums two bases,
+    and a basis-less dollar is never printed). Two decimals, except that a known non-zero
+    sub-cent amount shows its own digits rather than `0.00` (`_usd_amount`). `None` ->
+    `unknown` alone, no `$` and no label. A non-finite or unparsable value gets no `$` either --
+    only its own escaped text, basis label still beside it.
+
+    `basis_label` has no default, so a DIRECT call that forgets it raises `TypeError`. That
+    guard does not reach a typed `usd` cell, whose missing `basis` arrives here as `None`, so
+    the rendering itself carries the rule: a `None` or blank basis prints the amount WITHOUT
+    `$`, followed by the label `basis missing`."""
     if v is None:
         return esc(None)
     number = _finite_float(v)
-    amount = esc(v) if number is None else f"${number:,.2f}"
+    amount = esc(v) if number is None else esc(_usd_amount(number))
+    if basis_label is None or (isinstance(basis_label, str) and not basis_label.strip()):
+        return f'{amount} <span class="label">{esc(BASIS_MISSING)}</span>'
+    if number is not None:
+        amount = f"${amount}"
     return f'{amount} <span class="label">{esc(basis_label)}</span>'
 
 
@@ -935,11 +1242,12 @@ svg { width: 100%; height: auto; }
 # THAT through `esc` again would show the span as literal tag soup instead of markup, which is
 # exactly the T3 red-team break this vocabulary exists to close. `CELL_FORMATS` is the toolkit
 # contract T4-T7 build their `rows` on: a cost/credits/count/seconds/date cell is always this
-# shape, never a pre-rendered string.
+# shape, never a pre-rendered string. A `count` cell may carry an optional `qualifier`
+# (`exact` | `lower_bound` | `unknown`, see `fmt_count`) -- the shape of a class count.
 CELL_FORMATS = {
     "usd": lambda cell: fmt_usd(cell.get("value"), cell.get("basis")),
     "credits": lambda cell: fmt_credits(cell.get("value")),
-    "count": lambda cell: fmt_count(cell.get("value")),
+    "count": lambda cell: fmt_count(cell.get("value"), cell.get("qualifier") or "exact"),
     "seconds": lambda cell: fmt_seconds(cell.get("value")),
     "date": lambda cell: fmt_date(cell.get("value")),
 }
@@ -949,13 +1257,22 @@ def _render_cell(cell):
     """One table cell -> HTML, escaped exactly once. A typed cell's formatter output is already
     escaped HTML and is used as-is; anything else -- including a plain string -- goes through
     `esc`, so a builder cannot pass a pre-rendered `fmt_*` string as a cell (that would be
-    escaped a second time) and cannot smuggle raw HTML through a plain string either."""
+    escaped a second time) and cannot smuggle raw HTML through a plain string either. The same
+    dispatch renders each item of a `p` block's `parts`."""
     if isinstance(cell, dict) and "fmt" in cell:
-        renderer = CELL_FORMATS.get(cell.get("fmt"))
+        fmt = cell.get("fmt")
+        renderer = CELL_FORMATS.get(fmt) if isinstance(fmt, str) else None
         if renderer is not None:
             return renderer(cell)
-        return esc(f"cell: unrecognised fmt {cell.get('fmt')!r}")
+        return esc(f"cell: unrecognised fmt {fmt!r}")
     return esc(cell)
+
+
+def _as_row(row):
+    """A table row -> its cells. A row that is not a list or tuple (None, a number, a string, a
+    mapping) is ONE cell showing its own text, never an exception and never split into
+    characters."""
+    return list(row) if isinstance(row, (list, tuple)) else [row]
 
 
 def html_table(headers, rows, caption=None, details=False):
@@ -964,8 +1281,10 @@ def html_table(headers, rows, caption=None, details=False):
     class="table-wrap">`, so a wide table scrolls sideways and the PAGE never scrolls
     horizontally at phone width (PLAN D9). `details=True` wraps it again in `<details><summary>
     caption (N rows)</summary>...</details>` for a table too long to want open by default; the
-    caption then lives only in the summary, not duplicated as a `<caption>` too."""
-    rows = list(rows)
+    caption then lives only in the summary, not duplicated as a `<caption>` too. Malformed
+    headers or rows render as their own text (`_as_list`, `_as_row`) rather than raising."""
+    headers = _as_list(headers)
+    rows = [_as_row(row) for row in _as_list(rows)]
     parts = ['<div class="table-wrap">', "<table>"]
     if caption and not details:
         parts.append(f"<caption>{esc(caption)}</caption>")
@@ -1016,21 +1335,60 @@ def _chart_ids():
     return f"chart-{n}-title", f"chart-{n}-desc"
 
 
-def _is_number(value):
-    return isinstance(value, (int, float)) and not isinstance(value, bool)
+def _chart_value(value):
+    """A value the chart geometry may draw -> a finite float, or None to draw nothing. Only a
+    real number (never a bool, never a numeric string) that is finite (`_finite_float`): NaN
+    and ±Infinity draw nothing and break nothing else, and still read as their own text in the
+    table twin (PLAN R3)."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return _finite_float(value)
 
 
-def svg_bars(rows, title, desc, label_key, value_key):
+def _field(row, key):
+    """`row[key]` for a mapping row, else None -- and None for a key a mapping cannot hold (an
+    unhashable key from a malformed block) rather than an exception."""
+    if not isinstance(row, dict):
+        return None
+    try:
+        return row.get(key)
+    except TypeError:
+        return None
+
+
+def _as_pair(point):
+    """A sparkline point -> (label, value). Anything but a two-item list or tuple is its own
+    label with an unknown value: shown as text in the twin, drawn as nothing."""
+    if isinstance(point, (list, tuple)) and len(point) == 2:
+        return point[0], point[1]
+    return point, None
+
+
+def _twin_value(value, value_cell):
+    """One value for a chart's table twin: plain, or -- with a typed-cell template such as
+    `{"fmt": "usd", "basis": "est."}` -- that template carrying the value, so the twin renders
+    it once through `_render_cell` (a dollar twin keeps its basis beside every figure)."""
+    return dict(value_cell, value=value) if isinstance(value_cell, dict) else value
+
+
+def svg_bars(rows, title, desc, label_key, value_key, value_header=None, value_cell=None):
     """A horizontal bar per row of `rows[i][value_key]`, labelled `rows[i][label_key]` -> one
     `<figure>` holding an inline `<svg viewBox=… role="img" aria-labelledby=…>` (title, desc,
     then the bars) and, as its `<figcaption>`, an `html_table` of the same rows -- the chart is
-    never the only place a number lives. A `None` value draws no bar and reads `unknown` in the
-    table twin."""
-    rows = list(rows)
+    never the only place a number lives. Only a finite number draws a bar (`_chart_value`); a
+    `None` reads `unknown` in the twin and a NaN or infinity reads as its own text there.
+
+    The twin's value column is headed `value_header` (default: `value_key`, as before this
+    parameter existed) and, given `value_cell`, each of its cells is that typed-cell template
+    carrying the row's value (`_twin_value`). A row that is not a mapping is its own label
+    with an unknown value."""
+    rows = _as_list(rows)
     title_id, desc_id = _chart_ids()
-    values = [row.get(value_key) if isinstance(row, dict) else None for row in rows]
-    numeric = [v for v in values if _is_number(v)]
-    max_value = max(numeric) if numeric else 0
+    labels = [_field(row, label_key) if isinstance(row, dict) else row for row in rows]
+    values = [_field(row, value_key) for row in rows]
+    drawn = [_chart_value(value) for value in values]
+    finite = [value for value in drawn if value is not None]
+    max_value = max(finite) if finite else 0
     plot_width = max(CHART_WIDTH - BAR_LABEL_WIDTH - 8, 1)
     height = max(len(rows), 1) * (BAR_ROW_HEIGHT + BAR_ROW_GAP) + BAR_ROW_GAP
     parts = [
@@ -1039,35 +1397,38 @@ def svg_bars(rows, title, desc, label_key, value_key):
         f'<title id="{title_id}">{esc(title)}</title>',
         f'<desc id="{desc_id}">{esc(desc)}</desc>',
     ]
-    for index, row in enumerate(rows):
-        label = row.get(label_key) if isinstance(row, dict) else None
-        value = values[index]
+    for index, label in enumerate(labels):
+        value = drawn[index]
         y = BAR_ROW_GAP + index * (BAR_ROW_HEIGHT + BAR_ROW_GAP)
         parts.append(f'<text x="0" y="{y + BAR_ROW_HEIGHT - 5}" class="chart-label">'
                      f'{esc(label)}</text>')
-        if _is_number(value) and max_value > 0:
+        if value is not None and max_value > 0:
             width = max(round((value / max_value) * plot_width, 1), 0)
             parts.append(f'<rect x="{BAR_LABEL_WIDTH}" y="{y}" width="{width}" '
                          f'height="{BAR_ROW_HEIGHT}" class="chart-bar"></rect>')
     parts.append("</svg>")
     svg = "\n".join(parts)
-    table_rows = [[row.get(label_key) if isinstance(row, dict) else None,
-                  row.get(value_key) if isinstance(row, dict) else None] for row in rows]
-    table = html_table([label_key, value_key], table_rows, caption=title)
+    header = value_key if value_header is None else value_header
+    table_rows = [[label, _twin_value(values[index], value_cell)]
+                  for index, label in enumerate(labels)]
+    table = html_table([label_key, header], table_rows, caption=title)
     return f"<figure>\n{svg}\n<figcaption>\n{table}\n</figcaption>\n</figure>"
 
 
-def svg_sparkline(points, title, desc):
+def svg_sparkline(points, title, desc, value_header="value", value_cell=None):
     """A line through `points` (`(label, value)` pairs, oldest first) -> one `<figure>` holding
     an inline `<svg>` (title, desc, then a polyline through the known values) and, as its
-    `<figcaption>`, an `html_table` of the same points. A `None` value breaks the line rather
-    than being interpolated across, and reads `unknown` in the table twin."""
-    points = list(points)
+    `<figcaption>`, an `html_table` of the same points. Only a finite number is a point
+    (`_chart_value`): a `None`, NaN or infinity breaks the line rather than being interpolated
+    across, and reads as `unknown` or its own text in the twin. The twin's value column is
+    headed `value_header` and, given `value_cell`, each value is that typed-cell template
+    carrying it (`_twin_value`) -- how a dollar sparkline keeps its basis on every row."""
+    points = [_as_pair(point) for point in _as_list(points)]
     title_id, desc_id = _chart_ids()
-    values = [value for _label, value in points]
-    numeric = [v for v in values if _is_number(v)]
-    lo = min(numeric) if numeric else 0.0
-    hi = max(numeric) if numeric else 0.0
+    drawn = [_chart_value(value) for _label, value in points]
+    finite = [value for value in drawn if value is not None]
+    lo = min(finite) if finite else 0.0
+    hi = max(finite) if finite else 0.0
     span = (hi - lo) or 1.0
     steps = max(len(points) - 1, 1)
     plot_w = CHART_WIDTH - 2 * SPARK_PAD
@@ -1079,57 +1440,72 @@ def svg_sparkline(points, title, desc):
         f'<desc id="{desc_id}">{esc(desc)}</desc>',
     ]
     segment = []
-    for index, value in enumerate(values):
-        if _is_number(value):
+    for index, value in enumerate(drawn):
+        x = y = None
+        if value is not None:
             x = SPARK_PAD + (plot_w * index / steps)
             y = SPARK_PAD + plot_h - ((value - lo) / span) * plot_h
+        if x is not None and math.isfinite(x) and math.isfinite(y):
             segment.append(f"{x:.1f},{y:.1f}")
-        elif segment:
-            if len(segment) > 1:
-                parts.append(f'<polyline points="{" ".join(segment)}" class="chart-line">'
-                             f'</polyline>')
-            segment = []
+            continue
+        if len(segment) > 1:  # an extreme span can overflow; that point breaks the line too
+            parts.append(f'<polyline points="{" ".join(segment)}" class="chart-line">'
+                         f'</polyline>')
+        segment = []
     if len(segment) > 1:
         parts.append(f'<polyline points="{" ".join(segment)}" class="chart-line"></polyline>')
     parts.append("</svg>")
     svg = "\n".join(parts)
-    table = html_table(["label", "value"], [[label, value] for label, value in points],
+    header = "value" if value_header is None else value_header
+    table = html_table(["label", header],
+                       [[label, _twin_value(value, value_cell)] for label, value in points],
                        caption=title)
     return f"<figure>\n{svg}\n<figcaption>\n{table}\n</figcaption>\n</figure>"
 
 
 def _render_block(block):
     """One block dict -> HTML. The vocabulary is `p` / `list` / `table` (T2) plus, from T3,
-    `svg_bars` / `svg_sparkline`; an unrecognised type or shape renders a plain sentence
-    rather than raising, so one bad block cannot take its whole panel down with it."""
+    `svg_bars` / `svg_sparkline`. A `p` block carries either `text` (one plain value) or
+    `parts` (a list of plain values and typed cells, each rendered once through `_render_cell`
+    -- how a sentence holds a qualified count or the styled `unknown`). The chart blocks pass
+    their optional `value_header` / `value_cell` through. An unrecognised type or shape renders
+    a plain sentence, and a malformed list field renders as its own text, rather than raising,
+    so one bad block cannot take its whole panel down with it."""
     if not isinstance(block, dict):
         return f"<p>{esc('a block that is not a mapping was not rendered')}</p>"
     kind = block.get("type")
     if kind == "p":
+        if "parts" in block:
+            return "<p>" + "".join(_render_cell(part)
+                                   for part in _as_list(block.get("parts"))) + "</p>"
         return f"<p>{esc(block.get('text'))}</p>"
     if kind == "list":
-        items = block.get("items") or []
+        items = _as_list(block.get("items") or None)
         if not items:
             return f'<p class="notes">{esc(block.get("empty") or "none")}</p>'
         return ('<ul class="notes">\n' + "\n".join(f"<li>{esc(item)}</li>" for item in items)
                 + "\n</ul>")
     if kind == "table":
-        rows = block.get("rows") or []
+        rows = _as_list(block.get("rows") or None)
         if not rows and block.get("empty"):
             return f"<p>{esc(block['empty'])}</p>"
         return html_table(block.get("headers") or [], rows, block.get("caption"),
                           details=bool(block.get("details")))
     if kind == "svg_bars":
-        rows = block.get("rows") or []
+        rows = _as_list(block.get("rows") or None)
         if not rows and block.get("empty"):
             return f"<p>{esc(block['empty'])}</p>"
         return svg_bars(rows, block.get("title") or "", block.get("desc") or "",
-                        block.get("label_key"), block.get("value_key"))
+                        block.get("label_key"), block.get("value_key"),
+                        value_header=block.get("value_header"),
+                        value_cell=block.get("value_cell"))
     if kind == "svg_sparkline":
-        points = block.get("points") or []
+        points = _as_list(block.get("points") or None)
         if not points and block.get("empty"):
             return f"<p>{esc(block['empty'])}</p>"
-        return svg_sparkline(points, block.get("title") or "", block.get("desc") or "")
+        return svg_sparkline(points, block.get("title") or "", block.get("desc") or "",
+                             value_header=block.get("value_header"),
+                             value_cell=block.get("value_cell"))
     return f"<p>{esc(f'a block of unknown type {kind!r} was not rendered')}</p>"
 
 
@@ -1171,23 +1547,65 @@ def nav(panels):
     return '<nav aria-label="panels">' + " · ".join(links) + "</nav>"
 
 
-def render_page(model, home):
-    """The whole page as one string. Deterministic for the same model except the one line that
-    carries `data-built-at` (chart ids are reset here for the same reason: PLAN D9)."""
+# What a panel whose rendering raised leaves behind -- on its fallback section, in the bounds
+# section and in build.json -- naming the exception TYPE only: a message can carry a path.
+RENDER_FAILURE_NOTE = "this panel could not be rendered ({})"
+RENDER_FAILURE_SUMMARY = "could not be rendered (see notes)"
+
+
+def _render_panel(entry, built_at):
+    """One scrubbed panel entry -> its `<section>`. May raise on a malformed entry; the caller
+    contains that per panel."""
+    body_html = "\n".join(_render_block(block) for block in _as_list(entry.get("blocks")))
+    observed = entry.get("observed")
+    return panel(entry.get("id"), entry.get("title") or entry.get("id"), entry.get("source"),
+                 observed, age_days(observed, built_at), _as_list(entry.get("notes") or None),
+                 body_html, entry.get("refresh_hint"))
+
+
+def _fallback_ident(raw, home):
+    """A failed panel's id and title, scrubbed like everything else -> (id, title)."""
+    try:
+        return _scrub_tree(raw.get("id"), home), _scrub_tree(raw.get("title"), home)
+    except Exception:  # the entry is too broken even to scrub its name; say nothing of it
+        return None, None
+
+
+def _fallback_section(pid, title, note):
+    """The section a panel whose rendering raised gets instead: its id, its escaped title and
+    the one note -- nothing of the panel's own content."""
+    return "\n".join([
+        f'<section id="{esc("" if pid is None else pid)}">',
+        f"<h2>{esc(title or pid)}</h2>",
+        f'<p class="notes">{esc(note)}</p>',
+        "</section>",
+    ])
+
+
+def _render_view(model, home):
+    """One rendering pass -> (page, failed): `failed` lists (index, exception type name) for
+    every panel whose rendering raised, the index counting only the mapping entries of
+    `model["panels"]`. Each panel is scrubbed and rendered inside its own `try`, so one
+    malformed panel becomes a fallback section and never takes the page down (PLAN D10)."""
     _reset_chart_sequence()
-    view = _scrub_tree(model, home)
-    panels = [entry for entry in view.get("panels") or () if isinstance(entry, dict)]
+    view = _scrub_tree({key: value for key, value in model.items() if key != "panels"}, home)
+    entries = [entry for entry in _as_list(model.get("panels")) if isinstance(entry, dict)]
     built_at = view.get("built_at")
     built_text = f"built {built_at or 'unknown'} — a static file: rebuild to refresh"
     primary_text = f"primary checkout: {view.get('primary_checkout') or 'unknown'}"
     data_home_text = f"data home: {view.get('data_home') or 'unknown'}"
-    sections = []
-    for entry in panels:
-        body_html = "\n".join(_render_block(block) for block in entry.get("blocks") or ())
-        observed = entry.get("observed")
-        sections.append(panel(entry.get("id"), entry.get("title") or entry.get("id"),
-                              entry.get("source"), observed, age_days(observed, built_at),
-                              entry.get("notes") or (), body_html, entry.get("refresh_hint")))
+    sections, links, failed = [], [], []
+    for index, raw in enumerate(entries):
+        try:
+            entry = _scrub_tree(raw, home)
+            sections.append(_render_panel(entry, built_at))
+            links.append({"id": entry.get("id"), "title": entry.get("title")})
+        except Exception as exc:
+            pid, title = _fallback_ident(raw, home)
+            sections.append(_fallback_section(
+                pid, title, RENDER_FAILURE_NOTE.format(type(exc).__name__)))
+            links.append({"id": pid, "title": title})
+            failed.append((index, type(exc).__name__))
     lines = [
         "<!doctype html>",
         '<html lang="en">',
@@ -1207,7 +1625,7 @@ def render_page(model, home):
         f'<p class="meta" data-built-at="{esc(built_at)}">{esc(built_text)}</p>',
         f'<p class="meta">{esc(primary_text)} · {esc(data_home_text)}</p>',
         "</header>",
-        nav(panels),
+        nav(links),
         "<main>",
         *sections,
         "</main>",
@@ -1216,17 +1634,72 @@ def render_page(model, home):
         "</html>",
         "",
     ]
-    return "\n".join(lines)
+    return "\n".join(lines), failed
+
+
+def _with_render_failures(model, failed):
+    """A copy of `model` that carries one note per panel whose rendering raised: on the
+    page-wide `notes` (which build.json shows), in the bounds panel's rebuilt body, and as that
+    panel's `summary`. Idempotent: a note already present is not added twice."""
+    model = dict(model)
+    panels = [dict(entry) if isinstance(entry, dict) else entry
+              for entry in _as_list(model.get("panels"))]
+    shown = [entry for entry in panels if isinstance(entry, dict)]
+    notes = [str(note) for note in _as_list(model.get("notes"))]
+    broken = set()
+    for index, type_name in failed:
+        entry = shown[index]
+        broken.add(index)
+        entry["summary"] = RENDER_FAILURE_SUMMARY
+        note = f"{entry.get('id')}: {RENDER_FAILURE_NOTE.format(type_name)}"
+        if note not in notes:
+            notes.append(note)
+    for index, entry in enumerate(shown):
+        if entry.get("id") == BOUNDS_PANEL and index not in broken:
+            entry["blocks"] = _bounds_blocks(notes, _as_list(model.get("caps")))
+    model["notes"] = notes
+    model["panels"] = panels
+    return model
+
+
+def render_build(model, home):
+    """The page for `model` with every rendering failure contained -> (page, model).
+
+    A panel whose rendering raises becomes a fallback section (`_fallback_section`). Its note
+    -- the exception type only -- then goes on the page-wide notes, into the bounds section and,
+    through the returned model, into build.json: the model is re-derived by
+    `_with_render_failures` and rendered once more. The input model is never mutated; with no
+    failure it is returned as it came. Both passes are deterministic, so the same model renders
+    the same bytes except the build-time line (PLAN D9)."""
+    page, failed = _render_view(model, home)
+    if not failed:
+        return page, model
+    model = _with_render_failures(model, failed)
+    page, _again = _render_view(model, home)
+    return page, model
+
+
+def render_page(model, home):
+    """The whole page as one string (`render_build` without the model). Deterministic for the
+    same model except the one line that carries `data-built-at` (chart ids are reset on every
+    pass for the same reason: PLAN D9); a panel whose rendering raises is contained."""
+    return render_build(model, home)[0]
 
 
 # ---------------------------------------------------------------------------------------------
 # Receipt and summary.
 
 def build_receipt(model, home, out_dir):
-    """build.json: what was built, from where, what was cut and every note -> scrubbed dict."""
+    """build.json: what was built, from where, what was cut and every note -> scrubbed dict.
+
+    `classes` is pinned (the skill relays it): `listing` (one of LISTING_STATES), then
+    `mapped` / `unmapped` / `residue`, each `{"count": int|null, "qualifier":
+    "exact"|"lower_bound"|"unknown"}` -- `count` is null exactly when the qualifier is `unknown`
+    -- and residue also carries its `sample`."""
     classes = model.get("classes") or {}
     residue = classes.get("residue") or {}
     caps = model.get("caps") or []
+    listing = classes.get("listing")
     receipt = {
         "schema_version": model.get("schema_version"),
         "built_at": model.get("built_at"),
@@ -1236,9 +1709,11 @@ def build_receipt(model, home, out_dir):
         "checkouts": list(model.get("checkouts") or ()),
         "data_home": model.get("data_home"),
         "classes": {
-            "mapped": {"count": len(classes.get("mapped") or ())},
-            "unmapped": {"count": len(classes.get("unmapped") or ())},
-            "residue": {"count": residue.get("count"), "sample": list(residue.get("sample") or ())},
+            "listing": listing if listing in LISTING_STATES else "failed",
+            "mapped": class_count(classes, "mapped"),
+            "unmapped": class_count(classes, "unmapped"),
+            "residue": {**class_count(classes, "residue"),
+                        "sample": list(residue.get("sample") or ())},
         },
         "panels": [{key: entry.get(key) for key in ("id", "title", "source", "observed", "summary")}
                    for entry in model.get("panels") or ()],
@@ -1250,18 +1725,24 @@ def build_receipt(model, home, out_dir):
 
 
 def summary_lines(receipt):
-    """The one-screen summary `build` prints."""
+    """The one-screen summary `build` prints. Namespace counts follow the page's rules: an
+    exact count is `N`, a lower bound `at least N`, anything else `unknown`, and an absent data
+    home is the word `absent` -- never a line of zeros."""
     classes = receipt.get("classes") or {}
-
-    def count(name):
-        return (classes.get(name) or {}).get("count")
-
+    listing = classes.get("listing")
+    if listing == "absent":
+        namespaces = "namespaces: data home absent — no namespaces"
+    else:
+        namespaces = ("namespaces: "
+                      + " · ".join(_count_text(classes.get(name), name) for name in CLASS_NAMES)
+                      + " (heuristic: counted, never opened)")
+        if listing != "complete":
+            namespaces += f"; data-home listing {listing or 'unknown'}"
     lines = [
         f"page:       {receipt.get('page')}",
         f"receipt:    {receipt.get('receipt')}",
         f"built at:   {receipt.get('built_at')}",
-        (f"namespaces: {count('mapped')} mapped · {count('unmapped')} unmapped · "
-         f"{count('residue')} residue (heuristic: counted, never opened)"),
+        namespaces,
         "panels:",
     ]
     for entry in receipt.get("panels") or ():
@@ -1429,8 +1910,10 @@ def assemble_build(cwd, data_home=None, out_dir=None, flags=(), git=True, projec
             "projects_dir": None if projects_dir is None else os.fspath(projects_dir),
             "no_transcripts": bool(no_transcripts), "git": bool(git)}
     model = build_model(data_home, checkouts, opts, default_caps())
+    # The page first: a panel whose rendering fails adds a note to the model, and the receipt
+    # built after it carries that note too.
+    page, model = render_build(model, home)
     receipt = build_receipt(model, home, out_dir)
-    page = render_page(model, home)
     return out_dir, model, receipt, page
 
 

@@ -36,10 +36,11 @@ history (`git log --all --diff-filter=A`) on 2026-07-25 for the first five, on
 2026-09-13 for the next three, and on 2026-09-19 for `training/` — which returned nothing
 because that store has never existed here: collection is off
 (`bin/training_data.py` ships `COLLECTION_ENABLED = False` and nothing calls its capture
-hook), so a checkout never creates the directory. Same check on 2026-09-25 for `dashboard/`
-returned nothing, because the store did not exist before this kit. The rule and the test are
-in place for the day somebody turns it on. `python3 bin/release_gate.py packaging` re-checks
-the ignore rules and the tracked tree on demand.
+hook), so a checkout never creates the directory. The rule and the test are in place for the
+day somebody turns it on. The same check on 2026-09-25 for `dashboard/` returned nothing,
+because that store did not exist before the observability dashboard (`bin/dashboard.py`) was
+added. `python3 bin/release_gate.py packaging` re-checks the ignore rules and the tracked tree
+on demand.
 
 ## Where runtime data actually lives (since step 13)
 

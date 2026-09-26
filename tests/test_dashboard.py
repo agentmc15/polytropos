@@ -21,6 +21,7 @@ import html
 import importlib.util
 import io
 import json
+import math
 import os
 import re
 import stat
@@ -68,7 +69,52 @@ def tearDownModule():
 EXACT_CSP_META = ('<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; '
                   'style-src \'unsafe-inline\'; img-src data:">')
 NETWORK_TRIPWIRES = ("<script", "src=", 'href="http', 'href="//', "@import", "url(")
-EMPTY_CLASSES = {"mapped": [], "unmapped": [], "residue": {"count": 0, "sample": []}}
+UNKNOWN_SPAN = '<span class="unknown">unknown</span>'
+UNKNOWN_COUNT = {"count": None, "qualifier": "unknown"}
+
+
+def exact(count):
+    return {"count": count, "qualifier": "exact"}
+
+
+def absent_classes(checkouts):
+    """An absent data home: exact zeros, and every checkout definitively without a namespace."""
+    return {
+        "listing": "absent", "mapped": [], "unmapped": [],
+        "residue": {**exact(0), "sample": []},
+        "counts": {"mapped": exact(0), "unmapped": exact(0), "residue": exact(0)},
+        "by_checkout": [{"checkout": checkout, "state": "absent"} for checkout in checkouts],
+    }
+
+
+def unknown_classes(checkouts):
+    """Nothing could be classified: no rows and every count unknown -- never a zero."""
+    return {
+        "listing": "failed", "mapped": [], "unmapped": [],
+        "residue": {**UNKNOWN_COUNT, "sample": []},
+        "counts": {"mapped": UNKNOWN_COUNT, "unmapped": UNKNOWN_COUNT, "residue": UNKNOWN_COUNT},
+        "by_checkout": [{"checkout": checkout, "state": "unknown"} for checkout in checkouts],
+    }
+
+
+@contextlib.contextmanager
+def _scandir_in_name_order():
+    """`os.scandir` yielding entries sorted by name, so a lowered listing cap cuts a KNOWN tail
+    instead of whatever the filesystem's own order happens to be."""
+    real = os.scandir
+
+    @contextlib.contextmanager
+    def ordered(path):
+        with real(path) as found:
+            entries = sorted(found, key=lambda entry: entry.name)
+        yield iter(entries)
+
+    with mock.patch("os.scandir", ordered):
+        yield
+
+
+def _section(page, pid):
+    return page.split(f'<section id="{pid}">', 1)[1].split("</section>", 1)[0]
 
 # The panel ids, pinned for the whole kit in page order (TASKS.md, T2 brief item 5). Kept here
 # rather than in the engine: `bin/*.py` is scanned by the evals and training stores'
@@ -209,14 +255,15 @@ class ClassificationTests(_WorldCase):
         self.assertNotIn(empty, unmapped)
         self.assertEqual(classes["residue"]["count"], 31)
 
-    def test_absent_or_file_data_home_is_a_note_and_empty_classes(self):
+    def test_absent_or_file_data_home_is_a_note_and_exact_zero_classes(self):
+        checkouts = [str(self.world["checkout"])]
         classes, notes = self.classify(data_home=self.tmp / "nowhere")
-        self.assertEqual(classes, EMPTY_CLASSES)
+        self.assertEqual(classes, absent_classes(checkouts))
         self.assertTrue(any("does not exist" in note for note in notes), notes)
         a_file = self.tmp / "data-home-file"
         a_file.write_text("not a directory\n")
         classes, notes = self.classify(data_home=a_file)
-        self.assertEqual(classes, EMPTY_CLASSES)
+        self.assertEqual(classes, absent_classes(checkouts))
         self.assertTrue(any("is not a directory" in note for note in notes), notes)
 
     def test_absent_data_home_still_builds_a_page(self):
@@ -241,12 +288,15 @@ class ClassificationTests(_WorldCase):
                             for note in notes), notes)
         _chmod_restorable(self, self.world["data_home"], 0)
         classes, notes = self.classify()
-        self.assertEqual(classes, EMPTY_CLASSES)
+        self.assertEqual(classes, unknown_classes([str(self.world["checkout"])]))
         self.assertTrue(any("could not be listed" in note for note in notes), notes)
+        self.assertTrue(any("could not be looked up by name (PermissionError)" in note
+                            for note in notes), notes)
 
     def test_lowered_listing_cap_is_noted_on_its_panel_in_bounds_and_in_the_receipt(self):
-        model = db.build_model(self.world["data_home"], [str(self.world["checkout"])],
-                               {"notes": []}, {"MAX_NAMESPACES_LISTED": 5})
+        with _scandir_in_name_order():
+            model = db.build_model(self.world["data_home"], [str(self.world["checkout"])],
+                                   {"notes": []}, {"MAX_NAMESPACES_LISTED": 5})
         marker = "cap MAX_NAMESPACES_LISTED (5) reached"
         namespaces = model["panels"][0]
         self.assertEqual(namespaces["id"], "namespaces")
@@ -258,9 +308,15 @@ class ClassificationTests(_WorldCase):
         self.assertTrue(rows["MAX_NAMESPACES_LISTED"]["hit"])
         self.assertEqual(rows["MAX_NAMESPACES_LISTED"]["value"], 5)
         self.assertFalse(rows["MAX_NAMESPACES_READ"]["hit"])
+        # In name order the mapped namespace ("checkout-…") comes first, then the residue
+        # ("tmp…"), then "unmapped-…". The capped listing reached the first five names; the
+        # mapped one among them was already looked up by name, so it classified four residue
+        # and no unmapped namespace -- figures that are a lower bound and unknown, never exact.
         classes = model["classes"]
-        self.assertEqual(len(classes["mapped"]) + len(classes["unmapped"])
-                         + classes["residue"]["count"], 5)
+        self.assertEqual(classes["listing"], "truncated")
+        self.assertEqual(classes["counts"], {"mapped": exact(1), "unmapped": UNKNOWN_COUNT,
+                                             "residue": {"count": 4, "qualifier": "lower_bound"}})
+        self.assertEqual(classes["residue"]["sample"], sorted(self.world["residue"])[:3])
         page = db.render_page(model, _FAKE_HOME.name)
         section = page.split('<section id="namespaces">', 1)[1].split("</section>", 1)[0]
         self.assertIn(f"<li>{html.escape(panel_notes[0], quote=True)}</li>", section)
@@ -270,6 +326,12 @@ class ClassificationTests(_WorldCase):
         receipt = db.build_receipt(model, _FAKE_HOME.name, self.tmp / "out")
         self.assertEqual(receipt["caps_hit"], ["MAX_NAMESPACES_LISTED"])
         self.assertIn(f"namespaces: {panel_notes[0]}", receipt["notes"])
+        self.assertEqual(receipt["classes"], {
+            "listing": "truncated", "mapped": exact(1), "unmapped": UNKNOWN_COUNT,
+            "residue": {"count": 4, "qualifier": "lower_bound",
+                        "sample": sorted(self.world["residue"])[:3]}})
+        self.assertIn("1 mapped · " + UNKNOWN_SPAN + " unmapped · at least 4 residue.", section)
+        self.assertIn("at least 4 namespaces, e.g.", section)
 
     def test_a_raising_namespaces_builder_cannot_drop_the_cap_note(self):
         def broken(_ctx):
@@ -310,6 +372,151 @@ class ClassificationTests(_WorldCase):
             _classes, notes = self.classify()
         expected = (f"legacy in-tree store memory at {memory} — not scanned by the dashboard")
         self.assertIn(expected, notes)
+
+
+class ClassificationCompletenessTests(_WorldCase):
+    """The classes say how complete they are (PLAN D5, D7c, R3; P1 fix round F1): a cut or
+    failed listing, or a failed lookup, is a lower bound or `unknown` -- never a zero, and never
+    "No namespace in this data home for" unless every lookup definitively found none."""
+
+    def last_sorting_checkout(self):
+        checkout = self.tmp / "zzzz-sorts-last"
+        checkout.mkdir()
+        namespace = rd.project_namespace(checkout)
+        (self.world["data_home"] / namespace / "attempts").mkdir(parents=True)
+        return str(checkout), namespace
+
+    def test_a_capped_listing_never_drops_the_mapped_namespace_that_sorts_last(self):
+        checkout, namespace = self.last_sorting_checkout()
+        names = sorted(os.listdir(self.world["data_home"]))
+        self.assertGreaterEqual(len(names), 4)
+        self.assertEqual(names[-1], namespace)
+        with _scandir_in_name_order():  # the one listed entry is names[0], never the mapped one
+            model = db.build_model(self.world["data_home"], [checkout], {"notes": []},
+                                   {"MAX_NAMESPACES_LISTED": 1})
+        classes = model["classes"]
+        self.assertEqual([row["namespace"] for row in classes["mapped"]], [namespace])
+        self.assertEqual(classes["mapped"][0]["stores"], ["attempts"])
+        self.assertEqual(classes["by_checkout"], [{"checkout": checkout, "state": "mapped"}])
+        receipt = db.build_receipt(model, _FAKE_HOME.name, self.tmp / "out")
+        self.assertEqual(receipt["classes"], {
+            "listing": "truncated", "mapped": exact(1),
+            "unmapped": {"count": 1, "qualifier": "lower_bound"},
+            "residue": {**UNKNOWN_COUNT, "sample": []}})
+        for name in ("unmapped", "residue"):
+            self.assertIn(receipt["classes"][name]["qualifier"], ("lower_bound", "unknown"))
+        page = db.render_page(model, _FAKE_HOME.name)
+        section = _section(page, "namespaces")
+        self.assertNotIn("No namespace in this data home for", page)
+        self.assertIn(f"1 mapped · at least 1 unmapped · {UNKNOWN_SPAN} residue.", section)
+        self.assertIn("stopped at its cap (MAX_NAMESPACES_LISTED)", section)
+        self.assertNotIn("No namespaces were found", page)
+        summary = "\n".join(db.summary_lines(receipt))
+        self.assertIn("namespaces: 1 mapped · at least 1 unmapped · unknown residue", summary)
+        self.assertIn("data-home listing truncated", summary)
+        panel_summary = model["panels"][0]["summary"]
+        self.assertTrue(panel_summary.startswith("1 mapped · at least 1 unmapped · unknown "
+                                                 "residue"), panel_summary)
+
+    @unittest.skipIf(os.geteuid() == 0, "root lists a directory through mode 0o300")
+    def test_an_unlistable_data_home_keeps_mapped_exact_and_the_rest_unknown(self):
+        _chmod_restorable(self, self.world["data_home"], 0o300)  # search, but no read
+        rc, out, stdout, stderr = self.build("out", "--json")
+        self.assertEqual(rc, 0, stderr)
+        receipt = self.receipt(out)
+        self.assertEqual(json.loads(stdout), receipt)
+        self.assertEqual(receipt["classes"], {
+            "listing": "failed", "mapped": exact(1), "unmapped": UNKNOWN_COUNT,
+            "residue": {**UNKNOWN_COUNT, "sample": []}})
+        self.assertTrue(any("could not be listed (PermissionError)" in note
+                            for note in receipt["notes"]), receipt["notes"])
+        page = self.page(out)
+        section = _section(page, "namespaces")
+        self.assertIn(self.world["namespace"], section)  # the lookup still found it, by name
+        self.assertIn(f"1 mapped · {UNKNOWN_SPAN} unmapped · {UNKNOWN_SPAN} residue.", section)
+        self.assertIn("could not be listed, so whether it holds unmapped or residue", section)
+        for wrong in ("0 unmapped", "0 residue", "No namespaces were found",
+                      "No namespace in this data home for"):
+            self.assertNotIn(wrong, page)
+
+    @unittest.skipIf(os.geteuid() == 0, "root looks a name up through mode 0")
+    def test_failed_lookups_leave_the_checkout_unknown_never_absent(self):
+        _chmod_restorable(self, self.world["data_home"], 0o000)
+        rc, out, stdout, stderr = self.build()
+        self.assertEqual(rc, 0, stderr)
+        receipt = self.receipt(out)
+        self.assertEqual(receipt["classes"], {
+            "listing": "failed", "mapped": UNKNOWN_COUNT, "unmapped": UNKNOWN_COUNT,
+            "residue": {**UNKNOWN_COUNT, "sample": []}})
+        self.assertTrue(any("could not be looked up by name (PermissionError)" in note
+                            for note in receipt["notes"]), receipt["notes"])
+        page = self.page(out)
+        checkout = os.path.realpath(self.world["checkout"])
+        self.assertIn(f"It is unknown whether this data home holds a namespace for: {checkout}",
+                      page)
+        self.assertIn(f"{UNKNOWN_SPAN} mapped · {UNKNOWN_SPAN} unmapped · {UNKNOWN_SPAN} "
+                      f"residue.", page)
+        for wrong in ("No namespace in this data home for", "0 mapped", "0 unmapped",
+                      "0 residue", "No namespaces were found"):
+            self.assertNotIn(wrong, page)
+        self.assertIn("No namespace can be shown: the data home could not be listed", page)
+        self.assertIn("namespaces: unknown mapped · unknown unmapped · unknown residue", stdout)
+
+    def test_a_cut_listing_that_found_nothing_says_it_was_cut_not_that_none_exist(self):
+        (self.world["data_home"] / "0-a-plain-file").write_text("sorts first\n")
+        with _scandir_in_name_order():
+            model = db.build_model(self.world["data_home"], [], {"notes": []},
+                                   {"MAX_NAMESPACES_LISTED": 1})
+        self.assertEqual(model["classes"]["counts"], {"mapped": exact(0),
+                                                      "unmapped": UNKNOWN_COUNT,
+                                                      "residue": UNKNOWN_COUNT})
+        section = _section(db.render_page(model, _FAKE_HOME.name), "namespaces")
+        self.assertNotIn("No namespaces were found", section)
+        self.assertIn("No namespace was found among the entries the capped listing reached",
+                      section)
+
+    def test_an_absent_data_home_renders_absent_never_zeros(self):
+        out = self.tmp / "out"
+        nowhere = self.tmp / "nowhere"
+        argv = self.build_argv(out)
+        argv[argv.index("--data-home") + 1] = str(nowhere)
+        rc, stdout, stderr = _run(argv)
+        self.assertEqual(rc, 0, stderr)
+        self.assertEqual(self.receipt(out)["classes"], {
+            "listing": "absent", "mapped": exact(0), "unmapped": exact(0),
+            "residue": {**exact(0), "sample": []}})
+        page = self.page(out)
+        self.assertIn(f"Data home {nowhere}: absent — no namespaces.", page)
+        self.assertIn("namespaces: data home absent — no namespaces", stdout)
+        for text in (page, stdout):
+            for wrong in ("0 mapped", "0 unmapped", "0 residue"):
+                self.assertNotIn(wrong, text)
+
+    def test_a_link_at_the_expected_name_is_not_a_namespace_and_is_noted(self):
+        data_home, namespace = self.world["data_home"], self.world["namespace"]
+        elsewhere = self.tmp / "elsewhere-namespace"
+        os.rename(data_home / namespace, elsewhere)
+        os.symlink(elsewhere, data_home / namespace)
+        classes, notes = self.classify()
+        self.assertEqual(classes["mapped"], [])
+        self.assertEqual(classes["counts"]["mapped"], exact(0))
+        self.assertEqual(classes["by_checkout"],
+                         [{"checkout": str(self.world["checkout"]), "state": "absent"}])
+        self.assertNotIn(namespace, [row["namespace"] for row in classes["unmapped"]])
+        skipped = [note for note in notes if "not a directory without following links" in note]
+        self.assertEqual(len(skipped), 1, notes)
+        self.assertIn(namespace, skipped[0])
+
+    @unittest.skipIf(os.geteuid() == 0, "root searches a directory through mode 0")
+    def test_a_data_home_that_cannot_be_examined_is_unknown_never_absent(self):
+        locked = self.tmp / "locked"
+        (locked / "data-home").mkdir(parents=True)
+        _chmod_restorable(self, locked, 0o000)
+        classes, notes = self.classify(data_home=locked / "data-home")
+        self.assertEqual(classes, unknown_classes([str(self.world["checkout"])]))
+        self.assertTrue(any("could not be examined (PermissionError)" in note for note in notes),
+                        notes)
+        self.assertFalse(any("does not exist" in note for note in notes), notes)
 
 
 # ---------------------------------------------------------------------------------------------
@@ -632,7 +839,7 @@ class EmptyPathFlagTests(_WorldCase):
     def test_an_empty_data_home_checkout_or_config_dir_never_means_the_working_directory(self):
         (self.cwd / "looks-like-a-namespace").mkdir()
         model = db.build_model("", [str(self.world["checkout"])], {}, None)
-        self.assertEqual(model["classes"], EMPTY_CLASSES)
+        self.assertEqual(model["classes"], unknown_classes([str(self.world["checkout"])]))
         self.assertIn("namespaces: no data home was given — nothing was classified",
                       model["notes"])
         self.assertNotIn("looks-like-a-namespace", json.dumps(model))
@@ -757,10 +964,11 @@ class PageTests(_WorldCase):
         receipt = self.receipt(self.out)
         self.assertEqual(json.loads(self.stdout), receipt)
         self.assertEqual(receipt["schema_version"], db.BUILD_SCHEMA_VERSION)
-        self.assertEqual(receipt["classes"]["mapped"], {"count": 1})
-        self.assertEqual(receipt["classes"]["unmapped"], {"count": 1})
-        self.assertEqual(receipt["classes"]["residue"]["count"], 30)
-        self.assertEqual(len(receipt["classes"]["residue"]["sample"]), 3)
+        # The pinned receipt shape (T8's skill relays it): exactly these keys, and `count` is
+        # null exactly when the qualifier is `unknown`.
+        self.assertEqual(receipt["classes"], {
+            "listing": "complete", "mapped": exact(1), "unmapped": exact(1),
+            "residue": {**exact(30), "sample": sorted(self.world["residue"])[:3]}})
         self.assertEqual([panel["id"] for panel in receipt["panels"]], ["namespaces", "bounds"])
         self.assertEqual([row["name"] for row in receipt["caps"]], list(db.CAP_NAMES))
         self.assertEqual(receipt["caps_hit"], [])
@@ -840,12 +1048,16 @@ class RenderingTests(_WorldCase):
 
     def test_a_missing_data_home_argument_is_a_note_not_an_exception(self):
         model = db.build_model(None, [str(self.world["checkout"])], {}, None)
-        self.assertEqual(model["classes"], EMPTY_CLASSES)
+        self.assertEqual(model["classes"], unknown_classes([str(self.world["checkout"])]))
         self.assertIsNone(model["data_home"])
         self.assertIn("namespaces: no data home was given — nothing was classified",
                       model["notes"])
         page = db.render_page(model, _FAKE_HOME.name)
-        self.assertIn("Data home unknown: 0 mapped", page)
+        self.assertIn(f"Data home {UNKNOWN_SPAN}: {UNKNOWN_SPAN} mapped · {UNKNOWN_SPAN} "
+                      f"unmapped · {UNKNOWN_SPAN} residue.", page)
+        self.assertIn("No data home was given, so nothing was listed or looked up.", page)
+        self.assertNotIn("0 mapped", page)
+        self.assertNotIn("No namespace in this data home for", page)
         self.assertIn("data home: unknown", page)
 
     def test_model_is_json_serializable(self):
@@ -897,6 +1109,36 @@ class FormatterTests(unittest.TestCase):
         self.assertEqual(db.fmt_count(0), "0")
         self.assertEqual(db.fmt_count(42), "42")
 
+    def test_fmt_count_never_truncates(self):
+        # P1 fix round F3: 0.9 once rendered `0`, 2.7 `2` and True `1`.
+        for value, text in ((True, "True"), (False, "False"), (7, "7"), (2.0, "2"),
+                            (-2.0, "-2"), (-0.0, "0"), (0.9, "0.9"), (2.7, "2.7"),
+                            (1e23, "1e+23"), (float("nan"), "nan"), (float("-inf"), "-inf"),
+                            ("0.9", "0.9"), ("not a number", "not a number")):
+            with self.subTest(value=value):
+                self.assertEqual(db.fmt_count(value), text)
+        self.assertEqual(db.fmt_count(None), UNKNOWN_SPAN)
+        for value, text in ((0.9, "0.9"), (True, "True"), (2.0, "2")):
+            with self.subTest(typed=value):
+                self.assertEqual(db._render_cell({"fmt": "count", "value": value}), text)
+
+    def test_a_qualified_count_never_claims_more_than_it_knows(self):
+        self.assertEqual(db.fmt_count(3, "lower_bound"), "at least 3")
+        self.assertEqual(db.fmt_count(3, "exact"), "3")
+        for value, qualifier in ((0, "lower_bound"), (None, "lower_bound"), (True, "lower_bound"),
+                                 (2.5, "lower_bound"), (-1, "lower_bound"), (5, "unknown"),
+                                 (5, "approximately"), (None, "exact")):
+            with self.subTest(value=value, qualifier=qualifier):
+                self.assertEqual(db.fmt_count(value, qualifier), UNKNOWN_SPAN)
+        self.assertEqual(db._render_cell({"fmt": "count", "value": 3, "qualifier": "lower_bound"}),
+                         "at least 3")
+        self.assertEqual(db._render_cell({"fmt": "count", "value": 3, "qualifier": None}), "3")
+        # A `p` block's `parts` render each typed cell once and escape each plain part once.
+        self.assertEqual(
+            db._render_block({"type": "p", "parts": [
+                "n: ", {"fmt": "count", "value": None, "qualifier": "unknown"}, " <b>&", None]}),
+            f"<p>n: {UNKNOWN_SPAN} &lt;b&gt;&amp;{UNKNOWN_SPAN}</p>")
+
     def test_fmt_usd_requires_a_basis_label_and_never_prints_a_bare_dollar(self):
         self.assertEqual(db.fmt_usd(None, "est."), '<span class="unknown">unknown</span>')
         self.assertNotIn("$", db.fmt_usd(None, "est."))
@@ -904,7 +1146,46 @@ class FormatterTests(unittest.TestCase):
         self.assertIn("$1.50", rendered)
         self.assertIn('<span class="label">est.</span>', rendered)
         with self.assertRaises(TypeError):
-            db.fmt_usd(1.5)  # the basis label is required, never optional (PLAN D7a/b)
+            db.fmt_usd(1.5)  # a DIRECT call without the basis still fails loudly
+
+    def test_a_typed_usd_cell_without_a_basis_never_prints_a_dollar(self):
+        # P1 fix round F2: a typed cell cannot fail loudly, so the rendering carries the rule.
+        for cell in ({"fmt": "usd", "value": 2.5}, {"fmt": "usd", "value": 2.5, "basis": ""},
+                     {"fmt": "usd", "value": 2.5, "basis": "   "},
+                     {"fmt": "usd", "value": 2.5, "basis": None}):
+            with self.subTest(cell=cell):
+                rendered = db._render_cell(cell)
+                self.assertEqual(rendered, '2.50 <span class="label">basis missing</span>')
+                self.assertNotIn("$", rendered)
+        self.assertEqual(db._render_cell({"fmt": "usd", "value": 2.5, "basis": "est."}),
+                         '$2.50 <span class="label">est.</span>')
+        self.assertEqual(db._render_cell({"fmt": "usd", "value": None}), UNKNOWN_SPAN)
+        self.assertEqual(db.fmt_usd(float("nan"), " "),
+                         'nan <span class="label">basis missing</span>')
+        table = db.html_table(["usd"], [[{"fmt": "usd", "value": 2.5, "basis": "\t"}]])
+        self.assertNotIn("$", table)
+        self.assertIn('<td>2.50 <span class="label">basis missing</span></td>', table)
+
+    def test_a_known_sub_cent_dollar_never_renders_as_zero(self):
+        # P1 fix round F7. Compared as the whole amount, not a substring: "$0.004" contains
+        # "$0.00".
+        def amount(value):
+            return db.fmt_usd(value, "est.").split(" <span", 1)[0]
+
+        for value, text in ((0.004, "$0.004"), (-0.004, "$-0.004"), (0.0049, "$0.0049"),
+                            (1e-05, "$1e-05"), (-1e-09, "$-1e-09"), (0.005, "$0.01"),
+                            (1.5, "$1.50"), (-1.5, "$-1.50"), (1234.5, "$1,234.50"),
+                            (0, "$0.00"), (0.0, "$0.00"), (-0.0, "$0.00")):
+            with self.subTest(value=value):
+                self.assertEqual(amount(value), text)
+        self.assertEqual(db.fmt_usd(0.004, "est."), '$0.004 <span class="label">est.</span>')
+        self.assertEqual(db.fmt_usd(0.004, ""), '0.004 <span class="label">basis missing</span>')
+
+    def test_an_int_too_large_for_a_float_is_its_own_text_not_a_crash(self):
+        huge = 10 ** 400
+        self.assertEqual(db.fmt_usd(huge, "est."), f'{huge} <span class="label">est.</span>')
+        self.assertEqual(db.fmt_credits(huge), str(huge))
+        self.assertEqual(db.fmt_count(huge), str(huge))
 
     def test_fmt_usd_on_bad_input_still_carries_the_label_never_crashes_the_panel(self):
         rendered = db.fmt_usd("not-a-number", "est.")
@@ -1106,6 +1387,71 @@ class ChartTests(unittest.TestCase):
         self.assertNotEqual(id1, id2)
 
 
+class ChartGeometryAndTwinTests(unittest.TestCase):
+    """P1 fix round F6: only finite numbers reach the geometry, and a twin's value column can
+    carry a typed cell (a dollar sparkline keeps its basis on every row)."""
+
+    @staticmethod
+    def svg(fig):
+        return fig.split("<svg", 1)[1].split("</svg>", 1)[0]
+
+    @staticmethod
+    def twin(fig):
+        return fig.split("<figcaption>", 1)[1]
+
+    def test_a_non_finite_bar_draws_nothing_and_breaks_no_other_bar(self):
+        rows = [{"label": "a", "value": 2}, {"label": "b", "value": float("nan")},
+                {"label": "c", "value": 4}, {"label": "d", "value": float("inf")},
+                {"label": "e", "value": float("-inf")}, {"label": "f", "value": 10 ** 400}]
+        fig = db.svg_bars(rows, "T", "D", "label", "value")
+        svg = self.svg(fig)
+        widths = [float(width) for width in re.findall(r'<rect [^>]*width="([^"]+)"', svg)]
+        plot_width = db.CHART_WIDTH - db.BAR_LABEL_WIDTH - 8
+        self.assertEqual(widths, [plot_width / 2, float(plot_width)])
+        for bad in ("nan", "inf"):
+            self.assertNotIn(bad, svg.lower())
+        twin = self.twin(fig)
+        for text in ("<td>nan</td>", "<td>inf</td>", "<td>-inf</td>", f"<td>{10 ** 400}</td>"):
+            self.assertIn(text, twin)
+
+    def test_a_non_finite_point_breaks_the_line_and_never_reaches_the_geometry(self):
+        points = [("d1", 1), ("d2", 2), ("d3", float("nan")), ("d4", 3), ("d5", 4),
+                  ("d6", float("inf"))]
+        fig = db.svg_sparkline(points, "S", "D")
+        svg = self.svg(fig)
+        self.assertEqual(svg.count("<polyline"), 2)
+        for bad in ("nan", "inf"):
+            self.assertNotIn(bad, svg.lower())
+        for group in re.findall(r'points="([^"]+)"', svg):
+            for pair in group.split():
+                self.assertTrue(all(math.isfinite(float(n)) for n in pair.split(",")), pair)
+        twin = self.twin(fig)
+        self.assertIn("<td>d3</td><td>nan</td>", twin)
+        self.assertIn("<td>d6</td><td>inf</td>", twin)
+
+    def test_a_value_cell_twin_renders_each_dollar_once_beside_its_basis(self):
+        fig = db.svg_sparkline([("d1", 1.5), ("d2", None), ("d3", 2)], "Spend", "Spend by day",
+                               value_header="USD (est.)",
+                               value_cell={"fmt": "usd", "basis": "est."})
+        twin = self.twin(fig)
+        self.assertIn("<th>label</th><th>USD (est.)</th>", twin)
+        self.assertIn('<td>$1.50 <span class="label">est.</span></td>', twin)
+        self.assertIn('<td>$2.00 <span class="label">est.</span></td>', twin)
+        self.assertIn(f"<td>d2</td><td>{UNKNOWN_SPAN}</td>", twin)
+        self.assertEqual(twin.count('<span class="label">est.</span>'), 2)
+        self.assertNotIn("&lt;span", fig)
+        bars = db.svg_bars([{"k": "x", "v": 3}], "T", "D", "k", "v", value_header="USD",
+                           value_cell={"fmt": "usd", "basis": "actual"})
+        self.assertIn("<th>k</th><th>USD</th>", bars)
+        self.assertIn('<td>$3.00 <span class="label">actual</span></td>', bars)
+        self.assertNotIn("&lt;span", bars)
+
+    def test_without_the_new_parameters_the_twin_headers_are_as_before(self):
+        self.assertIn("<th>k</th><th>v</th>",
+                      db.svg_bars([{"k": "x", "v": 3}], "T", "D", "k", "v"))
+        self.assertIn("<th>label</th><th>value</th>", db.svg_sparkline([("d1", 1)], "S", "D"))
+
+
 class PanelChromeTests(unittest.TestCase):
 
     def test_meta_line_names_source_observed_and_age(self):
@@ -1228,6 +1574,30 @@ class ChartIntegrationTests(_WorldCase):
         self.assertIn('id="chart-1-title"', page1)
         self.assertIn('id="chart-2-title"', page1)
 
+    def test_chart_blocks_pass_value_header_and_value_cell_through(self):
+        def chart_panel(_ctx):
+            return {"source": "test fixture", "observed": "2026-09-01", "notes": [],
+                    "summary": "typed twins",
+                    "blocks": [
+                        {"type": "svg_sparkline", "title": "Spend", "desc": "by day",
+                         "points": [["d1", 1.5], ["d2", None]], "value_header": "USD",
+                         "value_cell": {"fmt": "usd", "basis": "est."}},
+                        {"type": "svg_bars", "title": "Cost", "desc": "by kit",
+                         "label_key": "kit", "value_key": "usd", "value_header": "USD",
+                         "value_cell": {"fmt": "usd", "basis": "actual"},
+                         "rows": [{"kit": "demo", "usd": 2}]},
+                    ]}
+
+        registry = [db.PANELS[0], ("charts", "Charts", chart_panel), db.PANELS[-1]]
+        with mock.patch.object(db, "PANELS", registry):
+            rc, out, _stdout, stderr = self.build()
+        self.assertEqual(rc, 0, stderr)
+        section = _section(self.page(out), "charts")
+        self.assertEqual(section.count("<th>USD</th>"), 2)
+        self.assertIn('<td>$1.50 <span class="label">est.</span></td>', section)
+        self.assertIn('<td>$2.00 <span class="label">actual</span></td>', section)
+        self.assertNotIn("&lt;span", section)
+
 
 class TypedCellIntegrationTests(_WorldCase):
     """The typed-cell mechanism reached the way a real panel reaches it: as a `table` block's
@@ -1254,6 +1624,124 @@ class TypedCellIntegrationTests(_WorldCase):
         self.assertIn('<span class="unknown">unknown</span>', page)
         self.assertNotIn("&lt;span", page)
         self.assertNotIn("&quot;label&quot;", page)
+
+
+class PageWideEscapingTests(_WorldCase):
+    """P1 fix round F5: formatter output is never escaped a second time ANYWHERE on the page.
+    Every later task re-runs this, so a panel that stores a pre-rendered `fmt_*` string in a
+    cell, a list item or a `p` text is caught here."""
+
+    def test_the_synthetic_world_page_holds_no_twice_escaped_markup(self):
+        rc, out, _stdout, stderr = self.build()  # --out-dir, empty --projects-dir, --no-git
+        self.assertEqual(rc, 0, stderr)
+        page = self.page(out)
+        self.assertNotIn("&lt;span", page)
+        self.assertNotIn("&amp;lt;", page)
+
+    def test_the_tripwire_trips_on_a_pre_rendered_formatter_string(self):
+        def wrong(_ctx):  # the mistake the tripwire exists for: a rendered string as a cell
+            return {"source": "fixture", "observed": None, "notes": [], "summary": "wrong",
+                    "blocks": [{"type": "table", "headers": ["usd"],
+                                "rows": [[db.fmt_usd(1.5, "est.")]]}]}
+
+        registry = [db.PANELS[0], ("wrong", "Wrong", wrong), db.PANELS[-1]]
+        with mock.patch.object(db, "PANELS", registry):
+            rc, out, _stdout, stderr = self.build()
+        self.assertEqual(rc, 0, stderr)
+        self.assertIn("&lt;span", self.page(out))
+
+
+class RenderContainmentTests(_WorldCase):
+    """P1 fix round F4 (PLAN D10: never a crash): a malformed block renders as its own text,
+    and a panel whose rendering still raises becomes a fallback section whose note -- the
+    exception type only -- reaches the page, the bounds section and build.json."""
+
+    SENTINEL = "SENTINEL-RENDER-MESSAGE /never/on/the/page"
+    NOTE = "this panel could not be rendered (RuntimeError)"
+
+    @staticmethod
+    def malformed(_ctx):
+        return {"source": "fixture", "observed": None, "notes": "one bare string note",
+                "summary": "malformed fixture",
+                "blocks": [
+                    {"type": "table", "headers": 7, "rows": [None, 5, "a bare row", ["ok", 1]]},
+                    {"type": "table", "headers": ["h"], "rows": 5},
+                    {"type": "list", "items": 3},
+                    {"type": "p", "parts": 4},
+                    {"type": "svg_bars", "title": "B", "desc": "D", "label_key": ["unhashable"],
+                     "value_key": "v", "rows": [7, {"v": 2}]},
+                    {"type": "svg_sparkline", "title": "S", "desc": "D",
+                     "points": [1, ["a", 2], ["b"], None, ["c", 3, 4]]},
+                    {"type": "table", "headers": ["h"], "rows": [[{"fmt": ["unhashable"]}]]},
+                    "not a mapping",
+                ]}
+
+    @staticmethod
+    def charts(_ctx):
+        return {"source": "fixture", "observed": "2026-09-01", "notes": [],
+                "summary": "chart fixture",
+                "blocks": [{"type": "svg_sparkline", "title": "S", "desc": "D",
+                            "points": [["d1", 1], ["d2", 2]]}]}
+
+    def raising(self, *_args, **_kwargs):
+        raise RuntimeError(self.SENTINEL)
+
+    def test_malformed_blocks_render_as_their_text_and_the_page_is_built(self):
+        registry = [db.PANELS[0], ("malformed", "Malformed", self.malformed), db.PANELS[-1]]
+        with mock.patch.object(db, "PANELS", registry):
+            rc, out, _stdout, stderr = self.build()
+        self.assertEqual(rc, 0, stderr)
+        page = self.page(out)
+        section = _section(page, "malformed")
+        self.assertNotIn("could not be rendered", page)
+        self.assertIn("<th>7</th>", section)
+        self.assertIn("<td>a bare row</td>", section)
+        self.assertIn(f"<tr><td>{UNKNOWN_SPAN}</td></tr>", section)  # the None row
+        self.assertIn("<li>one bare string note</li>", section)
+        self.assertIn("<p>4</p>", section)
+        self.assertIn("unrecognised fmt", section)
+        self.assertIn("a block that is not a mapping was not rendered", section)
+        self.assertEqual(section.count("<figure>"), 2)
+
+    def test_a_panel_whose_rendering_raises_is_contained_and_noted_everywhere(self):
+        registry = [db.PANELS[0], ("broken", "Broken <b>&", self.charts), db.PANELS[-1]]
+        with mock.patch.object(db, "PANELS", registry), \
+                mock.patch.object(db, "svg_sparkline", self.raising):
+            rc, out, stdout, stderr = self.build("out", "--json")
+        self.assertEqual(rc, 0, stderr)
+        page = self.page(out)
+        receipt_text = (out / "build.json").read_text(encoding="utf-8")
+        receipt = json.loads(receipt_text)
+        self.assertEqual(re.findall(r'<section id="([^"]+)">', page),
+                         ["namespaces", "broken", "bounds"])
+        self.assertEqual(_section(page, "broken"),
+                         f'\n<h2>Broken &lt;b&gt;&amp;</h2>\n<p class="notes">{self.NOTE}</p>\n')
+        self.assertIn(f"<li>broken: {self.NOTE}</li>", _section(page, "bounds"))
+        self.assertIn(f"broken: {self.NOTE}", receipt["notes"])
+        self.assertEqual({entry["id"]: entry["summary"] for entry in receipt["panels"]}["broken"],
+                         "could not be rendered (see notes)")
+        self.assertIn("1 mapped · 1 unmapped · 30 residue.", _section(page, "namespaces"))
+        for text in (page, receipt_text, stdout, stderr):
+            self.assertNotIn("SENTINEL", text)
+            self.assertNotIn("/never/on/the/page", text)
+
+    def test_a_contained_failure_is_deterministic_and_leaves_the_model_untouched(self):
+        registry = [db.PANELS[0], ("broken", "Broken", self.charts), db.PANELS[-1]]
+        with mock.patch.object(db, "PANELS", registry), \
+                mock.patch.object(db, "svg_sparkline", self.raising):
+            model = db.build_model(self.world["data_home"], [str(self.world["checkout"])],
+                                   {}, None)
+            before = json.dumps(model, sort_keys=True)
+            page1 = db.render_page(model, _FAKE_HOME.name)
+            page2 = db.render_page(model, _FAKE_HOME.name)
+            page3, noted = db.render_build(model, _FAKE_HOME.name)
+            page4, noted_again = db.render_build(noted, _FAKE_HOME.name)
+        self.assertEqual(json.dumps(model, sort_keys=True), before)
+        self.assertEqual(page1, page2)
+        self.assertEqual(page1, page3)
+        self.assertEqual(page3, page4)  # re-rendering the noted model adds nothing twice
+        self.assertEqual(noted_again["notes"].count(f"broken: {self.NOTE}"), 1)
+        self.assertNotIn(f"broken: {self.NOTE}", model["notes"])
 
 
 class StylesheetCompletionTests(_WorldCase):
@@ -1411,7 +1899,12 @@ class SourceTests(unittest.TestCase):
 
     def test_no_home_lookup_process_or_network_primitive_in_the_engine(self):
         text = DASHBOARD_PATH.read_text(encoding="utf-8")
-        for token in ("Path" + ".home", "sub" + "process", "url" + "open", "http" + ".client"):
+        # Split tokens, so this file never holds a banned word itself. `web`+`browser` is the
+        # "open in browser" fence (PLAN OUT OF SCOPE); the rest spawn a process or reach a
+        # network (P1 fix round F8).
+        for token in ("Path" + ".home", "sub" + "process", "url" + "open", "http" + ".client",
+                      "web" + "browser", "os" + ".system", "os" + ".popen", "sock" + "et",
+                      "url" + "lib"):
             self.assertNotIn(token, text)
 
     def test_pinned_constants(self):
@@ -1429,6 +1922,10 @@ class SourceTests(unittest.TestCase):
         self.assertEqual(db.default_caps(), {name: getattr(db, name) for name in db.CAP_NAMES})
         self.assertEqual(db.STORE_NAME, "dashboard")
         self.assertIn(db.STORE_NAME, rd.STORES)
+        # The receipt's class vocabulary (P1 fix round F1), relayed by the skill.
+        self.assertEqual(db.CLASS_NAMES, ("mapped", "unmapped", "residue"))
+        self.assertEqual(db.LISTING_STATES, ("complete", "truncated", "failed", "absent"))
+        self.assertEqual(db.COUNT_QUALIFIERS, ("exact", "lower_bound", "unknown"))
 
     def test_residue_pattern_matches_tempfile_names_only(self):
         self.assertTrue(db.RESIDUE_NAMESPACE_RE.fullmatch("tmpab3_x9kd-1a2b3c4d"))
