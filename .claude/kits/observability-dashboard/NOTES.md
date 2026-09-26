@@ -681,3 +681,295 @@ agent: T5 id=ada980f304e15dc79 role=red-team model=sonnet findings=4 confirmed=4
   times in a row after the fix.
 agent: T5 id=a354c8e19bbc8cdae role=implementer model=sonnet
 outcome: T5 model=sonnet attempts=2 result=retry-pass review=revised run=2026-09-25-7e3a
+
+## T6 — telemetry snapshots and journal digests panel
+
+- Owner shapes read directly from `bin/telemetry_snapshot.py` and `bin/journal_collect.py`: no
+  delta from the brief. `SOURCES` is the 6-tuple named in the brief; `build_list_summary(store_dir)`
+  returns `(None, [note])` for a missing store dir and otherwise `({"store_dir", "sources": [...]}, notes)`
+  with one row per subdirectory ACTUALLY present (registered or not), each carrying
+  `source`/`registered`/`count`/`first_date`/`last_date`/`latest_status`/`latest_labels`;
+  `read_source_snapshots(store_dir, source)` returns `(dated_envelopes, notes)` ascending by
+  date, tolerant of a rogue filename, an unreadable/undecodable file and a missing/invalid
+  `payload` key, each with its own note; `build_envelope(source, date_str, period, status,
+  labels, notes, payload)` is the exact 7-positional-argument shape `synthetic_world` builds
+  fixtures with. `journal_collect.SCHEMA_VERSION` is `1`, read from the module and never
+  hardcoded, in both the reader (`_read_journal_digest`) and the fixture (`_synthetic_digest`
+  inside `synthetic_world`).
+- PLAN D7(g)'s HEADLINE allowlist reads exactly as pinned for four sources (`cost_report`:
+  `totals.usd`/`mode`/`pricing_cached_date`; `codex_usage`: `branch`/`priced`; `copilot_usage`:
+  `totals.usd`/`totals.aic`; `routing_history`: `dollars.coverage`) via the new `_dig`/
+  `_headline_cell`/`HEADLINE_PATHS`. The other two are phrased as a NAMED SUB-STRUCTURE's every
+  key rather than a fixed path ("each section's found", "the coverage labels"): confirmed by
+  reading `telemetry_snapshot.collect_context_overview`/`collect_attempts`, whose payloads are
+  `context_weight.build_overview`'s own `sections: {name: {"found": bool, ...}}` and
+  `attempt_history.summarize`'s own `coverage: {"kits", "kits_with_ledger", "kits_with_notes",
+  "kits_with_role_use"}` dicts respectively -- `_headline_rows` renders every key each payload's
+  sub-structure actually carries (`sections.<name>.found`, `coverage.<field>`), so a field the
+  owner adds later is never silently dropped. Tests:
+  `TelemetryPanelTests.test_a_headline_field_absent_from_a_payload_renders_unknown`,
+  `TelemetryPanelTests.test_context_overview_and_attempts_headline_use_every_key_of_their_substructure`,
+  `TelemetryPanelTests.test_codex_usage_and_copilot_usage_headline_fields_render`.
+- The P1 fix round's S6 contract ("T6 and T7 use only its mapped entries... each of those
+  panels carries a note counting the unmapped namespaces whose one shallow listing shows that
+  panel's store") is implemented once, shared by both panels: `_unmapped_store_count(classes,
+  store_name)` derives its qualifier from the SAME rule `class_count(classes, "unmapped")`
+  already uses (unknown when the data-home listing failed outright; a lower bound when the
+  listing was cut OR when at least one unmapped namespace's own listing itself failed, since it
+  might hold the store and cannot be ruled out either way; exact only when every unmapped
+  namespace was itself listed AND the data-home listing saw all of them), and
+  `_unmapped_store_note` renders it as one of three sentences (a verified-zero sentence with no
+  digit, a qualified count, or "an unknown number") ending in the "not read... config.json"
+  wording. Both panels use ONLY the mapped rows of `read_namespaces(ctx)` for their own
+  per-namespace sections. Tests:
+  `TelemetryPanelTests.test_unmapped_namespace_showing_a_telemetry_store_is_counted_and_noted_not_read`,
+  `JournalPanelTests.test_unmapped_namespace_showing_a_journal_store_is_counted_and_noted_not_read`.
+- Symlink safety, extending T5 retry R3's `os.lstat`/`is_symlink` convention (a link is noted,
+  never followed) to the two new stores: `_guarded_store_dir(data_home, ns_row, store_name)`
+  refuses a symlinked `<namespace>/telemetry` or `<namespace>/journal` directory with a note
+  naming it, before either panel calls its owner; `_journal_day_candidates` applies the same
+  check per day directory (a symlinked day is noted by name and excluded from the candidate
+  list). This is a second line of defense: `safe_paths.confined_read_bytes`'s own `_descend`
+  walk already refuses to traverse a symlinked intermediate component with `O_NOFOLLOW` (read
+  directly, `bin/safe_paths.py:105-134`), so even a day-dir check that somehow missed a symlink
+  would still be caught, and reported as a `SafePathError`-driven note, by the reader itself.
+  Tests: `TelemetryPanelTests.test_a_symlinked_telemetry_store_is_not_followed`,
+  `JournalPanelTests.test_a_symlinked_journal_day_directory_is_not_followed`.
+- Note de-duplication, an implementation detail worth recording so T7 doesn't re-hit it:
+  `telemetry_snapshot.build_list_summary` already calls `read_source_snapshots` once for EVERY
+  subdirectory a telemetry store holds (registered or not) and collects all of those calls'
+  notes (a rogue filename, an unreadable/undecodable file) into its own returned `notes` list.
+  `_telemetry_namespace_section` surfaces that list once, prefixed with the namespace label.
+  `_telemetry_deep_dive` calls `read_source_snapshots` a second time, for ONE registered
+  source, but only to get the dated envelopes back -- it deliberately never re-adds that
+  second call's notes, which would otherwise duplicate the first pass's notes under a second
+  wording (`{label}: {note}` vs `{label}: {source}: {note}`) for the exact same underlying
+  file. `build_telemetry_panel`/`build_journal_panel` each still run `list(dict.fromkeys(notes))`
+  as a final, harmless safety net against any OTHER exact repeat; no distinct note is ever
+  dropped by it. Test: `TelemetryPanelTests.test_rogue_file_and_unregistered_source_notes_from_the_owner_appear`.
+- Fixture: `synthetic_world`'s existing single mapped namespace (the checkout's own) now also
+  carries a `telemetry` store (two dated envelopes per `telemetry_snapshot.SOURCES` entry, a
+  rogue `cost_report/notes.json` file, an unregistered `mystery/2026-01-01.json` source, and
+  `cost_report`'s LATEST envelope deliberately omitting `mode`) and a `journal` store (two
+  schema-1 digest days, one schema-99 day, and the canary string
+  `CANARY-INBOX-TEXT-DO-NOT-RENDER` planted in one digest's `signals.inbox.items`, which this
+  panel never reads). Both were added to the SAME mapped namespace `synthetic_world` already
+  had, rather than a new one, because S6 restricts both panels to mapped entries and the
+  existing fixture only ever mapped one. The S6 unmapped-count tests instead build their own
+  fresh, throwaway namespace/store inside the test method itself (the `last_sorting_checkout`/
+  `test_residue_needs_the_name_and_nothing_but_an_attempts_store` idiom already used elsewhere
+  in this file), so the SHARED `UNMAPPED_NAMESPACE` fixture's own stores list is left untouched.
+- Fixture ripple, expected and fixed (the T5 precedent): the mapped namespace's classified
+  `stores` list changed from `["attempts"]` to `["telemetry", "journal", "attempts"]` (sorted by
+  `runtime_data.STORES` index) now that it holds three stores instead of one. Cross-checked by
+  hand against `runtime_data.STORES`'s actual order before editing, not copied from a failure
+  diff. Fixed:
+  `ClassificationTests.test_synthetic_world_is_one_mapped_one_unmapped_thirty_residue`'s
+  `mapped["stores"]` assertion; `PageTests.test_json_flag_prints_the_receipt_the_store_holds`'s
+  and `RenderingTests.test_model_is_json_serializable`'s panel-id lists (both now include
+  `"telemetry"`, `"journal"`). Checked and found NOT to need a change: the unmapped namespace's
+  own `stores` assertion in `ClassificationTests.test_non_store_entries_in_a_namespace_are_noted`
+  and the mapped-namespace assertion in
+  `ClassificationCompletenessTests.test_a_capped_listing_never_drops_the_mapped_namespace_that_sorts_last`
+  each exercise a DIFFERENT, test-local namespace, never the shared mapped one this task extended.
+- Own bug, caught before considering the panels done: my first `_unmapped_store_count` counted
+  matching unmapped rows with `sum(1 for row in rows if ...)`, which is pure counting (PLAN D2
+  sanctions counting what was enumerated) but still trips
+  `AttemptsHistoryTests.test_no_sum_call_anywhere_in_dashboard_py`, a blunt textual grep for ANY
+  `sum(` in the file with no exceptions carved out for counting. Fixed by rewriting it as
+  `len([row for row in rows if ...])`, which every other counting site in this file already
+  does; the guard itself was correctly read as absolute rather than narrowed.
+- Own bug, caught the same way: `build_telemetry_panel`'s "no data home" branch originally
+  always set `refresh_hint` to `TELEMETRY_REFRESH_HINT`, which broke
+  `PanelDictContractTests.test_build_model_adds_a_refresh_hint_key_defaulting_to_none` (every
+  panel's `refresh_hint` must default to `None` when built with no data home at all). Fixed by
+  moving the refresh hint into only the normal (data-home-given) return path -- with no data
+  home there is not yet even a store to check, so a hint to run the capture script is not yet
+  actionable either.
+- A genuine, pre-existing-shaped flake this task's own fixture exposed, not caused by a race:
+  `RenderingTests.test_two_builds_are_byte_identical_but_for_the_built_at_line`'s second half
+  builds two models with explicit, one-calendar-day-apart `now` values (2026-01-01 09:00 and
+  2026-01-02 17:30) and asserts the rendered pages are identical apart from the built-at line.
+  Telemetry and journal are the FIRST panels in this kit whose `observed` is a genuine dated
+  string rather than the literal `"live, at build time"` (whose `age_days` is always `None`,
+  rendering `"n/a"` and so never varying with `now`) -- so their `age: N days` line is, correctly
+  per PLAN D7(d) ("age in days relative to the build"), one day apart between those two `now`
+  values, for ANY fixed observed date, not only the ones this fixture happens to pick. This is
+  not a bug in either panel; it is the test's own premise (predating any age-bearing panel)
+  meeting an intentional new behavior. Fixed in the test, not the engine: a new `_without_age`
+  helper neutralises the `age: ...` segment of every line, applied ONLY to the early/late
+  comparison (paralleling the existing `_without_built_at` treatment of the built-at line
+  itself); the earlier same-real-moment `out1`/`out2` comparison is untouched and still able to
+  catch a genuine instability there.
+- Tests, by name, for TASKS.md item 4's list: the rogue-file and unregistered-source notes
+  (`TelemetryPanelTests.test_rogue_file_and_unregistered_source_notes_from_the_owner_appear`);
+  the latest envelope's labels verbatim, registered and unregistered
+  (`TelemetryPanelTests.test_latest_envelope_labels_appear_verbatim_registered_and_unregistered`);
+  a missing headline field rendering `unknown`
+  (`TelemetryPanelTests.test_a_headline_field_absent_from_a_payload_renders_unknown`); the
+  schema-99 day noted with none of its numbers rendered
+  (`JournalPanelTests.test_unknown_schema_version_day_is_noted_and_none_of_its_numbers_render`);
+  the canary string absent from the whole page
+  (`JournalPanelTests.test_the_canary_inbox_string_never_renders_anywhere_on_the_page`); an
+  absent telemetry dir rendering the never-captured line
+  (`TelemetryPanelTests.test_a_mapped_namespace_without_a_telemetry_dir_renders_never_captured`);
+  the sparkline's table twin holding one row per kept envelope, both as a direct unit check and
+  in the rendered page
+  (`TelemetryPanelTests.test_cost_report_sparkline_block_has_one_twin_row_per_kept_envelope`,
+  `TelemetryPanelTests.test_the_cost_report_sparkline_appears_in_the_rendered_section`); and the
+  `MAX_JOURNAL_DAYS` cap lowered to 1 leaving a note
+  (`JournalPanelTests.test_max_journal_days_cap_lowered_to_one_leaves_a_note`).
+- Verify run from the repo root: `POLYTROPOS_DATA_HOME="$(mktemp -d)" python3 -m unittest
+  discover -s tests -p 'test_dashboard.py' -v` (204 tests, OK), the task's own `python3 -`
+  probe (`T6 probe OK`), and the full suite under an isolated `POLYTROPOS_DATA_HOME` (5874
+  tests, OK, 2 skipped) all exited 0.
+agent: T6 id=a354c8e19bbc8cdae role=implementer model=sonnet
+agent: T6 id=a081255a09b23634e role=verifier model=sonnet findings=0 confirmed=0 result=accepted
+agent: T6 id=a560e7958f64b2709 role=red-team model=sonnet findings=3 confirmed=3 marginal=3 result=accepted
+
+- T6 adjudication. The verifier found nothing, and the orchestrator's verify run was green.
+  The red-team found three breaks. The orchestrator replayed A, B and C and confirms all
+  three; none was raised by an earlier layer.
+  - (A) One envelope whose `labels` is not a list (the int `42`) raises inside the
+    namespace's telemetry section. The per-namespace catch then replaces the whole section,
+    so every healthy source vanishes (6,720 bytes shrank to about 920). This is the shape T4
+    already fixed for the attempts panel, repeated.
+  - (B) `telemetry_snapshot.read_source_snapshots` and `build_list_summary` follow links.
+    The dashboard's own link check stops at the store root, so a symlinked source dir, or
+    a symlinked envelope file pointing outside the data home, renders its content as if it
+    had been captured. The replay rendered `$999,999.99` and `mode: FABRICATED` from a linked
+    file. The journal reads refuse the same trick through `safe_paths`' `O_NOFOLLOW`, which
+    shows the asymmetry. The retry makes the telemetry contract "a link is noted and its
+    source is never rendered", because the owner cannot be told to skip one file.
+  - (C) `digest.json` is read with no size check. T6's dispatch had asked for a stat-before-read
+    cap on this reader, which is the dashboard's own, so this is a miss against the
+    dispatch and GUARDRAILS' bounded principle, not an optional extra. Envelope files are
+    read whole by the owner, so the retry's no-follow pre-scan also stats each one, and a
+    source with an oversized envelope is skipped under a named cap: T4's B3 precedent for
+    an owner that reads a unit whole.
+
+### T6 retry (attempt 2) — three red-team breaks fixed
+
+- (A) One malformed envelope must not blank the telemetry section. Replayed
+  `redteam-T6-labels-int.py` first and confirmed the collapse (about 920 bytes) before
+  touching any code. Root cause was TWO crash sites, not one: `_telemetry_deep_dive`'s own
+  `list(latest.get("labels") or ())`, AND `telemetry_snapshot.build_list_summary`'s own `list(
+  latest_envelope.get("labels") or [])` -- the owner call this dashboard made for the
+  per-source TABLE crashes on exactly the same malformed field, so guarding only the
+  deep-dive would have left the table-building call still able to take the whole namespace
+  down. Fixed by no longer calling `build_list_summary` at all (`bin/dashboard.py`'s
+  `_telemetry_namespace_section`): the per-source table row is now packaged by this
+  dashboard's own `_telemetry_source_summary_row` from the SAME `read_source_snapshots` data
+  the deep-dive already reads, through the new `_envelope_list_field(envelope, field, source,
+  label, notes)`, which returns `[]` and a note naming the source and field for any
+  non-list/tuple `labels` or `notes` value instead of raising -- the exact `_kind_label`/
+  `_safe_ts` precedent T4 set for a malformed ledger `kind`/`ts`, applied to telemetry
+  envelopes. `_cost_report_sparkline_block` had the identical crash site
+  (`(latest_env.get("labels") or ())` iterated for its basis label) and is fixed the same
+  way. This is a D10 adaptation, not a re-implementation of the owner's parsing:
+  `read_source_snapshots` (the actual tolerant reader) is still the only thing that opens and
+  parses an envelope file; only the aggregation step that used to call `build_list_summary`
+  moved into this dashboard's own adapter, and it does nothing `build_list_summary` did not
+  already do for a well-formed envelope. On TOP of that field-level fix, each source's read,
+  row and deep-dive/unregistered block are now each wrapped in their own `try`/`except`
+  (`_telemetry_one_source`) -- T4's `_guarded_section` idiom, applied per source and per PART
+  of a source, per the dispatch's explicit "as T4 did" -- so a future, unanticipated failure
+  in one source's own processing still leaves its OTHER parts and every OTHER source real.
+  The cost_report sparkline call is wrapped the same way, separately, in
+  `_telemetry_namespace_section`. The journal side had no equivalent crash (its own fields
+  were already routed through `_as_list`/typed cells, which never raise on a malformed
+  value), but gained the same STRUCTURAL per-day and per-source containment anyway, per the
+  dispatch's explicit "the journal per day and per source likewise": the per-day read call in
+  `_journal_namespace_section`, each day's row in `_journal_day_rows`, and each source's row
+  in `_journal_latest_source_table` are each now its own guarded call. Tests:
+  `TelemetryPanelTests.test_a_malformed_labels_field_on_the_latest_envelope_is_a_note_not_a_crash`,
+  `TelemetryPanelTests.test_cost_report_sparkline_malformed_labels_is_a_note_not_a_crash`.
+- (B) Links inside the telemetry store are noted, and their source is never rendered.
+  Replayed `redteam-T6-symlink-source.py` and `redteam-T6-symlink-file.py` first and
+  confirmed the leak (the marker string; `$999,999.99` and `mode: FABRICATED`) before
+  touching any code. `telemetry_snapshot.read_source_snapshots`/`build_list_summary` are
+  untouchable owners (GUARDRAILS) and both follow a link by design (`Path.iterdir()`/
+  `is_dir()`, `source_dir.glob("*.json")` with no `is_symlink()` check) -- this dashboard's
+  OWN `_guarded_store_dir` already refused a symlinked `<namespace>/telemetry` directory, but
+  never looked INSIDE a real one. Fixed with a new no-follow pre-scan,
+  `_telemetry_prescan(store_dir, caps, notes, label)`, run BEFORE any owner call: every
+  top-level entry is checked with `entry.is_symlink()` first (a symlinked source dir is
+  excluded and noted by name, never entered); for each surviving real directory, every
+  `*.json` file is checked the same way (a symlinked envelope file excludes the WHOLE
+  source, noted by source and file name -- the owner cannot be told to skip one file, so
+  `_telemetry_namespace_section`'s per-source loop only ever sees the names
+  `_telemetry_prescan` returned safe). The journal side already refused a linked
+  `digest.json` through `safe_paths.confined_read_bytes`'s own `O_NOFOLLOW` leaf-open
+  (`bin/safe_paths.py`'s `_descend`/`confined_read_bytes`, read to confirm, not assumed) and
+  a linked day directory through this dashboard's own `_journal_day_candidates` check from
+  T6's first pass -- both re-verified unchanged and still passing after this retry's edits
+  to `_read_journal_digest`'s signature (`redteam-T6-journal-file-symlink.py`, replayed
+  clean). Tests:
+  `TelemetryPanelTests.test_a_symlinked_telemetry_source_directory_is_excluded_with_a_note`,
+  `TelemetryPanelTests.test_a_symlinked_envelope_file_excludes_the_whole_source_with_a_note`.
+- (C) Bound the digest and envelope reads. Two new module constants, `MAX_DIGEST_BYTES`
+  (256 KiB -- a real `digest.json` is a few KB of numbers and short name lists,
+  `journal_collect.MAX_KIT_TASKS`/`MAX_INBOX_ITEMS` already cap its two list fields at 100
+  entries each) and `MAX_ENVELOPE_BYTES` (512 KiB -- a real envelope's payload is the owner's
+  own already-capped card, `telemetry_snapshot._public_payload` strips the uncapped
+  per-session/per-rollout scratch keys before anything is ever written), registered in
+  `CAP_NAMES`/`default_caps()` like every other bound (10 caps now; paired edit in
+  `SourceTests.test_pinned_constants`, whose cap-values tuple now includes both). `
+  _read_journal_digest` now `os.lstat`s `<journal_dir>/<day>/digest.json` (never `stat`,
+  so a symlinked leaf's own tiny apparent size can never let an oversized LINKED file past
+  this check -- the existing `O_NOFOLLOW` read below is what actually refuses a link,
+  unchanged) before ever calling `confined_read_bytes`; over the cap is a `cap_note` naming
+  the day and the size, and the file is never opened. `_telemetry_prescan` (the same pass
+  fix B added) also `lstat`s every envelope file against `MAX_ENVELOPE_BYTES`; an oversized
+  file excludes its whole source, for the same "cannot skip one file" reason as a linked
+  one. Replayed `redteam-T6-oversized.py` (an 8 MB `digest.json`) before and after: before,
+  `1.23` rendered with no size note; after, the cap fires, the digest is never read, and the
+  fixture's OWN unrelated `2026-01-01` day (which happens to also carry `usd_priced: 1.23`)
+  still renders -- confirmed by isolating the exact day/line rather than trusting the
+  repro's own naive substring check, which would have read that coincidence as a leak. Built
+  the oversized files in the test only (`db.MAX_DIGEST_BYTES + 1024` / `db.MAX_ENVELOPE_BYTES
+  + 1024` bytes of padding), never in `synthetic_world`/`demo`. Tests:
+  `JournalPanelTests.test_an_oversized_digest_json_is_capped_and_never_read`,
+  `TelemetryPanelTests.test_an_oversized_envelope_file_skips_only_its_source`.
+- Housekeeping: the panel's own "source" meta text and the section-banner comment above it
+  both still named `telemetry_snapshot.build_list_summary`, which this retry stopped
+  calling; both corrected so the page's own "source:" line stays an accurate description of
+  what actually ran (PLAN D7d).
+- Verify run from the repo root, as a script with `set -e`: `POLYTROPOS_DATA_HOME="$(mktemp
+  -d)" python3 -m unittest discover -s tests -p 'test_dashboard.py' -v` (210 tests, OK), the
+  task's own `python3 -` probe (`T6 probe OK`), and the full suite under an isolated
+  `POLYTROPOS_DATA_HOME` all exited 0. Five of the session scratchpad's eight
+  `redteam-T6-*.py` scripts were replayed directly against the fixed tree, not just the new
+  `unittest` tests: `redteam-T6-labels-int.py` (A), `redteam-T6-symlink-source.py` and
+  `redteam-T6-symlink-file.py` (B), `redteam-T6-oversized.py` and
+  `redteam-T6-journal-file-symlink.py` (C and B's journal side); all five came back clean.
+  The other three (`redteam-T6-symlink-source2.py`, a duplicate of `-source.py`;
+  `redteam-T6-manyfiles.py`, a scaling exploration not named as a confirmed break; and
+  `redteam-T6-labels-int-baseline.py`) were not replayed -- not needed for the three
+  confirmed breaks, and not claimed here.
+agent: T6 id=a354c8e19bbc8cdae role=implementer model=sonnet
+
+- T6 retry adjudication. The orchestrator replayed the red-team scripts against the retry:
+  - A: the telemetry section keeps its full size (about 6.9 KB) with `labels: 42`.
+  - B: neither `999,999.99`, `mode: FABRICATED` nor the leak marker renders, and both link
+    notes do.
+  - C: the 8 MB digest trips `MAX_DIGEST_BYTES` ("1 of 10 caps hit").
+- One accepted deviation, which the Phase 2 reviewer is asked to rule on:
+  - What changed: the retry stopped calling `telemetry_snapshot.build_list_summary`, one of
+    the two owner calls PLAN D3 row 3 names. That owner function itself does
+    `list(latest_envelope.get("labels") or [])`, so it raises `TypeError` on a malformed
+    envelope. The per-source table is now packaged from the same `read_source_snapshots`
+    data the deep-dive reads, and the rogue-file notes still come from that owner.
+  - What the dashboard now does itself: it counts the envelopes, picks the first, last and
+    latest (arithmetic PLAN D2 allows), and emits "unregistered source dir" itself, from
+    membership in the owner's `SOURCES`, in words that mirror the owner's note.
+  - Why it is accepted: T6's two attempts are spent, the semantics are kept, and the delta
+    is recorded.
+  - The alternative: restore the owner call behind its own guard, using its rows and notes
+    when it succeeds and falling back only when it raises. That is the reviewer's call, and
+    it is a phase-fix candidate, not a silent default.
+- Owner defect for the user, not fixed here because the owner is untouchable:
+  `telemetry_snapshot.build_list_summary` raises `TypeError` on an envelope whose `labels`
+  is not a list. Verified: `python3 bin/telemetry_snapshot.py --list --store-dir <tmp>` over
+  one envelope with `"labels": 42` exits 1 with `TypeError: 'int' object is not iterable`.
+outcome: T6 model=sonnet attempts=2 result=retry-pass review=revised run=2026-09-25-7e3a

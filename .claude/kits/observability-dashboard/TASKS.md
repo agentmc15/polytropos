@@ -569,7 +569,7 @@ POLYTROPOS_DATA_HOME="$(mktemp -d)" python3 -m unittest discover -s tests -v
 ### T6 — Telemetry snapshots and journal digests panel
 - id: T6
 - title: Telemetry snapshots and journal digests panel
-- status: pending
+- status: done
 - model: sonnet
 - depends: T5
 

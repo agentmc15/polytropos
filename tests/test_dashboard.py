@@ -138,6 +138,17 @@ def _without_built_at(text):
     return [line for line in text.splitlines() if "data-built-at" not in line]
 
 
+_AGE_TEXT_RE = re.compile(r"age: (?:-?\d+ days?|n/a)")
+
+
+def _without_age(lines):
+    """Neutralise every panel's `age: N days` segment (T6: telemetry/journal are the first
+    panels with a genuinely dated `observed`, so their age is intentionally `now`-dependent,
+    exactly like the built-at line PLAN D9 already excepts -- never a source of a real
+    difference to compare away, but not a bug either when two builds pass a different `now`)."""
+    return [_AGE_TEXT_RE.sub("age: <varies with build time>", line) for line in lines]
+
+
 def _chmod_restorable(case, path, mode):
     original = stat.S_IMODE(os.lstat(path).st_mode)
     os.chmod(path, mode)
@@ -195,7 +206,7 @@ class ClassificationTests(_WorldCase):
         self.assertEqual(mapped["namespace"], self.world["namespace"])
         self.assertEqual(mapped["kind"], "checkout")
         self.assertEqual(mapped["checkout"], str(self.world["checkout"]))
-        self.assertEqual(mapped["stores"], ["attempts"])
+        self.assertEqual(mapped["stores"], ["telemetry", "journal", "attempts"])
         self.assertEqual(classes["unmapped"], [{"namespace": db.UNMAPPED_NAMESPACE,
                                                 "stores": ["attempts"]}])
         self.assertEqual(classes["residue"]["count"], 30)
@@ -996,7 +1007,8 @@ class PageTests(_WorldCase):
             "listing": "complete", "mapped": exact(1), "unmapped": exact(1),
             "residue": {**exact(30), "sample": sorted(self.world["residue"])[:3]}})
         self.assertEqual([panel["id"] for panel in receipt["panels"]],
-                         ["namespaces", "attempts", "scorecard", "kits", "bounds"])
+                         ["namespaces", "attempts", "scorecard", "kits", "telemetry", "journal",
+                          "bounds"])
         self.assertEqual([row["name"] for row in receipt["caps"]], list(db.CAP_NAMES))
         self.assertEqual(receipt["caps_hit"], [])
         self.assertEqual(receipt["page"], str(self.out / "index.html"))
@@ -1035,7 +1047,12 @@ class RenderingTests(_WorldCase):
         page_early = db.render_page(early, _FAKE_HOME.name)
         page_late = db.render_page(late, _FAKE_HOME.name)
         self.assertNotEqual(page_early, page_late)
-        self.assertEqual(_without_built_at(page_early), _without_built_at(page_late))
+        # T6: telemetry/journal now carry a genuinely dated `observed`, so their `age` line is
+        # intentionally `now`-dependent across these two explicit, calendar-day-apart `now`
+        # values -- normalised away here on the same terms as the built-at line itself, never
+        # hiding a difference anywhere else on the page.
+        self.assertEqual(_without_age(_without_built_at(page_early)),
+                         _without_age(_without_built_at(page_late)))
 
     def test_fake_home_never_appears_while_tilde_does(self):
         home = self.tmp / "home"
@@ -1093,7 +1110,8 @@ class RenderingTests(_WorldCase):
         self.assertEqual(json.loads(json.dumps(model))["schema_version"], 1)
         self.assertEqual(model["notes"][0], "a note")
         self.assertEqual([panel["id"] for panel in model["panels"]],
-                         ["namespaces", "attempts", "scorecard", "kits", "bounds"])
+                         ["namespaces", "attempts", "scorecard", "kits", "telemetry", "journal",
+                          "bounds"])
 
     def test_a_panel_builder_that_raises_is_a_note_not_an_exception(self):
         def broken(_ctx):
@@ -2759,8 +2777,10 @@ class SourceTests(unittest.TestCase):
         self.assertEqual(
             (db.MAX_NAMESPACES_LISTED, db.MAX_NAMESPACES_READ, db.MAX_LEDGER_BYTES,
              db.MAX_KITS_PER_DIR, db.MAX_TASKS_MD_BYTES, db.MAX_EVAL_RUNS_RENDERED,
-             db.MAX_JOURNAL_DAYS, db.MAX_TELEMETRY_ENVELOPES_PER_SOURCE, db.GIT_TIMEOUT_SECONDS),
-            (5000, 32, 8 * 1024 * 1024, 100, 1024 * 1024, 10, 60, 120, 20))
+             db.MAX_JOURNAL_DAYS, db.MAX_TELEMETRY_ENVELOPES_PER_SOURCE, db.MAX_DIGEST_BYTES,
+             db.MAX_ENVELOPE_BYTES, db.GIT_TIMEOUT_SECONDS),
+            (5000, 32, 8 * 1024 * 1024, 100, 1024 * 1024, 10, 60, 120, 256 * 1024, 512 * 1024,
+             20))
         self.assertEqual(db.PLUGIN_ROOT, BIN_DIR.parent)
         self.assertEqual(db.default_caps(), {name: getattr(db, name) for name in db.CAP_NAMES})
         self.assertEqual(db.STORE_NAME, "dashboard")
@@ -2775,6 +2795,350 @@ class SourceTests(unittest.TestCase):
         for name in ("tmpab3_x9kd-1a2b3c4d\n", "tmpAB3_X9KD-1a2b3c4d", "tmpab3_x9k-1a2b3c4d",
                      "polytropos-1a2b3c4d", "tmpab3_x9kd-1a2b3c4g"):
             self.assertIsNone(db.RESIDUE_NAMESPACE_RE.fullmatch(name), name)
+
+
+# ---------------------------------------------------------------------------------------------
+# Telemetry snapshots panel (T6 item 1).
+
+class TelemetryPanelTests(_WorldCase):
+
+    def test_rogue_file_and_unregistered_source_notes_from_the_owner_appear(self):
+        rc, out, _stdout, stderr = self.build()
+        self.assertEqual(rc, 0, stderr)
+        section = _section(self.page(out), "telemetry")
+        self.assertIn("rogue snapshot file skipped: cost_report/notes.json", section)
+        self.assertIn("unregistered source dir: mystery", section)
+
+    def test_latest_envelope_labels_appear_verbatim_registered_and_unregistered(self):
+        rc, out, _stdout, stderr = self.build()
+        self.assertEqual(rc, 0, stderr)
+        section = _section(self.page(out), "telemetry")
+        # cost_report's LATEST (day 2) envelope's own labels (synthetic_world, T6 item 3).
+        self.assertIn("synthetic cost_report day 2", section)
+        self.assertIn("billing-mode: synthetic-flat", section)
+        # day 1's label must not have been substituted for day 2's -- the LATEST envelope only.
+        self.assertNotIn("synthetic cost_report day 1", section)
+        # the unregistered "mystery" source dir renders labels only (PLAN D7g).
+        self.assertIn("mystery label", section)
+
+    def test_a_headline_field_absent_from_a_payload_renders_unknown(self):
+        rc, out, _stdout, stderr = self.build()
+        self.assertEqual(rc, 0, stderr)
+        section = _section(self.page(out), "telemetry")
+        # cost_report's latest envelope omits "mode" on purpose (synthetic_world, T6 item 3).
+        self.assertIn(f"<td>mode</td><td>{UNKNOWN_SPAN}</td>", section)
+        # the OTHER headline fields for that same envelope still render their real values.
+        self.assertIn("pricing_cached_date", section)
+        self.assertIn("2026-01-02", section)
+        self.assertIn("$15.00", section)
+
+    def test_context_overview_and_attempts_headline_use_every_key_of_their_substructure(self):
+        rc, out, _stdout, stderr = self.build()
+        self.assertEqual(rc, 0, stderr)
+        section = _section(self.page(out), "telemetry")
+        for field in ("claude.found", "codex.found", "copilot.found"):
+            self.assertIn(field, section)
+        for field in ("coverage.kits", "coverage.kits_with_ledger", "coverage.kits_with_notes",
+                     "coverage.kits_with_role_use"):
+            self.assertIn(field, section)
+
+    def test_codex_usage_and_copilot_usage_headline_fields_render(self):
+        rc, out, _stdout, stderr = self.build()
+        self.assertEqual(rc, 0, stderr)
+        section = _section(self.page(out), "telemetry")
+        self.assertIn("<td>branch</td><td>priced</td>", section)
+        self.assertIn("<td>priced</td><td>True</td>", section)
+        self.assertIn("totals.aic", section)
+        self.assertIn("45.00", section)  # copilot_usage day 2's aic, a credits cell (no $)
+
+    def test_a_mapped_namespace_without_a_telemetry_dir_renders_never_captured(self):
+        checkout2 = self.tmp / "second-checkout-no-telemetry"
+        checkout2.mkdir()
+        namespace2 = rd.project_namespace(checkout2)
+        (self.world["data_home"] / namespace2 / "attempts").mkdir(parents=True)
+        rc, out, _stdout, stderr = self.build("out", "--checkout", str(checkout2))
+        self.assertEqual(rc, 0, stderr)
+        section = _section(self.page(out), "telemetry")
+        self.assertIn("never captured", section)
+        self.assertIn("telemetry_snapshot.py", section)
+
+    def test_a_symlinked_telemetry_store_is_not_followed(self):
+        checkout2 = self.tmp / "linked-telemetry-checkout"
+        checkout2.mkdir()
+        namespace2 = rd.project_namespace(checkout2)
+        ns2_dir = self.world["data_home"] / namespace2
+        ns2_dir.mkdir(parents=True)
+        (ns2_dir / "attempts").mkdir()
+        elsewhere = self.tmp / "elsewhere-telemetry"
+        elsewhere.mkdir()
+        os.symlink(elsewhere, ns2_dir / "telemetry")
+        rc, out, _stdout, stderr = self.build("out", "--checkout", str(checkout2))
+        self.assertEqual(rc, 0, stderr)
+        section = _section(self.page(out), "telemetry")
+        self.assertIn("is a symlink", section)
+        self.assertIn("not followed", section)
+
+    def test_unmapped_namespace_showing_a_telemetry_store_is_counted_and_noted_not_read(self):
+        extra_unmapped = "extra-unmapped-telemetry-0000dead"
+        (self.world["data_home"] / extra_unmapped / "telemetry").mkdir(parents=True)
+        rc, out, _stdout, stderr = self.build()
+        self.assertEqual(rc, 0, stderr)
+        section = _section(self.page(out), "telemetry")
+        self.assertIn("unmapped namespace(s) show a telemetry store", section)
+        self.assertIn("config.json", section)
+        # counted, never named or opened by THIS panel -- the namespaces panel earlier on the
+        # page is the one place an unmapped namespace's own name is shown (PLAN D4).
+        self.assertNotIn(extra_unmapped, section)
+
+    def test_telemetry_panel_shows_a_refresh_hint_naming_the_script(self):
+        rc, out, _stdout, stderr = self.build()
+        self.assertEqual(rc, 0, stderr)
+        section = _section(self.page(out), "telemetry")
+        self.assertIn("telemetry_snapshot.py", section)
+        self.assertEqual(section.count('<p class="meta">'), 2)  # source/observed/age + the hint
+
+    def test_no_data_home_telemetry_panel_has_no_refresh_hint(self):
+        model = db.build_model(None, [], {}, None)
+        telemetry = next(p for p in model["panels"] if p["id"] == "telemetry")
+        self.assertIsNone(telemetry["refresh_hint"])
+
+    def test_cost_report_sparkline_block_has_one_twin_row_per_kept_envelope(self):
+        dated = [
+            ("2026-01-01", {"status": "ok", "payload": {"totals": {"usd": 1.0}},
+                           "labels": ["L1"]}),
+            ("2026-01-02", {"status": "ok", "payload": {"totals": {"usd": 2.0}},
+                           "labels": ["L2"]}),
+        ]
+        notes = []
+        block = db._cost_report_sparkline_block(dated, "some-label", notes)
+        self.assertEqual(block["type"], "svg_sparkline")
+        self.assertEqual(block["points"], [("2026-01-01", 1.0), ("2026-01-02", 2.0)])
+        self.assertEqual(block["value_cell"], {"fmt": "usd", "basis": "L2"})
+        self.assertEqual(notes, [])
+        self.assertIsNone(db._cost_report_sparkline_block([], "some-label", notes))
+
+    def test_cost_report_sparkline_malformed_labels_is_a_note_not_a_crash(self):
+        dated = [("2026-01-01", {"status": "ok", "payload": {"totals": {"usd": 1.0}},
+                                 "labels": 42})]
+        notes = []
+        block = db._cost_report_sparkline_block(dated, "some-label", notes)
+        self.assertEqual(block["value_cell"], {"fmt": "usd", "basis": "no label from cost_report"})
+        self.assertTrue(any("labels" in n and "malformed" in n for n in notes), notes)
+
+    def test_the_cost_report_sparkline_appears_in_the_rendered_section(self):
+        rc, out, _stdout, stderr = self.build()
+        self.assertEqual(rc, 0, stderr)
+        section = _section(self.page(out), "telemetry")
+        self.assertIn("cost_report totals.usd across kept envelopes", section)
+        self.assertIn("<svg", section)
+
+    # -- T6 retry, red-team A: one malformed envelope must not blank the section. --------------
+
+    def test_a_malformed_labels_field_on_the_latest_envelope_is_a_note_not_a_crash(self):
+        cost_dir = self.world["telemetry_dir"] / "cost_report"
+        bad = {"status": "ok", "labels": 42, "payload": {"totals": {"usd": 1.0}}}
+        (cost_dir / "2026-01-03.json").write_text(json.dumps(bad))
+        rc, out, _stdout, stderr = self.build()
+        self.assertEqual(rc, 0, stderr)
+        page = self.page(out)
+        section = _section(page, "telemetry")
+        # every OTHER source, and the unregistered "mystery" one, survives intact.
+        for source in ("codex_usage", "copilot_usage", "context_overview", "routing_history",
+                      "attempts", "mystery"):
+            self.assertIn(source, section)
+        self.assertIn("cost_report: envelope", section)
+        self.assertIn("field is malformed (not a list) and was not rendered", section)
+        # cost_report itself still gets a row and a deep-dive -- only its labels are dropped.
+        self.assertIn("<td>cost_report</td>", section)
+        self.assertIn("cost_report — capture_date", section)
+        self.assertNotIn("not available this build", page)
+
+    # -- T6 retry, red-team B: a link inside the store is noted, its source never rendered. ----
+
+    def test_a_symlinked_telemetry_source_directory_is_excluded_with_a_note(self):
+        secret_dir = self.tmp / "outside-secret"
+        secret_dir.mkdir()
+        marker = "SECRET-LEAK-MARKER-9f21"
+        (secret_dir / "2099-01-01.json").write_text(json.dumps(
+            {"status": "ok", "labels": [marker], "payload": {}}))
+        os.symlink(secret_dir, self.world["telemetry_dir"] / "leaky", target_is_directory=True)
+        rc, out, _stdout, stderr = self.build()
+        self.assertEqual(rc, 0, stderr)
+        page = self.page(out)
+        section = _section(page, "telemetry")
+        self.assertNotIn(marker, page)
+        self.assertIn("leaky", section)
+        self.assertIn("symlinked directory", section)
+        self.assertIn("not followed", section)
+        # the healthy sources are unaffected.
+        self.assertIn("<td>cost_report</td>", section)
+
+    def test_a_symlinked_envelope_file_excludes_the_whole_source_with_a_note(self):
+        outside = self.tmp / "outside-file.json"
+        outside.write_text(json.dumps({
+            "status": "ok", "labels": ["definitely not an estimate"],
+            "payload": {"totals": {"usd": 999999.99}, "mode": "FABRICATED",
+                       "pricing_cached_date": "2099-01-01"},
+        }))
+        cost_dir = self.world["telemetry_dir"] / "cost_report"
+        (cost_dir / "2099-01-01.json").symlink_to(outside)
+        rc, out, _stdout, stderr = self.build()
+        self.assertEqual(rc, 0, stderr)
+        page = self.page(out)
+        section = _section(page, "telemetry")
+        self.assertNotIn("999999.99", page)
+        self.assertNotIn("999,999.99", page)
+        self.assertNotIn("FABRICATED", page)
+        self.assertIn("symlinked envelope file", section)
+        self.assertNotIn("<td>cost_report</td>", section)  # the whole source is dropped
+        self.assertNotIn("cost_report — capture_date", section)
+        # a healthy sibling source is unaffected.
+        self.assertIn("<td>codex_usage</td>", section)
+
+    # -- T6 retry, red-team C: bound the envelope read. -----------------------------------------
+
+    def test_an_oversized_envelope_file_skips_only_its_source(self):
+        junk = "B" * (db.MAX_ENVELOPE_BYTES + 1024)
+        oversized = {"status": "ok", "labels": ["oversized"],
+                    "payload": {"totals": {"usd": 1.0}, "junk": junk}}
+        cost_dir = self.world["telemetry_dir"] / "cost_report"
+        (cost_dir / "2026-01-03.json").write_text(json.dumps(oversized))
+        rc, out, _stdout, stderr = self.build()
+        self.assertEqual(rc, 0, stderr)
+        page = self.page(out)
+        section = _section(page, "telemetry")
+        self.assertNotIn("B" * 100, page)
+        self.assertIn("MAX_ENVELOPE_BYTES", page)
+        self.assertNotIn("<td>cost_report</td>", section)
+        self.assertIn("<td>codex_usage</td>", section)
+        bounds = _section(page, "bounds")
+        self.assertIn("<td>MAX_ENVELOPE_BYTES</td>", bounds)
+        self.assertIn("<td>hit</td>", bounds)
+
+
+# ---------------------------------------------------------------------------------------------
+# Journal digests panel (T6 item 2).
+
+class JournalPanelTests(_WorldCase):
+
+    def test_unknown_schema_version_day_is_noted_and_none_of_its_numbers_render(self):
+        rc, out, _stdout, stderr = self.build()
+        self.assertEqual(rc, 0, stderr)
+        page = self.page(out)
+        section = _section(page, "journal")
+        self.assertIn(f"{self.world['journal_days'][2]}: unknown digest version, not rendered",
+                      section)
+        self.assertNotIn("54321", page)
+
+    def test_the_canary_inbox_string_never_renders_anywhere_on_the_page(self):
+        rc, out, _stdout, stderr = self.build()
+        self.assertEqual(rc, 0, stderr)
+        self.assertNotIn("CANARY-INBOX-TEXT-DO-NOT-RENDER", self.page(out))
+
+    def test_latest_day_per_source_table_shows_priced_and_unpriced_correctly(self):
+        rc, out, _stdout, stderr = self.build()
+        self.assertEqual(rc, 0, stderr)
+        section = _section(self.page(out), "journal")
+        self.assertIn(f"per-source detail for the latest day ({self.world['journal_days'][1]})",
+                      section)
+        self.assertIn("unpriced", section)  # codex_usage, priced: false
+        self.assertIn("$2.50", section)     # cost_report day 2's usd_priced, priced: true
+
+    def test_journal_panel_states_it_reads_nothing_else_from_the_digest(self):
+        rc, out, _stdout, stderr = self.build()
+        self.assertEqual(rc, 0, stderr)
+        section = _section(self.page(out), "journal")
+        self.assertIn("not inbox, not signals, not any narrative file", section)
+
+    def test_max_journal_days_cap_lowered_to_one_leaves_a_note(self):
+        checkouts = [str(self.world["checkout"])]
+        model = db.build_model(self.world["data_home"], checkouts, {"notes": []},
+                               {"MAX_JOURNAL_DAYS": 1})
+        journal = next(p for p in model["panels"] if p["id"] == "journal")
+        self.assertTrue(any(note.startswith("cap MAX_JOURNAL_DAYS (1) reached")
+                            for note in journal["notes"]), journal["notes"])
+        caps_row = {row["name"]: row for row in model["caps"]}["MAX_JOURNAL_DAYS"]
+        self.assertTrue(caps_row["hit"])
+        # only the single newest day (2026-01-03, the unrenderable schema-99 one) was kept.
+        page = db.render_page(model, _FAKE_HOME.name)
+        section = _section(page, "journal")
+        self.assertIn("unknown digest version", section)
+        self.assertNotIn("1.23", section)
+        self.assertNotIn("2.5", section)
+
+    def test_a_symlinked_journal_day_directory_is_not_followed(self):
+        journal_dir = self.world["journal_dir"]
+        elsewhere = self.tmp / "somewhere-else-journal"
+        elsewhere.mkdir()
+        (elsewhere / "digest.json").write_text(json.dumps({
+            "schema_version": db._mod("journal_collect").SCHEMA_VERSION,
+            "totals": {"usd_priced": 77.0, "sessions": 7, "sources_active": [],
+                      "unpriced_sources": []},
+            "sources": {},
+        }))
+        os.symlink(elsewhere, journal_dir / "2026-02-02")
+        rc, out, _stdout, stderr = self.build()
+        self.assertEqual(rc, 0, stderr)
+        page = self.page(out)
+        section = _section(page, "journal")
+        self.assertIn("2026-02-02", section)
+        self.assertIn("symlinked day directory", section)
+        self.assertNotIn("77.0", page)
+        self.assertNotIn("somewhere-else-journal", page)
+
+    def test_unmapped_namespace_showing_a_journal_store_is_counted_and_noted_not_read(self):
+        extra_unmapped = "extra-unmapped-journal-0000beef"
+        (self.world["data_home"] / extra_unmapped / "journal").mkdir(parents=True)
+        rc, out, _stdout, stderr = self.build()
+        self.assertEqual(rc, 0, stderr)
+        section = _section(self.page(out), "journal")
+        self.assertIn("unmapped namespace(s) show a journal store", section)
+        self.assertIn("config.json", section)
+        # counted, never named or opened by THIS panel (PLAN D4) -- see the telemetry twin above.
+        self.assertNotIn(extra_unmapped, section)
+
+    def test_both_schema_one_days_render_with_sparkline_and_day_table(self):
+        rc, out, _stdout, stderr = self.build()
+        self.assertEqual(rc, 0, stderr)
+        section = _section(self.page(out), "journal")
+        self.assertIn(self.world["journal_days"][0], section)
+        self.assertIn(self.world["journal_days"][1], section)
+        self.assertIn("$1.23", section)
+        self.assertIn("$2.50", section)
+        self.assertIn("journal usd_priced by day", section)
+        self.assertIn("journal digests by day", section)
+
+    def test_no_data_home_journal_panel_is_a_plain_note(self):
+        model = db.build_model(None, [], {}, None)
+        journal = next(p for p in model["panels"] if p["id"] == "journal")
+        self.assertIsNone(journal["observed"])
+        self.assertIn("no journal digest could be read", journal["blocks"][0]["text"])
+
+    # -- T6 retry, red-team C: bound the digest read. -------------------------------------------
+
+    def test_an_oversized_digest_json_is_capped_and_never_read(self):
+        junk = "A" * (db.MAX_DIGEST_BYTES + 1024)
+        digest = {"schema_version": db._mod("journal_collect").SCHEMA_VERSION,
+                 "totals": {"usd_priced": 1.23, "sessions": 1, "sources_active": [],
+                            "unpriced_sources": []},
+                 "sources": {}, "junk": junk}
+        day_dir = self.world["journal_dir"] / "2099-01-01"
+        day_dir.mkdir(parents=True)
+        (day_dir / "digest.json").write_text(json.dumps(digest))
+        rc, out, _stdout, stderr = self.build()
+        self.assertEqual(rc, 0, stderr)
+        page = self.page(out)
+        section = _section(page, "journal")
+        self.assertNotIn("A" * 100, page)
+        self.assertIn("MAX_DIGEST_BYTES", page)
+        self.assertIn("2099-01-01", section)
+        self.assertIn("skipped, never read", section)
+        bounds = _section(page, "bounds")
+        self.assertIn("<td>MAX_DIGEST_BYTES</td>", bounds)
+        self.assertIn("<td>hit</td>", bounds)
+        # the healthy schema-1 days are unaffected.
+        self.assertIn("$1.23", section)
+        self.assertIn(self.world["journal_days"][0], section)
 
 
 if __name__ == "__main__":

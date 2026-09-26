@@ -121,6 +121,19 @@ MAX_TELEMETRY_ENVELOPES_PER_SOURCE = 120
 # while still refusing a corrupted or hostile file with no bound at all.
 MAX_TASKS_MD_BYTES = 1 * 1024 * 1024
 
+# T6 retry, red-team C: `journal_collect.py` reads a whole `digest.json`. A real one is a few KB
+# of numbers and short name lists (`journal_collect.MAX_KIT_TASKS`/`MAX_INBOX_ITEMS` cap its two
+# list fields at 100 entries each); 256 KiB leaves two orders of magnitude of headroom while
+# still refusing a multi-MB payload with no bound at all.
+MAX_DIGEST_BYTES = 256 * 1024
+
+# T6 retry, red-team C: `telemetry_snapshot.read_source_snapshots` reads a whole envelope file.
+# A real one's payload is the owner's own already-capped card (`_public_payload` strips the
+# uncapped per-session/per-rollout scratch keys before it is ever written); 512 KiB leaves
+# generous headroom for the larger cards (`context_overview`'s three sections) while still
+# refusing a multi-MB payload with no bound at all.
+MAX_ENVELOPE_BYTES = 512 * 1024
+
 # A local git read takes milliseconds; 20 s (attempt_ledger's git probe bound) stops a hung one.
 GIT_TIMEOUT_SECONDS = 20
 
@@ -138,6 +151,8 @@ CAP_NAMES = (
     "MAX_EVAL_RUNS_RENDERED",
     "MAX_JOURNAL_DAYS",
     "MAX_TELEMETRY_ENVELOPES_PER_SOURCE",
+    "MAX_DIGEST_BYTES",
+    "MAX_ENVELOPE_BYTES",
 )
 
 PAGE_TITLE = "polytropos observability dashboard"
@@ -313,6 +328,8 @@ def default_caps():
         "MAX_EVAL_RUNS_RENDERED": MAX_EVAL_RUNS_RENDERED,
         "MAX_JOURNAL_DAYS": MAX_JOURNAL_DAYS,
         "MAX_TELEMETRY_ENVELOPES_PER_SOURCE": MAX_TELEMETRY_ENVELOPES_PER_SOURCE,
+        "MAX_DIGEST_BYTES": MAX_DIGEST_BYTES,
+        "MAX_ENVELOPE_BYTES": MAX_ENVELOPE_BYTES,
     }
 
 
@@ -1937,6 +1954,690 @@ def build_kits_panel(ctx):
     }
 
 
+####################################################################################################
+# Telemetry snapshots and journal digests panels (T6): telemetry_snapshot.read_source_snapshots
+# per mapped namespace's telemetry store, per source (PLAN D3 row 3, D7g) -- T6 retry, red-team
+# A: this dashboard packages the per-source table itself from `read_source_snapshots` rather
+# than calling `telemetry_snapshot.build_list_summary`, whose own unguarded `list(envelope.get(
+# "labels") or [])` raises on a malformed (non-list) `labels` field and would take the whole
+# store's summary down with it; journal digests through a version-gated thin adapter over
+# <namespace>/journal/<day>/digest.json -- one of PLAN D2's three sanctioned thin adapters,
+# because journal_collect.py exposes no reader for this shape (PLAN D3 row 4). Both panels read
+# ONLY the MAPPED entries of read_namespaces (P1 fix round S6): an unmapped namespace's
+# telemetry/journal store is counted, never opened, with a note saying config.json's checkouts
+# list would map it. Every telemetry source dir and envelope file is pre-scanned, no-follow, for
+# a link or an oversized file before any owner call (red-team B/C), and every source's/day's own
+# part is built by its own contained call (red-team A) -- one excluded, malformed or oversized
+# part never drops another.
+
+TELEMETRY_PANEL = "telemetry"
+JOURNAL_PANEL = "journal"
+
+TELEMETRY_NEVER_CAPTURED = ("never captured — run `python3 bin/telemetry_snapshot.py` to "
+                            "capture")
+TELEMETRY_REFRESH_HINT = ("stale or empty? run `python3 bin/telemetry_snapshot.py` to capture "
+                          "a fresh snapshot")
+
+# PLAN D7(g): the fixed headline allowlist per registered telemetry source, read ONLY from a
+# `status: "ok"` envelope's own dict `payload`. Each path is a tuple of dict keys; a field the
+# payload does not carry renders the styled unknown (never guessed, never summed).
+# `context_overview` ("each section's found") and `attempts` ("the coverage labels") are not
+# fixed paths -- they are every key of a named sub-structure, so a field the owner adds later is
+# never silently dropped; both are handled separately in `_headline_rows`.
+HEADLINE_PATHS = {
+    "cost_report": (("totals", "usd"), ("mode",), ("pricing_cached_date",)),
+    "codex_usage": (("branch",), ("priced",)),
+    "copilot_usage": (("totals", "usd"), ("totals", "aic")),
+    "routing_history": (("dollars", "coverage"),),
+}
+
+# Which HEADLINE_PATHS entries are money/credits/date figures -- the only ones PLAN D7a's basis
+# rule and the date formatter reach; everything else (a mode string, a branch label, a bool) is
+# plain text, `esc`'d like any other owner-emitted word.
+_HEADLINE_USD_PATHS = {("cost_report", ("totals", "usd")), ("copilot_usage", ("totals", "usd"))}
+_HEADLINE_CREDITS_PATHS = {("copilot_usage", ("totals", "aic"))}
+_HEADLINE_DATE_PATHS = {("cost_report", ("pricing_cached_date",))}
+
+
+def _namespace_label(row):
+    """A mapped `read_namespaces` row's checkout, with the `tasks/kits` root named like T4's own
+    history-target label -- so a reader sees the same checkout wording across every panel."""
+    checkout, kind = row.get("checkout"), row.get("kind")
+    return f"{checkout} (tasks/kits)" if kind == "codex-kits" else str(checkout)
+
+
+def _guarded_store_dir(data_home, ns_row, store_name):
+    """`<data_home>/<namespace>/<store_name>` if it is a real, unlinked directory -> (path,
+    None); a symlink there is never followed (T5 retry's own os.lstat convention: a link is
+    noted, not followed) -> (None, note); anything else that is not a directory (never captured
+    yet, or a plain file) -> (None, None), a fact rather than a degraded scan."""
+    path = Path(data_home) / ns_row["namespace"] / store_name
+    if path.is_symlink():
+        return None, (f"{store_name} store for {ns_row.get('namespace')} is a symlink — not "
+                      f"followed, not read")
+    if not _is_real_dir(path):
+        return None, None
+    return path, None
+
+
+def _unmapped_store_count(classes, store_name):
+    """How many UNMAPPED namespaces (P1 fix round S6) show `store_name` in their own one shallow
+    listing -> {"count", "qualifier"}, on the same completeness terms as the overall unmapped
+    class count (`class_count`): unknown when the data-home listing failed outright; a lower
+    bound when the listing was cut OR when at least one unmapped namespace's own listing itself
+    failed (`stores` is None there -- it might hold this store and is not counted either way);
+    exact only when every unmapped namespace was itself listed and the data-home listing saw all
+    of them."""
+    overall = class_count(classes, "unmapped")
+    if overall.get("qualifier") == "unknown":
+        return {"count": None, "qualifier": "unknown"}
+    rows = classes.get("unmapped") or ()
+    matched = len([row for row in rows if isinstance(row, dict) and row.get("stores")
+                  and store_name in row["stores"]])
+    unresolved = any(isinstance(row, dict) and row.get("stores") is None for row in rows)
+    qualifier = ("lower_bound" if (overall.get("qualifier") == "lower_bound" or unresolved)
+                else "exact")
+    return _qualified(matched, qualifier)
+
+
+def _unmapped_store_note(classes, store_name, label):
+    """PLAN D4 / P1 fix round S6: the note counting unmapped namespaces whose listing shows this
+    panel's store -- they are not read, and config.json's `checkouts` would map them."""
+    entry = _unmapped_store_count(classes, store_name)
+    count, qualifier = entry.get("count"), entry.get("qualifier")
+    if qualifier == "exact" and count == 0:
+        lead = f"No unmapped namespace shows a {label} store in its one shallow listing."
+    elif qualifier == "exact":
+        lead = f"{count} unmapped namespace(s) show a {label} store in their one shallow listing."
+    elif qualifier == "lower_bound":
+        lead = (f"At least {count} unmapped namespace(s) show a {label} store in their one "
+               f"shallow listing.")
+    else:
+        lead = f"An unknown number of unmapped namespaces may show a {label} store."
+    return (f"{lead} They are not read by this panel (PLAN D4); add the checkout's path to this "
+           f"dashboard's config.json checkouts list to map it.")
+
+
+def _dig(payload, path):
+    """A nested dict lookup along `path` (a tuple of keys) -> the value, or None the moment a
+    key is missing or an intermediate is not a dict -- never a KeyError/TypeError, and never a
+    guess at what the owner would have said (PLAN D2, D7g)."""
+    current = payload
+    for key in path:
+        if not isinstance(current, dict):
+            return None
+        current = current.get(key)
+    return current
+
+
+def _headline_cell(source, path, value):
+    """One HEADLINE_PATHS field's value as a cell: a typed usd/credits/date cell for the three
+    money-or-date fields the allowlist carries, plain text (or the styled unknown for `None`)
+    for everything else."""
+    key = (source, path)
+    if key in _HEADLINE_USD_PATHS:
+        return {"fmt": "usd", "value": value, "basis": f"{source} {'.'.join(path)}, as captured"}
+    if key in _HEADLINE_CREDITS_PATHS:
+        return {"fmt": "credits", "value": value}
+    if key in _HEADLINE_DATE_PATHS:
+        return {"fmt": "date", "value": value}
+    return value
+
+
+def _headline_rows(source, payload):
+    """The HEADLINE allowlist rows for one `status: "ok"` envelope's dict payload (PLAN D7g) ->
+    `[[field, value]]`. `context_overview` and `attempts` are every key of a named
+    sub-structure -- dynamic, so a field the owner adds later is never silently dropped; every
+    other registered source is the fixed dotted-path allowlist. A field or sub-structure missing
+    from the payload renders the styled unknown, never guessed."""
+    payload = payload if isinstance(payload, dict) else {}
+    if source == "context_overview":
+        sections = payload.get("sections")
+        sections = sections if isinstance(sections, dict) else {}
+        rows = []
+        for name in sorted(sections):
+            section = sections.get(name)
+            found = section.get("found") if isinstance(section, dict) else None
+            rows.append([f"{name}.found", _owner_value_cell(found)])
+        return rows or [["sections", None]]
+    if source == "attempts":
+        coverage = payload.get("coverage")
+        coverage = coverage if isinstance(coverage, dict) else {}
+        rows = [[f"coverage.{field}", _owner_value_cell(coverage.get(field))]
+               for field in coverage]
+        return rows or [["coverage", None]]
+    return [[".".join(path), _headline_cell(source, path, _dig(payload, path))]
+           for path in HEADLINE_PATHS.get(source, ())]
+
+
+def _envelope_list_field(envelope, field, source, label, notes):
+    """One envelope's list-shaped field (`labels`, `notes`) -> a list, tolerant of a malformed
+    (non-list/tuple) value: a note names the namespace, source and field instead of raising (T6
+    retry, red-team A -- extends the attempts panel's `_kind_label`/`_safe_ts` malformed-field
+    precedent to telemetry envelopes; a `TypeError` from `list(42 or ())` on an int `labels`
+    field is exactly the shape that used to erase every OTHER healthy source in the section)."""
+    value = envelope.get(field) if isinstance(envelope, dict) else None
+    if value is None:
+        return []
+    if isinstance(value, (list, tuple)):
+        return list(value)
+    notes.append(f"{label}: {source}: envelope {field!r} field is malformed (not a list) and "
+                f"was not rendered")
+    return []
+
+
+def _telemetry_prescan(store_dir, caps, notes, label):
+    """A no-follow shallow scan of one telemetry store's own layout, run BEFORE any owner call
+    (T6 retry, red-team B/C) -> the source names that are safe to read: a real, unlinked
+    directory whose own envelope files (`*.json`) are all real, unlinked files no larger than
+    MAX_ENVELOPE_BYTES. `read_source_snapshots`/`build_list_summary` themselves follow a link
+    and read a whole envelope file with no size check, so a linked source dir, or a source
+    holding even one linked or oversized envelope file, is excluded HERE, before the owner ever
+    opens it. The owner cannot be told to skip one file, so the WHOLE source is excluded: no
+    row, no deep-dive, no sparkline point. Every exclusion is a note naming the source (and, for
+    a file, the file and its size)."""
+    try:
+        entries = sorted(store_dir.iterdir(), key=lambda p: p.name)
+    except OSError as exc:
+        notes.append(f"{label}: telemetry store could not be listed ({type(exc).__name__})")
+        return []
+    limit = cap_value(caps, "MAX_ENVELOPE_BYTES")
+    safe_sources = []
+    for entry in entries:
+        name = entry.name
+        if entry.is_symlink():
+            notes.append(f"{label}: telemetry source {name!r} is a symlinked directory — not "
+                         f"followed; its envelopes are never rendered")
+            continue
+        if not _is_real_dir(entry):
+            continue
+        try:
+            files = sorted(entry.glob("*.json"), key=lambda p: p.name)
+        except OSError as exc:
+            notes.append(f"{label}: telemetry source {name!r} could not be listed "
+                         f"({type(exc).__name__})")
+            continue
+        excluded = False
+        for f in files:
+            if f.is_symlink():
+                notes.append(f"{label}: telemetry source {name!r} holds a symlinked envelope "
+                             f"file ({f.name}) — the whole source is not rendered")
+                excluded = True
+                break
+            try:
+                size = f.lstat().st_size
+            except OSError as exc:
+                notes.append(f"{label}: telemetry source {name!r}'s {f.name} could not be "
+                             f"stat'd ({type(exc).__name__})")
+                excluded = True
+                break
+            if size > limit:
+                notes.append(cap_note(
+                    caps, "MAX_ENVELOPE_BYTES",
+                    f"{label}: telemetry source {name!r}'s envelope {f.name} is {size} bytes — "
+                    f"the whole source is not rendered"))
+                excluded = True
+                break
+        if not excluded:
+            safe_sources.append(name)
+    return safe_sources
+
+
+def _telemetry_source_summary_row(source, registered, dated, notes, label):
+    """One source's per-source-table row (TASKS.md item 1), packaged from ALREADY-READ,
+    ALREADY-CAPPED `dated` envelopes -- never re-deriving `read_source_snapshots`'s own parsing.
+    T6 retry: this dashboard computes the row itself rather than calling
+    `telemetry_snapshot.build_list_summary`, whose own `list(latest_envelope.get("labels") or
+    [])` raises on exactly the malformed (non-list) `labels` value red-team A found, taking the
+    WHOLE store's summary down with it."""
+    dates = [d for d, _e in dated]
+    if dated:
+        _d, latest_env = dated[-1]
+        latest_status = latest_env.get("status")
+        latest_labels = _envelope_list_field(latest_env, "labels", source, label, notes)
+    else:
+        latest_status, latest_labels = None, []
+    return [
+        source, _owner_value_cell(registered), {"fmt": "count", "value": len(dated)},
+        {"fmt": "date", "value": dates[0] if dates else None},
+        {"fmt": "date", "value": dates[-1] if dates else None},
+        latest_status,
+        " | ".join(str(item) for item in latest_labels) if latest_labels else "—",
+    ]
+
+
+def _telemetry_deep_dive_blocks(dated, source, notes, label):
+    """One registered source's deep-dive blocks (TASKS.md item 1) from ALREADY-READ,
+    ALREADY-CAPPED `dated` envelopes. A malformed `labels`/`notes` field on the latest envelope
+    is a note, never a crash (T6 retry, red-team A)."""
+    if not dated:
+        return [{"type": "p", "text": f"{source}: no snapshots to show"}]
+    _latest_date, latest = dated[-1]
+    blocks = [{"type": "p", "parts": [
+        f"{source} — capture_date: ", {"fmt": "date", "value": latest.get("capture_date")},
+        "  period: ", _owner_value_cell(latest.get("period")),
+        "  status: ", latest.get("status")]}]
+    labels = _envelope_list_field(latest, "labels", source, label, notes)
+    blocks.append({"type": "list", "items": labels, "empty": f"{source}: no labels recorded"})
+    env_notes = _envelope_list_field(latest, "notes", source, label, notes)
+    blocks.append({"type": "list", "items": env_notes,
+                   "empty": f"{source}: no notes from this envelope"})
+    if latest.get("status") == "ok" and isinstance(latest.get("payload"), dict):
+        blocks.append({"type": "table", "headers": ["headline field", "value"],
+                       "rows": _headline_rows(source, latest.get("payload")),
+                       "caption": f"{source} headline (PLAN D7g)",
+                       "empty": "the allowlist has no fields for this source"})
+    else:
+        blocks.append({"type": "p", "parts": [
+            f"{source}: no headline fields this build — status ", latest.get("status"),
+            " is not ok, or the payload is not a captured object"]})
+    return blocks
+
+
+def _telemetry_unregistered_blocks(dated, source, notes, label):
+    """PLAN D7g: a payload of an unregistered source dir renders labels only. A malformed
+    `labels` field is a note, never a crash (T6 retry, red-team A)."""
+    if not dated:
+        labels = []
+    else:
+        _d, latest = dated[-1]
+        labels = _envelope_list_field(latest, "labels", source, label, notes)
+    return [
+        {"type": "p", "text": f"{source}: unregistered source directory — labels only:"},
+        {"type": "list", "items": labels, "empty": "no labels recorded"},
+    ]
+
+
+def _cost_report_sparkline_block(dated, label, notes):
+    """TASKS.md item 1's last sentence: one sparkline per namespace of `cost_report`
+    `payload["totals"]["usd"]` across the KEPT envelopes, labelled with the latest envelope's
+    own labels (never this engine's own word for the billing mode or an estimate). A malformed
+    `labels` field is a note, never a crash (T6 retry, red-team A)."""
+    if not dated:
+        return None
+    labels = _envelope_list_field(dated[-1][1], "labels", "cost_report", label, notes)
+    basis = " | ".join(str(item) for item in labels) if labels else "no label from cost_report"
+    points = []
+    for date_str, envelope in dated:
+        value = None
+        if (isinstance(envelope, dict) and envelope.get("status") == "ok"
+                and isinstance(envelope.get("payload"), dict)):
+            value = _dig(envelope["payload"], ("totals", "usd"))
+        points.append((date_str, value))
+    return {"type": "svg_sparkline",
+           "title": f"{label}: cost_report totals.usd across kept envelopes",
+           "desc": "one point per kept cost_report envelope, oldest first; the owner's own "
+                   "totals.usd, never recomputed", "points": points, "value_header": "usd",
+           "value_cell": {"fmt": "usd", "basis": basis}}
+
+
+def _telemetry_one_source(ts, store_dir, source, caps, notes, label):
+    """One source's row + deep-dive/unregistered blocks + kept dated envelopes -> (row, blocks,
+    dated), each PART contained on its own (T6 retry, red-team A: "as T4 did", the
+    `_guarded_section` idiom applied per source and per part): the read itself, the summary row
+    and the deep-dive block are each wrapped so a failure in one still leaves the OTHER parts of
+    THIS source real, and never touches any OTHER source in the table."""
+    try:
+        dated, src_notes = ts.read_source_snapshots(store_dir, source)
+        notes.extend(f"{label}: {source}: {note}" for note in src_notes)
+        limit = cap_value(caps, "MAX_TELEMETRY_ENVELOPES_PER_SOURCE")
+        if len(dated) > limit:
+            notes.append(cap_note(
+                caps, "MAX_TELEMETRY_ENVELOPES_PER_SOURCE",
+                f"{label}: {source} holds more envelopes than were kept; only the latest "
+                f"{limit} (by date) are kept for this build"))
+            dated = dated[-limit:]
+    except Exception as exc:  # PLAN D10: the read itself failing drops only this source
+        notes.append(f"{label}: {source}: {type(exc).__name__}")
+        return ([source, _owner_value_cell(source in ts.SOURCES), None, None, None, None,
+                "not available this build — see the notes above"],
+               [{"type": "p", "text": f"{source}: not available this build — see the notes "
+                                      f"above"}], [])
+
+    registered = source in ts.SOURCES
+    if not registered:
+        notes.append(f"{label}: unregistered source dir: {source}")
+
+    try:
+        row = _telemetry_source_summary_row(source, registered, dated, notes, label)
+    except Exception as exc:  # noqa: BLE001 -- this source's row only, never another's
+        notes.append(f"{label}: {source} row could not be built ({type(exc).__name__})")
+        row = [source, _owner_value_cell(registered), {"fmt": "count", "value": len(dated)},
+              None, None, None, "not available — see the notes above"]
+
+    try:
+        if registered:
+            dive = _telemetry_deep_dive_blocks(dated, source, notes, label)
+        else:
+            dive = _telemetry_unregistered_blocks(dated, source, notes, label)
+    except Exception as exc:  # noqa: BLE001 -- this source's deep-dive only
+        notes.append(f"{label}: {source} section could not be built ({type(exc).__name__})")
+        dive = [{"type": "p", "text": f"{source}: not available this build — see the notes "
+                                      f"above"}]
+
+    return row, dive, dated
+
+
+def _telemetry_namespace_section(ctx, ts, ns_row, caps, notes):
+    """TASKS.md item 1, one mapped namespace -> (blocks, latest_capture_date_or_None). Every
+    source is pre-scanned for links and oversized files before any owner call (red-team B/C),
+    and every surviving source's row and deep-dive are built by their own contained call
+    (red-team A) -- one excluded or malformed source never drops another, or the table itself."""
+    label = _namespace_label(ns_row)
+    blocks = [{"type": "p", "text": f"Telemetry for {label}:"}]
+    store_dir, link_note = _guarded_store_dir(ctx["data_home"], ns_row, "telemetry")
+    if link_note:
+        notes.append(link_note)
+    if store_dir is None:
+        blocks.append({"type": "p", "text": TELEMETRY_NEVER_CAPTURED})
+        return blocks, None
+    source_names = _telemetry_prescan(store_dir, caps, notes, label)
+    if not source_names:
+        blocks.append({"type": "p", "text": TELEMETRY_NEVER_CAPTURED})
+        return blocks, None
+    rows, dive_blocks, latest_dates, cost_report_dated = [], [], [], None
+    for source in source_names:
+        row, dive, dated = _telemetry_one_source(ts, store_dir, source, caps, notes, label)
+        rows.append(row)
+        dive_blocks.extend(dive)
+        if source == "cost_report":
+            cost_report_dated = dated
+        if dated:
+            _d, latest_env = dated[-1]
+            capture_date = (latest_env.get("capture_date") if isinstance(latest_env, dict)
+                           else None)
+            if isinstance(capture_date, str):
+                latest_dates.append(capture_date)
+    blocks.append({"type": "table",
+                  "headers": ["source", "registered", "count", "first", "last",
+                              "latest status", "latest labels"],
+                  "rows": rows, "caption": "sources in this telemetry store",
+                  "empty": "no source subdirectories found"})
+    blocks.extend(dive_blocks)
+    try:
+        spark = _cost_report_sparkline_block(cost_report_dated, label, notes)
+    except Exception as exc:  # noqa: BLE001 -- the sparkline only, never the table/dive above
+        notes.append(f"{label}: cost_report sparkline could not be built "
+                     f"({type(exc).__name__})")
+        spark = None
+    if spark is not None:
+        blocks.append(spark)
+    return blocks, (max(latest_dates) if latest_dates else None)
+
+
+def build_telemetry_panel(ctx):
+    ts = _mod("telemetry_snapshot")
+    source_text = ("bin/dashboard.py — telemetry_snapshot.read_source_snapshots per source, per "
+                  "mapped namespace's telemetry store, pre-scanned no-follow for a link or an "
+                  "oversized file (PLAN D3 row 3)")
+    if ctx["data_home"] is None:
+        # No refresh hint here: with no data home at all there is not yet anything -- not even a
+        # store to check -- for `telemetry_snapshot.py` to refresh (PanelDictContractTests pins
+        # every panel's refresh_hint to None under exactly this degenerate build).
+        return {"source": source_text, "observed": None, "notes": [],
+               "summary": "no data home was given",
+               "blocks": [{"type": "p", "text": "No data home was given, so no telemetry store "
+                                                "could be read."}]}
+    ns_rows, cap_notes = read_namespaces(ctx)
+    notes = list(cap_notes)
+    mapped_rows = [row for row in ns_rows if row.get("mapped")]
+    blocks = []
+    latest_dates = []
+    for ns_row in mapped_rows:
+        label = _namespace_label(ns_row)
+        try:
+            ns_blocks, latest = _telemetry_namespace_section(ctx, ts, ns_row, ctx["caps"], notes)
+        except Exception as exc:  # PLAN D10: one namespace's failure never blanks the panel
+            notes.append(f"telemetry for {label}: {type(exc).__name__}")
+            ns_blocks, latest = ([{"type": "p", "text": f"Telemetry for {label}: not available "
+                                                        f"this build — see the notes above"}],
+                                 None)
+        blocks.extend(ns_blocks)
+        if latest:
+            latest_dates.append(latest)
+    if not mapped_rows:
+        blocks.append({"type": "p", "text": "No mapped namespace to read telemetry from."})
+    notes.append(_unmapped_store_note(ctx["model"]["classes"], "telemetry", "telemetry"))
+    notes = list(dict.fromkeys(notes))  # an exact-duplicate note carries no second fact; every
+    # DISTINCT note is kept in full (PLAN D7e)
+    return {
+        "source": source_text,
+        "observed": max(latest_dates) if latest_dates else None,
+        "notes": notes,
+        "summary": (f"telemetry read for {len(mapped_rows)} mapped namespace(s)" if mapped_rows
+                   else "no mapped namespace to read telemetry from"),
+        "blocks": blocks,
+        "refresh_hint": TELEMETRY_REFRESH_HINT,
+    }
+
+
+# ----- Journal digests (T6 item 2): a thin, version-gated adapter -- one of PLAN D2's three
+# sanctioned thin adapters, because journal_collect.py exposes no reader for this shape. Nothing
+# but `totals` and `sources` is ever read from a digest: not `signals`, not `inbox` (PLAN D8).
+
+JOURNAL_DAY_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+JOURNAL_USD_BASIS = "journal's own priced total: est., priced sources only"
+
+
+def _journal_day_candidates(journal_dir, caps, notes, label):
+    """Subdirectory names matching JOURNAL_DAY_RE, sorted descending (newest first), bounded by
+    MAX_JOURNAL_DAYS. A symlinked day directory is never followed (T5 retry's own convention)
+    and is noted by name; anything else that is not a directory is silently not a day."""
+    try:
+        entries = sorted(journal_dir.iterdir(), key=lambda p: p.name, reverse=True)
+    except OSError as exc:
+        notes.append(f"{label}: journal directory could not be listed ({type(exc).__name__})")
+        return []
+    days = []
+    for entry in entries:
+        if not JOURNAL_DAY_RE.match(entry.name):
+            continue
+        if entry.is_symlink():
+            notes.append(f"{label}: {entry.name} is a symlinked day directory — not followed, "
+                         f"not read")
+            continue
+        if _is_real_dir(entry):
+            days.append(entry.name)
+    limit = cap_value(caps, "MAX_JOURNAL_DAYS")
+    if len(days) > limit:
+        notes.append(cap_note(
+            caps, "MAX_JOURNAL_DAYS",
+            f"{label} holds more journal days than were read; only the latest {limit} (by day "
+            f"name) are shown"))
+        days = days[:limit]
+    return days
+
+
+def _read_journal_digest(sp, jc, journal_dir, day, caps, notes):
+    """One day's `digest.json`, size-gated by `os.lstat` against MAX_DIGEST_BYTES BEFORE any
+    read (T6 retry, red-team C: `journal_collect.py` itself reads a whole `digest.json`) and
+    version-gated on `journal_collect.SCHEMA_VERSION` (read from the module, never hardcoded) ->
+    the decoded dict, or None with a note naming why (PLAN D3's thin-adapter rule: load,
+    version-check, select fields -- nothing else). `lstat` (never `stat`) so a symlinked leaf's
+    own tiny size never lets an oversized LINKED file past this check -- it is `safe_paths`'s
+    `O_NOFOLLOW` read below that actually refuses a linked leaf, unchanged from before this
+    retry."""
+    try:
+        size = os.lstat(Path(journal_dir) / day / "digest.json").st_size
+    except FileNotFoundError:
+        notes.append(f"{day}: no digest.json found")
+        return None
+    except OSError as exc:
+        notes.append(f"{day}: could not be stat'd ({type(exc).__name__})")
+        return None
+    limit = cap_value(caps, "MAX_DIGEST_BYTES")
+    if size > limit:
+        notes.append(cap_note(caps, "MAX_DIGEST_BYTES",
+                              f"{day}'s digest.json is {size} bytes — skipped, never read"))
+        return None
+    try:
+        raw = sp.confined_read_bytes(journal_dir, f"{day}/digest.json", what="journal digest",
+                                     missing_ok=True)
+    except (sp.SafePathError, OSError) as exc:
+        notes.append(f"{day}: could not be read ({type(exc).__name__})")
+        return None
+    if raw is None:
+        notes.append(f"{day}: no digest.json found")
+        return None
+    try:
+        data = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError):
+        notes.append(f"{day}: undecodable, not rendered")
+        return None
+    if not isinstance(data, dict):
+        notes.append(f"{day}: undecodable, not rendered")
+        return None
+    if data.get("schema_version") != jc.SCHEMA_VERSION:
+        notes.append(f"{day}: unknown digest version, not rendered")
+        return None
+    return data
+
+
+def _journal_day_rows(rendered, notes, label):
+    """One row per successfully-read day (TASKS.md item 2), each day contained on its own (T6
+    retry, red-team A: "the journal per day... likewise, as T4 did") so a failure reading one
+    day's fields never drops another day's row from the table."""
+    rows = []
+    for day, digest in rendered:
+        try:
+            totals = digest.get("totals")
+            totals = totals if isinstance(totals, dict) else {}
+            active = ", ".join(str(s) for s in _as_list(totals.get("sources_active"))) or "none"
+            unpriced = (", ".join(str(s) for s in _as_list(totals.get("unpriced_sources")))
+                       or "none")
+            rows.append([day,
+                        {"fmt": "usd", "value": totals.get("usd_priced"),
+                         "basis": JOURNAL_USD_BASIS},
+                        {"fmt": "count", "value": totals.get("sessions")}, active, unpriced])
+        except Exception as exc:  # noqa: BLE001 -- this day's row only, never another day's
+            notes.append(f"{label}: {day} row could not be built ({type(exc).__name__})")
+            rows.append([day, None, None, "—", "—"])
+    return rows
+
+
+def _journal_sparkline(rendered, label):
+    """TASKS.md item 2: a sparkline of `usd_priced` by day, with its table twin."""
+    if not rendered:
+        return None
+    points = []
+    for day, digest in reversed(rendered):  # oldest first, a left-to-right trend line
+        totals = digest.get("totals")
+        totals = totals if isinstance(totals, dict) else {}
+        points.append((day, totals.get("usd_priced")))
+    return {"type": "svg_sparkline", "title": f"{label}: journal usd_priced by day",
+           "desc": "one point per rendered journal day, oldest first; the journal's own "
+                   "usd_priced, never recomputed", "points": points, "value_header": "usd",
+           "value_cell": {"fmt": "usd", "basis": JOURNAL_USD_BASIS}}
+
+
+def _journal_latest_source_table(rendered, notes, label):
+    """TASKS.md item 2: for the latest day, `available`/`priced`/`sessions`/`usd` per source,
+    each source contained on its own (T6 retry, red-team A: "...and per source likewise") so
+    one malformed source entry never drops another."""
+    if not rendered:
+        return {"type": "p", "text": "No successfully-read journal day to show a per-source "
+                                     "table for."}
+    latest_day, digest = rendered[0]
+    sources = digest.get("sources")
+    sources = sources if isinstance(sources, dict) else {}
+    rows = []
+    for name in sorted(sources):
+        try:
+            report = sources.get(name)
+            report = report if isinstance(report, dict) else {}
+            priced = report.get("priced")
+            usd_cell = ({"fmt": "usd", "value": report.get("usd"), "basis": "est."} if priced
+                       else "unpriced")
+            rows.append([name, _owner_value_cell(report.get("available")),
+                        _owner_value_cell(priced),
+                        {"fmt": "count", "value": report.get("sessions")}, usd_cell])
+        except Exception as exc:  # noqa: BLE001 -- this source's row only, never another's
+            notes.append(f"{label}: {latest_day}: {name}: {type(exc).__name__}")
+            rows.append([name, None, None, None, "not available — see the notes above"])
+    return {"type": "table", "headers": ["source", "available", "priced", "sessions", "usd"],
+           "rows": rows, "caption": f"per-source detail for the latest day ({latest_day})",
+           "empty": "the latest digest carries no sources"}
+
+
+def _journal_namespace_section(ctx, sp, jc, ns_row, caps, notes):
+    """TASKS.md item 2, one mapped namespace -> (blocks, latest_rendered_day_or_None)."""
+    label = _namespace_label(ns_row)
+    blocks = [{"type": "p", "text": f"Journal digests for {label}:"}]
+    journal_dir, link_note = _guarded_store_dir(ctx["data_home"], ns_row, "journal")
+    if link_note:
+        notes.append(link_note)
+    if journal_dir is None:
+        blocks.append({"type": "p", "text": "No journal store for this namespace."})
+        return blocks, None
+    days = _journal_day_candidates(journal_dir, caps, notes, label)
+    rendered = []
+    for day in days:
+        try:
+            digest = _read_journal_digest(sp, jc, journal_dir, day, caps, notes)
+        except Exception as exc:  # noqa: BLE001 -- this day's read only, never another day's
+            notes.append(f"{label}: {day}: {type(exc).__name__}")
+            digest = None
+        if digest is not None:
+            rendered.append((day, digest))
+    blocks.append({"type": "table",
+                  "headers": ["day", "usd priced", "sessions", "sources active",
+                              "unpriced sources"],
+                  "rows": _journal_day_rows(rendered, notes, label), "details": True,
+                  "caption": f"{label}: journal digests by day",
+                  "empty": "no journal digest could be read for this namespace"})
+    spark = _journal_sparkline(rendered, label)
+    if spark is not None:
+        blocks.append(spark)
+    blocks.append(_journal_latest_source_table(rendered, notes, label))
+    blocks.append({"type": "p", "text": "Nothing else from the digest is read this build: not "
+                                        "inbox, not signals, not any narrative file."})
+    return blocks, (rendered[0][0] if rendered else None)
+
+
+def build_journal_panel(ctx):
+    sp, jc = _mod("safe_paths"), _mod("journal_collect")
+    source_text = ("bin/dashboard.py — a thin, version-gated adapter over "
+                  "<namespace>/journal/<day>/digest.json, gated on journal_collect."
+                  "SCHEMA_VERSION (PLAN D2, D3 row 4); journal_collect.py exposes no reader for "
+                  "this shape")
+    if ctx["data_home"] is None:
+        return {"source": source_text, "observed": None, "notes": [],
+               "summary": "no data home was given",
+               "blocks": [{"type": "p", "text": "No data home was given, so no journal digest "
+                                                "could be read."}]}
+    ns_rows, cap_notes = read_namespaces(ctx)
+    notes = list(cap_notes)
+    mapped_rows = [row for row in ns_rows if row.get("mapped")]
+    blocks = []
+    latest_days = []
+    for ns_row in mapped_rows:
+        label = _namespace_label(ns_row)
+        try:
+            ns_blocks, latest = _journal_namespace_section(ctx, sp, jc, ns_row, ctx["caps"],
+                                                            notes)
+        except Exception as exc:  # PLAN D10: one namespace's failure never blanks the panel
+            notes.append(f"journal for {label}: {type(exc).__name__}")
+            ns_blocks, latest = ([{"type": "p", "text": f"Journal digests for {label}: not "
+                                                        f"available this build — see the notes "
+                                                        f"above"}], None)
+        blocks.extend(ns_blocks)
+        if latest:
+            latest_days.append(latest)
+    if not mapped_rows:
+        blocks.append({"type": "p", "text": "No mapped namespace to read journal digests from."})
+    notes.append(_unmapped_store_note(ctx["model"]["classes"], "journal", "journal"))
+    notes = list(dict.fromkeys(notes))
+    return {
+        "source": source_text,
+        "observed": max(latest_days) if latest_days else None,
+        "notes": notes,
+        "summary": (f"journal digests read for {len(mapped_rows)} mapped namespace(s)"
+                   if mapped_rows else "no mapped namespace to read journal digests from"),
+        "blocks": blocks,
+    }
+
+
 def _bounds_blocks(notes, report):
     """The bounds panel's body: every cap with hit / not hit, then every note of the build.
     Also how `render_build` rebuilds that body when a panel's rendering fails, so the failure
@@ -1977,6 +2678,8 @@ PANELS = [
     (ATTEMPTS_PANEL, "Attempts", build_attempts_panel),
     (SCORECARD_PANEL, "Routing scorecard", build_scorecard_panel),
     (KITS_PANEL, "Kits in flight", build_kits_panel),
+    (TELEMETRY_PANEL, "Telemetry snapshots", build_telemetry_panel),
+    (JOURNAL_PANEL, "Journal digests", build_journal_panel),
     (BOUNDS_PANEL, "Bounds and notes", build_bounds_panel),
 ]
 
@@ -2932,13 +3635,18 @@ def synthetic_world(root, residue=30):
     `.claude/kits/notes-kit/{TASKS,NOTES}.md` (a second, ledger-less kit -- T4 item 5) and an
     empty `tasks/kits/`; `root/data-home` holds the checkout's mapped namespace with a ledger (a
     finished, verified, projected attempt; a second finished attempt carrying an `estimated`
-    cost; and one started attempt that never finished), `residue` residue namespaces each
-    holding only `attempts/kit/events.jsonl` with one event, and one unmapped namespace with a
-    ledger carrying one corrupt line. Every value is synthetic; nothing outside `root` is
-    touched, and nothing here is oversized -- an over-size ledger is a T4-test-only fixture, not
-    a `demo`/`synthetic_world` one (TASKS.md item 5).
+    cost; and one started attempt that never finished), a telemetry store (two dated envelopes
+    per `telemetry_snapshot.SOURCES` entry, a rogue `cost_report/notes.json` file and an
+    unregistered `mystery/2026-01-01.json` source -- T6 item 3) and a journal store (two
+    schema-1 digest days, one schema-99 day, and a canary string
+    `CANARY-INBOX-TEXT-DO-NOT-RENDER` planted in one digest's never-read `inbox` -- T6 item 3);
+    `residue` residue namespaces each holding only `attempts/kit/events.jsonl` with one event,
+    and one unmapped namespace with a ledger carrying one corrupt line. Every value is
+    synthetic; nothing outside `root` is touched, and nothing here is oversized -- an over-size
+    ledger is a T4-test-only fixture, not a `demo`/`synthetic_world` one (TASKS.md item 5).
     """
     rd, al, sp = _mod("runtime_data"), _mod("attempt_ledger"), _mod("safe_paths")
+    ts, jc = _mod("telemetry_snapshot"), _mod("journal_collect")
     root = Path(root)
     data_home = root / "data-home"
     checkout = root / "checkout"
@@ -2999,6 +3707,117 @@ def synthetic_world(root, residue=30):
     sp.confined_append_bytes(other.root, f"{other.namespace}/{al.EVENTS_FILE}",
                              b"not-json-at-all\n", what="synthetic corrupt ledger line")
 
+    # T6 item 3: telemetry -- two dated envelopes per registered source, obviously-fake headline
+    # numbers (PLAN D7g), a rogue file inside a registered source's own dir, and an unregistered
+    # source dir. Only `cost_report`'s LATEST envelope omits `mode` on purpose, so a headline
+    # field genuinely absent from a real payload has a fixture to prove it renders `unknown`.
+    telemetry_dir = data_home / namespace / "telemetry"
+    rd.ensure_private(telemetry_dir)
+    telemetry_days = ("2026-01-01", "2026-01-02")
+    telemetry_payloads = {
+        "cost_report": (
+            ({"totals": {"usd": 12.34}, "mode": "synthetic-mode",
+              "pricing_cached_date": "2026-01-01"}, ["synthetic cost_report day 1"]),
+            ({"totals": {"usd": 15.0}, "pricing_cached_date": "2026-01-02"},  # "mode" omitted
+             ["synthetic cost_report day 2", "billing-mode: synthetic-flat"]),
+        ),
+        "codex_usage": (
+            ({"branch": "priced", "priced": True}, ["synthetic codex_usage day 1"]),
+            ({"branch": "priced", "priced": True}, ["synthetic codex_usage day 2"]),
+        ),
+        "copilot_usage": (
+            ({"totals": {"usd": 3.0, "aic": 30.0}}, ["synthetic copilot_usage day 1"]),
+            ({"totals": {"usd": 4.5, "aic": 45.0}}, ["synthetic copilot_usage day 2"]),
+        ),
+        "context_overview": (
+            ({"sections": {"claude": {"found": True}, "codex": {"found": False},
+                          "copilot": {"found": True}}},
+             ["claude section: no sessions in window"]),
+            ({"sections": {"claude": {"found": True}, "codex": {"found": True},
+                          "copilot": {"found": True}}}, ["synthetic context_overview day 2"]),
+        ),
+        "routing_history": (
+            ({"dollars": {"coverage": "partial"}},
+             ["dollars coverage: partial (1/2 kits)"]),
+            ({"dollars": {"coverage": "full"}}, ["dollars coverage: full (2/2 kits)"]),
+        ),
+        "attempts": (
+            ({"coverage": {"kits": 3, "kits_with_ledger": 2, "kits_with_notes": 1,
+                          "kits_with_role_use": 0}},
+             ["2 of 3 kit(s) carry an attempt ledger"]),
+            ({"coverage": {"kits": 3, "kits_with_ledger": 3, "kits_with_notes": 1,
+                          "kits_with_role_use": 1}},
+             ["3 of 3 kit(s) carry an attempt ledger"]),
+        ),
+    }
+    for source in ts.SOURCES:
+        for date_str, (payload, labels) in zip(telemetry_days, telemetry_payloads[source]):
+            envelope = ts.build_envelope(source, date_str, {"days": 30}, "ok", labels, [],
+                                         payload)
+            sp.confined_write_bytes(telemetry_dir, f"{source}/{date_str}.json",
+                                    json.dumps(envelope), what="synthetic telemetry envelope")
+    sp.confined_write_bytes(telemetry_dir, "cost_report/notes.json", "not an envelope\n",
+                            what="synthetic rogue telemetry file")
+    mystery_envelope = ts.build_envelope("mystery", "2026-01-01", {"days": 1}, "ok",
+                                         ["mystery label"], [], {"note": "unregistered source"})
+    sp.confined_write_bytes(telemetry_dir, "mystery/2026-01-01.json",
+                            json.dumps(mystery_envelope),
+                            what="synthetic unregistered telemetry source")
+
+    # T6 item 3: journal -- two schema-1 digest days (the first carrying the canary string in
+    # its `signals.inbox.items`, which this kit's panel never reads) and one schema-99 day.
+    journal_dir = data_home / namespace / "journal"
+    rd.ensure_private(journal_dir)
+
+    def _synthetic_digest(date_str, usd_priced, sessions, canary=False):
+        items = ["a synthetic inbox line"]
+        if canary:
+            items.append("CANARY-INBOX-TEXT-DO-NOT-RENDER")
+        return {
+            "schema_version": jc.SCHEMA_VERSION,
+            "date": date_str,
+            "generated_at": f"{date_str}T00:00:00+00:00",
+            "day_start": f"{date_str}T00:00:00+00:00",
+            "day_end": f"{date_str}T23:59:59+00:00",
+            "timezone": "UTC",
+            "sources": {
+                "cost_report": {"available": True, "priced": True, "sessions": sessions,
+                                "usd": usd_priced, "extra": {}},
+                "codex_usage": {"available": True, "priced": False, "sessions": 0, "usd": None,
+                                "extra": {}},
+            },
+            "totals": {
+                "usd_priced": usd_priced,
+                "sessions": sessions,
+                "sources_active": ["cost_report"],
+                "unpriced_sources": ["codex_usage"],
+            },
+            "signals": {
+                "kit_tasks": [],
+                "inbox": {"present": True, "path": "synthetic", "items": items,
+                          "truncated": False, "redactions": {}, "redaction_note": ""},
+                "wip": [],
+            },
+        }
+
+    journal_days = ("2026-01-01", "2026-01-02", "2026-01-03")
+    sp.confined_write_bytes(
+        journal_dir, f"{journal_days[0]}/digest.json",
+        json.dumps(_synthetic_digest(journal_days[0], 1.23, 2, canary=True)),
+        what="synthetic journal digest")
+    sp.confined_write_bytes(
+        journal_dir, f"{journal_days[1]}/digest.json",
+        json.dumps(_synthetic_digest(journal_days[1], 2.5, 4)),
+        what="synthetic journal digest")
+    sp.confined_write_bytes(
+        journal_dir, f"{journal_days[2]}/digest.json",
+        # Obviously-fake, distinctive numbers (never plausible elsewhere on the page) so a test
+        # can prove none of them rendered anywhere -- this whole digest must be unreadable.
+        json.dumps({"schema_version": 99, "date": journal_days[2],
+                   "totals": {"usd_priced": 54321.99, "sessions": 54321, "sources_active": [],
+                              "unpriced_sources": []}}),
+        what="synthetic journal digest")
+
     return {
         "root": root,
         "data_home": data_home,
@@ -3013,6 +3832,10 @@ def synthetic_world(root, residue=30):
         "ledger": ledger.events_path,
         "residue": residue_names,
         "unmapped": UNMAPPED_NAMESPACE,
+        "telemetry_dir": telemetry_dir,
+        "telemetry_days": telemetry_days,
+        "journal_dir": journal_dir,
+        "journal_days": journal_days,
     }
 
 
