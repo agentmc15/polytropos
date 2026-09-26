@@ -24,6 +24,7 @@ import json
 import math
 import os
 import re
+import signal
 import stat
 import tempfile
 import time
@@ -53,21 +54,69 @@ kc = _load("kit_contract")
 _DATA_HOME = None
 _FAKE_HOME = None
 _ENV_PATCH = None
+_PROJECTS_GUARD = None
+
+
+class _NotAnEmptyTempProjectsDir(BaseException):
+    """Raised by the module-wide guard below when a build or model a test runs hands the
+    routing scorecard anything but an existing, empty temp projects dir. A BaseException, so the
+    engine's own `except Exception` containment cannot turn a GUARDRAILS breach into a quiet
+    panel note: the test errors instead."""
+
+
+def _guarded_history_card(real):
+    """`routing_scorecard.assemble_history_card` -- the one projects-dir reader the dashboard
+    calls (PLAN D15) -- refusing any `projects_dir` that is not an existing, empty directory
+    under the temp root (GUARDRAILS: every build and model a test runs prices from an empty temp
+    `--projects-dir`, never the scorecard's default)."""
+    def guarded(*args, projects_dir=None, **kwargs):
+        ok = False
+        if projects_dir is not None:
+            try:
+                resolved = os.path.realpath(projects_dir)
+                temp_root = os.path.realpath(tempfile.gettempdir())
+                ok = (resolved.startswith(temp_root + os.sep) and os.path.isdir(resolved)
+                      and not os.listdir(resolved))
+            except OSError:
+                ok = False
+        if not ok:
+            raise _NotAnEmptyTempProjectsDir(
+                f"assemble_history_card was handed projects_dir={projects_dir!r}; every build "
+                f"and model a test runs passes an empty temp projects dir (GUARDRAILS)")
+        return real(*args, projects_dir=projects_dir, **kwargs)
+    return guarded
 
 
 def setUpModule():
-    global _DATA_HOME, _FAKE_HOME, _ENV_PATCH
+    global _DATA_HOME, _FAKE_HOME, _ENV_PATCH, _PROJECTS_GUARD
     _DATA_HOME = tempfile.TemporaryDirectory(prefix="polytropos-test-data-")
     _FAKE_HOME = tempfile.TemporaryDirectory(prefix="polytropos-test-home-")
     _ENV_PATCH = mock.patch.dict(os.environ, {"POLYTROPOS_DATA_HOME": _DATA_HOME.name,
                                               "HOME": _FAKE_HOME.name})
     _ENV_PATCH.start()
+    scorecard = db._mod("routing_scorecard")
+    _PROJECTS_GUARD = mock.patch.object(scorecard, "assemble_history_card",
+                                        _guarded_history_card(scorecard.assemble_history_card))
+    _PROJECTS_GUARD.start()
 
 
 def tearDownModule():
+    _PROJECTS_GUARD.stop()
     _ENV_PATCH.stop()
     _DATA_HOME.cleanup()
     _FAKE_HOME.cleanup()
+
+
+def _opts(case, **extra):
+    """`build_model` opts for one test: an empty temp projects dir, always (GUARDRAILS), plus
+    whatever the test sets. A `_WorldCase` lends its own empty `self.projects`; any other case
+    gets a fresh empty temp dir, removed after the test."""
+    projects = getattr(case, "projects", None)
+    if projects is None:
+        tmp = tempfile.TemporaryDirectory(prefix="dashboard-projects-")
+        case.addCleanup(tmp.cleanup)
+        projects = case.projects = Path(tmp.name)
+    return {"notes": [], "projects_dir": str(projects), **extra}
 
 
 EXACT_CSP_META = ('<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; '
@@ -311,7 +360,7 @@ class ClassificationTests(_WorldCase):
     def test_lowered_listing_cap_is_noted_on_its_panel_in_bounds_and_in_the_receipt(self):
         with _scandir_in_name_order():
             model = db.build_model(self.world["data_home"], [str(self.world["checkout"])],
-                                   {"notes": []}, {"MAX_NAMESPACES_LISTED": 5})
+                                   _opts(self), {"MAX_NAMESPACES_LISTED": 5})
         marker = "cap MAX_NAMESPACES_LISTED (5) reached"
         namespaces = model["panels"][0]
         self.assertEqual(namespaces["id"], "namespaces")
@@ -355,7 +404,7 @@ class ClassificationTests(_WorldCase):
         registry = [("namespaces", "Namespaces", broken), db.PANELS[-1]]
         with mock.patch.object(db, "PANELS", registry):
             model = db.build_model(self.world["data_home"], [str(self.world["checkout"])],
-                                   {}, {"MAX_NAMESPACES_LISTED": 5})
+                                   _opts(self), {"MAX_NAMESPACES_LISTED": 5})
         notes = model["panels"][0]["notes"]
         self.assertTrue(any(note.startswith("cap MAX_NAMESPACES_LISTED (5) reached")
                             for note in notes), notes)
@@ -407,7 +456,7 @@ class ClassificationCompletenessTests(_WorldCase):
         self.assertGreaterEqual(len(names), 4)
         self.assertEqual(names[-1], namespace)
         with _scandir_in_name_order():  # the one listed entry is names[0], never the mapped one
-            model = db.build_model(self.world["data_home"], [checkout], {"notes": []},
+            model = db.build_model(self.world["data_home"], [checkout], _opts(self),
                                    {"MAX_NAMESPACES_LISTED": 1})
         classes = model["classes"]
         self.assertEqual([row["namespace"] for row in classes["mapped"]], [namespace])
@@ -480,7 +529,7 @@ class ClassificationCompletenessTests(_WorldCase):
     def test_a_cut_listing_that_found_nothing_says_it_was_cut_not_that_none_exist(self):
         (self.world["data_home"] / "0-a-plain-file").write_text("sorts first\n")
         with _scandir_in_name_order():
-            model = db.build_model(self.world["data_home"], [], {"notes": []},
+            model = db.build_model(self.world["data_home"], [], _opts(self),
                                    {"MAX_NAMESPACES_LISTED": 1})
         self.assertEqual(model["classes"]["counts"], {"mapped": exact(0),
                                                       "unmapped": UNKNOWN_COUNT,
@@ -728,7 +777,10 @@ class ConfigTests(unittest.TestCase):
         checkouts, notes = db.read_config(self.out)
         self.assertEqual(checkouts, [])
         self.assertEqual(len(notes), 1, notes)
-        self.assertIn("could not be read (SafePathError)", notes[0])
+        # P2 fix round: refused at the `lstat` gate every non-regular leaf now meets, before
+        # any open (it was refused by `safe_paths`' O_NOFOLLOW open before).
+        self.assertIn("is a symlink, not a regular file — never opened; treated as absent",
+                      notes[0])
 
 
 class ConfigBuildTests(_WorldCase):
@@ -875,7 +927,7 @@ class EmptyPathFlagTests(_WorldCase):
 
     def test_an_empty_data_home_checkout_or_config_dir_never_means_the_working_directory(self):
         (self.cwd / "looks-like-a-namespace").mkdir()
-        model = db.build_model("", [str(self.world["checkout"])], {}, None)
+        model = db.build_model("", [str(self.world["checkout"])], _opts(self), None)
         self.assertEqual(model["classes"], unknown_classes([str(self.world["checkout"])]))
         self.assertIn("namespaces: no data home was given — nothing was classified",
                       model["notes"])
@@ -1040,10 +1092,12 @@ class RenderingTests(_WorldCase):
         self.assertEqual((rc1, rc2), (0, 0))
         self.assertEqual(_without_built_at(self.page(out1)), _without_built_at(self.page(out2)))
         checkouts = [str(self.world["checkout"])]
-        early = db.build_model(self.world["data_home"], checkouts,
-                               {"now": datetime(2026, 1, 1, 9, 0, tzinfo=timezone.utc)}, None)
-        late = db.build_model(self.world["data_home"], checkouts,
-                              {"now": datetime(2026, 1, 2, 17, 30, tzinfo=timezone.utc)}, None)
+        early = db.build_model(
+            self.world["data_home"], checkouts,
+            _opts(self, now=datetime(2026, 1, 1, 9, 0, tzinfo=timezone.utc)), None)
+        late = db.build_model(
+            self.world["data_home"], checkouts,
+            _opts(self, now=datetime(2026, 1, 2, 17, 30, tzinfo=timezone.utc)), None)
         page_early = db.render_page(early, _FAKE_HOME.name)
         page_late = db.render_page(late, _FAKE_HOME.name)
         self.assertNotEqual(page_early, page_late)
@@ -1091,7 +1145,7 @@ class RenderingTests(_WorldCase):
         self.assertIn("ns-ünïcode-✓-😀", page)
 
     def test_a_missing_data_home_argument_is_a_note_not_an_exception(self):
-        model = db.build_model(None, [str(self.world["checkout"])], {}, None)
+        model = db.build_model(None, [str(self.world["checkout"])], _opts(self), None)
         self.assertEqual(model["classes"], unknown_classes([str(self.world["checkout"])]))
         self.assertIsNone(model["data_home"])
         self.assertIn("namespaces: no data home was given — nothing was classified",
@@ -1106,7 +1160,7 @@ class RenderingTests(_WorldCase):
 
     def test_model_is_json_serializable(self):
         model = db.build_model(self.world["data_home"], [str(self.world["checkout"])],
-                               {"notes": ["a note"]}, None)
+                               _opts(self, notes=["a note"]), None)
         self.assertEqual(json.loads(json.dumps(model))["schema_version"], 1)
         self.assertEqual(model["notes"][0], "a note")
         self.assertEqual([panel["id"] for panel in model["panels"]],
@@ -1120,7 +1174,7 @@ class RenderingTests(_WorldCase):
         registry = [db.PANELS[0], ("attempts", "Attempts", broken), db.PANELS[-1]]
         with mock.patch.object(db, "PANELS", registry):
             model = db.build_model(self.world["data_home"], [str(self.world["checkout"])],
-                                   {}, None)
+                                   _opts(self), None)
             page = db.render_page(model, _FAKE_HOME.name)
         self.assertIn("attempts: panel could not be built (RuntimeError)", model["notes"])
         self.assertNotIn("/secret/path", json.dumps(model))
@@ -1551,7 +1605,7 @@ class PanelChromeTests(unittest.TestCase):
 class PanelDictContractTests(unittest.TestCase):
 
     def test_build_model_adds_a_refresh_hint_key_defaulting_to_none(self):
-        model = db.build_model(None, [], {}, None)
+        model = db.build_model(None, [], _opts(self), None)
         self.assertTrue(model["panels"])
         for entry in model["panels"]:
             self.assertIn("refresh_hint", entry)
@@ -1613,7 +1667,7 @@ class ChartIntegrationTests(_WorldCase):
         registry = [db.PANELS[0], ("charts", "Charts", chart_panel), db.PANELS[-1]]
         with mock.patch.object(db, "PANELS", registry):
             model = db.build_model(self.world["data_home"], [str(self.world["checkout"])],
-                                   {}, None)
+                                   _opts(self), None)
             page1 = db.render_page(model, _FAKE_HOME.name)
             page2 = db.render_page(model, _FAKE_HOME.name)
         self.assertEqual(page1, page2)
@@ -1776,7 +1830,7 @@ class RenderContainmentTests(_WorldCase):
         with mock.patch.object(db, "PANELS", registry), \
                 mock.patch.object(db, "svg_sparkline", self.raising):
             model = db.build_model(self.world["data_home"], [str(self.world["checkout"])],
-                                   {}, None)
+                                   _opts(self), None)
             before = json.dumps(model, sort_keys=True)
             page1 = db.render_page(model, _FAKE_HOME.name)
             page2 = db.render_page(model, _FAKE_HOME.name)
@@ -1799,7 +1853,7 @@ class _AttemptsCase(_WorldCase):
         return db.build_model(self.world["data_home"],
                               checkouts if checkouts is not None
                               else [str(self.world["checkout"])],
-                              {"notes": []}, caps)
+                              _opts(self), caps)
 
     def panel(self, model):
         return next(p for p in model["panels"] if p["id"] == "attempts")
@@ -1838,6 +1892,10 @@ class ReadNamespacesTests(_AttemptsCase):
         self.assertEqual(rows[0]["namespace"], self.world["namespace"])
         self.assertEqual(len(notes), 1)
         self.assertTrue(notes[0].startswith("cap MAX_NAMESPACES_READ (1) reached"))
+        # P2 fix round polish: the cap bounds four panels' reads (attempts, telemetry, journal,
+        # evals), so its note no longer claims it bounded ledger facts alone.
+        self.assertIn("were read in depth", notes[0])
+        self.assertNotIn("ledger facts", notes[0])
 
     def test_cap_not_hit_when_the_combined_list_fits(self):
         rows, notes = db.read_namespaces(self.ctx())
@@ -1959,6 +2017,28 @@ class AttemptsHistoryTests(_AttemptsCase):
         self.assertEqual(by_basis["process-wall"][2], {"fmt": "seconds", "value": 3.0})
         self.assertIsNone(by_basis["decision-latency"][2]["value"])
 
+    def test_a_count_the_owner_did_not_emit_renders_unknown_never_zero(self):
+        # P2 fix round S6 (PLAN R3): no `.get(..., 0)` default on an owner count. A basis, a tier
+        # or a card that carries no count renders the styled `unknown`, never a fabricated 0 --
+        # while the owner's OWN zero still renders as the zero it is.
+        for row in db._cost_rows({}, ah.COST_BASES):
+            self.assertEqual(row[1], {"fmt": "count", "value": None}, row[0])
+        for row in db._duration_rows({}, ah.DURATION_BASES):
+            self.assertEqual(row[1], {"fmt": "count", "value": None}, row[0])
+        own_zero = db._cost_rows({"billed": {"n": 0, "usd": None, "credits": None}}, ("billed",))
+        self.assertEqual(own_zero[0][1], {"fmt": "count", "value": 0})
+        self.assertEqual(
+            db._harness_tier_rows({"claude": {"tiers": {"sonnet": {"results": {"pass": 1}}}}}),
+            [("claude", "sonnet", None, "pass: 1")])
+        blocks = db._history_card_blocks({}, ah)
+        records_line = next(b for b in blocks if b.get("type") == "p" and b.get("parts")
+                            and b["parts"][0] == "records: ")
+        self.assertEqual(records_line["parts"][1], {"fmt": "count", "value": None})
+        rendered = "\n".join(db._render_block(block) for block in blocks)
+        self.assertIn(f"records: {UNKNOWN_SPAN}", rendered)
+        self.assertIn(f"<td>billed</td><td>{UNKNOWN_SPAN}</td>", rendered)
+        self.assertNotIn("<td>billed</td><td>0</td>", rendered)
+
     def test_owner_never_summed_note_appears_beneath_both_tables(self):
         page = db.render_page(self.model(), _FAKE_HOME.name)
         section = _section(page, "attempts")
@@ -2033,6 +2113,28 @@ class AttemptsHistoryTests(_AttemptsCase):
         self.assertIn(expected, attempts["notes"])
         page = db.render_page(model, _FAKE_HOME.name)
         self.assertIn('<section id="attempts">', page)
+
+    def test_a_symlinked_kit_dir_handed_to_join_kits_is_named_in_a_note(self):
+        # P2 fix round S7: `attempt_history.join_kits` lists kit dirs with `Path.is_dir()`,
+        # which follows a link, so the attempts panel names a symlinked kit dir exactly as the
+        # scorecard panel already does for its own owner.
+        outside = self.tmp / "outside-kit"
+        outside.mkdir()
+        (outside / "TASKS.md").write_text("# TASKS\n\n### OK1 — a task\n- status: done\n"
+                                          "- model: sonnet\n")
+        os.symlink(outside, self.world["kits_dir"] / "linked-kit", target_is_directory=True)
+        # the scorecard panel is built too: an empty temp projects dir, per GUARDRAILS.
+        model = db.build_model(self.world["data_home"], [str(self.world["checkout"])],
+                               _opts(self), None)
+        attempts = self.panel(model)
+        expected = (f"{self.world['checkout']}: symlinked kit dir(s) linked-kit — "
+                    f"attempt_history.join_kits follows these, unlike the kits-in-flight panel")
+        self.assertIn(expected, attempts["notes"])
+        scorecard = next(p for p in model["panels"] if p["id"] == "scorecard")
+        self.assertTrue(any("linked-kit" in n and "routing_scorecard follows" in n
+                            for n in scorecard["notes"]), scorecard["notes"])
+        page = db.render_page(model, _FAKE_HOME.name)
+        self.assertNotIn("total", _section(page, "attempts").lower())
 
     def test_oversize_kit_ledger_skips_that_historys_join_and_is_never_opened(self):
         events_path = (self.world["data_home"] / self.world["namespace"] / "attempts" /
@@ -2184,7 +2286,7 @@ class AttemptsLedgerFactsTests(_AttemptsCase):
         self.assertIn(self.world["namespace"], [r[0] for r in rows])  # unaffected
 
     def test_no_data_home_is_an_absence_sentence_for_both_sub_sections(self):
-        model = db.build_model(None, [str(self.world["checkout"])], {"notes": []}, None)
+        model = db.build_model(None, [str(self.world["checkout"])], _opts(self), None)
         attempts = self.panel(model)
         texts = [b.get("text") for b in attempts["blocks"] if b.get("type") == "p"]
         self.assertIn("No data home was given, so no checkout's history could be joined.",
@@ -2562,6 +2664,36 @@ class KitsInFlightTests(_ScorecardCase):
         self.assertTrue(any("escape-hatch" in n and "routing_scorecard follows" in n
                             for n in scorecard["notes"]), scorecard["notes"])
 
+    def test_a_symlinked_tasks_md_leaf_is_refused_with_a_note_never_read(self):
+        # P2 fix round S7: a REAL kit dir whose TASKS.md is a link out of the checkout. The
+        # kits panel checks the leaf with `os.lstat`, so it refuses the link instead of following
+        # it; `read_text` is never reached for it.
+        outside = self.tmp / "outside-tasks.md"
+        sentinel = "SENTINEL-LINKED-TASKS-LEAF-4d2e"
+        outside.write_text(f"# TASKS\n\n### LK1 — {sentinel}\n- status: done\n- model: sonnet\n")
+        linked_kit = self.world["kits_dir"] / "linked-leaf-kit"
+        linked_kit.mkdir()
+        (linked_kit / "TASKS.md").symlink_to(outside)
+        real_read_text = Path.read_text
+        read = []
+
+        def spying_read_text(path, *args, **kwargs):
+            read.append(os.fspath(path))
+            return real_read_text(path, *args, **kwargs)
+
+        # The kits panel's builder alone: the scorecard and history owners read TASKS.md files
+        # themselves (their own behaviour, named in their own panels' notes), not this panel.
+        ctx = {"checkouts": [str(self.world["checkout"])], "caps": db.default_caps()}
+        with mock.patch.object(Path, "read_text", spying_read_text):
+            kits_panel = db.build_kits_panel(ctx)
+        self.assertTrue(read)  # the spy saw the healthy kits' TASKS.md reads
+        self.assertTrue(any("linked-leaf-kit" in n and "TASKS.md is a symlink" in n
+                            and "never read" in n for n in kits_panel["notes"]),
+                        kits_panel["notes"])
+        self.assertNotIn("linked-leaf-kit", [row[1] for row in kits_panel["blocks"][0]["rows"]])
+        self.assertNotIn(os.fspath(linked_kit / "TASKS.md"), read)
+        self.assertIn(db.SCORECARD_KIT, [row[1] for row in kits_panel["blocks"][0]["rows"]])
+
     def test_oversized_tasks_md_is_skipped_via_stat_alone_and_never_opened(self):
         # T5 retry R4: os.stat gates the read; chmod 0 proves the file is never opened for
         # content (only stat, which needs no read permission on the file itself).
@@ -2798,17 +2930,60 @@ class SourceTests(unittest.TestCase):
             self.assertIsNone(db.RESIDUE_NAMESPACE_RE.fullmatch(name), name)
 
 
+class ProjectsDirGuardTests(_WorldCase):
+    """GUARDRAILS: every build and model a test runs prices from an empty temp projects dir. The
+    module-wide guard on the scorecard's projects-dir reader (`setUpModule`) is what makes that
+    hold for every test in this file; this shows the guard trips."""
+
+    def test_a_model_without_an_empty_temp_projects_dir_is_refused_by_the_guard(self):
+        checkouts = [str(self.world["checkout"])]
+        with self.assertRaises(_NotAnEmptyTempProjectsDir):
+            db.build_model(self.world["data_home"], checkouts, {"notes": []}, None)
+        (self.projects / "not-empty.jsonl").write_text("{}\n")
+        with self.assertRaises(_NotAnEmptyTempProjectsDir):
+            db.build_model(self.world["data_home"], checkouts, _opts(self), None)
+
+
 # ---------------------------------------------------------------------------------------------
 # Telemetry snapshots panel (T6 item 1).
 
 class TelemetryPanelTests(_WorldCase):
 
-    def test_rogue_file_and_unregistered_source_notes_from_the_owner_appear(self):
+    def test_the_owners_rogue_file_note_and_the_dashboards_unregistered_source_note_appear(self):
+        # P2 fix round S8: renamed from `..._notes_from_the_owner_appear`. Since T6's retry the
+        # rogue-file note is the owner's (`read_source_snapshots`), while the unregistered-source
+        # note is the dashboard's own, mirroring `build_list_summary`'s wording -- the parity
+        # test below pins that mirror against the owner itself.
         rc, out, _stdout, stderr = self.build()
         self.assertEqual(rc, 0, stderr)
         section = _section(self.page(out), "telemetry")
         self.assertIn("rogue snapshot file skipped: cost_report/notes.json", section)
         self.assertIn("unregistered source dir: mystery", section)
+
+    def test_per_source_rows_and_notes_match_the_owners_build_list_summary_on_a_clean_store(self):
+        # P2 fix round S8 (the phase review's Q1 ruling): T6's retry packages the per-source
+        # table itself, from `read_source_snapshots`, instead of calling the owner's
+        # `build_list_summary` (which raises on a malformed `labels`). On a CLEAN store the owner
+        # does not raise, so its own rows and notes are the reference the page must match: count,
+        # first, last, latest status and latest labels per source, and every note, verbatim.
+        ts = db._mod("telemetry_snapshot")
+        summary, owner_notes = ts.build_list_summary(self.world["telemetry_dir"])
+        self.assertIsNotNone(summary)
+        rc, out, _stdout, stderr = self.build()
+        self.assertEqual(rc, 0, stderr)
+        section = _section(self.page(out), "telemetry")
+        self.assertEqual(sorted(row["source"] for row in summary["sources"]),
+                         sorted(list(ts.SOURCES) + ["mystery"]))
+        for row in summary["sources"]:
+            labels = " | ".join(str(label) for label in row["latest_labels"]) or "—"
+            expected = "<tr>" + "".join(f"<td>{cell}</td>" for cell in (
+                db.esc(row["source"]), db.esc(row["registered"]), db.fmt_count(row["count"]),
+                db.fmt_date(row["first_date"]), db.fmt_date(row["last_date"]),
+                db.esc(row["latest_status"]), db.esc(labels))) + "</tr>"
+            self.assertIn(expected, section, row["source"])
+        self.assertTrue(owner_notes)
+        for note in owner_notes:
+            self.assertIn(db.esc(note), section)
 
     def test_latest_envelope_labels_appear_verbatim_registered_and_unregistered(self):
         rc, out, _stdout, stderr = self.build()
@@ -2899,7 +3074,7 @@ class TelemetryPanelTests(_WorldCase):
         self.assertEqual(section.count('<p class="meta">'), 2)  # source/observed/age + the hint
 
     def test_no_data_home_telemetry_panel_has_no_refresh_hint(self):
-        model = db.build_model(None, [], {}, None)
+        model = db.build_model(None, [], _opts(self), None)
         telemetry = next(p for p in model["panels"] if p["id"] == "telemetry")
         self.assertIsNone(telemetry["refresh_hint"])
 
@@ -3020,6 +3195,123 @@ class TelemetryPanelTests(_WorldCase):
 
 
 # ---------------------------------------------------------------------------------------------
+# P2 fix round S5: a FIFO at any leaf the build opens never hangs it.
+
+class _BuildHung(BaseException):
+    """Raised by the SIGALRM handler below. A BaseException, so none of the engine's own
+    `except Exception` containment can swallow it: a regression FAILS instead of hanging."""
+
+
+def _on_alarm(_signum, _frame):
+    raise _BuildHung()
+
+
+@unittest.skipUnless(hasattr(os, "mkfifo") and hasattr(signal, "SIGALRM"),
+                     "needs os.mkfifo and SIGALRM")
+class FifoLeafTests(_WorldCase):
+    """At each leaf the build pre-checks before it -- or an owner it calls -- opens it whole, the
+    leaf is `lstat`'d and must be a regular file: a FIFO there would block the open with no
+    writer. It is excluded with a note and never opened. Each build runs under a 10 s alarm and
+    disarms it in a `finally`."""
+
+    def build_under_alarm(self, *extra):
+        previous = signal.signal(signal.SIGALRM, _on_alarm)
+        signal.alarm(10)
+        try:
+            return self.build("out", *extra)
+        except _BuildHung:
+            self.fail("the build blocked on a FIFO for 10 s")
+        finally:
+            signal.alarm(0)
+            signal.signal(signal.SIGALRM, previous)
+
+    def test_a_fifo_telemetry_envelope_excludes_only_its_source(self):
+        os.mkfifo(self.world["telemetry_dir"] / "cost_report" / "2026-01-09.json")
+        rc, out, _stdout, stderr = self.build_under_alarm()
+        self.assertEqual(rc, 0, stderr)
+        section = _section(self.page(out), "telemetry")
+        self.assertIn("2026-01-09.json is a FIFO, not a regular file — never opened; the whole "
+                      "source is not rendered", section)
+        self.assertNotIn("<td>cost_report</td>", section)
+        self.assertIn("<td>codex_usage</td>", section)
+
+    def test_a_fifo_digest_json_is_skipped_and_the_other_days_render(self):
+        day = self.world["journal_dir"] / "2026-01-09"
+        day.mkdir()
+        os.mkfifo(day / "digest.json")
+        rc, out, _stdout, stderr = self.build_under_alarm()
+        self.assertEqual(rc, 0, stderr)
+        section = _section(self.page(out), "journal")
+        self.assertIn("2026-01-09: digest.json is a FIFO, not a regular file — skipped, never "
+                      "read", section)
+        self.assertIn("$1.23", section)
+        self.assertIn("$2.50", section)
+
+    def test_a_fifo_results_json_excludes_that_run_and_the_vetted_cards_render(self):
+        run = self.world["evals_dir"] / "run-2026-01-09-fifo"
+        run.mkdir()
+        os.mkfifo(run / "results.json")
+        rc, out, _stdout, stderr = self.build_under_alarm()
+        self.assertEqual(rc, 0, stderr)
+        section = _section(self.page(out), "evals")
+        self.assertIn("results.json is a FIFO, not a regular file — never opened", section)
+        self.assertIn("list_runs was not called", section)  # it would open the FIFO too
+        self.assertIn("run run-2026-01-01-demo — repo", section)
+
+    def test_a_fifo_policy_file_excludes_the_three_prefs_reports(self):
+        we = db._mod("workflow_eval")
+        os.mkfifo(self.world["prefs_dir"] / we.POLICY_FILE)
+        rc, out, _stdout, stderr = self.build_under_alarm()
+        self.assertEqual(rc, 0, stderr)
+        section = _section(self.page(out), "evals")
+        self.assertIn("is a FIFO, not a regular file — never opened; policy/approval/activation "
+                      "are not read this build", section)
+        self.assertNotIn("none in force.", section)
+        self.assertIn("run run-2026-01-01-demo — repo", section)
+
+    def test_a_fifo_ledger_events_file_is_skipped_by_the_history_join_and_the_ledger_facts(self):
+        events = Path(self.world["ledger"])  # the mapped demo-kit ledger's events file
+        events.unlink()
+        os.mkfifo(events)
+        rc, out, _stdout, stderr = self.build_under_alarm()
+        self.assertEqual(rc, 0, stderr)
+        section = _section(self.page(out), "attempts")
+        self.assertIn(db.esc(f"kit {db.DEMO_KIT}'s ledger file is a FIFO, not a regular file, "
+                             f"and was never opened"), section)
+        self.assertIn(f"{self.world['namespace']}/{db.DEMO_KIT}: its events file is a FIFO, not "
+                      f"a regular file — skipped, never read", section)
+        self.assertIn(db.UNMAPPED_NAMESPACE, section)  # the other ledger's row still renders
+
+    def test_a_fifo_config_json_is_refused_with_a_note_and_treated_as_absent(self):
+        # P2 fix round, closing S5's last leaf: the dashboard's own config.json, read before the
+        # build even classifies anything.
+        out = self.tmp / "out"
+        out.mkdir(mode=0o700)
+        os.mkfifo(out / "config.json")
+        rc, out, _stdout, stderr = self.build_under_alarm()
+        self.assertEqual(rc, 0, stderr)
+        expected = "config.json in"
+        notes = [note for note in self.receipt(out)["notes"] if note.startswith(expected)]
+        self.assertEqual(len(notes), 1, notes)
+        self.assertIn("is a FIFO, not a regular file — never opened; treated as absent",
+                      notes[0])
+        self.assertIn("is a FIFO, not a regular file — never opened; treated as absent",
+                      _section(self.page(out), "bounds"))
+        self.assertTrue(stat.S_ISFIFO(os.lstat(out / "config.json").st_mode))  # left in place
+
+    def test_a_fifo_tasks_md_is_skipped_with_a_note(self):
+        kit = self.world["kits_dir"] / "fifo-kit"
+        kit.mkdir()
+        os.mkfifo(kit / "TASKS.md")
+        rc, out, _stdout, stderr = self.build_under_alarm()
+        self.assertEqual(rc, 0, stderr)
+        section = _section(self.page(out), "kits")
+        self.assertIn("fifo-kit: TASKS.md is a FIFO, not a regular file — skipped, never read",
+                      section)
+        self.assertIn(db.SCORECARD_KIT, section)
+
+
+# ---------------------------------------------------------------------------------------------
 # Journal digests panel (T6 item 2).
 
 class JournalPanelTests(_WorldCase):
@@ -3032,6 +3324,18 @@ class JournalPanelTests(_WorldCase):
         self.assertIn(f"{self.world['journal_days'][2]}: unknown digest version, not rendered",
                       section)
         self.assertNotIn("54321", page)
+
+    def test_every_journal_day_note_carries_the_namespace_label(self):
+        # P2 fix round polish: a day note names the namespace it came from, like every other
+        # per-namespace note on the page, so two checkouts' same-day notes never read alike.
+        checkout = str(self.world["checkout"])
+        model = db.build_model(self.world["data_home"], [checkout], _opts(self), None)
+        journal = next(p for p in model["panels"] if p["id"] == "journal")
+        day = self.world["journal_days"][2]
+        self.assertIn(f"{checkout}: {day}: unknown digest version, not rendered",
+                      journal["notes"])
+        self.assertFalse(any(note.startswith(f"{day}:") for note in journal["notes"]),
+                         journal["notes"])
 
     def test_the_canary_inbox_string_never_renders_anywhere_on_the_page(self):
         rc, out, _stdout, stderr = self.build()
@@ -3055,7 +3359,7 @@ class JournalPanelTests(_WorldCase):
 
     def test_max_journal_days_cap_lowered_to_one_leaves_a_note(self):
         checkouts = [str(self.world["checkout"])]
-        model = db.build_model(self.world["data_home"], checkouts, {"notes": []},
+        model = db.build_model(self.world["data_home"], checkouts, _opts(self),
                                {"MAX_JOURNAL_DAYS": 1})
         journal = next(p for p in model["panels"] if p["id"] == "journal")
         self.assertTrue(any(note.startswith("cap MAX_JOURNAL_DAYS (1) reached")
@@ -3112,7 +3416,7 @@ class JournalPanelTests(_WorldCase):
         self.assertIn("journal digests by day", section)
 
     def test_no_data_home_journal_panel_is_a_plain_note(self):
-        model = db.build_model(None, [], {}, None)
+        model = db.build_model(None, [], _opts(self), None)
         journal = next(p for p in model["panels"] if p["id"] == "journal")
         self.assertIsNone(journal["observed"])
         self.assertIn("no journal digest could be read", journal["blocks"][0]["text"])
@@ -3216,14 +3520,16 @@ class EvalsPanelTests(_WorldCase):
         rc, out, _stdout, stderr = self.build()
         self.assertEqual(rc, 0, stderr)
         section = _section(self.page(out), "evals")
-        self.assertIn("unmapped namespace(s) show a evals store", section)
+        # P2 fix round polish: the article follows the store name ("an evals", "a prefs").
+        self.assertIn("unmapped namespace(s) show an evals store", section)
         self.assertIn("unmapped namespace(s) show a prefs store", section)
+        self.assertNotIn("show a evals store", section)
         self.assertNotIn(extra1, section)
         self.assertNotIn(extra2, section)
 
     def test_max_eval_runs_rendered_cap_lowered_leaves_a_note(self):
         checkouts = [str(self.world["checkout"])]
-        model = db.build_model(self.world["data_home"], checkouts, {"notes": []},
+        model = db.build_model(self.world["data_home"], checkouts, _opts(self),
                                {"MAX_EVAL_RUNS_RENDERED": 0})
         evals = next(p for p in model["panels"] if p["id"] == "evals")
         self.assertTrue(any(note.startswith("cap MAX_EVAL_RUNS_RENDERED (0) reached")
@@ -3291,31 +3597,47 @@ class EvalsPanelTests(_WorldCase):
         # over the pre-scan's safe directory names, never a re-parse of results.json here.
         self.assertIn("run run-2026-01-01-demo — repo", section)
         self.assertIn("run run-2026-01-03-second — repo", section)
-        # the bad (non-object) run gets its own note (apostrophes render as `&#x27;`).
-        self.assertIn("run-2026-01-04-notadict", section)
-        self.assertIn("card unavailable (AttributeError)", section)
+        # the bad (non-object) run fails the version gate every card passes (P2 fix round B2):
+        # the owner's own `list_runs` wording, and no card.
+        we = db._mod("workflow_eval")
+        self.assertIn(f"run-2026-01-04-notadict: not a {we.EVAL_VERSION} envelope", section)
+        self.assertNotIn("run run-2026-01-04-notadict", section)
+        # `list_runs` never finished, so the owner's own "not an evaluation run" note is
+        # repeated by the dashboard for the directory that holds no results.json.
+        self.assertIn("not-a-run: not an evaluation run", section)
 
-    def test_a_symlinked_eval_run_directory_is_excluded_with_a_note(self):
+    def test_a_symlinked_eval_run_directory_is_excluded_and_the_vetted_runs_cards_render(self):
+        # P2 fix round S4 (renamed from `..._is_excluded_with_a_note`): one linked run plus one
+        # good run -- the linked run is excluded by name, `list_runs` stays uncalled (it would
+        # read the linked run too), and the good run's card still renders through the per-run
+        # loop over vetted directory names.
+        we = db._mod("workflow_eval")
         secret_dir = self.tmp / "outside-eval-secret"
         secret_dir.mkdir()
         marker = "EVAL-LEAK-MARKER-abc1"
         (secret_dir / "results.json").write_text(json.dumps({
-            "v": db._mod("workflow_eval").EVAL_VERSION, "run_id": "leaky-run",
-            "labels": [marker]}))
+            "v": we.EVAL_VERSION, "run_id": "leaky-run", "labels": [marker]}))
         os.symlink(secret_dir, self.world["evals_dir"] / "leaky", target_is_directory=True)
-        rc, out, _stdout, stderr = self.build()
+        # A wrapping spy, never a raising one: the engine contains an owner that raises, so a
+        # raising stand-in would be swallowed and prove nothing.
+        with mock.patch.object(we, "list_runs", wraps=we.list_runs) as list_runs:
+            rc, out, _stdout, stderr = self.build()
+        list_runs.assert_not_called()
         self.assertEqual(rc, 0, stderr)
         page = self.page(out)
         section = _section(page, "evals")
         self.assertNotIn(marker, page)
-        self.assertIn("leaky", section)
-        self.assertIn("symlinked run directory", section)
+        self.assertIn("evals run &#x27;leaky&#x27; excluded from this build (symlinked run "
+                      "directory)", section)
         self.assertIn("list_runs was not called", section)
-        # the whole store is excluded this build -- see the module's own docstring for why a
-        # bad run cannot be safely dropped from `list_runs`'s own output after the fact.
-        self.assertNotIn("run-2026-01-01-demo", section)
+        self.assertNotIn("<td>run-2026-01-01-demo</td>", section)  # no runs table this build
+        self.assertIn("run run-2026-01-01-demo — repo", section)   # ... but the card renders
+        self.assertIn("v1: BELOW EVIDENCE FLOOR", section)
+        self.assertIn(f"run-2026-01-02-oldversion: not a {we.EVAL_VERSION} envelope", section)
+        self.assertIn("not-a-run: not an evaluation run", section)
 
-    def test_a_symlinked_results_json_excludes_the_whole_store_with_a_note(self):
+    def test_a_symlinked_results_json_excludes_only_that_run_with_a_note(self):
+        # Renamed from `..._excludes_the_whole_store_with_a_note` (P2 fix round S4).
         outside = self.tmp / "outside-results.json"
         outside.write_text(json.dumps({
             "v": db._mod("workflow_eval").EVAL_VERSION, "run_id": "fake",
@@ -3329,8 +3651,11 @@ class EvalsPanelTests(_WorldCase):
         section = _section(page, "evals")
         self.assertNotIn("FABRICATED-EVAL-LABEL", page)
         self.assertIn("symlinked results.json", section)
+        self.assertNotIn("run run-2099-01-01-linked", section)
+        self.assertIn("run run-2026-01-01-demo — repo", section)
 
-    def test_an_oversized_results_json_excludes_the_whole_store_with_a_note(self):
+    def test_an_oversized_results_json_excludes_only_that_run_and_hits_the_cap(self):
+        # Renamed from `..._excludes_the_whole_store_with_a_note` (P2 fix round S4).
         junk = "C" * (db.MAX_EVAL_RESULTS_BYTES + 1024)
         run_dir = self.world["evals_dir"] / "run-2099-02-02-huge"
         run_dir.mkdir()
@@ -3342,6 +3667,8 @@ class EvalsPanelTests(_WorldCase):
         section = _section(page, "evals")
         self.assertNotIn("C" * 100, page)
         self.assertIn("MAX_EVAL_RESULTS_BYTES", page)
+        self.assertNotIn("run run-2099-02-02-huge", section)
+        self.assertIn("run run-2026-01-01-demo — repo", section)
         bounds = _section(page, "bounds")
         # T7 retry V1/V2: the row's OWN status cell must read "hit" (V1's own fix routes the
         # exclusion through `cap_note`), not just that the row exists -- it renders on every
@@ -3351,29 +3678,40 @@ class EvalsPanelTests(_WorldCase):
         self.assertIn("MAX_EVAL_RESULTS_BYTES", self.receipt(out)["caps_hit"])
 
     def test_a_symlinked_prefs_entry_excludes_all_three_reports_with_a_note(self):
+        # P2 fix round S3: the link sits INSIDE the owner's read set -- a proposal file the
+        # owner's `policy_report` would read whole -- since only that set is pre-scanned now.
+        we = db._mod("workflow_eval")
         outside = self.tmp / "outside-prefs-file.json"
         outside.write_text(json.dumps({"leak": "PREFS-LEAK-MARKER-77"}))
-        (self.world["prefs_dir"] / "linked.json").symlink_to(outside)
+        proposals = self.world["prefs_dir"] / we.POLICY_PROPOSALS
+        proposals.mkdir()
+        (proposals / "linked.json").symlink_to(outside)
         rc, out, _stdout, stderr = self.build()
         self.assertEqual(rc, 0, stderr)
         page = self.page(out)
         section = _section(page, "evals")
         self.assertNotIn("PREFS-LEAK-MARKER-77", page)
         self.assertIn("prefs entry", section)
+        self.assertIn(html.escape(f"{we.POLICY_PROPOSALS}/linked.json", quote=True), section)
         self.assertIn("is a symlink", section)
         self.assertIn("policy/approval/activation are not read this build", section)
         self.assertNotIn("none in force.", section)  # the whole prefs section was skipped
         self.assertIn("run-2026-01-01-demo", section)  # evals runs are unaffected
 
     def test_an_oversized_prefs_file_excludes_all_three_reports_with_a_note(self):
+        # P2 fix round S3: the oversized file is an approval record the owner reads whole.
+        we = db._mod("workflow_eval")
         junk = "D" * (db.MAX_PREFS_FILE_BYTES + 1024)
-        (self.world["prefs_dir"] / "huge.json").write_text(junk)
+        approvals = self.world["prefs_dir"] / we.POLICY_APPROVALS
+        approvals.mkdir()
+        (approvals / "huge.json").write_text(junk)
         rc, out, _stdout, stderr = self.build()
         self.assertEqual(rc, 0, stderr)
         page = self.page(out)
         section = _section(page, "evals")
         self.assertNotIn("D" * 100, page)
         self.assertIn("MAX_PREFS_FILE_BYTES", page)
+        self.assertNotIn("none in force.", section)
         bounds = _section(page, "bounds")
         # T7 retry V2: the row's OWN status cell, not just that the row exists.
         self.assertIn(f"<td>MAX_PREFS_FILE_BYTES</td><td>{db.MAX_PREFS_FILE_BYTES}</td>"
@@ -3381,9 +3719,13 @@ class EvalsPanelTests(_WorldCase):
         self.assertIn("MAX_PREFS_FILE_BYTES", self.receipt(out)["caps_hit"])
 
     def test_max_prefs_entries_scanned_cap_lowered_leaves_a_note(self):
-        (self.world["prefs_dir"] / "one-entry.json").write_text("{}")
+        # P2 fix round S3: the entry sits inside the owner's read set, the only part scanned.
+        we = db._mod("workflow_eval")
+        proposals = self.world["prefs_dir"] / we.POLICY_PROPOSALS
+        proposals.mkdir()
+        (proposals / "one-entry.json").write_text("{}")
         checkouts = [str(self.world["checkout"])]
-        model = db.build_model(self.world["data_home"], checkouts, {"notes": []},
+        model = db.build_model(self.world["data_home"], checkouts, _opts(self),
                                {"MAX_PREFS_ENTRIES_SCANNED": 0})
         evals = next(p for p in model["panels"] if p["id"] == "evals")
         self.assertTrue(any(note.startswith("cap MAX_PREFS_ENTRIES_SCANNED (0) reached")
@@ -3397,10 +3739,232 @@ class EvalsPanelTests(_WorldCase):
         self.assertIn('<span class="label">ceiling_usd</span>', section)
 
     def test_no_data_home_evals_panel_is_a_plain_note(self):
-        model = db.build_model(None, [], {}, None)
+        model = db.build_model(None, [], _opts(self), None)
         evals = next(p for p in model["panels"] if p["id"] == "evals")
         self.assertIsNone(evals["observed"])
         self.assertIn("no evals or prefs store could be read", evals["blocks"][0]["text"])
+
+
+class EvalsP2FixTests(_WorldCase):
+    """P2 fix round B1/B2/B3/S3: cards are read only by vetted directory names, every card passes
+    the version gate, proxy dollars carry the owner's proxy label, and the prefs pre-scan covers
+    exactly the owner's read set."""
+
+    def we(self):
+        return db._mod("workflow_eval")
+
+    def good_envelope(self):
+        return json.loads((self.world["good_run_dir"] / "results.json").read_text())
+
+    # -- B1: a declared run_id never steers a read ---------------------------------------------
+
+    def test_a_declared_run_id_outside_the_store_is_never_read_absolute_or_dotdot(self):
+        we = self.we()
+        evals_dir = self.world["evals_dir"]
+        outside = self.tmp / "outside-the-store"
+        outside.mkdir()
+        canary = "CANARY-OUTSIDE-STORE-LABEL-3b7d"
+        outside_envelope = dict(self.good_envelope(), labels=[canary], run_id="whatever")
+        outside_envelope["pad"] = "x" * (db.MAX_EVAL_RESULTS_BYTES + 4096)
+        (outside / "results.json").write_text(json.dumps(outside_envelope))
+        declared = {"run-2026-09-02-absolute": str(outside),
+                    "run-2026-09-03-dotdot": os.path.relpath(outside, evals_dir)}
+        self.assertTrue(declared["run-2026-09-03-dotdot"].startswith(".."))
+        for name, run_id in declared.items():
+            (evals_dir / name).mkdir()
+            (evals_dir / name / "results.json").write_text(
+                json.dumps(dict(self.good_envelope(), run_id=run_id, labels=["inner"])))
+        read = []
+        real_read_envelope = we.read_envelope
+
+        def spy(store_dir, run_id):
+            read.append((Path(store_dir), run_id))
+            return real_read_envelope(store_dir, run_id)
+
+        with mock.patch.object(we, "read_envelope", spy):
+            rc, out, _stdout, stderr = self.build()
+        self.assertEqual(rc, 0, stderr)
+        page = self.page(out)
+        self.assertNotIn(canary, page)
+        # Every read went through a vetted directory name -- a plain name of a real directory
+        # directly under the store holding a regular results.json within MAX_EVAL_RESULTS_BYTES
+        # -- so the size cap holds for every file actually read.
+        read_names = [run_id for _store, run_id in read]
+        for name in declared:
+            self.assertIn(name, read_names)
+        for store, run_id in read:
+            self.assertEqual(store, evals_dir)
+            self.assertEqual(Path(run_id).name, run_id)
+            self.assertNotIn(run_id, ("", ".", ".."))
+            st = os.lstat(store / run_id / "results.json")
+            self.assertTrue(stat.S_ISREG(st.st_mode))
+            self.assertLessEqual(st.st_size, db.MAX_EVAL_RESULTS_BYTES)
+        for run_id in declared.values():
+            self.assertNotIn(run_id, read_names)
+        # the declared-id runs' own cards are headed by their own directories.
+        section = _section(page, "evals")
+        self.assertIn("run run-2026-09-02-absolute  (run_id in its envelope: ", section)
+        self.assertEqual(self.receipt(out)["caps_hit"], [])
+
+    # -- B2: the version gate, on every path ---------------------------------------------------
+
+    def plant_foreign_version_canary(self):
+        """A canary in the fixture's foreign-version run's own `labels` (its version string is
+        the fixture's, never retyped here)."""
+        canary = "CANARY-FOREIGN-VERSION-LABEL-5e1a"
+        results = self.world["old_run_dir"] / "results.json"
+        envelope = json.loads(results.read_text())
+        self.assertNotEqual(envelope["v"], self.we().EVAL_VERSION)
+        envelope.update(labels=[canary], variants=[{"id": "vX"}], trials=[], repeats=1)
+        results.write_text(json.dumps(envelope))
+        return canary
+
+    def assert_only_the_gate_note(self, page, canary):
+        section = _section(page, "evals")
+        note = f"run-2026-01-02-oldversion: not a {self.we().EVAL_VERSION} envelope"
+        self.assertNotIn(canary, page)
+        self.assertIn(note, section)
+        self.assertEqual(section.count("run-2026-01-02-oldversion"), section.count(note))
+        self.assertNotIn("run run-2026-01-02-oldversion", section)
+        return section
+
+    def test_a_foreign_version_run_renders_only_the_owners_note_on_the_normal_path(self):
+        canary = self.plant_foreign_version_canary()
+        rc, out, _stdout, stderr = self.build()
+        self.assertEqual(rc, 0, stderr)
+        section = self.assert_only_the_gate_note(self.page(out), canary)
+        self.assertIn("<td>run-2026-01-01-demo</td>", section)  # list_runs ran: the table shows
+        self.assertIn("run run-2026-01-01-demo — repo", section)
+
+    def test_a_foreign_version_run_renders_only_the_owners_note_on_the_fallback_path(self):
+        canary = self.plant_foreign_version_canary()
+        not_an_object = self.world["evals_dir"] / "run-2026-01-04-notadict"
+        not_an_object.mkdir()
+        (not_an_object / "results.json").write_text("[1, 2]")  # makes list_runs raise
+        rc, out, _stdout, stderr = self.build()
+        self.assertEqual(rc, 0, stderr)
+        section = self.assert_only_the_gate_note(self.page(out), canary)
+        self.assertIn("workflow_eval.list_runs raised AttributeError", section)
+        self.assertIn("run run-2026-01-01-demo — repo", section)
+
+    def test_a_run_declaring_another_runs_directory_as_its_id_never_reads_that_directory(self):
+        # The reviewer's normal-path B2 vector: a valid run whose envelope declares the
+        # foreign-version run's DIRECTORY as its run_id. The old code read that directory
+        # through the declared id and carded the foreign envelope.
+        canary = self.plant_foreign_version_canary()
+        steer = self.world["evals_dir"] / "run-2026-01-04-steer"
+        steer.mkdir()
+        (steer / "results.json").write_text(json.dumps(
+            dict(self.good_envelope(), run_id=self.world["old_run_dir"].name)))
+        rc, out, _stdout, stderr = self.build()
+        self.assertEqual(rc, 0, stderr)
+        page = self.page(out)
+        section = _section(page, "evals")
+        self.assertNotIn(canary, page)
+        self.assertNotIn("<p>run run-2026-01-02-oldversion", section)
+        self.assertIn("run run-2026-01-04-steer  (run_id in its envelope: "
+                      "run-2026-01-02-oldversion) — repo", section)
+        self.assertIn(f"run-2026-01-02-oldversion: not a {self.we().EVAL_VERSION} envelope",
+                      section)
+
+    # -- B3: proxy dollars carry the owner's proxy label ---------------------------------------
+
+    def test_proxy_dollars_carry_the_owners_proxy_label_and_no_bare_float_remains(self):
+        we = self.we()
+        run = self.world["evals_dir"] / "run-2026-01-06-proxy"
+        run.mkdir()
+        envelope = dict(self.good_envelope(), run_id=run.name)
+        envelope["trials"] = [{"trial": "t1", "variant": "v1", "task_id": "task1",
+                               "solved": True,
+                               "stages": [{"cost": {"basis": "proxy",
+                                                    "api_equivalent_usd": 3.75}}]}]
+        envelope["totals"] = dict(envelope["totals"],
+                                  proxy={"n": 1, "api_equivalent_usd": 7.25})
+        (run / "results.json").write_text(json.dumps(envelope))
+        rc, out, _stdout, stderr = self.build()
+        self.assertEqual(rc, 0, stderr)
+        section = _section(self.page(out), "evals")
+        beside = f'<span class="label">{db.esc(we.PROXY_LABEL)}</span>'
+        for figure in ("3.75", "7.25"):  # the variant's usage, then the run's totals
+            self.assertIn(f"${figure} {beside}", section)
+            self.assertEqual(section.count(figure), section.count(f"${figure} {beside}"),
+                             figure)
+        self.assertIn("usage by basis — variant v1", section)
+        # no per-basis dict is flattened into a cell any more: no bare float dollar remains.
+        self.assertNotIn("&#x27;usd&#x27;", section)
+        self.assertNotIn("&#x27;api_equivalent_usd&#x27;", section)
+        self.assertNotIn('<span class="label">proxy</span>', section)
+
+    # -- S3: the prefs pre-scan covers exactly the owner's read set ----------------------------
+
+    def test_a_large_policy_journal_and_another_engines_large_file_never_darken_the_reports(self):
+        we = self.we()
+        prefs = self.world["prefs_dir"]
+        line = b'{"kind": "policy.synthetic", "ts": "2026-01-01T00:00:00+00:00"}\n'
+        (prefs / we.POLICY_JOURNAL).write_bytes(line * (600 * 1024 // len(line) + 1))
+        (prefs / "another-engine-prefs.json").write_bytes(b"E" * (600 * 1024))
+        self.assertGreater((prefs / we.POLICY_JOURNAL).stat().st_size, db.MAX_PREFS_FILE_BYTES)
+        rc, out, _stdout, stderr = self.build()
+        self.assertEqual(rc, 0, stderr)
+        section = _section(self.page(out), "evals")
+        self.assertNotIn("policy/approval/activation are not read this build", section)
+        self.assertIn("none in force.", section)                  # policy_report ran
+        self.assertIn("no approvals recorded", section)           # approval_report ran
+        self.assertIn("no activation scopes recorded", section)   # activation_report ran
+        self.assertNotIn("MAX_PREFS_FILE_BYTES", self.receipt(out)["caps_hit"])
+
+    def test_the_owners_read_set_is_read_from_its_public_constants(self):
+        we = self.we()
+        self.assertEqual([name for name, _kind in db._prefs_read_set(we)],
+                         [we.POLICY_FILE, we.POLICY_HISTORY, we.POLICY_PROPOSALS,
+                          we.POLICY_APPROVALS, we.POLICY_ACTIVATION])
+        self.assertNotIn(we.POLICY_JOURNAL, [name for name, _kind in db._prefs_read_set(we)])
+        # the file the owner's guard polices is never spelled in the engine (its attribute is).
+        self.assertNotIn(we.POLICY_FILE, DASHBOARD_PATH.read_text(encoding="utf-8"))
+
+    # -- The unlistable store says so (P2 fix round) ------------------------------------------
+
+    def test_an_unlistable_evals_store_says_it_could_not_be_listed(self):
+        # The store cannot be listed at all: nothing in it was vetted, and no run in it was found
+        # to be linked, oversized or non-regular -- so the page must not say one was.
+        if os.geteuid() == 0:
+            self.skipTest("root can list a mode-0 directory")
+        _chmod_restorable(self, self.world["evals_dir"], 0)
+        rc, out, _stdout, stderr = self.build()
+        self.assertEqual(rc, 0, stderr)
+        section = _section(self.page(out), "evals")
+        self.assertIn("evals store could not be listed (PermissionError)", section)
+        self.assertIn("The evals store could not be listed this build (see the notes above), so "
+                      "nothing in it was read: no runs table, no run&#x27;s card and no manifest "
+                      "count.", section)
+        self.assertNotIn("a linked, oversized or non-regular run was found", section)
+        self.assertNotIn("excluded from this build", section)
+        self.assertNotIn("&lt;store&gt;", section)
+        self.assertNotIn("manifests: no manifests directory", section)
+        self.assertIn("none in force.", section)  # the namespace's prefs reports still render
+
+    # -- No Python None as text (P2 fix round, PLAN R3) ----------------------------------------
+
+    def test_a_none_in_a_variants_coverage_renders_unknown_never_python_none(self):
+        # The fixture's one variant has no reviews, so the owner's `coverage.review_parsed` is
+        # None -- a joined-dict cell that used to print Python's own `None`.
+        variant = self.we().build_card(self.good_envelope())["variants"][0]
+        self.assertIsNone(variant["coverage"]["review_parsed"])
+        rc, out, _stdout, stderr = self.build()
+        self.assertEqual(rc, 0, stderr)
+        page = self.page(out)
+        section = _section(page, "evals")
+        self.assertIn("<td>review_parsed: unknown, tests_oracle: 0.0</td>", section)
+        self.assertNotIn("review_parsed: None", section)
+        # a page-wide tripwire: Python's own None never stands in for an unknown value.
+        self.assertIsNone(re.search(r"\bNone\b", re.sub(r"<[^>]+>", " ", page)))
+
+    def test_a_joined_owner_dict_renders_none_as_unknown_at_every_depth(self):
+        self.assertEqual(
+            db._owner_value_cell({"b": {"c": None, "d": [1, None]}, "a": None, "e": 2}),
+            "a: unknown, b: {c: unknown, d: [1, unknown]}, e: 2")
+        # a dict without a None renders exactly as it did before the fix.
+        self.assertEqual(db._owner_value_cell({"y": True, "x": 0.5}), "x: 0.5, y: True")
 
 
 # ---------------------------------------------------------------------------------------------
@@ -3416,7 +3980,7 @@ class TrainingPanelTests(_WorldCase):
 
     def test_evals_and_training_panel_ids_are_in_the_model(self):
         checkouts = [str(self.world["checkout"])]
-        model = db.build_model(self.world["data_home"], checkouts, {"notes": []}, None)
+        model = db.build_model(self.world["data_home"], checkouts, _opts(self), None)
         ids = [p["id"] for p in model["panels"]]
         self.assertIn("evals", ids)
         self.assertIn("training", ids)
@@ -3430,9 +3994,44 @@ class TrainingPanelTests(_WorldCase):
         self.assertIn("training status unavailable (RuntimeError)", section)
 
     def test_no_checkouts_training_panel_is_a_plain_note(self):
-        model = db.build_model(self.world["data_home"], [], {"notes": []}, None)
+        model = db.build_model(self.world["data_home"], [], _opts(self), None)
         training = next(p for p in model["panels"] if p["id"] == "training")
         self.assertIn("No checkout discovered", training["blocks"][0]["text"])
+
+    def training_rows(self, model):
+        training = next(p for p in model["panels"] if p["id"] == "training")
+        table = next(b for b in training["blocks"] if b.get("type") == "table")
+        return training, table["rows"]
+
+    def test_the_training_store_path_sits_under_the_pages_data_home(self):
+        # P2 fix round S1: the process's own data home (this module's `_DATA_HOME`) differs from
+        # the page's (`--data-home`, the synthetic world's), and the row must follow the PAGE.
+        self.assertNotEqual(os.path.realpath(_DATA_HOME.name),
+                            os.path.realpath(self.world["data_home"]))
+        rc, out, _stdout, stderr = self.build()
+        self.assertEqual(rc, 0, stderr)
+        section = _section(self.page(out), "training")
+        self.assertIn(os.fspath(self.world["data_home"]), section)
+        self.assertNotIn(_DATA_HOME.name, section)
+        checkout = str(self.world["checkout"])
+        _training, rows = self.training_rows(
+            db.build_model(self.world["data_home"], [checkout], _opts(self), None))
+        store_path = Path(rows[0][3])
+        self.assertEqual(store_path.parent.parent, Path(self.world["data_home"]))
+        self.assertEqual(store_path.parent.name, rd.project_namespace(checkout))
+        self.assertEqual(rows[0][4], "env")
+
+    def test_a_data_home_the_build_resolved_itself_keeps_the_owners_own_resolution(self):
+        # S1's other half: with no explicit data home the page's IS the process's, and the
+        # owner is called with no `env` at all -- its own resolution stands untouched.
+        checkout = str(self.world["checkout"])
+        opts = _opts(self, data_home_explicit=False)
+        with mock.patch.object(db._mod("training_data"), "status",
+                               wraps=db._mod("training_data").status) as status:
+            training, _rows = self.training_rows(
+                db.build_model(self.world["data_home"], [checkout], opts, None))
+        status.assert_called_once_with(repo_root=checkout, env=None)
+        self.assertFalse(any("page's data home" in note for note in training["notes"]))
 
 
 if __name__ == "__main__":

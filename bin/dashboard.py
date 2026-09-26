@@ -107,13 +107,19 @@ MAX_LEDGER_BYTES = 8 * 1024 * 1024
 # Kits parsed per kits dir: a busy checkout holds a few dozen.
 MAX_KITS_PER_DIR = 100
 
-# Evaluation runs rendered in full; the rest are counted, not drawn.
+# Evaluation-run CARDS rendered per evals store, newest run directory first. It bounds the cards
+# this page reads and draws, not what the owner lists: when `workflow_eval.list_runs` is called it
+# still reads every run's results.json (each one pre-checked against MAX_EVAL_RESULTS_BYTES) for
+# the runs table.
 MAX_EVAL_RUNS_RENDERED = 10
 
 # Journal days rendered: two months of daily digests is one screen of rows.
 MAX_JOURNAL_DAYS = 60
 
-# Telemetry envelopes listed per source: about four months of daily captures.
+# Telemetry envelopes KEPT per source (the latest by date) for this page's rows, deep-dive and
+# sparkline: about four months of daily captures. It bounds what is kept and rendered, not what
+# the owner reads: `read_source_snapshots` reads every envelope file of a source (each one
+# pre-checked against MAX_ENVELOPE_BYTES) before the cut.
 MAX_TELEMETRY_ENVELOPES_PER_SOURCE = 120
 
 # T5 retry R4: `kit_contract.parse_tasks` reads a whole TASKS.md; the largest real one in this
@@ -143,14 +149,16 @@ MAX_EVAL_RESULTS_BYTES = 4 * 1024 * 1024
 # T7: `policy_report`/`approval_report`/`activation_report` each read one or more small
 # structured records (an applied policy, one proposal, one approval, one activation
 # generation) whole. 512 KiB matches MAX_ENVELOPE_BYTES's own reasoning: generous headroom for
-# any real one, a firm refusal of a multi-MB payload.
+# any real one, a firm refusal of a multi-MB payload. P2 fix round S3: it is applied only inside
+# the owner's own read set (`_prefs_read_set`), never to another engine's file in `prefs/` or to
+# the owner's append-only journal, which none of the three reports reads.
 MAX_PREFS_FILE_BYTES = 512 * 1024
 
-# T7: the bounded, no-follow walk of one namespace's prefs directory (`_prefs_prescan`) that
-# runs before any of the three report functions above -- a real prefs directory (one policy
-# file plus a handful of proposals/approvals/activation generations) holds well under 100
-# entries; 500 catches a hostile or corrupted tree without letting the pre-scan itself run
-# unbounded.
+# T7: the bounded, no-follow walk of one namespace's prefs read set (`_prefs_prescan`) that runs
+# before any of the three report functions above -- a real read set (one policy file plus a
+# handful of history versions, proposals, approvals and activation generations) holds well
+# under 100 entries; 500 catches a hostile or corrupted tree without letting the pre-scan
+# itself run unbounded.
 MAX_PREFS_ENTRIES_SCANNED = 500
 
 # A local git read takes milliseconds; 20 s (attempt_ledger's git probe bound) stops a hung one.
@@ -333,6 +341,25 @@ def _as_list(value):
     if isinstance(value, (str, bytes, dict)) or not hasattr(value, "__iter__"):
         return [value]
     return list(value)
+
+
+def _leaf_kind(mode):
+    """What an `lstat` mode names, for a note about a leaf that is not a regular file (P2 fix
+    round S5). The leaves this engine pre-checks before it -- or an owner it calls -- opens
+    them whole (a ledger's events file, TASKS.md, a telemetry envelope, a journal digest, an
+    evaluation run's results.json, the prefs read set) are checked with `os.lstat` and
+    `stat.S_ISREG`: a FIFO there would block the open with no writer and hang the build, and a
+    link would hand back a file from outside the store. Such a leaf is excluded with a note
+    naming its kind, and never opened."""
+    if stat.S_ISLNK(mode):
+        return "a symlink"
+    if stat.S_ISDIR(mode):
+        return "a directory"
+    if stat.S_ISFIFO(mode):
+        return "a FIFO"
+    if stat.S_ISCHR(mode) or stat.S_ISBLK(mode):
+        return "a device"
+    return "a special file"
 
 
 # ---------------------------------------------------------------------------------------------
@@ -895,7 +922,9 @@ def build_model(data_home, checkouts, opts, caps):
     """The JSON-serializable model every rendering reads -> dict.
 
     `opts` carries `notes` (discovery and config notes gathered before the build), and what
-    later panels consume: `projects_dir`, `no_transcripts`, `git`, and an optional `now`.
+    later panels consume: `projects_dir`, `no_transcripts`, `git`, `data_home_explicit` (absent
+    means True: a data home handed to this function is the caller's choice; `assemble_build`
+    sets it False when it resolved the process's own), and an optional `now`.
     `caps` overrides `default_caps()` key by key. The model's `notes` are the page-wide list:
     the global notes, then every panel's own (the classification's ride on the namespaces
     panel), each prefixed with its panel id -- what the bounds panel and build.json show, and
@@ -1122,7 +1151,7 @@ def read_namespaces(ctx):
             ctx["caps"], "MAX_NAMESPACES_READ",
             f"{len(combined)} namespaces are mapped or unmapped ({len(mapped)} mapped, "
             f"{len(unmapped)} unmapped); only the first {limit} (mapped first, then unmapped by "
-            f"name) were read for ledger facts"))
+            f"name) were read in depth"))
     return combined[:limit], notes
 
 
@@ -1156,12 +1185,16 @@ def _history_targets(classes):
     return targets
 
 
-def _kits_dir_oversized(kits_dir, store, caps, kc):
-    """The first kit under `kits_dir` whose ledger file exceeds MAX_LEDGER_BYTES ->
-    `(kit_name, size)`, or None. Checked before `attempt_history.join_kits` is ever called: that
-    owner hands every kit's ledger to `AttemptLedger.events()` in full and has no per-kit size
+def _kits_dir_unjoinable(kits_dir, store, caps, kc):
+    """The first kit under `kits_dir` whose ledger file this build must not hand to the owner ->
+    `(kit_name, size, None)` when it exceeds MAX_LEDGER_BYTES, `(kit_name, None, kind)` when it
+    is not a regular file (`_leaf_kind`: a FIFO would hang `AttemptLedger.events()`'s open, P2
+    fix round S5), or None. Checked before `attempt_history.join_kits` is ever called: that owner
+    hands every kit's ledger to `AttemptLedger.events()` in full and has no per-kit size or type
     guard of its own (P1 fix round B3). `kit_contract.open_ledger`'s constructor only validates
-    the name and composes a path -- no file is opened by this check, only stat'd."""
+    the name and composes a path -- no file is opened by this check, only `lstat`'d. The kit
+    dirs are listed the way `join_kits` lists them (a linked kit dir included), so every ledger
+    the owner would read is checked."""
     limit = cap_value(caps, "MAX_LEDGER_BYTES")
     try:
         kit_dirs = sorted((p for p in Path(kits_dir).iterdir() if p.is_dir()),
@@ -1173,11 +1206,13 @@ def _kits_dir_oversized(kits_dir, store, caps, kc):
             continue
         try:
             ledger = kc.open_ledger(kit_dir, store=store)
-            size = os.stat(ledger.events_path).st_size
+            st = os.lstat(ledger.events_path)
         except Exception:  # noqa: BLE001 -- an unopenable ledger is join_kits's own note to make
             continue
-        if size > limit:
-            return kit_dir.name, size
+        if not stat.S_ISREG(st.st_mode):
+            return kit_dir.name, None, _leaf_kind(st.st_mode)
+        if st.st_size > limit:
+            return kit_dir.name, st.st_size, None
     return None
 
 
@@ -1186,7 +1221,8 @@ def _harness_tier_rows(by_harness):
     records, results_text)]`, sorted for a deterministic render. `results_text` joins the tier's
     own `results` dict as `result: n` pairs (TASKS.md item 2) as plain text: every value in it is
     a count `summarize` produced by incrementing, never None or NaN, so no typed cell is needed
-    to keep it honest."""
+    to keep it honest. A tier dict that carries no `records` count gives None, which renders
+    `unknown` and draws no bar -- never a 0 the owner did not emit (P2 fix round S6, PLAN R3)."""
     rows = []
     for harness in sorted(by_harness or {}):
         tiers = (by_harness[harness] or {}).get("tiers") or {}
@@ -1194,20 +1230,22 @@ def _harness_tier_rows(by_harness):
             t = tiers[tier] or {}
             results = t.get("results") or {}
             text = ", ".join(f"{result}: {n}" for result, n in sorted(results.items()))
-            rows.append((harness, tier, t.get("records", 0), text or "—"))
+            rows.append((harness, tier, t.get("records"), text or "—"))
     return rows
 
 
 def _cost_rows(by_basis, bases):
     """One row per basis in `attempt_history.COST_BASES` (read the tuple, never retyped) ->
     typed cells only: `n`, then the owner's own `usd`/`credits` through `fmt_usd(value, basis)` /
-    `fmt_credits`. Every basis in the tuple gets a row whether or not any record carried it -- a
-    basis with nothing recorded is `n=0`, `usd`/`credits` None, which renders `unknown`, never a
-    zero standing in for "not observed" (PLAN R3)."""
+    `fmt_credits`. Every basis in the tuple gets a row whether or not any record carried it. The
+    owner itself emits every basis with `n: 0` and `usd`/`credits` None when nothing carried it,
+    and those render as the owner's own 0 and `unknown`; a basis the owner's dict does not carry
+    at all renders `unknown` in every cell, `n` included -- never a zero the owner did not emit
+    standing in for "not observed" (P2 fix round S6, PLAN R3)."""
     rows = []
     for basis in bases:
         t = (by_basis or {}).get(basis) or {}
-        rows.append([basis, {"fmt": "count", "value": t.get("n", 0)},
+        rows.append([basis, {"fmt": "count", "value": t.get("n")},
                     {"fmt": "usd", "value": t.get("usd"), "basis": basis},
                     {"fmt": "credits", "value": t.get("credits")}])
     return rows
@@ -1215,11 +1253,11 @@ def _cost_rows(by_basis, bases):
 
 def _duration_rows(by_basis, bases):
     """One row per basis in `attempt_history.DURATION_BASES` (read the tuple, never retyped) ->
-    typed cells only, on the same terms as `_cost_rows`."""
+    typed cells only, on the same terms as `_cost_rows` (a missing `n` is `unknown`, never 0)."""
     rows = []
     for basis in bases:
         t = (by_basis or {}).get(basis) or {}
-        rows.append([basis, {"fmt": "count", "value": t.get("n", 0)},
+        rows.append([basis, {"fmt": "count", "value": t.get("n")},
                     {"fmt": "seconds", "value": t.get("seconds")}])
     return rows
 
@@ -1230,7 +1268,8 @@ def _history_card_blocks(card, ah):
     renders on its own row, and the owner's own never-summed note is printed beneath its table."""
     blocks = []
     by_source = card.get("by_source") or {}
-    parts = ["records: ", {"fmt": "count", "value": card.get("records", 0)}, "  by source: "]
+    # P2 fix round S6: a card without a `records` count renders `unknown`, never a 0 (PLAN R3).
+    parts = ["records: ", {"fmt": "count", "value": card.get("records")}, "  by source: "]
     for source in sorted(by_source):
         parts += [source, ": ", {"fmt": "count", "value": by_source[source]}, "  "]
     blocks.append({"type": "p", "parts": parts})
@@ -1317,14 +1356,25 @@ def _history_section_blocks(ctx, ah, al, kc, notes):
     for target in targets:
         label, kits_dir, namespace = target["label"], target["kits_dir"], target["namespace"]
         blocks.append({"type": "p", "text": f"History for {label}:"})
+        # P2 fix round S7: `join_kits` lists kit dirs with `Path.is_dir()`, which follows a link,
+        # so a symlinked kit dir is joined -- named here exactly as the scorecard panel names it.
+        symlinked = _symlinked_kit_names(kits_dir)
+        if symlinked:
+            notes.append(f"{label}: symlinked kit dir(s) {', '.join(symlinked)} — "
+                         f"attempt_history.join_kits follows these, unlike the kits-in-flight "
+                         f"panel")
         store = Path(data_home) / namespace / al.STORE
-        oversized = _kits_dir_oversized(kits_dir, store, ctx["caps"], kc)
-        if oversized is not None:
-            kit_name, size = oversized
-            notes.append(cap_note(
-                ctx["caps"], "MAX_LEDGER_BYTES",
-                f"history for {label} was not joined this build — kit {kit_name}'s ledger is "
-                f"{size} bytes"))
+        unjoinable = _kits_dir_unjoinable(kits_dir, store, ctx["caps"], kc)
+        if unjoinable is not None:
+            kit_name, size, kind = unjoinable
+            if kind is not None:
+                notes.append(f"history for {label} was not joined this build — kit {kit_name}'s "
+                             f"ledger file is {kind}, not a regular file, and was never opened")
+            else:
+                notes.append(cap_note(
+                    ctx["caps"], "MAX_LEDGER_BYTES",
+                    f"history for {label} was not joined this build — kit {kit_name}'s ledger "
+                    f"is {size} bytes"))
             blocks.append({"type": "p", "text": "not joined this build — see the notes above"})
             continue
         try:
@@ -1425,13 +1475,19 @@ def _ledger_fact_rows(data_home, ns_row, caps, al, notes):
             continue
         events_path = attempts_root / ledger_name / al.EVENTS_FILE
         try:
-            size = os.stat(events_path).st_size
+            st = os.lstat(events_path)
         except FileNotFoundError:
             continue
         except OSError as exc:
             notes.append(f"ledger facts for {ns_name}/{ledger_name}: could not be stat'd "
                          f"({type(exc).__name__})")
             continue
+        if not stat.S_ISREG(st.st_mode):
+            # P2 fix round S5: a FIFO here would block `AttemptLedger.events()`'s open forever.
+            notes.append(f"ledger facts for {ns_name}/{ledger_name}: its events file is "
+                         f"{_leaf_kind(st.st_mode)}, not a regular file — skipped, never read")
+            continue
+        size = st.st_size
         if size > limit:
             notes.append(cap_note(
                 caps, "MAX_LEDGER_BYTES",
@@ -1572,15 +1628,29 @@ def _scorecard_kits_dirs(checkouts):
 _NO_KITS_DIRS_TEXT = "no kits directories found in the discovered checkouts"
 
 
+def _joined_text(value):
+    """One value inside a joined owner dict, as text (P2 fix round, PLAN R3): `None` is the word
+    `unknown`, never Python's own `None`; a nested dict or list is joined the same way, so a
+    `None` inside it is `unknown` too; anything else is its own text."""
+    if value is None:
+        return "unknown"
+    if isinstance(value, dict):
+        return "{" + ", ".join(f"{k}: {_joined_text(v)}" for k, v in sorted(value.items())) + "}"
+    if isinstance(value, (list, tuple)):
+        return "[" + ", ".join(_joined_text(item) for item in value) + "]"
+    return str(value)
+
+
 def _owner_value_cell(value):
     """One owner-emitted field value as a table cell, generically: a nested dict of small
-    counts (a tier's `reroutes`, a role's `results`/`by_kind`/`by_kit`) becomes joined
-    `key: n` text; a bool or a plain int becomes a typed count cell; anything else (a rate or
+    counts (a tier's `reroutes`, a role's `results`/`by_kind`/`by_kit`, a variant's
+    `coverage`) becomes joined `key: value` text, a `None` inside it the word `unknown`
+    (`_joined_text`); a bool or a plain int becomes a typed count cell; anything else (a rate or
     ratio float, `None`, a string) is a plain cell -- `esc` renders it verbatim, never reshaped
     by `fmt_count`'s float formatting, so a whole-number rate keeps its own decimal shape
     rather than reading like a bare count (PLAN D2: never re-derive a rate)."""
     if isinstance(value, dict):
-        return ", ".join(f"{k}: {v}" for k, v in sorted(value.items())) or "—"
+        return ", ".join(f"{k}: {_joined_text(v)}" for k, v in sorted(value.items())) or "—"
     if isinstance(value, bool):
         return value
     if isinstance(value, int):
@@ -1930,16 +2000,29 @@ def build_kits_panel(ctx):
             kit_dirs = kit_dirs[:limit]
         for kit_dir in kit_dirs:
             tasks_md = kit_dir / "TASKS.md"
-            if not tasks_md.is_file():
-                continue
-            # R4: size-gated by `os.stat` alone, before any read -- an over-cap TASKS.md is
-            # skipped and never opened, the same discipline T4 applies to a ledger file.
+            # R4: size-gated by `os.lstat` alone, before any read -- an over-cap TASKS.md is
+            # skipped and never opened, the same discipline T4 applies to a ledger file. P2 fix
+            # round S7/S5: `lstat`, never `stat`, so a symlinked TASKS.md leaf is refused rather
+            # than followed out of the checkout, and a FIFO or other special file there is
+            # skipped rather than opened (its open would block the build).
             try:
-                size = os.stat(tasks_md).st_size
+                st = os.lstat(tasks_md)
+            except FileNotFoundError:
+                continue
             except OSError as exc:
                 notes.append(f"kits in flight for {label}/{kit_dir.name}: TASKS.md could not "
                              f"be stat'd ({type(exc).__name__})")
                 continue
+            if stat.S_ISLNK(st.st_mode):
+                notes.append(f"kits in flight for {label}/{kit_dir.name}: TASKS.md is a "
+                             f"symlink — not followed, never read")
+                continue
+            if not stat.S_ISREG(st.st_mode):
+                notes.append(f"kits in flight for {label}/{kit_dir.name}: TASKS.md is "
+                             f"{_leaf_kind(st.st_mode)}, not a regular file — skipped, never "
+                             f"read")
+                continue
+            size = st.st_size
             if size > cap_value(ctx["caps"], "MAX_TASKS_MD_BYTES"):
                 notes.append(cap_note(
                     ctx["caps"], "MAX_TASKS_MD_BYTES",
@@ -2070,15 +2153,17 @@ def _unmapped_store_note(classes, store_name, label):
     panel's store -- they are not read, and config.json's `checkouts` would map them."""
     entry = _unmapped_store_count(classes, store_name)
     count, qualifier = entry.get("count"), entry.get("qualifier")
+    # "an evals store", "a telemetry store": the article follows the store name's first letter.
+    store = f"{'an' if str(label)[:1].lower() in ('a', 'e', 'i', 'o', 'u') else 'a'} {label} store"
     if qualifier == "exact" and count == 0:
-        lead = f"No unmapped namespace shows a {label} store in its one shallow listing."
+        lead = f"No unmapped namespace shows {store} in its one shallow listing."
     elif qualifier == "exact":
-        lead = f"{count} unmapped namespace(s) show a {label} store in their one shallow listing."
+        lead = f"{count} unmapped namespace(s) show {store} in their one shallow listing."
     elif qualifier == "lower_bound":
-        lead = (f"At least {count} unmapped namespace(s) show a {label} store in their one "
-               f"shallow listing.")
+        lead = (f"At least {count} unmapped namespace(s) show {store} in their one shallow "
+               f"listing.")
     else:
-        lead = f"An unknown number of unmapped namespaces may show a {label} store."
+        lead = f"An unknown number of unmapped namespaces may show {store}."
     return (f"{lead} They are not read by this panel (PLAN D4); add the checkout's path to this "
            f"dashboard's config.json checkouts list to map it.")
 
@@ -2154,13 +2239,14 @@ def _envelope_list_field(envelope, field, source, label, notes):
 def _telemetry_prescan(store_dir, caps, notes, label):
     """A no-follow shallow scan of one telemetry store's own layout, run BEFORE any owner call
     (T6 retry, red-team B/C) -> the source names that are safe to read: a real, unlinked
-    directory whose own envelope files (`*.json`) are all real, unlinked files no larger than
-    MAX_ENVELOPE_BYTES. `read_source_snapshots`/`build_list_summary` themselves follow a link
-    and read a whole envelope file with no size check, so a linked source dir, or a source
-    holding even one linked or oversized envelope file, is excluded HERE, before the owner ever
-    opens it. The owner cannot be told to skip one file, so the WHOLE source is excluded: no
-    row, no deep-dive, no sparkline point. Every exclusion is a note naming the source (and, for
-    a file, the file and its size)."""
+    directory whose own envelope files (`*.json`) are all regular files (P2 fix round S5: not a
+    link, a FIFO, a directory or any other special file) no larger than MAX_ENVELOPE_BYTES.
+    `read_source_snapshots`/`build_list_summary` themselves follow a link, open whatever a name
+    holds and read a whole envelope file with no size check, so a linked source dir, or a source
+    holding even one linked, non-regular or oversized envelope file, is excluded HERE, before
+    the owner ever opens it. The owner cannot be told to skip one file, so the WHOLE source is
+    excluded: no row, no deep-dive, no sparkline point. Every exclusion is a note naming the
+    source (and, for a file, the file and its kind or size)."""
     try:
         entries = sorted(store_dir.iterdir(), key=lambda p: p.name)
     except OSError as exc:
@@ -2190,12 +2276,20 @@ def _telemetry_prescan(store_dir, caps, notes, label):
                 excluded = True
                 break
             try:
-                size = f.lstat().st_size
+                st = f.lstat()
             except OSError as exc:
                 notes.append(f"{label}: telemetry source {name!r}'s {f.name} could not be "
                              f"stat'd ({type(exc).__name__})")
                 excluded = True
                 break
+            if not stat.S_ISREG(st.st_mode):
+                # P2 fix round S5: the owner's `read_text()` on a FIFO blocks with no writer.
+                notes.append(f"{label}: telemetry source {name!r}'s {f.name} is "
+                             f"{_leaf_kind(st.st_mode)}, not a regular file — never opened; "
+                             f"the whole source is not rendered")
+                excluded = True
+                break
+            size = st.st_size
             if size > limit:
                 notes.append(cap_note(
                     caps, "MAX_ENVELOPE_BYTES",
@@ -2474,47 +2568,57 @@ def _journal_day_candidates(journal_dir, caps, notes, label):
     return days
 
 
-def _read_journal_digest(sp, jc, journal_dir, day, caps, notes):
-    """One day's `digest.json`, size-gated by `os.lstat` against MAX_DIGEST_BYTES BEFORE any
-    read (T6 retry, red-team C: `journal_collect.py` itself reads a whole `digest.json`) and
+def _read_journal_digest(sp, jc, journal_dir, day, caps, notes, label):
+    """One day's `digest.json`, gated by `os.lstat` BEFORE any read -- a regular file (P2 fix
+    round S5: a FIFO would block the open below with no writer, so a link, a FIFO or any other
+    special file is skipped with a note and never opened) no larger than MAX_DIGEST_BYTES (T6
+    retry, red-team C: `journal_collect.py` itself reads a whole `digest.json`) -- and
     version-gated on `journal_collect.SCHEMA_VERSION` (read from the module, never hardcoded) ->
-    the decoded dict, or None with a note naming why (PLAN D3's thin-adapter rule: load,
-    version-check, select fields -- nothing else). `lstat` (never `stat`) so a symlinked leaf's
-    own tiny size never lets an oversized LINKED file past this check -- it is `safe_paths`'s
-    `O_NOFOLLOW` read below that actually refuses a linked leaf, unchanged from before this
-    retry."""
+    the decoded dict, or None with a note naming the namespace label, the day and why (PLAN D3's
+    thin-adapter rule: load, version-check, select fields -- nothing else). `lstat`, never
+    `stat`, so a symlinked leaf is seen as the link it is; `safe_paths`' `O_NOFOLLOW` read below
+    still refuses one that appears after this check."""
     try:
-        size = os.lstat(Path(journal_dir) / day / "digest.json").st_size
+        st = os.lstat(Path(journal_dir) / day / "digest.json")
     except FileNotFoundError:
-        notes.append(f"{day}: no digest.json found")
+        notes.append(f"{label}: {day}: no digest.json found")
         return None
     except OSError as exc:
-        notes.append(f"{day}: could not be stat'd ({type(exc).__name__})")
+        notes.append(f"{label}: {day}: could not be stat'd ({type(exc).__name__})")
         return None
+    if stat.S_ISLNK(st.st_mode):
+        notes.append(f"{label}: {day}: digest.json is a symlink — not followed, never read")
+        return None
+    if not stat.S_ISREG(st.st_mode):
+        notes.append(f"{label}: {day}: digest.json is {_leaf_kind(st.st_mode)}, not a regular "
+                     f"file — skipped, never read")
+        return None
+    size = st.st_size
     limit = cap_value(caps, "MAX_DIGEST_BYTES")
     if size > limit:
         notes.append(cap_note(caps, "MAX_DIGEST_BYTES",
-                              f"{day}'s digest.json is {size} bytes — skipped, never read"))
+                              f"{label}: {day}'s digest.json is {size} bytes — skipped, never "
+                              f"read"))
         return None
     try:
         raw = sp.confined_read_bytes(journal_dir, f"{day}/digest.json", what="journal digest",
                                      missing_ok=True)
     except (sp.SafePathError, OSError) as exc:
-        notes.append(f"{day}: could not be read ({type(exc).__name__})")
+        notes.append(f"{label}: {day}: could not be read ({type(exc).__name__})")
         return None
     if raw is None:
-        notes.append(f"{day}: no digest.json found")
+        notes.append(f"{label}: {day}: no digest.json found")
         return None
     try:
         data = json.loads(raw.decode("utf-8"))
     except (UnicodeDecodeError, ValueError):
-        notes.append(f"{day}: undecodable, not rendered")
+        notes.append(f"{label}: {day}: undecodable, not rendered")
         return None
     if not isinstance(data, dict):
-        notes.append(f"{day}: undecodable, not rendered")
+        notes.append(f"{label}: {day}: undecodable, not rendered")
         return None
     if data.get("schema_version") != jc.SCHEMA_VERSION:
-        notes.append(f"{day}: unknown digest version, not rendered")
+        notes.append(f"{label}: {day}: unknown digest version, not rendered")
         return None
     return data
 
@@ -2599,7 +2703,7 @@ def _journal_namespace_section(ctx, sp, jc, ns_row, caps, notes):
     rendered = []
     for day in days:
         try:
-            digest = _read_journal_digest(sp, jc, journal_dir, day, caps, notes)
+            digest = _read_journal_digest(sp, jc, journal_dir, day, caps, notes, label)
         except Exception as exc:  # noqa: BLE001 -- this day's read only, never another day's
             notes.append(f"{label}: {day}: {type(exc).__name__}")
             digest = None
@@ -2672,78 +2776,102 @@ def build_journal_panel(ctx):
 # verbatim (`NOT_A_RANKING`, a below-floor label, `MECHANICS_NOT_PERFORMANCE_LABEL`-shaped
 # activation/approval labels). The link/size contract carried forward from T6 ("a link is noted
 # and its content is never rendered") is applied at TWO different grains because the owners
-# themselves differ: `workflow_eval.list_runs`/`read_envelope` read one independent RUN at a
-# time, so a linked or oversized run's own name is excluded and its siblings still render; the
-# three prefs report functions each read several files that make up ONE interrelated policy
-# record with no per-file name this dashboard may spell (`workflow_eval.POLICY_FILE` is the
-# trap `tests/test_workflow_eval.py::test_nothing_in_the_repository_reads_the_policy_file_
-# automatically` polices), so a link or an oversized file anywhere under one namespace's prefs
-# directory excludes all three reports for that namespace, never a single file within it.
+# themselves differ. EVALS, per run (P2 fix round B1/S4): every card is read by a directory name
+# the no-follow pre-scan vetted -- never by a `run_id` an envelope declares, which
+# `workflow_eval.read_envelope` would join onto the store path unconfined -- so a linked,
+# oversized or non-regular run is excluded by name and its siblings' cards still render; only
+# `list_runs` (the runs table) is skipped whole while any run is excluded, because it reads
+# every run. Every card also passes the version gate (B2). PREFS, per namespace: the three
+# report functions each read several files that make up ONE interrelated policy record, so a
+# link, a special file or an oversized file anywhere in the OWNER'S READ SET (`_prefs_read_set`,
+# read from its own public constants -- never another engine's file in `prefs/`, never its
+# append-only journal, S3) excludes all three reports for that namespace. The policy file's
+# name is only ever the attribute `workflow_eval.POLICY_FILE`: its value is the trap
+# `tests/test_workflow_eval.py::test_nothing_in_the_repository_reads_the_policy_file_
+# automatically` polices in every `bin/*.py`.
 
 EVALS_PANEL = "evals"
 TRAINING_PANEL = "training"
 
 
 def _evals_prescan(we_mod, store_dir, caps, notes, label):
-    """A no-follow, stat-before-read scan of one evals store's own run directories and their
-    `results.json` files -> `(safe_names, [(run_name, reason)])`. `workflow_eval.list_runs`
-    reads every run's `results.json` whole, in one pass, with no per-run size check and no
-    `is_symlink` check of its own -- and its returned row carries no field that reliably maps
-    back to the directory a bad run came from (a linked file could declare an arbitrary
-    `run_id`), so a row cannot be safely dropped by identity after the fact. When this
-    pre-scan finds ANY bad run, the caller does not call `list_runs` on this store at all this
-    build (T4's own B3 precedent for an owner that reads N things whole in one uncontrollable
-    pass: skip the whole call, name what triggered it) -- MANIFEST_DIR is skipped here exactly
-    as the owner itself skips it. `safe_names` is every OTHER real, unlinked directory name
-    (whether or not it turns out to hold a `results.json`), read by T7 retry R2 as the
-    candidate set for `read_envelope`/`build_card`'s own per-run fallback when `list_runs`
-    itself raises for a reason this pre-scan does not check (a `results.json` that decodes but
-    is not a JSON object)."""
+    """A no-follow, `lstat`-before-read scan of one evals store's own entries and their
+    `results.json` files -> `(vetted, excluded, not_runs)`:
+
+    - `vetted`: names of real, unlinked run directories directly under the store whose
+      `results.json` is a regular file (never a link, a FIFO or any other special file -- P2 fix
+      round S5) no larger than MAX_EVAL_RESULTS_BYTES. These are the ONLY identifiers a card is
+      ever read by (B1): `workflow_eval.read_envelope(store_dir, run_id)` joins its `run_id`
+      onto the store path with no confinement, and `list_runs` reports the `run_id` an envelope
+      DECLARES, so an in-store run declaring an absolute or `../` id would otherwise have a file
+      outside the data home read, past this very size cap.
+    - `excluded`: `[(name, reason)]` for a symlinked run directory, a `results.json` that is a
+      link, not a regular file, over the cap, or cannot be `lstat`'d. `list_runs` reads EVERY
+      run whole, in one pass, with no per-run size, type or link check of its own, so while any
+      run is excluded the caller does not call it at all (T4's B3 precedent for an owner that
+      reads N things whole in one uncontrollable pass: skip the whole call, name what triggered
+      it) -- the vetted runs' cards still render, each through its own read (S4).
+    - `not_runs`: entries that are not a run (not a directory, or a directory holding no
+      `results.json`) -- the owner's `list_runs` notes these itself as "not an evaluation run";
+      the caller repeats that note in the owner's words only when `list_runs` was not called or
+      raised.
+
+    A store that cannot be listed at all is its own case: a note naming the error type, and
+    `(None, [], [])` -- nothing in it can be vetted, and no run in it was found to be bad (P2 fix
+    round: the caller says the store could not be listed, never that a run was excluded).
+
+    MANIFEST_DIR is skipped here exactly as the owner itself skips it."""
     limit = cap_value(caps, "MAX_EVAL_RESULTS_BYTES")
-    safe, bad = [], []
+    vetted, excluded, not_runs = [], [], []
     try:
         entries = sorted(Path(store_dir).iterdir(), key=lambda p: p.name)
     except OSError as exc:
         notes.append(f"{label}: evals store could not be listed ({type(exc).__name__})")
-        return [], [("<store>", f"could not be listed ({type(exc).__name__})")]
+        return None, [], []
     for entry in entries:
-        if entry.name == we_mod.MANIFEST_DIR:
+        name = entry.name
+        if name == we_mod.MANIFEST_DIR:
             continue
         if entry.is_symlink():
-            bad.append((entry.name, "symlinked run directory"))
+            excluded.append((name, "symlinked run directory"))
             continue
         if not _is_real_dir(entry):
-            continue  # list_runs itself notes "not an evaluation run"; nothing to pre-scan
-        results = entry / "results.json"
-        if results.is_symlink():
-            bad.append((entry.name, "symlinked results.json"))
+            not_runs.append(name)
             continue
         try:
-            size = results.lstat().st_size
-        except OSError:
-            safe.append(entry.name)  # no results.json here; read_envelope notes it naturally
+            st = os.lstat(entry / "results.json")
+        except FileNotFoundError:
+            not_runs.append(name)
             continue
-        if size > limit:
+        except OSError as exc:
+            excluded.append((name, f"results.json could not be stat'd ({type(exc).__name__})"))
+            continue
+        if stat.S_ISLNK(st.st_mode):
+            excluded.append((name, "symlinked results.json"))
+            continue
+        if not stat.S_ISREG(st.st_mode):
+            excluded.append((name, f"results.json is {_leaf_kind(st.st_mode)}, not a regular "
+                                   f"file — never opened"))
+            continue
+        if st.st_size > limit:
             # T7 retry V1: through `cap_note` like every other bound, so `caps_report`
             # recognises the hit (its own "cap NAME (" prefix match) and `caps_hit`/the bounds
             # row/`build.json` all say so -- plain note text does not register as a hit.
             notes.append(cap_note(
                 caps, "MAX_EVAL_RESULTS_BYTES",
-                f"{label}: evals run {entry.name!r}'s results.json is {size} bytes — the "
+                f"{label}: evals run {name!r}'s results.json is {st.st_size} bytes — the "
                 f"whole run is excluded from this build, never read"))
-            bad.append((entry.name, f"results.json is {size} bytes (over "
-                                    f"MAX_EVAL_RESULTS_BYTES)"))
+            excluded.append((name, f"results.json is {st.st_size} bytes (over "
+                                   f"MAX_EVAL_RESULTS_BYTES)"))
             continue
-        safe.append(entry.name)
-    return safe, bad
+        vetted.append(name)
+    return vetted, excluded, not_runs
 
 
 def _eval_ordered_run_ids(run_ids, caps, notes, label, by):
     """The latest MAX_EVAL_RUNS_RENDERED run identifiers, newest first, with a cap note when
-    cut -- shared by the normal path (`list_runs` succeeded, identifiers are the owner's own
-    `run_id` field, `by="run id"`) and T7 retry R2's fallback path (`list_runs` raised,
-    identifiers are the pre-scan's own safe directory names, `by="directory name"`), which
-    differ only in WHERE the identifier came from."""
+    cut. P2 fix round B1: every caller passes the pre-scan's VETTED DIRECTORY NAMES
+    (`by="directory name"`), never an identifier an envelope declares."""
     ordered = sorted((str(r) for r in run_ids), reverse=True)
     limit = cap_value(caps, "MAX_EVAL_RUNS_RENDERED")
     if len(ordered) > limit:
@@ -2754,32 +2882,57 @@ def _eval_ordered_run_ids(run_ids, caps, notes, label, by):
     return ordered
 
 
-def _eval_run_card_blocks(we_mod, store_dir, run_id, label, notes):
-    """One run's card, from the owner's own `read_envelope` + `build_card`, or a note naming
-    the run and the exception type -- never propagating (T7 retry R1: the brief's own
-    `(OSError, ValueError, KeyError, TypeError)` tuple is too narrow, since a malformed field
+def _eval_run_card_blocks(we_mod, store_dir, name, label, notes):
+    """One run's card, read by its VETTED DIRECTORY NAME (B1) through the owner's own
+    `read_envelope` + `build_card`, or a note -- never propagating (T7 retry R1: a malformed field
     a trial carries -- `oracles` not a dict -- can make `_variant_summary` raise an
     `AttributeError` `build_card` never catches; this guard is UNCONDITIONAL so one run's
-    failure never reaches the per-namespace catch and erases every other run's card)."""
+    failure never reaches the per-namespace catch and erases every other run's card).
+
+    P2 fix round B2, the version gate every card passes, on every path: an envelope that is not
+    a JSON object, or whose `v` is not `workflow_eval.EVAL_VERSION` (read from the module), gets
+    ONLY a note in the owner's own `list_runs` wording, `"<name>: not a <EVAL_VERSION>
+    envelope"`, and no card -- `build_card` would otherwise fill a foreign envelope with its own
+    defaults and render its `labels`. On the normal path that note is the same string the
+    owner's `list_runs` already gave, so the panel's de-duplication shows it once."""
     try:
-        envelope = we_mod.read_envelope(store_dir, run_id)
+        envelope = we_mod.read_envelope(store_dir, name)
+    except Exception as exc:  # noqa: BLE001 -- this run's card only, never another's
+        notes.append(f"{label}: run {name!r} card unavailable ({type(exc).__name__})")
+        return [{"type": "p", "text": f"run {name}: not available this build — see the notes "
+                                      f"above"}]
+    if not isinstance(envelope, dict) or envelope.get("v") != we_mod.EVAL_VERSION:
+        notes.append(f"{label}: {name}: not a {we_mod.EVAL_VERSION} envelope")
+        return []
+    try:
         card = we_mod.build_card(envelope)
     except Exception as exc:  # noqa: BLE001 -- this run's card only, never another's
-        notes.append(f"{label}: run {run_id!r} card unavailable ({type(exc).__name__})")
-        return [{"type": "p", "text": f"run {run_id}: not available this build — see the "
-                                      f"notes above"}]
-    return _eval_card_blocks(card)
+        notes.append(f"{label}: run {name!r} card unavailable ({type(exc).__name__})")
+        return [{"type": "p", "text": f"run {name}: not available this build — see the notes "
+                                      f"above"}]
+    return _eval_card_blocks(card, name, we_mod.PROXY_LABEL)
 
 
-def _owner_totals_table(totals, caption):
-    """`spend`/`totals`-shaped nested dicts (basis -> {field: value, ...}, plus an optional
-    top-level `note`) as one key/value table, TASKS.md item 1's own wording: "a spend key that
-    names a basis keeps that basis word in its label". Every basis this dict actually carries
-    is read from the dict itself, never a hardcoded vocabulary -- a future basis is never
+# P2 fix round B3: the owner's own name for the Codex subscription-proxy basis (one of
+# `workflow_eval.BASES`) and the field `workflow_eval.add_cost` files a proxy figure under. A
+# dollar under either is an API-equivalent relative-burn proxy, never a bill, so its basis label
+# is `workflow_eval.PROXY_LABEL`, read from the module by the caller -- never the bare basis
+# word, and never this engine's own wording (PLAN D7b).
+_PROXY_BASIS = "proxy"
+_PROXY_USD_FIELD = "api_equivalent_usd"
+
+
+def _owner_totals_table(totals, caption, proxy_label):
+    """`spend`/`totals`/`usage`-shaped nested dicts (basis -> {field: value, ...}, plus an
+    optional top-level `note`) as one key/value table, TASKS.md item 1's own wording: "a spend
+    key that names a basis keeps that basis word in its label". Every basis this dict actually
+    carries is read from the dict itself, never a hardcoded vocabulary -- a future basis is never
     silently dropped. A field ending `usd` renders through `fmt_usd` with the BASIS word (not
-    this engine's own guess) as its label; `credits` and `n` get their own formatters; anything
-    else renders through `_owner_value_cell`. The owner's own explanatory `note` (e.g. "bases
-    are separate facts and are never summed") is rendered beneath the table, verbatim."""
+    this engine's own guess) as its label -- except a proxy dollar (`_PROXY_BASIS`,
+    `_PROXY_USD_FIELD`), which carries `proxy_label`, the owner's `PROXY_LABEL` (B3); `credits`
+    and `n` get their own formatters; anything else renders through `_owner_value_cell`. The
+    owner's own explanatory `note` (e.g. "bases are separate facts and are never summed") is
+    rendered beneath the table, verbatim."""
     if not isinstance(totals, dict):
         return [{"type": "p", "text": f"{caption}: not recorded"}]
     rows = []
@@ -2793,7 +2946,9 @@ def _owner_totals_table(totals, caption):
             value = sub.get(field)
             label = f"{basis}.{field}"
             if isinstance(field, str) and field.endswith("usd"):
-                cell = {"fmt": "usd", "value": value, "basis": str(basis)}
+                proxy = basis == _PROXY_BASIS or field == _PROXY_USD_FIELD
+                cell = {"fmt": "usd", "value": value,
+                        "basis": proxy_label if proxy else str(basis)}
             elif field == "credits":
                 cell = {"fmt": "credits", "value": value}
             elif field == "n":
@@ -2829,17 +2984,29 @@ def _spend_table(spend):
             "empty": "spend: no fields recorded"}]
 
 
-def _variant_table(variants):
+# The variant-summary field that holds per-basis money (`workflow_eval._variant_summary`'s own
+# key): rendered as its own typed table per variant, never flattened into a table cell.
+_VARIANT_USAGE_FIELD = "usage"
+
+
+def _variant_blocks(variants, proxy_label):
     """TASKS.md item 1: `variants` as a table of every key each summary carries -- the column
     set is read from the summaries themselves (T5's `_first_seen_keys` idiom), so a future
     `_variant_summary` field is never silently dropped. `below_floor` renders as plain text
     (`_owner_value_cell` on a bool), like every other field here; nothing here re-derives a
-    rate, a rank or a verdict the owner did not already compute."""
+    rate, a rank or a verdict the owner did not already compute.
+
+    P2 fix round B3: `usage` is per-basis money (`workflow_eval.empty_totals`' shape). Flattened
+    into one cell it printed its dollars as bare floats, so it is not a column: each variant
+    that carries it gets its own table right after this one, through the same typed per-basis
+    cells as the run's `totals` (`_owner_totals_table`), a proxy figure beside the owner's
+    `PROXY_LABEL` -- the `by_tier` precedent of T5 retry V1 (rendered separately, not
+    dropped)."""
     fields = []
     for v in variants:
         if isinstance(v, dict):
             for key in v:
-                if key not in fields:
+                if key != _VARIANT_USAGE_FIELD and key not in fields:
                     fields.append(key)
     rows = []
     for v in variants:
@@ -2847,21 +3014,40 @@ def _variant_table(variants):
             rows.append([_owner_value_cell(v)])
             continue
         rows.append([_owner_value_cell(v.get(field)) for field in fields])
-    return {"type": "table", "headers": fields or ["variant"], "rows": rows,
-           "caption": "variants", "empty": "no variants recorded", "details": True}
+    blocks = [{"type": "table", "headers": fields or ["variant"], "rows": rows,
+               "caption": "variants", "empty": "no variants recorded", "details": True}]
+    for v in variants:
+        if not isinstance(v, dict) or _VARIANT_USAGE_FIELD not in v:
+            continue
+        variant_id = v.get("variant")
+        caption = (f"usage by basis — variant {variant_id}" if variant_id is not None
+                   else "usage by basis — variant unknown")
+        usage = v.get(_VARIANT_USAGE_FIELD)
+        if isinstance(usage, dict):
+            blocks.extend(_owner_totals_table(usage, caption, proxy_label))
+        else:
+            blocks.append({"type": "p", "parts": [f"{caption}: ", _owner_value_cell(usage)]})
+    return blocks
 
 
-def _eval_card_blocks(card):
+def _eval_card_blocks(card, run_dir, proxy_label):
     """TASKS.md item 1's per-run card: variants, spend, totals, sample, labels verbatim,
     ranking only when the owner set it (else the exact line the brief pins), adjudications,
-    escaped_defects_total, untested_claims as a details list, notes."""
-    blocks = [{"type": "p", "parts": [
-        f"run ", card.get("run_id"), " — repo: ", card.get("repo"), "  harness: ",
+    escaped_defects_total, untested_claims as a details list, notes. The card is headed by the
+    vetted directory it was read from (P2 fix round B1); the `run_id` its envelope records is
+    shown beside it when the two differ, so a card never reads as another run's."""
+    header = ["run ", run_dir]
+    recorded = card.get("run_id")
+    if recorded != run_dir:
+        header += ["  (run_id in its envelope: ", recorded, ")"]
+    blocks = [{"type": "p", "parts": header + [
+        " — repo: ", card.get("repo"), "  harness: ",
         card.get("harness"), "  repeats: ", _owner_value_cell(card.get("repeats")),
         "  evidence floor: ", _owner_value_cell(card.get("evidence_floor"))]}]
-    blocks.append(_variant_table(card.get("variants") or []))
+    blocks.extend(_variant_blocks(card.get("variants") or [], proxy_label))
     blocks.extend(_spend_table(card.get("spend")))
-    blocks.extend(_owner_totals_table(card.get("totals"), "totals (usage, by basis)"))
+    blocks.extend(_owner_totals_table(card.get("totals"), "totals (usage, by basis)",
+                                      proxy_label))
     blocks.append({"type": "p", "parts": ["sample: ", _owner_value_cell(card.get("sample"))]})
     blocks.append({"type": "list", "items": list(card.get("labels") or ()),
                    "empty": "no labels recorded"})
@@ -2912,37 +3098,54 @@ def _evals_namespace_section(ctx, we_mod, ns_row, notes):
     if store_dir is None:
         blocks.append({"type": "p", "text": "No evals store for this namespace."})
         return blocks
-    safe_names, bad_runs = _evals_prescan(we_mod, store_dir, caps, notes, label)
-    if bad_runs:
-        for name, reason in bad_runs:
+    vetted, excluded, not_runs = _evals_prescan(we_mod, store_dir, caps, notes, label)
+    if vetted is None:
+        # The store itself could not be listed (the pre-scan's note names the error type):
+        # nothing in it could be vetted, so neither `list_runs` nor any card read runs, and no
+        # manifest is counted -- and no run in it was found to be linked, oversized or
+        # non-regular, so the page does not say one was.
+        blocks.append({"type": "p", "text": "The evals store could not be listed this build (see "
+                                            "the notes above), so nothing in it was read: no "
+                                            "runs table, no run's card and no manifest count."})
+        return blocks
+    # The owner's own words for an entry that is not a run -- repeated here only on the two
+    # paths where `list_runs`, which would have said it, did not run to completion.
+    not_run_notes = [f"{label}: {name}: not an evaluation run" for name in not_runs]
+    if excluded:
+        # P2 fix round S4: `list_runs` would read the excluded runs too, so it stays uncalled;
+        # every VETTED run's card still renders below, through the same per-run loop.
+        for name, reason in excluded:
             notes.append(f"{label}: evals run {name!r} excluded from this build ({reason})")
-        blocks.append({"type": "p", "text": "Evaluation runs not read this build — a linked or "
-                                            "oversized run was found in this namespace's evals "
-                                            "store (see the notes above); list_runs was not "
-                                            "called."})
+        notes.extend(not_run_notes)
+        blocks.append({"type": "p", "text": "The runs table is not shown this build: a linked, "
+                                            "oversized or non-regular run was found in this "
+                                            "namespace's evals store (see the notes above), so "
+                                            "list_runs was not called — it would read that run "
+                                            "too. Each vetted run's own card follows."})
     else:
         try:
             rows, list_notes = we_mod.list_runs(store_dir)
         except Exception as exc:
             # T7 retry R2: `list_runs` itself can raise (a `results.json` that decodes but is
             # not a JSON object -- `env.get("v")` then raises on a list/str/int/etc.), which
-            # the pre-scan above does not catch (it only checks links and size). The runs
-            # TABLE has no owner data to build from, but every pre-scanned-safe run still gets
-            # its own `read_envelope`/`build_card` attempt -- no fourth adapter, no parsing of
+            # the pre-scan above does not catch (it checks links, file types and size). The runs
+            # TABLE has no owner data to build from, but every vetted run still gets its own
+            # `read_envelope`/`build_card` attempt below -- no fourth adapter, no parsing of
             # results.json by this dashboard.
             notes.append(f"{label}: evaluation runs unavailable ({type(exc).__name__})")
+            notes.extend(not_run_notes)
             blocks.append({"type": "p", "text": f"the runs table is not available this build "
                                                 f"— workflow_eval.list_runs raised "
                                                 f"{type(exc).__name__} — see the notes above"})
-            for run_id in _eval_ordered_run_ids(safe_names, caps, notes, label,
-                                                "directory name"):
-                blocks.extend(_eval_run_card_blocks(we_mod, store_dir, run_id, label, notes))
         else:
             notes.extend(f"{label}: {note}" for note in list_notes)
+            # The table shows the owner's own rows, `run_id` as each envelope declares it; no
+            # card is ever read through one of those ids (B1).
             blocks.append(_eval_runs_table(rows))
-            run_ids = [row.get("run_id") for row in rows]
-            for run_id in _eval_ordered_run_ids(run_ids, caps, notes, label, "run id"):
-                blocks.extend(_eval_run_card_blocks(we_mod, store_dir, run_id, label, notes))
+    # P2 fix round B1: every card, on every path, is read by a VETTED DIRECTORY NAME -- never by
+    # a `run_id` an envelope declares -- and passes the version gate (B2).
+    for name in _eval_ordered_run_ids(vetted, caps, notes, label, "directory name"):
+        blocks.extend(_eval_run_card_blocks(we_mod, store_dir, name, label, notes))
     manifest_dir = Path(store_dir) / we_mod.MANIFEST_DIR
     if manifest_dir.is_symlink():
         notes.append(f"{label}: manifests directory is a symlink — not followed, not counted")
@@ -2963,50 +3166,112 @@ def _evals_namespace_section(ctx, we_mod, ns_row, notes):
     return blocks
 
 
-def _prefs_prescan(prefs_dir, caps, notes, label):
-    """A no-follow, bounded, recursive scan of everything under one namespace's prefs
-    directory (T6's link contract, generalized): if ANY entry anywhere in the tree is a
-    symlink, or any file exceeds MAX_PREFS_FILE_BYTES, the whole directory is untrusted for
-    this build and none of `policy_report`/`approval_report`/`activation_report` are called
-    over it -- each reads several files this dashboard does not enumerate by name (never
-    spelling `workflow_eval.POLICY_FILE`), so excluding by name is not possible; excluding the
-    whole directory is. Returns True when it is safe to call the three report functions."""
+def _prefs_read_set(we_mod):
+    """What `policy_report`/`approval_report`/`activation_report` open under a prefs directory
+    -> `[(name, "file" | "dir")]`, read from `workflow_eval`'s own public constants and never
+    spelled here (P2 fix round S3). Confirmed by reading the three functions: `read_policy` reads
+    the policy file whole; `policy_report` lists the history directory's names and reads every
+    proposal file whole; `approval_report` reads every approval file whole; `activation_report`
+    walks the activation directory's scope directories and reads each scope's latest generation
+    whole. Nothing else: the owner's append-only journal (`workflow_eval.POLICY_JOURNAL`) is
+    written by the owner and read by none of the three, and `prefs/` is shared with other
+    engines (`copilot_prefs`, `copilot_pricing`, `repo_bench`), whose files these reports never
+    open -- so neither can darken them."""
+    return [(we_mod.POLICY_FILE, "file"), (we_mod.POLICY_HISTORY, "dir"),
+            (we_mod.POLICY_PROPOSALS, "dir"), (we_mod.POLICY_APPROVALS, "dir"),
+            (we_mod.POLICY_ACTIVATION, "dir")]
+
+
+def _prefs_prescan(we_mod, prefs_dir, caps, notes, label):
+    """A no-follow, bounded scan of the OWNER'S READ SET under one namespace's prefs directory
+    (`_prefs_read_set`; T6's link contract, generalized), run before any of the three report
+    functions -> True when it is safe to call them. The policy file must be a regular file; each
+    of the four directories that exists must be a real directory, walked recursively. Anywhere
+    in that set, a symlink, a leaf that is not a regular file (P2 fix round S5: a FIFO would
+    block the owner's `read_text()` with no writer), a file over MAX_PREFS_FILE_BYTES, or an
+    entry that cannot be `lstat`'d (a note, the telemetry convention -- never a silent skip)
+    makes the whole read set untrusted for this build, and none of the three reports is called:
+    each reads several files that together make up ONE policy record. A directory name that
+    holds something other than a directory is left alone: the owner's own `is_dir()` is False
+    there and it opens nothing. Every exclusion is a note naming the entry by its path relative
+    to the prefs directory."""
     limit = cap_value(caps, "MAX_PREFS_FILE_BYTES")
     entries_limit = cap_value(caps, "MAX_PREFS_ENTRIES_SCANNED")
+    skipped = "policy/approval/activation are not read this build"
+    prefs_dir = Path(prefs_dir)
     seen = 0
-    stack = [Path(prefs_dir)]
+    stack = []
+
+    def rel(path):
+        try:
+            return str(path.relative_to(prefs_dir))
+        except ValueError:
+            return path.name
+
+    def refused(path, st):
+        """The note that refuses the leaf at `path`, or None when it may be read."""
+        if stat.S_ISLNK(st.st_mode):
+            return f"{label}: prefs entry {rel(path)!r} is a symlink — not followed; {skipped}"
+        if not stat.S_ISREG(st.st_mode):
+            return (f"{label}: prefs entry {rel(path)!r} is {_leaf_kind(st.st_mode)}, not a "
+                    f"regular file — never opened; {skipped}")
+        if st.st_size > limit:
+            return cap_note(caps, "MAX_PREFS_FILE_BYTES",
+                            f"{label}: prefs file {rel(path)!r} is {st.st_size} bytes — "
+                            f"{skipped}")
+        return None
+
+    def over_entries_cap():
+        notes.append(cap_note(
+            caps, "MAX_PREFS_ENTRIES_SCANNED",
+            f"{label}: the prefs read set holds more entries than were scanned; {skipped}"))
+        return False
+
+    for name, kind in _prefs_read_set(we_mod):
+        path = prefs_dir / name
+        try:
+            st = os.lstat(path)
+        except FileNotFoundError:
+            continue  # absent: the owner reads nothing there either
+        except OSError as exc:
+            notes.append(f"{label}: prefs entry {name!r} could not be stat'd "
+                         f"({type(exc).__name__}); {skipped}")
+            return False
+        seen += 1
+        if seen > entries_limit:
+            return over_entries_cap()
+        if kind == "dir" and not stat.S_ISLNK(st.st_mode):
+            if stat.S_ISDIR(st.st_mode):
+                stack.append(path)
+            continue
+        note = refused(path, st)
+        if note is not None:
+            notes.append(note)
+            return False
     while stack:
         current = stack.pop()
         try:
             children = sorted(current.iterdir(), key=lambda p: p.name)
         except OSError as exc:
-            notes.append(f"{label}: prefs directory could not be listed "
-                         f"({type(exc).__name__})")
+            notes.append(f"{label}: prefs entry {rel(current)!r} could not be listed "
+                         f"({type(exc).__name__}); {skipped}")
             return False
         for child in children:
             seen += 1
             if seen > entries_limit:
-                notes.append(cap_note(
-                    caps, "MAX_PREFS_ENTRIES_SCANNED",
-                    f"{label}: the prefs directory holds more entries than were scanned; "
-                    f"policy/approval/activation are not read this build"))
+                return over_entries_cap()
+            try:
+                st = os.lstat(child)
+            except OSError as exc:
+                notes.append(f"{label}: prefs entry {rel(child)!r} could not be stat'd "
+                             f"({type(exc).__name__}); {skipped}")
                 return False
-            if child.is_symlink():
-                notes.append(f"{label}: prefs entry {child.name!r} is a symlink — not "
-                             f"followed; policy/approval/activation are not read this build")
-                return False
-            if _is_real_dir(child):
+            if stat.S_ISDIR(st.st_mode):
                 stack.append(child)
                 continue
-            try:
-                size = child.lstat().st_size
-            except OSError:
-                continue
-            if size > limit:
-                notes.append(cap_note(
-                    caps, "MAX_PREFS_FILE_BYTES",
-                    f"{label}: prefs file {child.name!r} is {size} bytes — "
-                    f"policy/approval/activation are not read this build"))
+            note = refused(child, st)
+            if note is not None:
+                notes.append(note)
                 return False
     return True
 
@@ -3094,7 +3359,7 @@ def _prefs_namespace_section(ctx, we_mod, ns_row, notes):
         blocks.append({"type": "p", "text": "Policy, approvals and activation not read this "
                                             "build — the prefs store is a symlink."})
         return blocks
-    if prefs_dir.is_dir() and not _prefs_prescan(prefs_dir, caps, notes, label):
+    if prefs_dir.is_dir() and not _prefs_prescan(we_mod, prefs_dir, caps, notes, label):
         blocks.append({"type": "p", "text": "Policy, approvals and activation not read this "
                                             "build — see the notes above."})
         return blocks
@@ -3166,19 +3431,42 @@ def build_evals_panel(ctx):
     }
 
 
+def _training_status_env(ctx):
+    """The environment `training_data.status` resolves its store through -> a dict, or None for
+    the process's own (P2 fix round S1). The owner resolves the store with
+    `runtime_data.resolve_store(..., env=env)`, and with no `env` it reads the PROCESS's data
+    home -- so a build given an explicit data home (`--data-home`, or any direct `build_model`
+    caller) would stat a different, possibly the real, training store. When the page's data
+    home is explicit, the owner's own `env=` seam is handed the process environment with
+    `runtime_data.DATA_HOME_VAR` set to it. A data home the build resolved itself
+    (`opts["data_home_explicit"]` False) IS the process's own, so the owner's own resolution --
+    a legacy in-tree store included -- stands untouched."""
+    data_home = ctx.get("data_home")
+    if data_home is None or not (ctx.get("opts") or {}).get("data_home_explicit", True):
+        return None
+    return {**os.environ, _mod("runtime_data").DATA_HOME_VAR: os.fspath(data_home)}
+
+
 def build_training_panel(ctx):
     """TASKS.md item 3: `training_data.status(repo_root=checkout)`, per DISCOVERED checkout --
     not a namespace concept: the owner resolves its own store from the checkout path, and
     reads no file at all (only a directory-existence check), so no link/size pre-scan applies
-    here."""
+    here. P2 fix round S1: the store is resolved under THIS PAGE'S data home when that is
+    explicit (`_training_status_env`)."""
     td_mod = _mod("training_data")
     notes = []
     checkouts = ctx.get("checkouts") or []
     rows = []
     detail_blocks = []
+    env = _training_status_env(ctx)
+    if env is not None and checkouts:
+        notes.append(f"training status resolved under this page's data home: "
+                     f"training_data.status was handed it as "
+                     f"{_mod('runtime_data').DATA_HOME_VAR}, so each row's store origin reads "
+                     f"env")
     for checkout in checkouts:
         try:
-            status = td_mod.status(repo_root=checkout)
+            status = td_mod.status(repo_root=checkout, env=env)
         except Exception as exc:  # PLAN D10: one checkout's failure never blanks the panel
             notes.append(f"{checkout}: training status unavailable ({type(exc).__name__})")
             rows.append([checkout, None, None, None, None, None, None])
@@ -4097,9 +4385,10 @@ def write_page(out_dir, html, receipt):
 def read_config(out_dir):
     """`config.json`'s extra checkouts -> (checkouts, notes). Absent is empty, not a note.
 
-    The file must be a JSON object whose `checkouts` is a list of strings. A malformed file is
-    one note and adds nothing; an entry that is not a string, contains `..`, is not absolute,
-    or is not a directory is one note and is skipped.
+    The file must be a regular file (a link, a FIFO or any other special file is one note and
+    is never opened) holding a JSON object whose `checkouts` is a list of strings. A malformed
+    file is one note and adds nothing; an entry that is not a string, contains `..`, is not
+    absolute, or is not a directory is one note and is skipped.
     """
     sp = _mod("safe_paths")
     checkouts, notes = [], []
@@ -4108,6 +4397,21 @@ def read_config(out_dir):
         return checkouts, notes
     out_dir = Path(out_dir)
     if not out_dir.is_dir():
+        return checkouts, notes
+    # P2 fix round, closing S5: `lstat` the leaf before anything opens it. A FIFO here would
+    # block the read below with no writer and hang the build, and a link is never followed, so
+    # anything but a regular file is a note and the config is treated as absent.
+    try:
+        st = os.lstat(out_dir / CONFIG_NAME)
+    except FileNotFoundError:
+        return checkouts, notes
+    except OSError as exc:
+        notes.append(f"{CONFIG_NAME} in {out_dir} could not be stat'd ({type(exc).__name__}) — "
+                     f"treated as absent")
+        return checkouts, notes
+    if not stat.S_ISREG(st.st_mode):
+        notes.append(f"{CONFIG_NAME} in {out_dir} is {_leaf_kind(st.st_mode)}, not a regular "
+                     f"file — never opened; treated as absent")
         return checkouts, notes
     try:
         raw = sp.confined_read_bytes(out_dir, CONFIG_NAME, what="dashboard config",
@@ -4193,6 +4497,9 @@ def assemble_build(cwd, data_home=None, out_dir=None, flags=(), git=True, projec
     config, config_notes = read_config(out_dir)
     checkouts, notes = discover_checkouts(cwd, flags=flags, config=config, git=git, runner=runner)
     notes.extend(config_notes)
+    # P2 fix round S1: whether the data home was the caller's choice or the process's own --
+    # the training panel resolves its owner's store under an explicit one only.
+    data_home_explicit = data_home is not None
     if data_home is None:
         data_home = _mod("runtime_data").user_data_home()
     if projects_dir is None:
@@ -4200,7 +4507,8 @@ def assemble_build(cwd, data_home=None, out_dir=None, flags=(), git=True, projec
         notes.extend(projects_notes)
     opts = {"notes": notes,
             "projects_dir": None if projects_dir is None else os.fspath(projects_dir),
-            "no_transcripts": bool(no_transcripts), "git": bool(git)}
+            "no_transcripts": bool(no_transcripts), "git": bool(git),
+            "data_home_explicit": data_home_explicit}
     model = build_model(data_home, checkouts, opts, default_caps())
     # The page first: a panel whose rendering fails adds a note to the model, and the receipt
     # built after it carries that note too.

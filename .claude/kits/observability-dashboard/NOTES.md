@@ -1246,3 +1246,298 @@ agent: T7 id=a354c8e19bbc8cdae role=implementer model=sonnet
   allowance. That is a check on an owner-returned envelope, not a fourth file parser.
   It waits for the phase review because T7's two attempts are spent.
 outcome: T7 model=sonnet attempts=2 result=retry-pass review=revised run=2026-09-25-7e3a
+
+## Phase 2 review (reviewer opus a865e135fa892ba13; security-auditor pending)
+
+- The reviewer's verdict is `revised`, over `46d3da2..HEAD`, with 3 must-fix and 8 should-fix
+  findings, counted as the verdict tiered them. Its notes are not counted. All eleven are
+  confirmed and go into one P2 fix round before Phase 3.
+- Must-fix, each verified by running:
+  - B1 (fence breach) was replayed by the orchestrator. `list_runs` reports the `run_id`
+    the envelope declares, and the evals panel passed that id to `read_envelope`, which
+    joins it onto the store path with no confinement. A small in-store run declaring an
+    outside `run_id` made the build read a 4,199,115-byte `results.json` outside the data
+    home, above the 4,194,304-byte cap, render its canary, and report `caps_hit: []`. That
+    bypasses T7's own pre-scan. The fix reads cards only by the directory names the no-follow
+    pre-scan vetted.
+  - B2: foreign-version runs get cards on both paths. The fix is a version gate in the shared
+    `_eval_run_card_blocks` (`isinstance(dict)` first, then `v == workflow_eval.EVAL_VERSION`,
+    read from the module), with the owner's note wording. This supersedes the orchestrator's
+    queued fallback-only gate: the reviewer showed the normal path is affected too.
+  - B3: Codex proxy dollars render with the basis word "proxy" only, never
+    `workflow_eval.PROXY_LABEL`, and variant `usage` renders as a raw dict. Brief gap, recorded
+    and not fixed: the attempts panel's `proxy` basis row has no owner label to borrow
+    (`attempt_history` defines none) and no producer today.
+- Should-fix:
+  - S1: the training panel resolves the environment's data home, not `--data-home`.
+  - S2: two guard-test comments falsely claim `synthetic_world` writes a training store.
+  - S3: the prefs pre-scan is wider than what the owner reads, so a growing
+    `routing-policy.journal.jsonl` would darken policy, approvals and activation.
+  - S4: per-run grain for evals after B1.
+  - S5: a FIFO at a leaf name hangs the build, because the `lstat` pre-checks test for links
+    and size but not the file type.
+  - S6: `.get(..., 0)` defaults on owner counts (the R3 tripwire).
+  - S7: the kits panel follows a symlinked `TASKS.md` leaf, and the attempts panel lacks the
+    symlinked-kit note.
+  - S8: an owner-parity test for the `build_list_summary` ruling, and a renamed test.
+- Rulings accepted:
+  - Q1: keep T6's own per-source packaging; the S8 parity test pins it.
+  - Q2: the version gate goes in the shared helper (B2).
+  - Q3: whole-store exclusion is a sound fail-closed floor; refine it through S3 and S4.
+  - Q4: the caps are justified; `MAX_TELEMETRY_ENVELOPES_PER_SOURCE` and
+    `MAX_EVAL_RUNS_RENDERED` bound what is kept, not what the owner reads, and their comments
+    should say so.
+  - Q5: the guard edits are faithful except the S2 comments.
+  - Q6: no drift in the P1 fix round.
+- Brief defects the review surfaced:
+  - T7's brief prescribed `read_envelope(store_dir, run_id)` with `list_runs`' `run_id`,
+    which is the root of B1.
+  - T5's `or "n/a" in page` passes on every build ("age: n/a" is on every live panel).
+  - T7's `"collection enabled"` clause matches a table header that is always present.
+- Carried to later tasks:
+  - T8's panel paragraphs describe the evals and prefs grain as fixed.
+  - T10's RSI reads get `MAX_TASKS_MD_BYTES`, link refusal and a `NOTES.md` cap, and
+    resolve `STORE` against the page's data home.
+- Owner defects for the user: `workflow_eval.read_envelope` does not confine `run_id`, and
+  `list_runs` reports the declared id rather than the directory name.
+defect: T7 kind=unspecified-path
+defect: T5 kind=tautological-verify
+defect: T7 kind=tautological-verify
+agent: P2 id=a5f9c51ca87c47feb role=security-auditor model=sonnet findings=1 confirmed=1 marginal=0 result=accepted
+
+- Security auditor: one finding, confirmed. In the R2 fallback path, an unknown-version run's
+  `labels` reach the page (canary demonstrated). It is the same mechanism as the reviewer's
+  B2, and the roster's tiebreak gives a finding raised by both to the REVIEWER, so it is not
+  marginal for the auditor. Everything else is a clean pass:
+  - the CSP is exact and no network-capable element exists;
+  - the only subprocesses are the two git verbs;
+  - writes go only through `safe_paths`, and the real dashboard store does not exist on disk;
+  - there is no `*.db` read and the D15 seam is intact;
+  - scrubbing and the canaries hold;
+  - tests isolate `HOME` and the data home;
+  - no untouchable file is edited;
+  - all 12 symlink-defence tests pass.
+- Carried to T8 (the auditor's non-finding): `build --json` and `build.json` notes are not
+  HTML-escaped and some interpolate local directory names (kit, namespace and ledger names)
+  verbatim. The skill must relay only the path and the summary lines' counts, never note
+  strings, because a kit name from a cloned repository is untrusted text.
+- The P2 fix round is an implementer dispatch with no `outcome:` line, the P1fix precedent.
+  Counted by hand, it is the run's sixteenth implementer dispatch against the cap of 22.
+
+## P2 fix round — contract changes
+
+The fix round changed `bin/dashboard.py`, `tests/test_dashboard.py` and two docstrings in
+`tests/test_training_data.py`. It touched no owner. Where this section differs from the T7 notes
+above or from a T4–T7 brief's wording, this section wins, and the briefs' semantics stay.
+
+- **Cards are read only by vetted directory names (B1).** `_evals_prescan` returns `(vetted,
+  excluded, not_runs)`. `vetted` holds the names of real, unlinked run directories whose
+  `results.json` is a regular file within `MAX_EVAL_RESULTS_BYTES`. It is the only source of the
+  identifiers `_eval_run_card_blocks` reads by, on every path, newest name first, bounded by
+  `MAX_EVAL_RUNS_RENDERED` (every cap note now says "by directory name"). The runs table still
+  shows the owner's `list_runs` rows, each `run_id` as its envelope declares it, and no card is
+  read through one of those ids. A card is headed by its directory, with the envelope's own
+  `run_id` beside it when the two differ ("run X  (run_id in its envelope: Y)"), so a card never
+  reads as another run's. Test:
+  `EvalsP2FixTests.test_a_declared_run_id_outside_the_store_is_never_read_absolute_or_dotdot`
+  (an absolute and a `../` declared id; a spy on `read_envelope` shows every read is a plain
+  vetted name whose file is a regular file within the cap, and the canary never appears).
+  `reviewer-P2-runid.py` replayed: the canary rendered before the fix and not after. Its
+  `caps_hit` stays `[]`, which is now correct, because the outside file is never looked at.
+- **The version gate every card passes (B2).** `_eval_run_card_blocks` reads the envelope, then
+  refuses anything that is not a dict, or whose `v` is not `workflow_eval.EVAL_VERSION` (read from
+  the module), with ONLY the note "<label>: <name>: not a <EVAL_VERSION> envelope" (the owner's
+  `list_runs` wording) and no card. On the normal path that string equals the owner's own note, so
+  the panel's existing de-duplication shows it once. This supersedes T7 retry R2's documented
+  trade-off (a mostly-unknown card for the foreign run on the fallback path). Tests:
+  `EvalsP2FixTests.test_a_foreign_version_run_renders_only_the_owners_note_on_the_normal_path`,
+  `EvalsP2FixTests.test_a_foreign_version_run_renders_only_the_owners_note_on_the_fallback_path`
+  and `EvalsP2FixTests.test_a_run_declaring_another_runs_directory_as_its_id_never_reads_that_directory`
+  (the reviewer's steered normal-path vector). An intended paired edit:
+  `EvalsPanelTests.test_list_runs_raising_falls_back_to_per_run_reads_for_the_good_runs` now
+  expects the gate note for its non-object run where it expected "card unavailable
+  (AttributeError)". Replayed: `reviewer-P2-v99.py` (the foreign run's card is gone on both
+  paths, and the steered card is headed by its own directory) and
+  `auditor-P2-eval-version-gate-probe.py` (the canary rendered before and not after; the only
+  remaining mention of the run is the gate note). The auditor's saved
+  `auditor-P2-evals-section.html` was backed up before each replay and restored after it; the
+  replays' own sections are `impl-P2fix-auditor-evals-section.before.html` and `.after.html`.
+- **Proxy dollars carry the owner's proxy label (B3).** `_owner_totals_table(totals, caption,
+  proxy_label)` gives `workflow_eval.PROXY_LABEL` as the basis label to a dollar field under the
+  `proxy` basis or named `api_equivalent_usd` (`workflow_eval.add_cost`'s own names, held in
+  `_PROXY_BASIS` and `_PROXY_USD_FIELD`). `_variant_table` became `_variant_blocks`: a variant's
+  `usage` is no longer a column, since one flattened cell printed bare floats. Each variant that
+  carries it gets its own "usage by basis — variant <id>" table through the same typed per-basis
+  cells, on T5 retry V1's `by_tier` precedent. Test:
+  `EvalsP2FixTests.test_proxy_dollars_carry_the_owners_proxy_label_and_no_bare_float_remains`.
+  The brief gap stays as recorded: the attempts panel's `proxy` basis row has no owner label, and
+  none was invented.
+- **Training status under the page's data home (S1).** `training_data.status(repo_root, env=)`
+  has the seam, so `_training_status_env` hands it the process environment with
+  `runtime_data.DATA_HOME_VAR` set to the page's data home whenever that is explicit, and the
+  panel notes that the owner therefore reports the origin `env`. `assemble_build` records
+  `opts["data_home_explicit"]`: False when it resolved the process's own data home, in which case
+  the owner's own resolution (a legacy in-tree store included) stands. A direct `build_model`
+  caller's data home counts as explicit. The `demo` now resolves the training store under its
+  synthetic data home too. Tests:
+  `TrainingPanelTests.test_the_training_store_path_sits_under_the_pages_data_home` and
+  `TrainingPanelTests.test_a_data_home_the_build_resolved_itself_keeps_the_owners_own_resolution`.
+  `reviewer-P2-training.py` replayed: the store path sat under the env data home before and does
+  not after.
+- **The guard comments (S2).** Both docstrings in `tests/test_training_data.py`
+  (`test_no_production_path_calls_the_capture_hook` and
+  `test_the_training_store_has_exactly_one_engine_naming_it`) now say what is true: the dashboard
+  names the store only through `TRAINING_PANEL = "training"`, reads status through the owner's
+  `status()`, and writes no training store, fixtures included. Checked: `bin/dashboard.py` holds
+  exactly that one quoted literal, and a `synthetic_world` build leaves no `training` directory
+  under its root. No assertion changed.
+- **The prefs pre-scan covers the owner's read set only (S3).** `_prefs_read_set(we_mod)` lists
+  `POLICY_FILE`, `POLICY_HISTORY`, `POLICY_PROPOSALS`, `POLICY_APPROVALS` and
+  `POLICY_ACTIVATION`, read as attributes and confirmed by reading `read_policy`,
+  `policy_report`, `approval_report`, `activation_report` and `read_activation`. The owner's
+  `POLICY_JOURNAL` is not in it. `_prefs_prescan(we_mod, ...)` requires the policy file to be a
+  regular file and walks each of the four directories that exists. A symlink, a non-regular leaf,
+  an oversized file or an `lstat` error anywhere in that set excludes all three reports, with a
+  note naming the entry by its path relative to `prefs/`. A directory name that holds something
+  else is left alone, because the owner's own `is_dir()` is False there and it opens nothing.
+  Tests: `EvalsP2FixTests.test_a_large_policy_journal_and_another_engines_large_file_never_darken_the_reports`
+  and `EvalsP2FixTests.test_the_owners_read_set_is_read_from_its_public_constants`. Paired edits,
+  needed because a file at the top of `prefs/` is no longer scanned: the fixtures of
+  `EvalsPanelTests.test_a_symlinked_prefs_entry_excludes_all_three_reports_with_a_note`,
+  `EvalsPanelTests.test_an_oversized_prefs_file_excludes_all_three_reports_with_a_note` and
+  `EvalsPanelTests.test_max_prefs_entries_scanned_cap_lowered_leaves_a_note` moved inside the
+  owner's proposals and approvals directories.
+- **Per-run grain for evals (S4).** While any run is excluded, `list_runs` stays uncalled,
+  because it would read the excluded run too, and every vetted run's card still renders through
+  the same loop. On the two paths where `list_runs` did not complete, the dashboard repeats the
+  owner's "<name>: not an evaluation run" note for entries that hold no `results.json`. Three
+  tests are renamed because their old names became false:
+  `EvalsPanelTests.test_a_symlinked_eval_run_directory_is_excluded_with_a_note` is now
+  `test_a_symlinked_eval_run_directory_is_excluded_and_the_vetted_runs_cards_render` (it asserts
+  the good card renders and, through a wrapping spy, that `list_runs` was never called);
+  `test_a_symlinked_results_json_excludes_the_whole_store_with_a_note` is now
+  `test_a_symlinked_results_json_excludes_only_that_run_with_a_note`; and
+  `test_an_oversized_results_json_excludes_the_whole_store_with_a_note` is now
+  `test_an_oversized_results_json_excludes_only_that_run_and_hits_the_cap`.
+- **Non-regular leaves (S5).** `_leaf_kind(mode)` names a non-regular `lstat` mode. `lstat` plus
+  `stat.S_ISREG` now gate the ledger events file (in both the history join's pre-check, where
+  `_kits_dir_oversized` is renamed `_kits_dir_unjoinable`, and the ledger facts), `TASKS.md`,
+  each telemetry envelope, each `digest.json`, each `results.json` and the prefs read set. Such a
+  leaf is excluded with a note naming its kind and is never opened. Tests: `FifoLeafTests`, one
+  per site (a telemetry envelope, a `digest.json`, a `results.json`, the policy file, a ledger
+  events file and a `TASKS.md`). Each build runs under `signal.alarm(10)`, whose handler raises a
+  `BaseException` subclass that the engine's `except Exception` containment cannot swallow, and
+  each disarms in a `finally`. `reviewer-P2-fifo.py` replayed: journal and telemetry both hung
+  before and both completed with rc 0 after. One more leaf of this class, outside the listed
+  sites, was found hanging here: a FIFO at `config.json` in the out dir (`read_config` opened it
+  through `safe_paths.confined_read_bytes`; the probe `impl-P2fix-config-fifo.py` hung after
+  5 s). It is closed below. The owners' own `TASKS.md`/`NOTES.md` reads are
+  guarded by their own `is_file()`, which is False for a FIFO:
+  `FifoLeafTests.test_a_fifo_tasks_md_is_skipped_with_a_note` builds the scorecard and the
+  history join too, and does not hang.
+- **No fabricated zero (S6).** The four `.get(..., 0)` defaults on owner counts are gone, in
+  `_harness_tier_rows`, `_cost_rows`, `_duration_rows` and `_history_card_blocks`. A missing count
+  renders `unknown`, and the owner's own zero still renders as its zero. Test:
+  `AttemptsHistoryTests.test_a_count_the_owner_did_not_emit_renders_unknown_never_zero`.
+- **The link convention (S7).** The kits panel gates `TASKS.md` with `os.lstat`, so a symlinked
+  leaf is refused with a note and never read. The attempts panel names the symlinked kit dirs it
+  hands to `join_kits`, in the scorecard panel's own words. Tests:
+  `KitsInFlightTests.test_a_symlinked_tasks_md_leaf_is_refused_with_a_note_never_read` (a
+  `Path.read_text` spy wraps the kits builder alone, because the scorecard and history owners read
+  `TASKS.md` themselves) and
+  `AttemptsHistoryTests.test_a_symlinked_kit_dir_handed_to_join_kits_is_named_in_a_note`.
+- **Owner parity for T6's packaging (S8).**
+  `TelemetryPanelTests.test_per_source_rows_and_notes_match_the_owners_build_list_summary_on_a_clean_store`
+  calls `telemetry_snapshot.build_list_summary` over the fixture store. It asserts each owner row
+  (count, first, last, latest status, latest labels) as the page's exact table row, and each owner
+  note verbatim. `test_rogue_file_and_unregistered_source_notes_from_the_owner_appear` is renamed
+  `test_the_owners_rogue_file_note_and_the_dashboards_unregistered_source_note_appear`.
+- **Polish.** The comments on `MAX_TELEMETRY_ENVELOPES_PER_SOURCE` and `MAX_EVAL_RUNS_RENDERED`
+  now say they bound what is kept or rendered. "a evals store" is now "an evals store" (paired
+  edit in `EvalsPanelTests.test_unmapped_namespace_showing_an_evals_or_prefs_store_is_counted_and_noted`).
+  The `MAX_NAMESPACES_READ` note now says the namespaces "were read in depth"
+  (`ReadNamespacesTests.test_cap_lowered_to_one_keeps_the_mapped_row_first_and_notes_the_cut`).
+  Every journal day note starts with the namespace label
+  (`JournalPanelTests.test_every_journal_day_note_carries_the_namespace_label`).
+- **What shows the tests can fail.** The new test file was run against HEAD's engine in a scratch
+  `git archive` tree, and every new or changed test failed there except three that hold on both
+  by design: the plain normal-path B2 case (HEAD never carded the foreign run on that path), the
+  S8 parity test (HEAD's packaging already matched) and the renamed S8 test. Those, and more
+  guards, were then mutation-tested on the fixed engine in a scratch copy. Removing the version
+  gate, the telemetry `S_ISREG` check, the proxy label, the S1 `env` or the read-set restriction,
+  swapping the parity row's first and last dates, or restoring `.get("n", 0)` each made its test
+  fail; the telemetry one failed at its 10 s alarm instead of hanging. The unmutated engine passed
+  all of them.
+- **Slips caught before hand-off.** `_leaf_kind` first named a socket by its own word, which is
+  on the engine source guard's banned list, and
+  `SourceTests.test_no_home_lookup_process_or_network_primitive_in_the_engine` went red. Sockets
+  now fall under "a special file". A `list_runs` spy first written with a raising side effect would
+  have been swallowed by the engine's own containment and could never fail, so it is now a
+  wrapping spy checked with `assert_not_called()`. My first mutation harness imported `tests` as
+  a package, which it is not, so every run "failed" at import and proved nothing; it was rerun
+  through `discover -k` with an unmutated baseline.
+- **Carried forward.** T8's panel paragraphs should describe the evals grain as per run (cards by
+  vetted directory name, and the runs table skipped whole while any run is excluded) and the prefs
+  grain as the owner's read set.
+- **Four items closed after the first hand-off, at the coordinator's request.**
+  - `config.json` (closing S5): `read_config` `lstat`s the leaf before anything opens it, and a
+    non-regular leaf, a link included, is a note and the config is treated as absent. Test:
+    `FifoLeafTests.test_a_fifo_config_json_is_refused_with_a_note_and_treated_as_absent`. An
+    intended paired edit: `ConfigTests.test_symlinked_config_is_refused_not_followed` now expects
+    the gate's note ("is a symlink, not a regular file — never opened; treated as absent") where
+    it expected "could not be read (SafePathError)". `impl-P2fix-config-fifo.py` replayed: it
+    hung after 5 s before and completes with rc 0 after.
+  - No Python `None` as text (PLAN R3): `_owner_value_cell`'s dict join goes through the new
+    `_joined_text`, so a `None` value, at any depth, reads `unknown`; a dict without one renders
+    exactly as before. Tests:
+    `EvalsP2FixTests.test_a_none_in_a_variants_coverage_renders_unknown_never_python_none` (the
+    fixture's `coverage.review_parsed` is `None`; it also keeps a page-wide tripwire: the page's
+    text holds no `None` word) and
+    `EvalsP2FixTests.test_a_joined_owner_dict_renders_none_as_unknown_at_every_depth`.
+  - The unlistable evals store: `_evals_prescan` returns `(None, [], [])` when it cannot list
+    the store, and the section then says the store could not be listed and that nothing in it
+    was read (no runs table, no card, no manifest count) -- never that a linked, oversized or
+    non-regular run was found, and never a pseudo-run named "<store>". Test:
+    `EvalsP2FixTests.test_an_unlistable_evals_store_says_it_could_not_be_listed` (the evals
+    directory at mode 0; skipped when run as root).
+  - The projects dir: `_AttemptsCase.model()` and every other `build_model(...)` call in
+    `tests/test_dashboard.py` now pass an empty temp projects dir, through the module helper
+    `_opts(case, **extra)`. The audit found 28 `build_model(...)` call sites; 26 passed none:
+    the `_AttemptsCase.model()` helper, 22 other calls that predate this round, and 3 calls in
+    tests I added earlier in this round. The other 2, `_ScorecardCase.model()` and one of my
+    tests, already passed one. Every CLI build already passed `--projects-dir`, and every
+    `assemble_build` call either passes one or is refused before anything is read. A
+    module-wide guard now holds the rule for the whole file: `setUpModule` wraps the dashboard's
+    `routing_scorecard.assemble_history_card` (the one projects-dir reader, PLAN D15) so that
+    anything but an existing, empty directory under the temp root raises a `BaseException` the
+    engine cannot contain. Added before the call sites were fixed, it errored 45 test runs
+    (44 tests, one of them in two subTests) that reached the scorecard with no projects dir;
+    after the fix it errors none. Test:
+    `ProjectsDirGuardTests.test_a_model_without_an_empty_temp_projects_dir_is_refused_by_the_guard`
+    (a missing and a non-empty projects dir both trip it).
+  - Each of the five new tests passes on the fixed engine and fails in a scratch copy with its
+    fix removed: the config test at its 10 s alarm, the `None` tests with the old join, the
+    store test with the old `<store>` exclusion, and the guard test with the guard never
+    started.
+- Verification, re-run after the four items above, from the repo root: the dashboard suite; the T4,
+  T5, T6 and T7 Verify blocks, extracted verbatim from TASKS.md and each run under `set -e` with
+  its final full-suite line dropped; `docs_build`, `copilot_docs`, `sync_codex_surfaces` and
+  `release_gate` `check`; and the `sum(` grep. All exited 0, and the grep printed 0. The full
+  suite runs last, under an isolated `POLYTROPOS_DATA_HOME`, and its result is in the hand-off.
+agent: P2fix id=aeb292b53d0e06e49 role=implementer model=opus
+
+- P2 fix round, as verified by the orchestrator from the repo root:
+  - the T4–T7 Verify blocks, with their shared full-suite step run once at the end;
+  - the `sum(` and forbidden-literal greps, and the four generator checks;
+  - the full suite with an isolated data home, which exited 0;
+  - replays of `reviewer-P2-{runid,v99,training,fifo journal,fifo telemetry}.py` and the
+    auditor's version-gate probe, all clean:
+    - the outside canary never renders;
+    - a foreign-version run shows only the owner-worded gate note;
+    - the training row sits under the page's data home;
+    - both FIFO builds complete.
+  - The fix round also found that 26 of 28 `build_model(...)` calls in the tests ran without
+    an empty projects dir. Since T5, the scorecard panel reads that seam, and only the
+    module's `HOME` patch kept real transcripts out of reach. A test-only guard now refuses
+    any other projects dir.
+reviewer: P2 model=opus findings=11 confirmed=11 result=accepted

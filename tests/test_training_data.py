@@ -245,10 +245,11 @@ class SnapshotTests(unittest.TestCase):
 
         The two modules that name this one are `release_gate`, which reads two version
         constants for its contract table, and `dashboard.py` (the observability-dashboard
-        kit, T7), which READS every checkout's training status through this owner's own
-        `status()` function and writes one only as a temp-root fixture (`synthetic_world`),
-        never a real store. Neither captures anything, and the assertion is an exact set so a
-        second importer cannot appear without this test saying so.
+        kit, T7), which names the training store only through its pinned panel id
+        `TRAINING_PANEL = "training"` and reads each checkout's training status through this
+        owner's own `status()` function. It writes no training store, not even as a fixture:
+        its `synthetic_world` builds none. Neither captures anything, and the assertion is an
+        exact set so a second importer cannot appear without this test saying so.
         """
         naming = set()
         for path in sorted(BIN_DIR.glob("*.py")):
@@ -840,9 +841,10 @@ class SnapshotTests(unittest.TestCase):
         its own store. "One local store, written by its own engine ONLY": `bin/runtime_data.py`
         declares it and `bin/training_data.py` is the only module that resolves it, so a second
         writer has to name itself here. `bin/dashboard.py` (the observability-dashboard kit, T7)
-        is the one sanctioned exception: it READS every checkout's training status through this
-        owner's own `status()` function and writes one only as a temp-root fixture
-        (`synthetic_world`), never a real store."""
+        is the one sanctioned exception: it names the store only through its pinned panel id
+        `TRAINING_PANEL = "training"` and reads each checkout's training status through this
+        owner's own `status()` function. It writes no training store, not even as a fixture:
+        its `synthetic_world` builds none."""
         naming = sorted(path.name for path in BIN_DIR.glob("*.py")
                         if '"training"' in path.read_text("utf-8")
                         or "'training'" in path.read_text("utf-8"))
