@@ -136,7 +136,7 @@ POLYTROPOS_DATA_HOME="$(mktemp -d)" python3 -m unittest discover -s tests -v
 ### T2 — `bin/dashboard.py` core: namespace enumeration, checkout discovery, private writer, page shell
 - id: T2
 - title: `bin/dashboard.py` core: namespace enumeration, checkout discovery, private writer, page shell
-- status: pending
+- status: done
 - model: opus
 - depends: T1
 
