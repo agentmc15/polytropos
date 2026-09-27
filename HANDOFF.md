@@ -13,9 +13,9 @@
 > bin/harness_update.py check` reports what is installed against this checkout. Every figure in the body below is dated to when
 > it was written and should be re-derived, never quoted forward.
 >
-> **Observability dashboard (note added 2026-09-27).** A kit is in flight on branch
-> `kit/observability-dashboard`, unmerged and unpushed. The last section of this file
-> is the summary to resume from. The full record, with every adjudication, ledger line and user
+> **Observability dashboard (note added 2026-09-27).** The kit on branch
+> `kit/observability-dashboard` was merged into `main` on 2026-09-27. T11 stays gated. The
+> last section of this file is the summary to resume from. The full record, with every adjudication, ledger line and user
 > decision, is `.claude/kits/observability-dashboard/NOTES.md`.
 
 **As of 2026-09-07.** Steps 01–15 are committed as a single change set on top of `fb40925`:
@@ -905,8 +905,8 @@ reads the page into a session.
 **Where it stands.** The kit is `.claude/kits/observability-dashboard`, run 2026-09-25-7e3a.
 T1–T10 are done. T11 is blocked by its own gate, because `bin/recursive_improvement.py` is not
 on this branch. The test-leak fix the kit depends on went in separately as PR #25 (main
-4a7761b). This branch merged that fix branch but has not been compared against the current
-`main` since. Commits, oldest first:
+4a7761b). This branch merged that fix branch, and was itself merged into `main` on 2026-09-27
+(under "Merged", below). Commits, oldest first:
 ```
 f6cb4c7 docs(kits): plan an offline observability dashboard, its RSI panel gated on R02
 0d47a47 Merge fix/tests-isolate-data-home: run the kit with the data-home canary in place
@@ -975,19 +975,15 @@ browser. For this checkout that is
 Rebuild it with `python3 bin/dashboard.py build --no-git` from the checkout.
 - A build run from a development checkout treats that checkout as its own plugin root.
 - The plugin install's store (`polytropos-install`) appears when the engine runs from the
-  installed plugin, after a merge and an install refresh, or once that folder is added to the
+  installed plugin, after an install refresh, or once that folder is added to the
   `checkouts` list in `<dashboard store>/config.json`.
 - Without `--no-git`, the build walks every worktree of the repository, Codex's RSI worktree
   included.
 
 **Waiting on you.**
-- **Merge.** Merge only on your explicit say-so, and `git fetch` and compare with `main` first:
-  Codex merges into main concurrently.
-  - A conflict in `bin/attempt_ledger.py`, `bin/attempt_history.py`,
-    `bin/recursive_improvement.py` or `tasks/kits/**` is a stop, never a resolution (PLAN R1).
-  - A conflict in the generated block of `docs/RELEASE.md`, or its mirror, is resolved only by
-    regenerating: `python3 bin/release_gate.py build`, then `python3 bin/docs_build.py build`
-    (R2).
+- **Merged 2026-09-27, on your "merge".** `git log --merges -1 --grep
+  'kit/observability-dashboard' main` finds the merge commit. Its second parent is the commit
+  that carries this note.
   - Checked 2026-09-27 at f69dd16. `origin/main` was at 73499e0 (Codex's goliath R10 roster
     merge, two commits past this branch's base). The branch was not on the remote. In a
     throwaway detached worktree, since removed, `git merge --no-commit origin/main` was
@@ -996,7 +992,12 @@ Rebuild it with `python3 bin/dashboard.py build --no-git` from the checkout.
       auto-merged;
     - all four generator `check`s exited 0;
     - the full suite passed (5977 tests, 2 skipped).
-    Re-fetch before merging, since main may have moved again.
+    The real merge re-ran those checks on its own tree before it was pushed.
+- **Install refresh (your step; a session never refreshes the plugin).** Pull `main` into
+  `reposV2/polytropos-install` and run your usual pull, preflight, update and restart, and
+  `/polytropos:dashboard` appears. If the update does not pick up the new skill, that is
+  because `plugin update` re-copies only when the version differs. A release bump
+  (`release/0.6.x`) is the documented fix.
 - **T11 needs the architect before any dispatch.**
   - Its gate runs `exec_module` on the engine and requires a `STORE` string. R02's engine has
     none by design, and its readers are `outcome_eligibility_inventory` and `derived_lineage`.
