@@ -1750,3 +1750,134 @@ agent: T9 id=ac4e0db334e818047 role=red-team model=sonnet findings=2 confirmed=0
   that the sentinel cannot pass for the wrong kit, that the regeneration mirrors exactly the
   two source hunks, and that the other census rows match the live tree.
 outcome: T9 model=haiku attempts=1 result=pass review=clean run=2026-09-25-7e3a
+
+- Done-means 3 and 4, the one sanctioned real build. The orchestrator ran it from the repo
+  root on 2026-09-26, with `--no-git` per the user's decision, and reports it here without
+  tidying:
+  - `python3 bin/dashboard.py build --no-git` exited 0 in 4.12 s, with nothing on stderr.
+  - Summary: "1 mapped · 3 unmapped · 1682 residue", "0 of 13 caps hit", and 6 notes.
+  - The page and receipt landed in the `dashboard` row of `runtime_data.py where`
+    (`~/Library/Application Support/polytropos/polytropos-decision-improvement-plan-9f697583/
+    dashboard`). The directory is `0700`, and `index.html` (85,831 bytes) and `build.json`
+    (6,423 bytes) are `0600`.
+  - `git status --porcelain` in the checkout was empty before and after.
+  - The data home held 1,686 namespaces before and after: nothing was deleted, and the store
+    lives inside the primary namespace.
+  - Checked by property, without loading the page or the notes into the session:
+    - the exact CSP comes before `<body`, and there is exactly one;
+    - none of `<script`, `src=`, URL `href`, `@import`, `url(`, iframe, form, link or img
+      appears;
+    - there are 0 unscrubbed home paths in the page and the receipt;
+    - all nine panel ids are present, with no "could not be built" or "rendered" and no
+      traceback;
+    - the receipt says `listing: complete`, mapped 1, unmapped 3 and residue 1682, all
+      `exact`, with `caps_hit: []`.
+  - The data on this machine is sparse, and the page shows it as the absent states (R11). The
+    primary namespace holds only a journal store. The scorecard priced from the Claude
+    transcripts through its own `projects_dir` seam (D15, the default).
+
+- **Phase 3 security audit (T8, T9; range `117a210..HEAD`): no fence violation.** The
+  auditor re-ran the four generator checks (all exit 0) and traced every panel `summary`
+  construction site. It also built three fixture pages in temp dirs. No task-title,
+  ledger-output or journal free-text canary reached the plain `build` stdout the skill relays,
+  and a kit directory named `evil<script>kit&"x` rendered escaped. No untouchable file changed,
+  and `tests/test_codex_portable_skills.py` differs by exactly the user's recorded exemption.
+  - One finding, confirmed as a record rather than a code change. PLAN D11 ("relays the path
+    and the one-screen summary from `build --json`", PLAN.md:217) and GUARDRAILS.md:12 ("The
+    skill relays the path and the `--json` summary") still sanction `--json`. T8's red-team
+    finding (A) showed that `--json` loads the receipt's `notes` into the session, and the
+    shipped skill never runs it. Both files are architect-owned, so execute leaves them as
+    written and records the defect for the architect. The amendment would read "relays the
+    plain `build` summary lines and the receipt's path". It is not marginal: T8's red-team
+    raised the same conflict first, and that adjudication named D11.
+defect: - kind=stale-plan-decision
+agent: P3 id=a66d1a5db37567d89 role=security-auditor model=sonnet findings=1 confirmed=1 marginal=0 result=accepted
+
+- **Phase 3 review (opus, a83de99c4adfdfb6f): 14 findings, all confirmed.** The orchestrator
+  read every cited line; the ones below it re-checked by command are named. The fences hold. In
+  the reviewer's run the suite (5,929 tests), the four generator checks,
+  `kit_contract.py graph` and a fixture build were all green.
+  - M1: the skill's refresh recipe cannot refresh the telemetry panel. `telemetry_snapshot`
+    resolves its store against its own plugin root (`bin/telemetry_snapshot.py:80,93`), and so
+    do `journal_collect` (`:40,53`) and `workflow_eval` (`:259`). When the plugin runs them,
+    their stores land in the plugin install's namespace. D4 never maps that namespace, and the
+    telemetry, journal and evals panels read mapped namespaces only (`bin/dashboard.py:2074`).
+    D4's premise ("a skill runs the engine from the plugin cache and a cache is not a
+    checkout") holds for git and kits, but not for stores. **User decision, 2026-09-26: map the
+    plugin's store.** This amends D4 and D6; the contract follows below.
+  - M2: the skill promises that every relayed line is a count, and `summary_lines` relays each
+    panel's `summary` verbatim. The only test near it, `test_build_summary_fits_one_screen`,
+    checks line count and prefixes, and T10's brief never constrains the rsi summary. The fix
+    round adds a CLI canary test for the existing panels. T10's dispatch carries the rsi
+    extension (a version-string canary) and an acceptance line: the rsi summary is fixed words
+    plus counts.
+  - M3: T10's brief (item 1) and D12 load each discovered checkout's
+    `bin/recursive_improvement.py` with `importlib`. That runs the file's code inside the
+    dashboard, so a cloned repo carrying the file gets code execution whenever the user runs
+    the skill in it. **User decision, 2026-09-26: parse, never import.** T10 reads the
+    constants with `ast.parse` and `ast.literal_eval`, behind the no-follow, regular-file and
+    size gate, and runs no checkout code. T11's reader calls need their own decision when R02
+    lands.
+  - S1–S9, doc accuracy:
+    - S1: `docs/REFERENCE.md:337` still names a `--json` receipt and repeats S5's rationale,
+      and "arithmetic is limited to counting" omits the age and latest-date arithmetic D2
+      allows.
+    - S2: the heading at `:351` says "the sixty-nine engines" against a census of 70.
+    - S3: the HOW-IT-WORKS row renders the page "over those stores", memory and lessons
+      included, and it files `dashboard` in a different family from REFERENCE's new
+      Observability row.
+    - S4: the AUDIT addendum's sentinels line names one test. Four count tests notice the skill,
+      and `tests/test_docs_site.py` reads every SKILL.md body.
+    - S5: SKILL.md:20-23 says that without `--checkout` no namespace maps back to the session's
+      repo. The primary checkout is already the cwd's git toplevel (`_primary_checkout`).
+    - S6: SKILL.md:120-121 gives the wrong privacy reason. The ledger carries `report` and
+      `tail`, and the digest carries inbox text; the dashboard omits them by selection (D8).
+    - S7: the scorecard's history card is one aggregate over every kits dir, not "per
+      checkout found". Only roles are per kits dir.
+    - S8: adjudication (b)'s "a link is noted and its content never rendered" appears in
+      neither the skill nor the fragment.
+    - S9: the fragment's `--no-transcripts` bullet reads backwards, and the page does carry an
+      inline stylesheet. "Reading is the whole job" also sits beside a refresh step that
+      writes a store.
+  - S10: the skill's default path, with git on, has never run end to end. Tests stub the
+    runner, `demo` passes `git=False`, and the real build used `--no-git`. The fix round adds
+    one git-enabled fixture build in a `git init` temp repo.
+  - S11: the skill's RSI paragraph describes a panel that does not exist at HEAD. This is a T10
+    checkpoint: the paragraph must match the panel as T10 builds it.
+  - Carried forward, not fixed: `--out-dir` pointing at an existing directory keeps that
+    directory's mode, and nothing warns about a synced or in-repo target. This is a follow-up
+    for the user.
+  - The description's "an overview of what the ledger, scorecard or telemetry show" names the
+    user's intent, and the page gives that overview, so it stays.
+  - Taken into the fix round: the namespace summary line's "(heuristic: counted, never
+    opened)" reads as covering every class. It must attach to the residue count alone.
+- Two corrections to earlier records:
+  - The T8 entry says both Phase 3 adjudications were applied verbatim. Adjudication (b)'s
+    link clause was not (S8).
+  - The Done-means 3 real build with `--no-git` checked modes, store placement, a clean
+    `git status` and the page's properties. It left the git-enabled path the skill runs
+    unexercised. S10's fixture test covers that path. A git-enabled real build stays the
+    user's own action, because it would walk the RSI worktree.
+- Defects: M1 (D4 and D6's store premise) and M3 (D12's `importlib` load) are plan decisions
+  this run overturned. S2 is a path T9's brief did not name.
+defect: - kind=stale-plan-decision
+defect: - kind=stale-plan-decision
+defect: T9 kind=unspecified-path
+
+## P3 fix round — contract changes
+
+- **The plugin install's store is mapped (M1, user decision 2026-09-26).** The plugin root the
+  engine runs from (`PLUGIN_ROOT`; the `assemble_build(..., plugin_root=...)` seam) is a
+  MAPPING-ONLY candidate. Its one namespace, `runtime_data.project_namespace(plugin_root)`, is
+  looked up like every expected namespace and labelled "plugin install". Its `tasks/kits` root
+  is not mapped.
+  - Only the telemetry, journal and evals/prefs panels read it, and each labels what it read
+    "plugin install".
+  - It is never a checkout: git never runs in it, no kits dir is read from it, and it is never
+    a history-join target. The attempts, scorecard and kits panels treat its namespace exactly
+    as they did before.
+  - When it resolves to the same namespace as a discovered checkout, the checkout entry wins
+    and nothing is duplicated.
+  - `demo` passes a synthetic plugin root, so the demo page never names the real one.
+- **T10 reads the RSI engine as text (M3, user decision 2026-09-26).** It parses the file and
+  never imports it. The dispatch carries the exact shape.
