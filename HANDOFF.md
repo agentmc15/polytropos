@@ -993,11 +993,12 @@ Rebuild it with `python3 bin/dashboard.py build --no-git` from the checkout.
     - all four generator `check`s exited 0;
     - the full suite passed (5977 tests, 2 skipped).
     The real merge re-ran those checks on its own tree before it was pushed.
-- **Install refresh (your step; a session never refreshes the plugin).** Pull `main` into
-  `reposV2/polytropos-install` and run your usual pull, preflight, update and restart, and
-  `/polytropos:dashboard` appears. If the update does not pick up the new skill, that is
-  because `plugin update` re-copies only when the version differs. A release bump
-  (`release/0.6.x`) is the documented fix.
+- **Install refresh.** It runs only on your explicit ask; a session never refreshes the plugin
+  unprompted. Pull `main` into `reposV2/polytropos-install`, then run the usual pull,
+  preflight, update and restart, and `/polytropos:dashboard` appears.
+  - `plugin update` re-copies only when the version differs, so the preflight's
+    `version-changed` gate refuses a refresh that would copy nothing.
+  - 0.6.8 (`release/0.6.8`) was cut for exactly this, on 2026-09-27.
 - **T11 needs the architect before any dispatch.**
   - Its gate runs `exec_module` on the engine and requires a `STORE` string. R02's engine has
     none by design, and its readers are `outcome_eligibility_inventory` and `derived_lineage`.
