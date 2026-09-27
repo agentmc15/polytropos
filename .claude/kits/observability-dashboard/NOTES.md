@@ -2119,3 +2119,313 @@ defect: T9 kind=unspecified-path
     the cap of 22. Its follow-up was a message to the same agent, not a spawn.
 agent: P3fix id=a091ef9727b4feff7 role=implementer model=opus
 reviewer: P3 model=opus findings=14 confirmed=14 result=accepted
+
+- **T10 (implementer).** The RSI panel: what each discovered checkout holds of the
+  recursive-improvement work, built to the T10 brief as the dispatch amended it (A1–A8). Changed
+  `bin/dashboard.py`, `tests/test_dashboard.py`, the RSI paragraph of `skills/dashboard/SKILL.md`
+  and the `claude/dashboard` word count in `.claude/kits/docs-site/AUDIT.md`; `python3
+  bin/docs_build.py build` rewrote `docs-site/skills/claude/dashboard.md`. No owner, PLAN,
+  GUARDRAILS, TASKS or other kit's NOTES was touched, and nothing was committed.
+  - What it does. Panel `rsi`, titled "Recursive improvement (RSI)", sits just before `bounds`,
+    the slot the tests' `PINNED_PANEL_ORDER` already held. It probes `ctx["checkouts"]` alone,
+    so the plugin install is never looked at (A7). Per checkout it builds two sections, each
+    contained by `_guarded_section` (a note naming the exception type only):
+    - The engine. `rsi_status(checkout, caps=None, data_home=None)` looks up
+      `bin/recursive_improvement.py` one component at a time with `os.lstat`
+      (`_no_follow_walk`). The leaf must be a regular file within `MAX_RSI_ENGINE_BYTES`. It is
+      read bounded (`_read_bounded`: `O_NOFOLLOW | O_NONBLOCK`, an `fstat` re-check, at most
+      cap + 1 bytes), decoded as strict UTF-8 (`utf-8-sig`, which only drops a byte-order mark,
+      as Python does) and parsed with `ast.parse`. A top-level `NAME = <literal>` or `NAME: T =
+      <literal>` value goes through `ast.literal_eval`. Nothing is imported, executed or
+      compiled to run.
+    - The kit. `tasks/kits/recursive-improvement` is looked up the same way. TASKS.md is read
+      under `MAX_TASKS_MD_BYTES` and parsed by `kit_contract.parse_tasks`: a table of id, title,
+      status and model, then the status counts. NOTES.md is read under `MAX_KIT_NOTES_BYTES`;
+      `attempt_history.notes_records(kit, text, model_registry.registry())` gives the outcome
+      table (task, result, dispatched model, observed model, run), and the lines that carry
+      the `actual-use:` or `routing:` prefix are counted after one bullet, never parsed. A last
+      line names the `tasks/kits` namespace (PLAN D4) and says whether this build mapped it,
+      pointing the reader to the Attempts panel.
+    - `rsi_record_kind(obj, known_versions)` is T11's guard. The literal prefix is spelled on
+      one line of the engine, inside it. A `known_versions` handed as a bare string counts as
+      one version, never as a substring test.
+    - The summary is fixed words and integers only (A3): "engine present in P of N
+      checkout(s), parsed in Q, unknown in U; RSI kit present in K, unknown in V", or "no
+      checkout discovered — nothing probed".
+  - The `rsi_status` dict shapes:
+    - `{"present": False}`: no engine file.
+    - `{"present": None, "notes"}`: unknown, because a lookup failed or `bin` is a symlink.
+    - `{"present": True, "parsed": False, "notes"}` plus one of `refused` (the leaf's kind, a
+      link included), `size` (over the cap) or `error` (an exception type's name: a failed
+      read, bytes that are not UTF-8, or a file `ast.parse` refused).
+    - `{"present": True, "parsed": True, "size", "versions", "known_versions", "arms", "store",
+      "store_defined", "readers", "not_rendered", "notes"}`. `versions` is `[name, value]` in
+      source order and `known_versions` those values. `store` is None or `{"value", "known",
+      "path", "state"}` from `_rsi_store`, resolved with `runtime_data.store_path(value,
+      checkout, env={DATA_HOME_VAR: <the page's data home>})` and looked up without following a
+      link. `readers` is `[name, where]` and `not_rendered` is `[name, reason]`. Strings are
+      the file's own, at full length; the panel bounds what renders.
+  - The four new caps, all in `CAP_NAMES` and `default_caps()`, each hit a `cap_note`:
+    - `MAX_RSI_ENGINE_BYTES` = 1 MiB. The branch's engine is 70,123 bytes, so about 15x
+      headroom.
+    - `MAX_KIT_NOTES_BYTES` = 2 MiB. NOTES.md is append-only; the largest real one in this
+      repo (`decision-improvement-v1`) is 310,019 bytes and the RSI kit's on its branch 47,919.
+    - `MAX_RSI_CONSTANTS_RENDERED` = 50 per list (versions, arms, reader-shaped names, names
+      not read as data). The branch defines six versions, three arms and no reader.
+    - `MAX_RSI_VALUE_CHARS` = 120. The longest real version value is 36 characters and the
+      longest name 25. A longer string renders as the fixed `RSI_WITHHELD` label, never cut
+      (the `MAX_KIND_CHARS` precedent).
+  - Judgement calls beyond the brief's letter, each for review:
+    - A1 has a non-literal value noted by name. The probe also withholds, by name, a version,
+      `ARMS` or `STORE` bound in a form it does not read (several targets, an augmented
+      assignment, an import, a def, a `del`) or inside a module-level `if`, `try`, loop,
+      `with` or `match` block, since only running the file could say which value holds. A
+      later top-level literal assignment settles the name again, the way the file would run.
+    - A1's readers are top-level `read_`/`list_`/`iter_` functions and top-level assigned
+      names containing `READ`. The probe also counts such names bound inside a module-level
+      block, so the page never says there is no store or reader about an engine that defines
+      one under a `try`. The `READ` test is the brief's substring rule (a `THREAD_POOL` would
+      count), and the page lists every name that triggered it.
+    - An engine that defines a store or a reader-shaped name gets the line saying this page
+      does not read RSI records yet (T11, gated on R02), never the "nothing to render" line.
+    - build.json carries notes, never blocks. So a parsed engine leaves one note listing the
+      contract versions it read, bounded like the table. That note is how A4's version canary
+      reaches build.json; the summary never carries it.
+    - The bounded read is the engine's own, not `safe_paths.confined_read_bytes`, which reads
+      a whole file where A1 asks for a bounded read. These are checkout source files, not the
+      stores, markers or install destinations SECURITY.md scopes `safe_paths` to, and the kits
+      panel already reads checkout TASKS.md files directly. The leaf open refuses a link and
+      never waits on a FIFO; the components above it are checked by the `lstat` walk just
+      before, so a link swapped into one of them mid-build is the same residual race the kits
+      panel carries.
+    - A1's "a link is noted" for the STORE lookup is both the STORE line and a panel note.
+  - Deltas from the brief:
+    - The brief says `tasks/kits/recursive-improvement/{PLAN,TASKS,NOTES}.md` exists on `main`.
+      `main` and this branch hold PLAN.md and TASKS.md only: `git log main --
+      tasks/kits/recursive-improvement/NOTES.md` is empty, and the file is created on the RSI
+      branch. This checkout's panel says "NOTES.md absent". I did not stop over it: absence is
+      a state the panel must render anyway, and nothing in the build depends on the file.
+    - Item 5's "a stub that raises RuntimeError on import" became A4's parse-failure stub, and
+      A4's side-effect stub proves nothing runs.
+  - What `git show feat/rsi-evidence-foundation:<path>` and `git log
+    main..feat/rsi-evidence-foundation` confirmed, the source never run, imported or copied:
+    - the branch is 17 commits ahead of `main`;
+    - `bin/recursive_improvement.py` is 70,123 bytes;
+    - its top level assigns six `*_VERSION` string literals (`polytropos.rsi-generation/2`,
+      `-improver/1`, `-experiment/1`, `-lineage/3`, `-source-capture/2`,
+      `-outcome-eligibility/2`), `ARMS = ("A", "B", "C")`, `TERMINAL_KINDS` and two
+      `re.compile` patterns;
+    - it has no `STORE`, no top-level `read_`/`list_`/`iter_` function and no top-level name
+      containing `READ`. Its likely future readers, `outcome_eligibility_inventory` and
+      `derived_lineage`, fit neither shape. Over that file the panel would render six
+      versions, three arms and the "nothing to render" line;
+    - the kit's NOTES.md there (47,919 bytes) holds bulleted lines of the three kinds the panel
+      reads (`actual-use:`, `routing:` and `outcome:`), in the shapes the counts and
+      `notes_records` expect.
+  - Tests: 25 new, in `RsiPanelTests` (23) and `RsiSourceTests` (2). The dashboard suite
+    went from 273 to 298.
+    - `RsiPanelTests`: `test_the_synthetic_checkout_shows_the_absent_engine_line`,
+      `test_a_stub_engines_versions_render_as_data_and_nothing_to_render_is_said`,
+      `test_a_stub_that_fails_to_parse_is_named_by_type_with_no_message_text`,
+      `test_a_stub_whose_top_level_would_have_side_effects_is_parsed_never_run` (the marker
+      file is never created and the canary never appears),
+      `test_a_store_kind_unknown_to_runtime_data_is_named_and_never_resolved`,
+      `test_a_known_store_resolves_under_the_pages_data_home_scrubbed_with_its_existence`,
+      `test_a_symlinked_store_is_noted_and_never_followed`,
+      `test_a_symlinked_engine_is_noted_by_kind_and_never_read` (a spy on `_read_bounded` sees
+      no call for it), `test_an_engine_behind_a_symlinked_bin_is_unknown_and_never_looked_at`,
+      `test_an_oversize_engine_gets_a_cap_note_and_is_never_read_or_parsed` (chmod 0, so an
+      open would have failed loudly), `test_a_non_utf8_engine_is_named_by_type_and_never_parsed`,
+      `test_a_fifo_engine_is_named_by_kind_and_never_opened` (under a 10 s alarm),
+      `test_names_bound_in_forms_not_read_as_data_are_noted_by_name_and_never_rendered`,
+      `test_the_rendered_constants_and_their_length_are_capped_with_notes`,
+      `test_the_rsi_kit_tables_come_from_the_synthetic_kit`,
+      `test_oversize_rsi_tasks_md_and_notes_md_get_cap_notes_and_are_never_read`,
+      `test_a_symlinked_notes_md_is_noted_and_never_read`,
+      `test_undecodable_rsi_kit_files_are_named_by_type`, `test_an_absent_rsi_kit_is_said_in_words`,
+      `test_rsi_record_kind_names_known_unknown_and_non_records`,
+      `test_the_rsi_summary_is_fixed_words_and_counts_only`,
+      `test_the_plugin_root_is_never_probed_for_an_rsi_engine_or_kit` (the P3 path spy on the
+      plugin root sees nothing), `test_no_checkout_is_a_plain_sentence_and_a_count_free_summary`.
+    - `RsiSourceTests`: `test_no_checkout_code_is_imported_or_run_by_the_engine` (an AST scan:
+      no `exec`/`eval`/`compile`/`__import__` call, no module loading outside `_load`, which
+      reads `PLUGIN_ROOT / "bin"`, and no loader call naming the RSI engine) and
+      `test_the_rsi_contract_prefix_is_spelled_on_one_line_only`.
+    - Intended paired edits: `rsi` joins the two pinned panel-id lists
+      (`PageTests.test_json_flag_prints_the_receipt_the_store_holds`,
+      `RenderingTests.test_model_is_json_serializable`); `SourceTests.test_pinned_constants`
+      pins the four new caps; `PlainBuildStdoutCanaryTests.plant_canaries` gains the RSI
+      version canary, found 0 times in plain stdout and at least once in build.json. The
+      synthetic RSI kit uses the synthetic model, so no scorecard tier figure moved and no
+      other test changed.
+  - What shows the tests can fail. 21 mutations were each applied to a scratch copy of `bin/`,
+    `tests/` and `data/`, never the checkout, and each made at least one of the new or edited
+    tests fail; the unmutated copy passed them all. The mutations: running the file after
+    parsing it, a leaf link read as a file, no size gate, a checkout path in the summary, STORE
+    resolved against the process's data home, known versions as a substring, a non-literal
+    rendered from its source, block bindings ignored, the version note dropped, no length cap,
+    no count cap, the plugin root probed, an intermediate link followed, prefixes counted
+    without the bullet, a silent absent engine, the prefix spelled twice, the kit TASKS.md
+    uncapped, NOTES.md decoded leniently, a parse note carrying the message, a store outside
+    `STORES` resolved, and a linked store left without its note.
+  - Slips caught before hand-off:
+    - My first full verify run failed `test_python_floor`'s stale-floor guard: a comment in
+      `bin/dashboard.py` read "(Python 3.10+)". The documented floor is 3.11, so `ast.TryStar`,
+      `ast.Match` and `ast.pattern` are referenced directly and the `getattr` fallbacks and
+      their version comments are gone.
+    - The second full run erred on
+      `test_kit_scheduler.DryRunAndCliTests.test_the_cli_runs_a_stub_batch_and_plans`
+      (`FileNotFoundError` on a `TASKS.md.<pid>.tmp` inside `kit_scheduler.snapshot_tree`). It
+      is pre-existing, and I proved it. `kit_scheduler` loads none of the files I changed. A
+      clean `git archive HEAD` extraction in scratch, looping that one test, failed 3 times in
+      128 runs, and run 128 raised the identical `FileNotFoundError` in `snapshot_tree`. It is a
+      race between the scheduler's own parallel workers, left for the user. The third run was
+      green end to end.
+  - S11: the skill's RSI paragraph did not match the panel. "Read from the module at run time"
+    reads as loading the file, and it named only whether the engine and kit exist. It now says,
+    per checkout, whether the engine is present, its contract versions, arms and any store or
+    reader it defines, "read from the file as text, never run"; the kit's task statuses and its
+    lines of the `outcome:` kind, with those of the `actual-use:` and `routing:` kinds counted,
+    not parsed; and that RSI records themselves are not rendered yet. It stays evergreen and
+    names no checkout. The body went from 1228 to 1263 words (frontmatter stripped), and
+    AUDIT.md says so.
+  - A follow-up for the user, outside this task: `caps_report` counts a cap as hit when any note
+    contains "cap NAME (", and notes interpolate checkout-derived text (kit names, namespace
+    names, and now RSI version strings). A hostile string can therefore mark a cap as hit that
+    was not. That over-claims a cut, and never hides one.
+  - Verification, from the checkout root:
+    - the T10 Verify block, extracted verbatim from TASKS.md and run under `bash -e`, exit 0:
+      the dashboard suite "Ran 297 tests … OK", the prefix grep, "T10 probe OK", and the full
+      suite "Ran 5967 tests … OK (skipped=2)", with isolated data homes;
+    - that run preceded `test_a_symlinked_store_is_noted_and_never_followed` and its engine
+      change, so the block was run once more at the end; its result is in the hand-off
+      report;
+    - `docs_build`, `copilot_docs`, `sync_codex_surfaces` and `release_gate` `check` each exit 0.
+agent: T10 id=a51fc341301af5b24 role=implementer model=opus
+
+- **T10 orchestrator checks (attempt 1).** From the checkout root:
+  - T10's Verify block, verbatim under `set -e`, exits 0 (298 dashboard tests, the probe,
+    and a full suite of 5968 tests, 2 skipped).
+  - The prefix appears once, at `bin/dashboard.py:4142`.
+  - The `--no-git` scan finds 7 build argv literals, every one carrying `--no-git`.
+  - The orchestrator's own probe (`verify-T10-orch.py`) passes. It chdirs into the synthetic
+    checkout, so nothing in the real repo can satisfy a clause. The synthetic RSI kit
+    renders. An engine stub that would write a marker file and raise is parsed and never
+    executed: no marker, no canary. Its version renders as data, reaches build.json, and stays
+    out of plain stdout.
+  - The snapshot shows exactly the task's files, and the hand-off is a pure append.
+- Brief defects:
+  - T10's Verify probe builds from the repo root with `--no-git`, which makes the real
+    checkout the primary checkout. The real `tasks/kits/recursive-improvement` then satisfies
+    `"recursive-improvement" in page` whatever item 4 does. The verify still failed first, at
+    the prefix count, so its evidence is not wholly tautological. The orchestrator and the
+    verifier judged item 4 with the primary checkout set to the synthetic one.
+  - The brief says `tasks/kits/recursive-improvement/{PLAN,TASKS,NOTES}.md` exist on main.
+    NOTES.md never has (`git log main` is empty for it), and the panel renders it as absent.
+defect: T10 kind=tautological-verify
+defect: T10 kind=stale-pin
+agent: T10 id=a8ff3af9538fbc0b0 role=verifier model=sonnet findings=1 confirmed=1 result=accepted
+
+- **T10 verifier: PASS, with one finding.** The hand-off's "Ran 5967 tests" (NOTES.md:2299)
+  is from an earlier run: the final tree runs 5968, as measured by the orchestrator and by
+  the verifier. This record corrects it; the deliverable is unchanged. The verifier also
+  reproduced, with its own fixtures:
+  - every engine state, including a FIFO;
+  - no execution, using its own side-effect stub;
+  - the real branch engine parsed from memory through `_rsi_parse` (6 versions, ARMS A/B/C,
+    no store, no reader);
+  - all four caps firing;
+  - the plugin root never touched, checked with its own spy;
+  - the summary matched by regex on plain stdout.
+agent: T10 id=a6f10556a35363672 role=red-team model=sonnet findings=3 confirmed=3 marginal=3 result=accepted
+
+- **T10 red-team: three findings, all reproduced by the orchestrator. The first is a break,
+  so T10 takes its one retry.**
+  - (1) Break. `_rsi_parse`'s `reader()` dedups with `[name, where] not in readers` over a
+    growing list, which is O(N²) in names containing "READ". The orchestrator measured
+    0.105 s, 0.416 s and 1.670 s for 4k, 8k and 16k such names, against 0.106 s for 16k plain
+    names. At the 1 MiB cap, the red-team measured about 20 s for one checkout, with no cap
+    naming the cost. That breaks GUARDRAILS' "bounded means a named constant" principle: the
+    file-size cap bounds the input but not the work done on it.
+  - (2) Confirmed, and not reachable from T10's own path. `rsi_record_kind` drains any
+    iterable `known_versions` through `_as_list`, so an infinite generator hangs. The
+    orchestrator reproduced this under a 3 s alarm. T11 will call the guard, so it is hardened
+    now.
+  - (3) Cosmetic. A name reassigned at top level renders its final value at the position of
+    its first assignment (`A_VERSION` twice around `B_VERSION`), which "in source order" does
+    not describe.
+  - All three are marginal: neither the implementer's 21 mutations nor the verifier's scripts
+    touched cost at scale, `known_versions` shapes, or reassignment order.
+  - The red-team also tried hard to crash the parser, nesting from 1,000 to 400,000 levels.
+    Every case raised a catchable `SyntaxError`, `MemoryError` or `RecursionError` that the
+    panel names, and none crashed or hung.
+
+- **T10 (implementer), continued.** The hand-off above, resumed after the verifier's and the
+  red-team's entries:
+  - T10 retry (attempt 2 of 2): the red-team's three confirmed findings, fixed in
+    `bin/dashboard.py` with four new tests; nothing else changed.
+    - R1, the break. `_rsi_parse` de-duplicated reader-shaped names by scanning a growing list.
+      Before the fix, 40,000 names holding READ took 10.5 s here, against 0.05 s for as many
+      plain names; the red-team measured about 20 s at the 1 MiB cap, and no cap named that
+      cost. A set beside the list makes each name O(1). The same 40,000 names now take 0.27 to
+      0.39 s across runs, and the cost grows linearly from 40,000 to 160,000 names (about 9 µs
+      a name). Checking every other per-name step found a second, milder cost in my own walk:
+      `_scope_bindings` was a recursive generator, so each name paid O(depth) to climb back
+      through the generators above it. Past the recursion limit it raised, and the whole engine
+      read as unparsed, although `ast.parse` accepts left-nested chains 6,000 deep. The walk
+      now keeps its own stack, O(1) a node. The parse is therefore linear in the file's size,
+      and `MAX_RSI_ENGINE_BYTES`, whose comment now says so, is its named bound.
+    - R2. `rsi_record_kind` handed `known_versions` to `_as_list`, which drains any iterable,
+      so an endless generator hung it. `_rsi_known_versions` now reads a string as one version
+      and a `collections.abc.Collection` (list, tuple, set, frozenset, dict view) no further
+      than its own `len()`. Anything else, such as a generator, an iterator or None, is no known
+      version: it is never iterated, and a prefixed record reads as unknown. `_as_list` is
+      unchanged.
+    - R3. A reassigned version kept its first binding's position. It now moves to its final
+      binding's position, holding that value, and a name unsettled twice has its note at the
+      later statement. This corrects the hand-off above: "`versions` is `[name, value]` in
+      source order" described neither behaviour, and the docstrings now say what happens.
+    - Tests added: `test_the_parse_is_linear_in_reader_shaped_names` (40,000 READ-names under a
+      3 s bound and a 60 s alarm; the old scan took about 10 s there, and a second part pins
+      one entry per name and place),
+      `test_a_statement_nested_past_the_recursion_limit_is_still_read` (a binding 3,000 levels
+      deep is found), and
+      `test_rsi_record_kind_never_drains_an_iterator_and_reads_a_sized_collection`. That third
+      test covers a slow endless generator under a 5 s alarm, an iterator left untouched, dict
+      views, and a collection that would iterate forever past its stated length. The fourth is
+      `test_a_reassigned_name_sits_at_its_final_binding_with_its_final_value`. The dashboard
+      suite went from 298 to 302.
+    - What shows the tests can fail. 27 mutations ran in scratch copies, never the checkout:
+      the first attempt's 21, plus six that each restore one finding. Those six are the list
+      scan, the draining `_as_list`, rows at the first position, the recursive walk, notes at
+      the first position, and a sized collection read past its length. Each made at least one
+      test fail, and the unmutated copy passed.
+    - Verification, from the checkout root:
+      - T10's Verify block, verbatim under `bash -e`, exit 0: "Ran 302 tests … OK", "T10 probe
+        OK", and the full suite "Ran 5972 tests … OK (skipped=2)".
+      - The red-team's three scripts, unadapted, each exit 0. At the cap boundary, 56,348
+        READ-names parse in 0.74 s and the two-checkout build takes 0.76 s. The endless
+        generator returns unknown at once. The reassigned name renders last, with its final
+        value.
+      - `docs_build check` exits 0.
+      - The final full-suite count is 5972. The 5967 above came from a run before the final
+        state.
+
+- **T10 retry (attempt 2 of 2), verified by the orchestrator.** From the checkout root:
+  - T10's Verify block, verbatim under `set -e`, exits 0: 302 dashboard tests, the probe, and
+    a full suite of 5972 tests, 2 skipped.
+  - The orchestrator's own probe passes, run from inside the synthetic checkout.
+  - The `--no-git` scan is clean, and the prefix count is 1.
+  - The red-team's three repro scripts each exit 0. The cap-sized build completes promptly,
+    the endless generator returns `unknown`, and a reassigned version sits at its final
+    binding.
+  - Reader-name parsing is linear by the orchestrator's timing: 0.064 s, 0.231 s and 0.547 s
+    at 16k, 32k and 64k names, against 1.670 s at 16k before the fix.
+  - The four generator checks exit 0.
+  - The retry also fixed a milder cost the implementer found in its own attempt-1 code.
+    `_scope_bindings` was a recursive generator, which cost O(depth) per name and misread a
+    legal engine nested past the recursion limit. The walk now keeps its own stack.
+  - Budget: counted by hand, the retry is the run's twenty-second implementer dispatch, which
+    reaches the cap of 22. The grammar counts 19 attempts.
+agent: T10 id=a51fc341301af5b24 role=implementer model=opus
+outcome: T10 model=opus attempts=2 result=retry-pass review=revised run=2026-09-25-7e3a

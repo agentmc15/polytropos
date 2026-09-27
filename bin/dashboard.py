@@ -4,7 +4,8 @@
 WHAT THIS IS. A read-only consumer and presentation layer. It lists the per-user data home that
 `bin/runtime_data.py` resolves, maps each namespace in it back to a checkout, and renders what
 the owning engines already output -- the attempt ledger and its history projection, the routing
-scorecard, telemetry envelopes, journal digests, evaluation runs, as their panels land -- into
+scorecard, telemetry envelopes, journal digests, evaluation runs, and what each checkout holds of
+the recursive-improvement (RSI) work -- into
 ONE self-contained `index.html` plus a `build.json` receipt in this engine's own `dashboard`
 store. The user opens the file in a browser; refreshing is a rebuild, so the page prints the
 moment it was built.
@@ -25,6 +26,10 @@ WHAT IT REFUSES.
   bin/safe_paths.py, 0700/0600. Nothing in any other store, namespace, harness home or checkout
   is written, moved or deleted -- residue included.
 - To open residue beyond one listing, or to delete anything at all.
+- To run any checkout's code. The RSI panel reads a checkout's `bin/recursive_improvement.py` as
+  text -- `ast.parse` and `ast.literal_eval`, behind a no-follow, regular-file and size gate --
+  and never imports, executes or compiles it to run (user decision, 2026-09-26). The only modules
+  this engine loads are its own siblings in PLUGIN_ROOT's `bin/`.
 
 THE PRIMARY CHECKOUT, AND WHY NEVER PLUGIN_ROOT ON ITS OWN. The page belongs to the checkout
 being observed: the git toplevel of the working directory, or the working directory itself when
@@ -57,10 +62,13 @@ the counts, names, labels and notes it selects.
 """
 
 import argparse
+import ast
+import collections.abc
 import functools
 import hashlib
 import html
 import importlib.util
+import itertools
 import json
 import math
 import os
@@ -172,6 +180,32 @@ MAX_PREFS_FILE_BYTES = 512 * 1024
 # itself run unbounded.
 MAX_PREFS_ENTRIES_SCANNED = 500
 
+# T10 (user decision 2026-09-26: parse, never import): a checkout's `bin/recursive_improvement.py`
+# is read as TEXT and parsed, never run. The engine on Codex's branch is about 68 KiB (70,123
+# bytes when this was written), so 1 MiB leaves about 15x headroom while still refusing to read or
+# parse a corrupted or hostile file with no bound at all. It is also the bound on the parse's own
+# work: every step `_rsi_parse` takes is O(1) per name and its walk is iterative, so that work is
+# linear in the file's size (T10 retry: a list scan had made 40,000 reader-shaped names cost 10 s).
+MAX_RSI_ENGINE_BYTES = 1 * 1024 * 1024
+
+# T10: a kit's NOTES.md is append-only and grows with every dispatch. The largest real one in this
+# repo (`decision-improvement-v1`) is about 303 KiB, and the RSI kit's own on its branch about 47
+# KiB; 2 MiB leaves more than 6x headroom over the largest while still refusing a corrupted or
+# hostile file with no bound at all.
+MAX_KIT_NOTES_BYTES = 2 * 1024 * 1024
+
+# T10: how many names or values of ONE kind the RSI panel renders per checkout (contract version
+# constants, arms, reader-shaped names, names not read as data). The branch's engine defines six
+# contract versions, three arms and no reader; 50 leaves room for every contract the later RSI
+# tasks could add while bounding a hostile file that defines thousands.
+MAX_RSI_CONSTANTS_RENDERED = 50
+
+# T10: the longest string read out of an RSI engine that renders -- the MAX_KIND_CHARS precedent.
+# The longest real contract version value is 36 characters and the longest constant name 25;
+# 120 is over three times that, long enough for any real contract string and far too short for a
+# payload. A longer one is replaced by a fixed label, never rendered and never cut.
+MAX_RSI_VALUE_CHARS = 120
+
 # A local git read takes milliseconds; 20 s (attempt_ledger's git probe bound) stops a hung one.
 GIT_TIMEOUT_SECONDS = 20
 
@@ -194,6 +228,10 @@ CAP_NAMES = (
     "MAX_EVAL_RESULTS_BYTES",
     "MAX_PREFS_FILE_BYTES",
     "MAX_PREFS_ENTRIES_SCANNED",
+    "MAX_RSI_ENGINE_BYTES",
+    "MAX_KIT_NOTES_BYTES",
+    "MAX_RSI_CONSTANTS_RENDERED",
+    "MAX_RSI_VALUE_CHARS",
 )
 
 PAGE_TITLE = "polytropos observability dashboard"
@@ -295,6 +333,37 @@ CODEX_DEMO_TASKS_MD = """# TASKS — codex-demo (synthetic)
 CODEX_DEMO_NOTES_MD = """# NOTES — codex-demo (synthetic)
 
 outcome: CD1 model=sonnet attempts=1 result=pass review=clean
+"""
+
+# T10 item 4: the recursive-improvement kit under the checkout's `tasks/kits` -- three tasks (one
+# done, two pending) and a NOTES.md holding one `outcome:` line, one `actual-use:` line and one
+# `routing:` line, in the bulleted shapes the Codex driver writes. No engine file: the demo shows
+# the absent state. Its model is the synthetic one no pricing file knows, so the routing
+# scorecard's tier figures are unchanged by this kit (the scorecard notes the unknown pin instead).
+RSI_KIT = "recursive-improvement"
+RSI_KIT_TASKS_MD = f"""# TASKS — recursive-improvement (synthetic)
+
+## Phase 1 — synthetic
+
+### R1 — a synthetic finished RSI task
+- status: done
+- model: {SYNTHETIC_MODEL}
+
+### R2 — a synthetic pending RSI task
+- status: pending
+- model: {SYNTHETIC_MODEL}
+- depends: R1
+
+### R3 — a synthetic pending RSI task after it
+- status: pending
+- model: {SYNTHETIC_MODEL}
+- depends: R2
+"""
+RSI_KIT_NOTES_MD = f"""# NOTES — recursive-improvement (synthetic)
+
+- actual-use: attempt=1 planned=synthetic dispatched_model={SYNTHETIC_MODEL} result=passed
+- routing: policy=synthetic
+- outcome: R1 model={SYNTHETIC_MODEL} attempts=1 result=pass review=none run={DEMO_RUN}
 """
 
 
@@ -399,6 +468,10 @@ def default_caps():
         "MAX_EVAL_RESULTS_BYTES": MAX_EVAL_RESULTS_BYTES,
         "MAX_PREFS_FILE_BYTES": MAX_PREFS_FILE_BYTES,
         "MAX_PREFS_ENTRIES_SCANNED": MAX_PREFS_ENTRIES_SCANNED,
+        "MAX_RSI_ENGINE_BYTES": MAX_RSI_ENGINE_BYTES,
+        "MAX_KIT_NOTES_BYTES": MAX_KIT_NOTES_BYTES,
+        "MAX_RSI_CONSTANTS_RENDERED": MAX_RSI_CONSTANTS_RENDERED,
+        "MAX_RSI_VALUE_CHARS": MAX_RSI_VALUE_CHARS,
     }
 
 
@@ -3682,6 +3755,744 @@ def build_training_panel(ctx):
     }
 
 
+####################################################################################################
+# RSI panel (T10): what each discovered checkout holds of the recursive-improvement work (PLAN D12,
+# D3 row 7) -- the third of PLAN D2's sanctioned thin adapters. By the user's decision of
+# 2026-09-26 the engine file is read as TEXT: `ast.parse` builds its syntax tree and
+# `ast.literal_eval` reads its top-level constants, so no checkout code is ever imported, executed
+# or compiled to run. The kit is read through `kit_contract.parse_tasks` and
+# `attempt_history.notes_records`. RSI records themselves are T11's, gated on the read seam R02
+# lands (PLAN D12): nothing here calls into the engine, and the page says so. Every file is looked
+# up one path component at a time without following a link, must be a regular file under its own
+# named cap, and is read bounded -- a link is noted and its content never rendered. Only
+# `ctx["checkouts"]` is probed: the plugin install is never a checkout, so nothing under the
+# plugin root is looked for here (P3 fix round M1).
+
+RSI_PANEL = "rsi"
+
+# Where the engine and the kit live in a checkout, as the components the lookup walks one by one.
+RSI_ENGINE_PARTS = ("bin", "recursive_improvement.py")
+RSI_KIT_PARTS = ("tasks", "kits", RSI_KIT)
+
+# Reader-shaped names: a module-scope function whose name starts with one of these prefixes, or any
+# module-scope name containing RSI_READ_MARK. Either one means the engine may define a way to read
+# stored RSI records, so the page never claims there is nothing to render.
+RSI_READER_PREFIXES = ("read_", "list_", "iter_")
+RSI_READ_MARK = "READ"
+
+# The fixed lines the panel prints, one per state.
+RSI_ENGINE_ABSENT = "RSI engine not present in this checkout (`bin/recursive_improvement.py`)"
+RSI_ENGINE_UNKNOWN = ("Whether the RSI engine is present in this checkout is unknown — see the "
+                      "notes above.")
+RSI_ENGINE_NOT_PARSED = ("RSI engine present in this checkout (`bin/recursive_improvement.py`) but "
+                         "not parsed — see the notes above; nothing in it is rendered.")
+RSI_ENGINE_PARSED = ("RSI engine present in this checkout (`bin/recursive_improvement.py`), read "
+                     "as text with ast.parse — nothing in it was run. Only its top-level NAME = "
+                     "<literal> statements are read as data.")
+RSI_NOTHING_TO_RENDER = ("no RSI record store or reader is defined by this engine version; nothing "
+                         "to render — R02 (durable links and history projection) has not landed "
+                         "here")
+RSI_RECORDS_NOT_READ = ("This engine version defines a record store or a reader-shaped name, but "
+                        "this page does not read RSI records: that waits on R02's read seam "
+                        "reaching main (PLAN D12). Nothing here calls into the engine.")
+RSI_STORE_UNKNOWN = "store kind unknown to runtime_data — not resolved"
+RSI_KIT_ABSENT = "RSI kit not present in this checkout (`tasks/kits/recursive-improvement`)"
+RSI_KIT_UNKNOWN = ("Whether the RSI kit is present in this checkout is unknown — see the notes "
+                   "above.")
+
+# What stands in for a string read out of an engine that is longer than MAX_RSI_VALUE_CHARS: a
+# fixed label, never the value and never a cut of it (the MAX_KIND_CHARS precedent).
+RSI_WITHHELD = "(longer than MAX_RSI_VALUE_CHARS — not rendered)"
+
+# A statement whose body only running the file could say ran: a name bound inside one is noted,
+# never read as data.
+_RSI_BLOCKS = (ast.If, ast.For, ast.AsyncFor, ast.While, ast.With, ast.AsyncWith, ast.Try,
+               ast.TryStar, ast.Match)
+
+# One `os.read` at a time while reading a file bounded; the bound itself is the caller's cap.
+_READ_CHUNK_BYTES = 64 * 1024
+
+
+def _no_follow_walk(base, parts):
+    """`base` joined with `parts`, looked up one component at a time with `os.lstat` and never
+    following a link -> `(state, rel, detail)`, `rel` naming (relative to `base`) the component the
+    answer is about:
+
+    - `("found", rel, st)`: every component before the last is a real directory, and `st` is the
+      last one's own `lstat` -- the caller judges its kind;
+    - `("absent", rel, None)`: a component does not exist, or one before the last is not a
+      directory, so nothing can exist at the full path;
+    - `("link", rel, None)`: a component before the last is a symlink, never followed;
+    - `("unknown", rel, error type name)`: a lookup failed, so whether it exists is unknown."""
+    path, rel = Path(base), ""
+    for index, part in enumerate(parts):
+        path = path / part
+        rel = "/".join(parts[:index + 1])
+        try:
+            st = os.lstat(path)
+        except (FileNotFoundError, NotADirectoryError):
+            return "absent", rel, None
+        except OSError as exc:
+            return "unknown", rel, type(exc).__name__
+        if index == len(parts) - 1:
+            return "found", rel, st
+        if stat.S_ISLNK(st.st_mode):
+            return "link", rel, None
+        if not stat.S_ISDIR(st.st_mode):
+            return "absent", rel, None
+    return "absent", rel, None
+
+
+def _read_bounded(path, limit):
+    """The regular file at `path` -> `(bytes, None)` holding at most `limit + 1` of its bytes, or
+    `(None, kind)` when what the open found is not a regular file. The open follows no link at the
+    leaf (`O_NOFOLLOW`) and never waits (`O_NONBLOCK`), and `fstat` checks the type again, so a
+    link, FIFO or other special file swapped in after the caller's `lstat` is refused -- never
+    followed, never waited on. `bin/safe_paths.py`'s reader reads a whole file and T10's reads are
+    bounded, so this one is its own: a caller handed `limit + 1` bytes knows the file outgrew its
+    size gate. An `OSError` is the caller's to note."""
+    fd = os.open(os.fspath(path), os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_NONBLOCK", 0))
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode):
+            return None, _leaf_kind(st.st_mode)
+        chunks, total = [], 0
+        while total <= limit:
+            chunk = os.read(fd, min(_READ_CHUNK_BYTES, limit + 1 - total))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            total += len(chunk)
+        return b"".join(chunks), None
+    finally:
+        os.close(fd)
+
+
+def _read_checkout_leaf(checkout, parts, caps, cap_name, label, notes):
+    """One file inside a checkout, read the T10 way -> `(outcome, detail)`. It is looked up without
+    following a link at any component (`_no_follow_walk`), must be a regular file no larger than
+    cap `cap_name` or it is never opened, and is then read bounded (`_read_bounded`).
+
+    `outcome` is `read` (detail: the bytes); `absent` (nothing there, no note); `unknown` (a lookup
+    failed, or a component on the way is a symlink); `refused` (not a regular file -- a link, a
+    FIFO, a directory -- detail: its kind); `oversize` (over the cap -- detail: its size); or
+    `error` (the read failed -- detail: the error type's name). Each of the last four leaves
+    exactly one note naming the file and why -- an exception's type, never its message."""
+    what = "/".join(parts)
+    state, rel, detail = _no_follow_walk(checkout, parts)
+    if state == "absent":
+        return "absent", None
+    if state == "unknown":
+        notes.append(f"{label}: {rel} could not be looked up ({detail}) — whether {what} is "
+                     f"present is unknown")
+        return "unknown", detail
+    if state == "link":
+        notes.append(f"{label}: {rel} is a symlink — not followed; {what} is never read through "
+                     f"it")
+        return "unknown", "a symlink"
+    st = detail
+    if not stat.S_ISREG(st.st_mode):
+        kind = _leaf_kind(st.st_mode)
+        notes.append(f"{label}: {what} is {kind}, not a regular file — never read")
+        return "refused", kind
+    limit = cap_value(caps, cap_name)
+    if st.st_size > limit:
+        notes.append(cap_note(caps, cap_name,
+                              f"{label}: {what} is {st.st_size} bytes — never read"))
+        return "oversize", st.st_size
+    try:
+        data, kind = _read_bounded(Path(checkout, *parts), limit)
+    except OSError as exc:
+        notes.append(f"{label}: {what} could not be read ({type(exc).__name__})")
+        return "error", type(exc).__name__
+    if kind is not None:
+        notes.append(f"{label}: {what} is {kind}, not a regular file — never read")
+        return "refused", kind
+    if len(data) > limit:
+        notes.append(cap_note(caps, cap_name,
+                              f"{label}: {what} grew past the cap while it was read — none of it "
+                              f"is used"))
+        return "oversize", len(data)
+    return "read", data
+
+
+def _scope_bindings(node):
+    """Every module-scope name the statement or expression `node` binds -> a list of `(name,
+    kind)` pairs in source order, `kind` being `def` for a function and `bound` for anything else:
+    a name stored or deleted, an import, a class, an `except ... as` name, a `match` capture, a
+    walrus. A function, class or lambda body is its own scope and is never entered (a def gives its
+    own name only); a comprehension's loop variable is the comprehension's own, while a walrus
+    anywhere else binds the module's. An annotation with no value binds nothing.
+
+    The walk keeps its own stack instead of recursing (T10 retry). A recursive generator hands
+    each name back up the whole chain of generators above it, so a name nested d levels deep
+    costs O(d); and past the interpreter's recursion limit it raises, although `ast.parse`
+    accepts left-nested expressions several times deeper than that limit. Here every node costs
+    O(1), however deep it sits."""
+    found, stack = [], [node]
+    while stack:
+        current = stack.pop()
+        if isinstance(current, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            found.append((current.name, "def"))
+            continue
+        if isinstance(current, ast.ClassDef):
+            found.append((current.name, "bound"))
+            continue
+        if isinstance(current, ast.Lambda) or (isinstance(current, ast.AnnAssign)
+                                               and current.value is None):
+            continue
+        if isinstance(current, ast.Name) and isinstance(current.ctx, (ast.Store, ast.Del)):
+            found.append((current.id, "bound"))
+        elif isinstance(current, (ast.Import, ast.ImportFrom)):
+            found.extend(((alias.asname or alias.name.split(".")[0]), "bound")
+                         for alias in current.names if alias.name != "*")
+        elif isinstance(current, ast.ExceptHandler) and current.name:
+            found.append((current.name, "bound"))
+        elif isinstance(current, ast.pattern):
+            # A `match` capture: the name of a MatchAs or MatchStar, the rest of a MatchMapping.
+            found.extend((value, "bound") for value in (getattr(current, "name", None),
+                                                        getattr(current, "rest", None))
+                         if isinstance(value, str))
+        children = ([current.iter, *current.ifs] if isinstance(current, ast.comprehension)
+                    else list(ast.iter_child_nodes(current)))
+        stack.extend(reversed(children))  # the first child is popped first: source order
+    return found
+
+
+def _rsi_single_assignment(node):
+    """A top-level `NAME = <value>` or `NAME: T = <value>` -> `(name, value node)`, else None. These
+    two are the only forms whose value is ever read as data."""
+    if isinstance(node, ast.Assign) and len(node.targets) == 1 \
+            and isinstance(node.targets[0], ast.Name):
+        return node.targets[0].id, node.value
+    if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name) \
+            and node.value is not None:
+        return node.target.id, node.value
+    return None
+
+
+def _rsi_of_interest(name):
+    """A name whose value the panel reads as data: a contract version, the arms, the store."""
+    return name.endswith("_VERSION") or name in ("ARMS", "STORE")
+
+
+def _rsi_parse(tree):
+    """The facts one parsed engine states at module scope -> dict (see `rsi_status`).
+
+    Statements are taken in the order the file would run them, top to bottom. A later top-level
+    literal assignment of a name replaces an earlier one, and the name moves to that later
+    statement's position -- where the value the file ends with is set. A name bound any other way,
+    or inside a block only running the file could settle, stops being read as data until a later
+    top-level literal assignment settles it again; its note moves the same way, to the last
+    statement that unsettled it. `readers` keeps each `[name, where]` once, at its first binding.
+
+    Every step is O(1) per name -- the dicts are popped and re-inserted, reader-shaped names are
+    de-duplicated through a set, never by scanning the list (T10 retry: that scan made 40,000
+    such names cost 10 s) -- and `_scope_bindings` is linear in the tree, so the work is linear in
+    the file's size, which MAX_RSI_ENGINE_BYTES bounds."""
+    versions, not_rendered, readers, seen_readers = {}, {}, [], set()
+    facts = {"arms": None, "store": None, "store_defined": False}
+
+    def unsettled(name, reason):
+        versions.pop(name, None)
+        if name == "ARMS":
+            facts["arms"] = None
+        if name == "STORE":
+            facts["store"] = None
+        not_rendered.pop(name, None)  # re-inserted: at the last statement that unsettled it
+        not_rendered[name] = reason
+
+    def reader(name, where):
+        if (name, where) not in seen_readers:
+            seen_readers.add((name, where))
+            readers.append([name, where])
+
+    for node in tree.body:
+        single = _rsi_single_assignment(node)
+        if single is None:
+            where = "inside a block" if isinstance(node, _RSI_BLOCKS) else "at the top level"
+            bindings = _scope_bindings(node)
+        else:
+            name, value_node = single
+            where = "at the top level"
+            bindings = _scope_bindings(value_node)  # a walrus inside the value binds too
+            if RSI_READ_MARK in name:
+                reader(name, where)
+            if name == "STORE":
+                facts["store_defined"] = True
+            if _rsi_of_interest(name):
+                try:
+                    value = ast.literal_eval(value_node)
+                except Exception:  # noqa: BLE001 -- not a literal: named, never evaluated otherwise
+                    unsettled(name, "is not a literal")
+                else:
+                    if name == "ARMS":
+                        if isinstance(value, (tuple, list)) \
+                                and all(isinstance(arm, str) for arm in value):
+                            not_rendered.pop(name, None)
+                            facts["arms"] = list(value)
+                        else:
+                            unsettled(name, "is not a tuple or list of strings")
+                    elif not isinstance(value, str):
+                        unsettled(name, "is not a string")
+                    elif name == "STORE":
+                        not_rendered.pop(name, None)
+                        facts["store"] = value
+                    else:
+                        not_rendered.pop(name, None)
+                        versions.pop(name, None)  # re-inserted: at its final binding's position
+                        versions[name] = value
+        for bound, kind in bindings:
+            if (kind == "def" and bound.startswith(RSI_READER_PREFIXES)) or RSI_READ_MARK in bound:
+                reader(bound, where)
+            if bound == "STORE":
+                facts["store_defined"] = True
+            if _rsi_of_interest(bound):
+                unsettled(bound, ("is bound inside a block, which only running the file could "
+                                  "settle" if where == "inside a block" else
+                                  "is bound at the top level in a form not read as data"))
+    return {
+        "versions": [[name, value] for name, value in versions.items()],
+        "known_versions": list(versions.values()),
+        "arms": facts["arms"],
+        "store": facts["store"],
+        "store_defined": facts["store_defined"],
+        "readers": readers,
+        "not_rendered": [[name, reason] for name, reason in not_rendered.items()],
+    }
+
+
+def _rsi_store(value, checkout, data_home, label, notes):
+    """`STORE`'s value for one checkout -> `{"value", "known", "path", "state"}`. Only a
+    `runtime_data.STORES` entry is resolved, and only under `data_home` -- the PAGE's data home,
+    handed to `runtime_data.store_path` as the one variable of an otherwise empty environment, so
+    neither this process's own data home nor a legacy in-tree store is ever what it names. Whether
+    it exists is looked up without following a link at the namespace or at the store; a link at
+    either, or a lookup that failed, is also a note."""
+    rd = _mod("runtime_data")
+    if value not in rd.STORES:
+        return {"value": value, "known": False, "path": None, "state": None}
+    if data_home is None:
+        return {"value": value, "known": True, "path": None,
+                "state": "not resolved — no data home was given"}
+    path = rd.store_path(value, checkout, env={rd.DATA_HOME_VAR: os.fspath(data_home)})
+    state, rel, detail = _no_follow_walk(data_home, (rd.project_namespace(checkout), value))
+    if state == "found":
+        mode = detail.st_mode
+        text = ("exists" if stat.S_ISDIR(mode) else
+                f"is {_leaf_kind(mode) if not stat.S_ISREG(mode) else 'a regular file'}, not a "
+                f"store directory — not followed, not read")
+        if stat.S_ISLNK(mode):
+            notes.append(f"{label}: the {value} store its RSI engine names is a symlink in this "
+                         f"page's data home ({rel}) — not followed, not read")
+    elif state == "absent":
+        text = "does not exist"
+    elif state == "link":
+        text = "not looked at — its namespace is a symlink, never followed"
+        notes.append(f"{label}: the namespace of the {value} store its RSI engine names is a "
+                     f"symlink in this page's data home ({rel}) — not followed, not read")
+    else:
+        text = f"could not be looked up ({detail}) — whether it exists is unknown"
+        notes.append(f"{label}: the {value} store its RSI engine names could not be looked up "
+                     f"({detail}) — whether it exists is unknown")
+    return {"value": value, "known": True, "path": os.fspath(path), "state": text}
+
+
+def rsi_status(checkout, caps=None, data_home=None):
+    """The RSI engine in one checkout, read as TEXT and never run (T10) -> dict:
+
+    - `{"present": False}` -- no `bin/recursive_improvement.py` in this checkout;
+    - `{"present": None, "notes"}` -- whether it is here is unknown: a lookup failed, or `bin` is
+      a symlink, never followed;
+    - `{"present": True, "parsed": False, "notes"}` plus `refused` (the kind of a leaf that is not
+      a regular file, a link included), `size` (over MAX_RSI_ENGINE_BYTES) or `error` (an
+      exception type's name: the read failed, the bytes are not strict UTF-8, or `ast.parse`
+      refused them) -- nothing in it is rendered;
+    - `{"present": True, "parsed": True, "size", "versions", "known_versions", "arms", "store",
+      "store_defined", "readers", "not_rendered", "notes"}`.
+
+    Parsed facts come from module-scope statements, and only a top-level `NAME = <literal>` or
+    `NAME: T = <literal>` is read as data, its value through `ast.literal_eval`. `versions` is
+    every such name ending `_VERSION` whose value is a string, as `[name, value]`, ordered by the
+    statement that settled each one's final value (a name assigned twice sits where its last
+    assignment is, holding that value); `known_versions` is those values, in the same order, the
+    set `rsi_record_kind` checks a record's `v` against.
+    `arms` is `ARMS` when it is a tuple or list of strings, else None. `store` is `STORE` when it is
+    a string, resolved by `_rsi_store` against `data_home` -- the page's own, never the process's;
+    `store_defined` is True whenever `STORE` is bound at module scope in any form. `readers` lists
+    `[name, where]` for every reader-shaped module-scope name (RSI_READER_PREFIXES,
+    RSI_READ_MARK). `not_rendered` lists `[name, reason]` for each contract version, `ARMS` or
+    `STORE` bound in a way not read as data. Every string is the file's own, at full length: the
+    panel bounds what it renders. `notes` carry exception type names only, never a message."""
+    caps = {**default_caps(), **dict(caps or {})}
+    label = os.fspath(checkout)
+    what = "/".join(RSI_ENGINE_PARTS)
+    notes = []
+    outcome, detail = _read_checkout_leaf(checkout, RSI_ENGINE_PARTS, caps,
+                                          "MAX_RSI_ENGINE_BYTES", label, notes)
+    if outcome == "absent":
+        return {"present": False}
+    if outcome == "unknown":
+        return {"present": None, "notes": notes}
+    if outcome == "refused":
+        return {"present": True, "parsed": False, "refused": detail, "notes": notes}
+    if outcome == "oversize":
+        return {"present": True, "parsed": False, "size": detail, "notes": notes}
+    if outcome == "error":
+        return {"present": True, "parsed": False, "error": detail, "notes": notes}
+    try:
+        # Strict UTF-8; `-sig` only drops a leading byte-order mark, as Python itself does.
+        tree = ast.parse(detail.decode("utf-8-sig"), filename=RSI_ENGINE_PARTS[-1])
+        facts = _rsi_parse(tree)
+    except Exception as exc:  # noqa: BLE001 -- UnicodeDecodeError, SyntaxError, RecursionError...
+        notes.append(f"{label}: {what} could not be parsed ({type(exc).__name__}) — nothing in it "
+                     f"is rendered")
+        return {"present": True, "parsed": False, "error": type(exc).__name__, "notes": notes}
+    store = None
+    if facts["store"] is not None:
+        store = _rsi_store(facts["store"], checkout, data_home, label, notes)
+    return {"present": True, "parsed": True, "size": len(detail), **facts, "store": store,
+            "notes": notes}
+
+
+def _rsi_known_versions(known_versions):
+    """`known_versions` as the set of version strings a record may match, without draining
+    anything that is not a finite, sized collection (T10 retry). A string is one version. A list,
+    tuple, set, frozenset or dict view -- any `collections.abc.Collection` -- gives each of its
+    strings, iterated no further than its own `len()`. Anything else -- a generator, an iterator,
+    None, or a collection that raises while it is read -- is no known version at all: a prefixed
+    record then reads as unknown, never as known, and nothing is iterated. `_as_list`, which
+    other panels share, drains any iterable, so it is not used here."""
+    if isinstance(known_versions, str):
+        return {known_versions}
+    if not isinstance(known_versions, collections.abc.Collection):
+        return set()
+    try:
+        return {item for item in itertools.islice(known_versions, len(known_versions))
+                if isinstance(item, str)}
+    except Exception:  # noqa: BLE001 -- an unreadable collection names no version
+        return set()
+
+
+def rsi_record_kind(obj, known_versions):
+    """The version guard T11's record renderer uses -> `(kind, version)`: `("known", v)` for a
+    record whose `v` is in `known_versions` (the parsed `*_VERSION` values), `("unknown", v)` for
+    a record whose `v` is not -- a renderer meeting one prints "unknown version, not rendered" and
+    the version -- and `("not-a-record", None)` for anything else. A record is a dict whose `v`
+    is a string starting with the RSI contract prefix. `known_versions` is read by
+    `_rsi_known_versions`: a string, or a finite sized collection of strings; anything else
+    counts as no known version and is never iterated."""
+    if not isinstance(obj, dict):
+        return "not-a-record", None
+    version = obj.get("v")
+    if not isinstance(version, str) or not version.startswith("polytropos.rsi-"):
+        return "not-a-record", None
+    known = _rsi_known_versions(known_versions)
+    return ("known" if version in known else "unknown"), version
+
+
+def _rsi_text(value, limit, withheld):
+    """One string read out of an engine, as it may render: itself when it is at most `limit`
+    characters, else RSI_WITHHELD -- counted in `withheld[0]`, so the panel can say how many."""
+    text = str(value)
+    if len(text) <= limit:
+        return text
+    withheld[0] += 1
+    return RSI_WITHHELD
+
+
+def _rsi_engine_blocks(status, label, caps, notes):
+    """One checkout's `rsi_status` -> the engine's blocks. Every string read out of the engine is
+    bounded by MAX_RSI_VALUE_CHARS and every list by MAX_RSI_CONSTANTS_RENDERED, each hit a cap
+    note. A parsed engine also leaves one note recording the contract versions read: the receipt
+    carries notes, never blocks, so that is how build.json records which versions the page saw."""
+    notes.extend(status.get("notes") or ())
+    present = status.get("present")
+    if present is False:
+        return [{"type": "p", "text": RSI_ENGINE_ABSENT}]
+    if present is not True:
+        return [{"type": "p", "text": RSI_ENGINE_UNKNOWN}]
+    if not status.get("parsed"):
+        return [{"type": "p", "text": RSI_ENGINE_NOT_PARSED}]
+    what = "/".join(RSI_ENGINE_PARTS)
+    limit = cap_value(caps, "MAX_RSI_CONSTANTS_RENDERED")
+    chars = cap_value(caps, "MAX_RSI_VALUE_CHARS")
+    withheld = [0]
+
+    def bounded(items, noun):
+        items = list(items or ())
+        if len(items) > limit:
+            notes.append(cap_note(caps, "MAX_RSI_CONSTANTS_RENDERED",
+                                  f"{label}: {what} has {len(items)} {noun}; only the first "
+                                  f"{limit}, by position in the file, are rendered"))
+        return items[:limit]
+
+    versions = status.get("versions") or ()
+    rows = [[_rsi_text(name, chars, withheld), _rsi_text(value, chars, withheld)]
+            for name, value in bounded(versions, "contract version constants")]
+    listed = "; ".join(f"{name} = {value}" for name, value in rows) or "none"
+    notes.append(f"{label}: {what} read as text, never run — {len(versions)} contract version "
+                 f"constant(s) read as data: {listed}")
+    blocks = [
+        {"type": "p", "text": RSI_ENGINE_PARSED},
+        {"type": "table", "headers": ["constant", "contract version"], "rows": rows,
+         "caption": "contract versions, read as data",
+         "empty": "no top-level *_VERSION string constant"},
+    ]
+    not_rendered = status.get("not_rendered") or ()
+    unsettled = {name for name, _reason in not_rendered}
+    arms = status.get("arms")
+    if arms is not None:
+        shown = [_rsi_text(arm, chars, withheld) for arm in bounded(arms, "arms")]
+        blocks.append({"type": "p", "parts": ["arms (ARMS): ", ", ".join(shown) or "none"]})
+    elif "ARMS" in unsettled:
+        blocks.append({"type": "p", "text": "arms (ARMS): not read as data — see the notes above"})
+    else:
+        blocks.append({"type": "p", "text": "arms (ARMS): not defined at module scope"})
+    store = status.get("store")
+    if store is not None:
+        value = _rsi_text(store.get("value"), chars, withheld)
+        if not store.get("known"):
+            blocks.append({"type": "p", "parts": ["STORE ", value, ": ", RSI_STORE_UNKNOWN]})
+        elif store.get("path") is None:
+            blocks.append({"type": "p", "parts": ["STORE ", value, ": ", store.get("state")]})
+        else:
+            blocks.append({"type": "p", "parts": [
+                "STORE ", value, ": resolved for this checkout under this page's data home — ",
+                store.get("path"), " — ", store.get("state")]})
+    elif status.get("store_defined"):
+        blocks.append({"type": "p", "text": "STORE: bound, but not read as data — see the notes "
+                                            "above"})
+    else:
+        blocks.append({"type": "p", "text": "STORE: not defined at module scope"})
+    readers = status.get("readers") or ()
+    blocks.append({"type": "p", "text": ("Reader-shaped names (a module-scope read_, list_ or "
+                                         "iter_ function, or any module-scope name containing "
+                                         "READ):")})
+    blocks.append({"type": "list",
+                   "items": [f"{_rsi_text(name, chars, withheld)} — bound {where}"
+                             for name, where in bounded(readers, "reader-shaped names")],
+                   "empty": "none"})
+    for name, reason in bounded(not_rendered, "names not read as data"):
+        notes.append(f"{label}: {what}: {_rsi_text(name, chars, withheld)} {reason} — not "
+                     f"rendered")
+    blocks.append({"type": "p", "text": (RSI_RECORDS_NOT_READ
+                                         if status.get("store_defined") or readers
+                                         else RSI_NOTHING_TO_RENDER)})
+    if withheld[0]:
+        notes.append(cap_note(caps, "MAX_RSI_VALUE_CHARS",
+                              f"{label}: {withheld[0]} string(s) read out of {what} are longer "
+                              f"than the cap — each is shown as a fixed label, never rendered"))
+    return blocks
+
+
+def _prefix_line_count(text, prefix):
+    """How many lines of `text` start with `prefix`, after indentation and one `- ` or `* ` bullet
+    -- counted by prefix alone, never parsed (the Codex driver owns what follows)."""
+    count = 0
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped[:2] in ("- ", "* "):
+            stripped = stripped[2:].lstrip()
+        if stripped.startswith(prefix):
+            count += 1
+    return count
+
+
+def _rsi_tasks_blocks(checkout, label, caps, notes):
+    """The RSI kit's TASKS.md, under MAX_TASKS_MD_BYTES, through `kit_contract.parse_tasks` -> a
+    table (id, title, status, model) and the status counts. Undecodable or unparseable is a note
+    naming the error type."""
+    kc = _mod("kit_contract")
+    parts = RSI_KIT_PARTS + ("TASKS.md",)
+    what = "/".join(parts)
+    outcome, detail = _read_checkout_leaf(checkout, parts, caps, "MAX_TASKS_MD_BYTES", label,
+                                          notes)
+    if outcome == "absent":
+        return [{"type": "p", "text": "TASKS.md absent — no task table."}]
+    if outcome != "read":
+        return [{"type": "p", "text": "TASKS.md not read — see the notes above."}]
+    try:
+        tasks = kc.parse_tasks(detail.decode("utf-8"))
+    except Exception as exc:  # noqa: BLE001 -- UnicodeDecodeError, or the owner's own ValueError
+        notes.append(f"{label}: {what} could not be parsed ({type(exc).__name__})")
+        return [{"type": "p", "text": "TASKS.md not parsed — see the notes above."}]
+    counts = {status: 0 for status in kc.STATUSES}
+    rows = []
+    for task in tasks:
+        try:
+            row = [task.get("id"), task.get("title"), task.get("status"), task.get("model")]
+        except Exception as exc:  # noqa: BLE001 -- this task's row only, never another's
+            notes.append(f"{label}: a task in {what} could not be rendered ({type(exc).__name__})")
+            continue
+        rows.append(row)
+        if row[2] in counts:
+            counts[row[2]] += 1
+    parts_line = ["task status counts — "]
+    for index, status in enumerate(kc.STATUSES):
+        parts_line += ([" · "] if index else []) + [f"{status}: ",
+                                                    {"fmt": "count", "value": counts[status]}]
+    return [
+        {"type": "table", "headers": ["id", "title", "status", "model"], "rows": rows,
+         "caption": f"{RSI_KIT} tasks (kit_contract.parse_tasks)",
+         "empty": "TASKS.md holds no task", "details": True},
+        {"type": "p", "parts": parts_line},
+    ]
+
+
+def _rsi_notes_blocks(checkout, label, caps, notes):
+    """The RSI kit's NOTES.md, under MAX_KIT_NOTES_BYTES -> its `outcome:` lines through
+    `attempt_history.notes_records(kit, text, model_registry.registry())` as a table (task,
+    result, dispatched and observed model, run -- each the record's own value or `unknown`), and
+    the count of its `actual-use:` and `routing:` lines, by prefix only."""
+    ah, mr = _mod("attempt_history"), _mod("model_registry")
+    parts = RSI_KIT_PARTS + ("NOTES.md",)
+    what = "/".join(parts)
+    outcome, detail = _read_checkout_leaf(checkout, parts, caps, "MAX_KIT_NOTES_BYTES", label,
+                                          notes)
+    if outcome == "absent":
+        return [{"type": "p", "text": "NOTES.md absent — no outcome:, actual-use: or routing: "
+                                      "line to show."}]
+    if outcome != "read":
+        return [{"type": "p", "text": "NOTES.md not read — see the notes above."}]
+    try:
+        text = detail.decode("utf-8")
+    except Exception as exc:  # noqa: BLE001 -- UnicodeDecodeError, named by type only
+        notes.append(f"{label}: {what} could not be decoded ({type(exc).__name__})")
+        return [{"type": "p", "text": "NOTES.md not decoded — see the notes above."}]
+    blocks = []
+    try:
+        records = ah.notes_records(RSI_KIT, text, mr.registry())
+    except Exception as exc:  # PLAN D10: an owner that raises is a note, never a crash
+        notes.append(f"{label}: outcome lines in {what} unavailable ({type(exc).__name__})")
+        blocks.append({"type": "p", "text": "outcome lines: not available this build — see the "
+                                            "notes above"})
+    else:
+        rows = []
+        for record in records:
+            try:
+                rows.append([record.get("task"), record.get("result"),
+                             record.get("dispatched_model"), record.get("observed_model"),
+                             record.get("run")])
+            except Exception as exc:  # noqa: BLE001 -- this record's row only
+                notes.append(f"{label}: an outcome record from {what} could not be rendered "
+                             f"({type(exc).__name__})")
+        blocks.append({"type": "table",
+                       "headers": ["task", "result", "dispatched model", "observed model", "run"],
+                       "rows": rows, "caption": "outcome: lines (attempt_history.notes_records)",
+                       "empty": "NOTES.md holds no outcome: line the owner reads",
+                       "details": True})
+    blocks.append({"type": "p", "parts": [
+        "actual-use: lines ", {"fmt": "count", "value": _prefix_line_count(text, "actual-use:")},
+        " · routing: lines ", {"fmt": "count", "value": _prefix_line_count(text, "routing:")},
+        " — counted by prefix only, never parsed: that vocabulary belongs to the Codex driver"]})
+    return blocks
+
+
+def _rsi_ledger_pointer(checkout, ctx):
+    """Where this kit's attempt ledger would be: a `tasks/kits/<slug>` kit's ledger root is
+    `tasks/kits` (PLAN D4), so its namespace is that root's, and the Attempts panel reads it when
+    it is mapped."""
+    root = Path(checkout) / "tasks" / "kits"
+    namespace = _mod("runtime_data").project_namespace(root)
+    classes = (ctx.get("model") or {}).get("classes") or {}
+    mapped = any(isinstance(row, dict) and row.get("namespace") == namespace
+                 for row in classes.get("mapped") or ())
+    return {"type": "p", "parts": [
+        "This kit's attempt ledger, when a driver recorded one, is kept under the namespace of ",
+        os.fspath(root), " (a tasks/kits kit's ledger root, PLAN D4): ", namespace, " — ",
+        ("mapped in this build; its ledger facts are in the Attempts panel" if mapped
+         else "not among the namespaces mapped in this build"), "."]}
+
+
+def _rsi_kit_blocks(checkout, label, ctx, notes):
+    """The RSI kit in one checkout -> `(blocks, state)`, `state` one of `present`, `absent` or
+    `unknown` for the summary's counts. The kit directory is looked up without following a link;
+    its TASKS.md and NOTES.md sections are each contained on their own."""
+    caps = ctx["caps"]
+    kit_what = "/".join(RSI_KIT_PARTS)
+    state, rel, detail = _no_follow_walk(checkout, RSI_KIT_PARTS)
+    if state == "absent":
+        return [{"type": "p", "text": RSI_KIT_ABSENT}], "absent"
+    if state == "unknown":
+        notes.append(f"{label}: {rel} could not be looked up ({detail}) — whether the RSI kit is "
+                     f"present is unknown")
+        return [{"type": "p", "text": RSI_KIT_UNKNOWN}], "unknown"
+    if state == "link":
+        notes.append(f"{label}: {rel} is a symlink — not followed; the RSI kit is never read "
+                     f"through it")
+        return [{"type": "p", "text": RSI_KIT_UNKNOWN}], "unknown"
+    mode = detail.st_mode
+    if stat.S_ISLNK(mode):
+        notes.append(f"{label}: {kit_what} is a symlink — not followed, never read")
+        return [{"type": "p", "text": "RSI kit present in this checkout but not read — see the "
+                                      "notes above."}], "present"
+    if not stat.S_ISDIR(mode):
+        kind = "a regular file" if stat.S_ISREG(mode) else _leaf_kind(mode)
+        notes.append(f"{label}: {kit_what} is {kind}, not a kit directory — never read")
+        return [{"type": "p", "text": RSI_KIT_ABSENT}], "absent"
+    blocks = [{"type": "p", "text": f"RSI kit present in this checkout (`{kit_what}`):"}]
+    blocks.extend(_guarded_section(lambda: _rsi_tasks_blocks(checkout, label, caps, notes),
+                                   f"{label}: RSI kit tasks", notes))
+    blocks.extend(_guarded_section(lambda: _rsi_notes_blocks(checkout, label, caps, notes),
+                                   f"{label}: RSI kit outcome lines", notes))
+    blocks.append(_rsi_ledger_pointer(checkout, ctx))
+    return blocks, "present"
+
+
+def build_rsi_panel(ctx):
+    """T10: per DISCOVERED checkout (never the plugin root), the RSI engine read as text and the
+    RSI kit's progress, each contained on its own. The `summary` is fixed words and integers only:
+    `summary_lines` relays it verbatim, and nothing read out of a checkout -- a version, an arm, a
+    store name, a path, a title, an exception -- may ride along (P3 review M2)."""
+    checkouts = [os.fspath(checkout) for checkout in ctx.get("checkouts") or ()]
+    caps = ctx["caps"]
+    source = ("bin/dashboard.py — each discovered checkout's bin/recursive_improvement.py read as "
+              "text (ast.parse and ast.literal_eval; never imported, never run) and its "
+              "tasks/kits/recursive-improvement kit through kit_contract.parse_tasks and "
+              "attempt_history.notes_records (PLAN D3 row 7, D12)")
+    if not checkouts:
+        return {"source": source, "observed": "live, at build time", "notes": [],
+                "summary": "no checkout discovered — nothing probed",
+                "blocks": [{"type": "p", "text": "No checkout discovered — no RSI engine or kit "
+                                                 "to look for."}]}
+    notes, blocks = [], []
+    counts = {"present": 0, "parsed": 0, "unknown": 0, "kit": 0, "kit_unknown": 0}
+    for checkout in checkouts:
+        blocks.append({"type": "p", "text": f"RSI in {checkout}:"})
+
+        def engine(checkout=checkout):
+            status = rsi_status(checkout, caps=caps, data_home=ctx.get("data_home"))
+            present = status.get("present")
+            if present is True:
+                counts["present"] += 1
+            elif present is None:
+                counts["unknown"] += 1
+            if status.get("parsed"):
+                counts["parsed"] += 1
+            return _rsi_engine_blocks(status, checkout, caps, notes)
+
+        def kit(checkout=checkout):
+            kit_blocks, state = _rsi_kit_blocks(checkout, checkout, ctx, notes)
+            if state == "present":
+                counts["kit"] += 1
+            elif state == "unknown":
+                counts["kit_unknown"] += 1
+            return kit_blocks
+
+        blocks.extend(_guarded_section(engine, f"{checkout}: RSI engine", notes))
+        blocks.extend(_guarded_section(kit, f"{checkout}: RSI kit", notes))
+    return {
+        "source": source,
+        "observed": "live, at build time",
+        "notes": notes,
+        "summary": (f"engine present in {counts['present']} of {len(checkouts)} checkout(s), "
+                    f"parsed in {counts['parsed']}, unknown in {counts['unknown']}; RSI kit "
+                    f"present in {counts['kit']}, unknown in {counts['kit_unknown']}"),
+        "blocks": blocks,
+    }
+
+
 def _bounds_blocks(notes, report):
     """The bounds panel's body: every cap with hit / not hit, then every note of the build.
     Also how `render_build` rebuilds that body when a panel's rendering fails, so the failure
@@ -3726,6 +4537,7 @@ PANELS = [
     (JOURNAL_PANEL, "Journal digests", build_journal_panel),
     (EVALS_PANEL, "Evaluation runs and policy", build_evals_panel),
     (TRAINING_PANEL, "Training data readiness", build_training_panel),
+    (RSI_PANEL, "Recursive improvement (RSI)", build_rsi_panel),
     (BOUNDS_PANEL, "Bounds and notes", build_bounds_panel),
 ]
 
@@ -4737,6 +5549,11 @@ def synthetic_world(root, residue=30, plugin_install=False):
     outside `root` is touched, and nothing here is oversized -- an over-size ledger is a
     T4-test-only fixture, not a `demo`/`synthetic_world` one (TASKS.md item 5).
 
+    T10 item 4: the checkout's `tasks/kits/` also holds the RSI kit, `recursive-improvement`
+    (RSI_KIT_TASKS_MD: three tasks, one done and two pending; RSI_KIT_NOTES_MD: one `outcome:`,
+    one `actual-use:` and one `routing:` line). There is no `bin/recursive_improvement.py`, so the
+    RSI panel shows the absent engine; a test that needs one writes its own stub.
+
     P3 fix round M1: `root/plugin` is always created, an empty directory standing for a plugin
     install (`plugin_root` in the result), so a build can be handed a synthetic plugin root and
     never the real PLUGIN_ROOT. With `plugin_install=True` its namespace also holds what the
@@ -4756,9 +5573,10 @@ def synthetic_world(root, residue=30, plugin_install=False):
     scorecard_kit_dir = kits_dir / SCORECARD_KIT
     codex_kits_dir = checkout / "tasks" / "kits"
     codex_demo_dir = codex_kits_dir / CODEX_DEMO_KIT
+    rsi_kit_dir = codex_kits_dir / RSI_KIT
     plugin_root = root / DEMO_PLUGIN_DIR
     for directory in (data_home, kit_dir, notes_kit_dir, scorecard_kit_dir, codex_kits_dir,
-                      codex_demo_dir, plugin_root):
+                      codex_demo_dir, rsi_kit_dir, plugin_root):
         rd.ensure_private(directory)
     sp.confined_write_bytes(kit_dir, "TASKS.md", DEMO_TASKS_MD, what="synthetic kit")
     sp.confined_write_bytes(kit_dir, "NOTES.md", DEMO_NOTES_MD, what="synthetic kit")
@@ -4774,6 +5592,9 @@ def synthetic_world(root, residue=30, plugin_install=False):
                             what="synthetic kit")
     sp.confined_write_bytes(codex_demo_dir, "NOTES.md", CODEX_DEMO_NOTES_MD,
                             what="synthetic kit")
+    # T10 item 4: the RSI kit, and deliberately no engine file.
+    sp.confined_write_bytes(rsi_kit_dir, "TASKS.md", RSI_KIT_TASKS_MD, what="synthetic kit")
+    sp.confined_write_bytes(rsi_kit_dir, "NOTES.md", RSI_KIT_NOTES_MD, what="synthetic kit")
 
     namespace = rd.project_namespace(checkout)
     ledger = al.AttemptLedger(data_home / namespace / al.STORE, DEMO_KIT)
@@ -4993,6 +5814,7 @@ def synthetic_world(root, residue=30, plugin_install=False):
         "scorecard_kit_dir": scorecard_kit_dir,
         "codex_kits_dir": codex_kits_dir,
         "codex_demo_dir": codex_demo_dir,
+        "rsi_kit_dir": rsi_kit_dir,
         "namespace": namespace,
         "ledger": ledger.events_path,
         "residue": residue_names,

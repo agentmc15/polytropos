@@ -20,11 +20,14 @@ SAFETY CONTRACT (binds every test in this file):
 * A built `index.html` is only ever probed with assertions, never printed.
 """
 
+import ast
 import builtins
+import collections.abc
 import contextlib
 import html
 import importlib.util
 import io
+import itertools
 import json
 import math
 import os
@@ -32,6 +35,7 @@ import re
 import shutil
 import signal
 import stat
+import sys
 import tempfile
 import time
 import unittest
@@ -1071,7 +1075,7 @@ class PageTests(_WorldCase):
             "residue": {**exact(30), "sample": sorted(self.world["residue"])[:3]}})
         self.assertEqual([panel["id"] for panel in receipt["panels"]],
                          ["namespaces", "attempts", "scorecard", "kits", "telemetry", "journal",
-                          "evals", "training", "bounds"])
+                          "evals", "training", "rsi", "bounds"])
         self.assertEqual([row["name"] for row in receipt["caps"]], list(db.CAP_NAMES))
         self.assertEqual(receipt["caps_hit"], [])
         self.assertEqual(receipt["page"], str(self.out / "index.html"))
@@ -1176,7 +1180,7 @@ class RenderingTests(_WorldCase):
         self.assertEqual(model["notes"][0], "a note")
         self.assertEqual([panel["id"] for panel in model["panels"]],
                          ["namespaces", "attempts", "scorecard", "kits", "telemetry", "journal",
-                          "evals", "training", "bounds"])
+                          "evals", "training", "rsi", "bounds"])
 
     def test_a_panel_builder_that_raises_is_a_note_not_an_exception(self):
         def broken(_ctx):
@@ -2964,9 +2968,10 @@ class SourceTests(unittest.TestCase):
              db.MAX_KITS_PER_DIR, db.MAX_TASKS_MD_BYTES, db.MAX_EVAL_RUNS_RENDERED,
              db.MAX_JOURNAL_DAYS, db.MAX_TELEMETRY_ENVELOPES_PER_SOURCE, db.MAX_DIGEST_BYTES,
              db.MAX_ENVELOPE_BYTES, db.MAX_EVAL_RESULTS_BYTES, db.MAX_PREFS_FILE_BYTES,
-             db.MAX_PREFS_ENTRIES_SCANNED, db.GIT_TIMEOUT_SECONDS),
+             db.MAX_PREFS_ENTRIES_SCANNED, db.GIT_TIMEOUT_SECONDS, db.MAX_RSI_ENGINE_BYTES,
+             db.MAX_KIT_NOTES_BYTES, db.MAX_RSI_CONSTANTS_RENDERED, db.MAX_RSI_VALUE_CHARS),
             (5000, 32, 8 * 1024 * 1024, 100, 1024 * 1024, 10, 60, 120, 256 * 1024, 512 * 1024,
-             4 * 1024 * 1024, 512 * 1024, 500, 20))
+             4 * 1024 * 1024, 512 * 1024, 500, 20, 1024 * 1024, 2 * 1024 * 1024, 50, 120))
         self.assertEqual(db.PLUGIN_ROOT, BIN_DIR.parent)
         self.assertEqual(db.default_caps(), {name: getattr(db, name) for name in db.CAP_NAMES})
         self.assertEqual(db.STORE_NAME, "dashboard")
@@ -4350,7 +4355,7 @@ class PlainBuildStdoutCanaryTests(_WorldCase):
 
     def plant_canaries(self):
         """Plant every canary -> ({canary: where}, extra build argv). One entry per placement; a
-        later panel's canary joins here (T10: an RSI version string)."""
+        later panel's canary joins here (T10's is an RSI contract version string)."""
         world, canaries, argv = self.world, {}, []
         target = self.tmp / "canary-kit-target"
         target.mkdir()
@@ -4368,6 +4373,14 @@ class PlainBuildStdoutCanaryTests(_WorldCase):
         canaries["canarysource1a2b"] = "an unregistered telemetry source dir's name"
         (world["evals_dir"] / "canary-not-a-run-3c4d").mkdir()
         canaries["canary-not-a-run-3c4d"] = "an evals store entry that is not a run"
+        # T10: a contract version read out of a stub engine in the fixture checkout. The page
+        # renders it as data and the receipt records it in the rsi panel's note; the rsi summary
+        # is fixed words and counts, so stdout never carries it.
+        engine = world["checkout"] / "bin"
+        engine.mkdir()
+        (engine / "recursive_improvement.py").write_text(
+            'CANARY_VERSION = "polytropos.rsi-canary-5f2e/1"\n', encoding="utf-8")
+        canaries["polytropos.rsi-canary-5f2e/1"] = "an RSI contract version read from a stub engine"
         return canaries, argv
 
     def test_plain_build_stdout_never_carries_checkout_text(self):
@@ -4444,6 +4457,625 @@ class GitEnabledDiscoveryTests(unittest.TestCase):
                           for path in db._porcelain_worktrees(calls[1][2]["stdout"])], [real_repo])
         self.assertEqual(checkouts, [real_repo])
         self.assertEqual(notes, [])  # no git-failure note, and no `--no-git` note
+
+
+# ---------------------------------------------------------------------------------------------
+# RSI panel (T10): each checkout's `bin/recursive_improvement.py` read as text and never run, the
+# `tasks/kits/recursive-improvement` kit's progress, and the version guard T11 inherits.
+
+class RsiPanelTests(_WorldCase):
+    """The engine is parsed, never imported or run (user decision 2026-09-26). Every file is looked
+    up without following a link, gated by its own named cap and read bounded; the summary is fixed
+    words and counts. A test that needs an engine writes its own stub into the synthetic
+    checkout, whose `tasks/kits/` already holds the synthetic RSI kit."""
+
+    VERSION_A = "polytropos.rsi-fixture-a/1"
+    VERSION_B = "polytropos.rsi-fixture-b/1"
+    STUB = (f'FIXTURE_A_VERSION = "{VERSION_A}"\n'
+            f'FIXTURE_B_VERSION = "{VERSION_B}"\n'
+            'ARMS = ("A", "B", "C")\n')
+    SUMMARY_TEMPLATE = ("engine present in N of N checkout(s), parsed in N, unknown in N; RSI kit "
+                        "present in N, unknown in N")
+
+    def engine(self, source):
+        """Write `source` (str or bytes) as the synthetic checkout's engine -> its path."""
+        path = self.world["checkout"] / "bin" / "recursive_improvement.py"
+        path.parent.mkdir(exist_ok=True)
+        path.write_bytes(source.encode("utf-8") if isinstance(source, str) else source)
+        return path
+
+    def status(self, **kwargs):
+        return db.rsi_status(self.world["checkout"], **kwargs)
+
+    def model(self, caps=None):
+        return db.build_model(self.world["data_home"], [str(self.world["checkout"])],
+                              _opts(self), caps)
+
+    @staticmethod
+    def rsi(model):
+        return next(p for p in model["panels"] if p["id"] == "rsi")
+
+    @staticmethod
+    def block(panel, headers):
+        return next(b for b in panel["blocks"]
+                    if b.get("type") == "table" and b.get("headers") == headers)
+
+    @staticmethod
+    def counts_in(panel, lead):
+        """The typed count values of the `p` block whose first part is `lead`."""
+        parts = next(b["parts"] for b in panel["blocks"]
+                     if b.get("type") == "p" and (b.get("parts") or [None])[0] == lead)
+        return [part["value"] for part in parts if isinstance(part, dict)]
+
+    def built(self, *extra):
+        """One CLI build (`--out-dir`, an empty `--projects-dir`, `--no-git`) -> (the rsi section,
+        the page, the receipt text, stdout)."""
+        rc, out, stdout, stderr = self.build("out", *extra)
+        self.assertEqual(rc, 0, stderr)
+        page = self.page(out)
+        return _section(page, "rsi"), page, (out / "build.json").read_text(encoding="utf-8"), stdout
+
+    # -- the engine ------------------------------------------------------------------------------
+
+    def test_the_synthetic_checkout_shows_the_absent_engine_line(self):
+        self.assertEqual(self.status(), {"present": False})
+        section, page, _receipt, _stdout = self.built()
+        self.assertIn(db.esc(db.RSI_ENGINE_ABSENT), section)
+        self.assertIn("RSI kit present in this checkout", section)
+        self.assertNotIn(db.esc(db.RSI_NOTHING_TO_RENDER), section)  # a parsed engine's line only
+        self.assertNotIn("Traceback", page)
+
+    def test_a_stub_engines_versions_render_as_data_and_nothing_to_render_is_said(self):
+        self.engine(self.STUB)
+        status = self.status()
+        self.assertEqual((status["present"], status["parsed"]), (True, True))
+        self.assertEqual(status["versions"], [["FIXTURE_A_VERSION", self.VERSION_A],
+                                              ["FIXTURE_B_VERSION", self.VERSION_B]])
+        self.assertEqual(status["known_versions"], [self.VERSION_A, self.VERSION_B])
+        self.assertEqual(status["arms"], ["A", "B", "C"])
+        self.assertEqual((status["store"], status["store_defined"], status["readers"],
+                          status["not_rendered"]), (None, False, [], []))
+        section, page, receipt, _stdout = self.built()
+        self.assertIn(f"<td>FIXTURE_A_VERSION</td><td>{self.VERSION_A}</td>", section)
+        self.assertIn(f"<td>FIXTURE_B_VERSION</td><td>{self.VERSION_B}</td>", section)
+        self.assertIn("<p>arms (ARMS): A, B, C</p>", section)
+        self.assertIn("STORE: not defined at module scope", section)
+        self.assertIn(db.esc(db.RSI_NOTHING_TO_RENDER), section)
+        self.assertNotIn(db.esc(db.RSI_RECORDS_NOT_READ), section)
+        self.assertIn(self.VERSION_A, receipt)  # the receipt records the versions it read
+        self.assertNotIn("Traceback", page)
+
+    def test_a_stub_that_fails_to_parse_is_named_by_type_with_no_message_text(self):
+        # T10 A4 replaces "a stub that raises RuntimeError on import": nothing is ever imported.
+        source = "def (:\n"
+        self.engine(source)
+        status = self.status()
+        self.assertEqual({key: status[key] for key in ("present", "parsed", "error")},
+                         {"present": True, "parsed": False, "error": "SyntaxError"})
+        try:
+            ast.parse(source, filename="recursive_improvement.py")
+        except SyntaxError as exc:
+            message, detail = str(exc), exc.msg
+        section, page, receipt, stdout = self.built()
+        self.assertIn(db.esc(db.RSI_ENGINE_NOT_PARSED), section)
+        self.assertIn("bin/recursive_improvement.py could not be parsed (SyntaxError) — nothing "
+                      "in it is rendered", section)
+        for text in (page, receipt, stdout):
+            self.assertNotIn(message, text)
+            self.assertNotIn(detail, text)
+            self.assertNotIn("Traceback", text)
+
+    def test_a_stub_whose_top_level_would_have_side_effects_is_parsed_never_run(self):
+        # T10 A4, the test that proves nothing is executed: were the file run, the marker would
+        # exist and the canary would be an exception message.
+        marker = self.tmp / "rsi-side-effect-marker"
+        canary = "CANARY-RSI-TOP-LEVEL-RAN-7d1e"
+        self.engine(self.STUB + f"open({str(marker)!r}, 'w').write('ran')\n"
+                                f"raise RuntimeError({canary!r})\n")
+        section, page, receipt, stdout = self.built()
+        self.assertIn(f"<td>FIXTURE_A_VERSION</td><td>{self.VERSION_A}</td>", section)
+        self.assertIn(f"<td>FIXTURE_B_VERSION</td><td>{self.VERSION_B}</td>", section)
+        self.assertIn("<p>arms (ARMS): A, B, C</p>", section)
+        for text in (page, receipt, stdout):
+            self.assertNotIn(canary, text)
+            self.assertNotIn("Traceback", text)
+        self.assertFalse(os.path.lexists(marker))
+
+    def test_a_store_kind_unknown_to_runtime_data_is_named_and_never_resolved(self):
+        self.engine(self.STUB + 'STORE = "not-a-store"\n')
+        self.assertEqual(self.status(data_home=self.world["data_home"])["store"],
+                         {"value": "not-a-store", "known": False, "path": None, "state": None})
+        section, _page, _receipt, _stdout = self.built()
+        self.assertIn(f"<p>STORE not-a-store: {db.RSI_STORE_UNKNOWN}</p>", section)
+        self.assertIn(db.esc(db.RSI_RECORDS_NOT_READ), section)
+        self.assertNotIn(db.esc(db.RSI_NOTHING_TO_RENDER), section)
+
+    def test_a_known_store_resolves_under_the_pages_data_home_scrubbed_with_its_existence(self):
+        # The Phase 2 carry-forward: the PAGE's data home, never the process's own.
+        self.assertNotEqual(os.path.realpath(_DATA_HOME.name),
+                            os.path.realpath(self.world["data_home"]))
+        namespace = self.world["namespace"]
+        for store, state in (("telemetry", "exists"), ("memory", "does not exist")):
+            with self.subTest(store=store):
+                self.engine(self.STUB + f'STORE = "{store}"\n')
+                section = _section(db.render_page(self.model(), str(self.tmp)), "rsi")
+                self.assertIn(db.esc(f"STORE {store}: resolved for this checkout under this "
+                                     f"page's data home — ~/world/data-home/{namespace}/{store} — "
+                                     f"{state}"), section)
+                for spelling in {str(self.tmp), os.path.realpath(self.tmp), _DATA_HOME.name}:
+                    self.assertNotIn(spelling, section)
+                self.assertIn(db.esc(db.RSI_RECORDS_NOT_READ), section)
+        # With no data home at all, nothing is resolved -- never against the process's own.
+        self.assertEqual(self.status()["store"],
+                         {"value": "memory", "known": True, "path": None,
+                          "state": "not resolved — no data home was given"})
+
+    def test_a_symlinked_store_is_noted_and_never_followed(self):
+        elsewhere = self.tmp / "elsewhere-memory"
+        elsewhere.mkdir()
+        (self.world["data_home"] / self.world["namespace"] / "memory").symlink_to(elsewhere)
+        self.engine(self.STUB + 'STORE = "memory"\n')
+        status = self.status(data_home=self.world["data_home"])
+        self.assertEqual(status["store"]["state"],
+                         "is a symlink, not a store directory — not followed, not read")
+        self.assertTrue(any(note.endswith(f"the memory store its RSI engine names is a symlink in "
+                                          f"this page's data home ({self.world['namespace']}/"
+                                          f"memory) — not followed, not read")
+                            for note in status["notes"]), status["notes"])
+        rsi = self.rsi(self.model())
+        self.assertTrue(any("the memory store its RSI engine names is a symlink" in note
+                            for note in rsi["notes"]), rsi["notes"])
+        self.assertNotIn("elsewhere-memory", json.dumps(rsi))
+
+    def test_a_symlinked_engine_is_noted_by_kind_and_never_read(self):
+        outside = self.tmp / "outside-engine"
+        outside.mkdir()
+        target = outside / "recursive_improvement.py"
+        target.write_text('LINKED_VERSION = "polytropos.rsi-linked-canary/1"\n', encoding="utf-8")
+        (self.world["checkout"] / "bin").mkdir()
+        (self.world["checkout"] / "bin" / "recursive_improvement.py").symlink_to(target)
+        with mock.patch.object(db, "_read_bounded", wraps=db._read_bounded) as read:
+            model = self.model()
+            status = self.status()
+        self.assertFalse([call for call in read.call_args_list
+                          if os.fspath(call.args[0]).endswith("recursive_improvement.py")])
+        self.assertEqual({key: status[key] for key in ("present", "parsed", "refused")},
+                         {"present": True, "parsed": False, "refused": "a symlink"})
+        rsi = self.rsi(model)
+        self.assertTrue(any(note.endswith("bin/recursive_improvement.py is a symlink, not a "
+                                          "regular file — never read") for note in rsi["notes"]),
+                        rsi["notes"])
+        page = db.render_page(model, _FAKE_HOME.name)
+        self.assertIn(db.esc(db.RSI_ENGINE_NOT_PARSED), _section(page, "rsi"))
+        self.assertNotIn("linked-canary", page)
+
+    def test_an_engine_behind_a_symlinked_bin_is_unknown_and_never_looked_at(self):
+        outside = self.tmp / "outside-bin"
+        outside.mkdir()
+        (outside / "recursive_improvement.py").write_text(
+            'BEHIND_VERSION = "polytropos.rsi-behind-canary/1"\n', encoding="utf-8")
+        (self.world["checkout"] / "bin").symlink_to(outside)
+        self.assertEqual(self.status()["present"], None)
+        rsi = self.rsi(self.model())
+        self.assertTrue(any(note.endswith("bin is a symlink — not followed; "
+                                          "bin/recursive_improvement.py is never read through it")
+                            for note in rsi["notes"]), rsi["notes"])
+        self.assertTrue(rsi["summary"].startswith("engine present in 0 of 1 checkout(s), parsed "
+                                                  "in 0, unknown in 1;"), rsi["summary"])
+        page = db.render_page(self.model(), _FAKE_HOME.name)
+        self.assertIn(db.esc(db.RSI_ENGINE_UNKNOWN), _section(page, "rsi"))
+        self.assertNotIn("behind-canary", page)
+
+    def test_an_oversize_engine_gets_a_cap_note_and_is_never_read_or_parsed(self):
+        canary = "polytropos.rsi-oversize-canary/1"
+        path = self.engine(f'OVERSIZE_VERSION = "{canary}"\n')
+        size = path.stat().st_size
+        if os.geteuid() != 0:
+            _chmod_restorable(self, path, 0)  # an open would fail loudly; the size gate never opens
+        with mock.patch.object(db, "MAX_RSI_ENGINE_BYTES", 16):
+            section, page, receipt, _stdout = self.built()
+        self.assertIn("MAX_RSI_ENGINE_BYTES", json.loads(receipt)["caps_hit"])
+        self.assertIn(f"cap MAX_RSI_ENGINE_BYTES (16) reached — ", section)
+        self.assertIn(f"bin/recursive_improvement.py is {size} bytes — never read", section)
+        self.assertIn(db.esc(db.RSI_ENGINE_NOT_PARSED), section)
+        self.assertNotIn("could not be read", section)
+        for text in (page, receipt):
+            self.assertNotIn(canary, text)
+
+    def test_a_non_utf8_engine_is_named_by_type_and_never_parsed(self):
+        self.engine(b'FIXTURE_A_VERSION = "\xff\xfe"\n')
+        status = self.status()
+        self.assertEqual({key: status[key] for key in ("present", "parsed", "error")},
+                         {"present": True, "parsed": False, "error": "UnicodeDecodeError"})
+        rsi = self.rsi(self.model())
+        self.assertTrue(any(note.endswith("bin/recursive_improvement.py could not be parsed "
+                                          "(UnicodeDecodeError) — nothing in it is rendered")
+                            for note in rsi["notes"]), rsi["notes"])
+
+    @unittest.skipUnless(hasattr(os, "mkfifo") and hasattr(signal, "SIGALRM"),
+                         "needs os.mkfifo and SIGALRM")
+    def test_a_fifo_engine_is_named_by_kind_and_never_opened(self):
+        (self.world["checkout"] / "bin").mkdir()
+        os.mkfifo(self.world["checkout"] / "bin" / "recursive_improvement.py")
+        previous = signal.signal(signal.SIGALRM, _on_alarm)
+        signal.alarm(10)
+        try:
+            section, _page, _receipt, _stdout = self.built()
+        except _BuildHung:
+            self.fail("the build blocked on a FIFO engine for 10 s")
+        finally:
+            signal.alarm(0)
+            signal.signal(signal.SIGALRM, previous)
+        self.assertIn("bin/recursive_improvement.py is a FIFO, not a regular file — never read",
+                      section)
+        self.assertIn(db.esc(db.RSI_ENGINE_NOT_PARSED), section)
+
+    def test_names_bound_in_forms_not_read_as_data_are_noted_by_name_and_never_rendered(self):
+        self.engine(self.STUB
+                    + 'JOINED_VERSION = "polytropos.rsi-" + "joined-canary/1"\n'
+                      "NUMBER_VERSION = 7\n"
+                      'ARMS = ("A", 2)\n'
+                      'try:\n    STORE = "attempts"\nexcept ImportError:\n    pass\n'
+                      "def read_records():\n    return []\n"
+                      'FIXTURE_B_VERSION += "-changed"\n')
+        status = self.status()
+        self.assertEqual(status["versions"], [["FIXTURE_A_VERSION", self.VERSION_A]])
+        self.assertEqual(status["known_versions"], [self.VERSION_A])
+        self.assertEqual((status["arms"], status["store"], status["store_defined"]),
+                         (None, None, True))
+        self.assertEqual(status["readers"], [["read_records", "at the top level"]])
+        self.assertEqual(dict(status["not_rendered"]), {
+            "JOINED_VERSION": "is not a literal",
+            "NUMBER_VERSION": "is not a string",
+            "ARMS": "is not a tuple or list of strings",
+            "STORE": "is bound inside a block, which only running the file could settle",
+            "FIXTURE_B_VERSION": "is bound at the top level in a form not read as data"})
+        model = self.model()
+        notes = self.rsi(model)["notes"]
+        for name, reason in status["not_rendered"]:
+            self.assertTrue(any(note.endswith(f"bin/recursive_improvement.py: {name} {reason} — "
+                                              f"not rendered") for note in notes), (name, notes))
+        page = db.render_page(model, _FAKE_HOME.name)
+        section = _section(page, "rsi")
+        self.assertIn("arms (ARMS): not read as data — see the notes above", section)
+        self.assertIn("STORE: bound, but not read as data — see the notes above", section)
+        self.assertIn("<li>read_records — bound at the top level</li>", section)
+        self.assertIn(db.esc(db.RSI_RECORDS_NOT_READ), section)
+        self.assertNotIn("joined-canary", page)
+        self.assertNotIn(self.VERSION_B, page)  # re-bound after its literal: no longer a fact
+
+    def test_the_rendered_constants_and_their_length_are_capped_with_notes(self):
+        long_value = "polytropos.rsi-" + "x" * 200 + "/1"
+        self.engine(self.STUB + f'LONG_VERSION = "{long_value}"\n')
+        with self.subTest(cap="MAX_RSI_CONSTANTS_RENDERED"):
+            rsi = self.rsi(self.model({"MAX_RSI_CONSTANTS_RENDERED": 1}))
+            table = self.block(rsi, ["constant", "contract version"])
+            self.assertEqual(table["rows"], [["FIXTURE_A_VERSION", self.VERSION_A]])
+            for noun in ("3 contract version constants", "3 arms"):
+                self.assertTrue(any(note.startswith("cap MAX_RSI_CONSTANTS_RENDERED (1) reached")
+                                    and noun in note for note in rsi["notes"]),
+                                (noun, rsi["notes"]))
+            self.assertIn({"type": "p", "parts": ["arms (ARMS): ", "A"]}, rsi["blocks"])
+        with self.subTest(cap="MAX_RSI_VALUE_CHARS"):
+            model = self.model({"MAX_RSI_VALUE_CHARS": 40})
+            rsi = self.rsi(model)
+            table = self.block(rsi, ["constant", "contract version"])
+            self.assertIn(["LONG_VERSION", db.RSI_WITHHELD], table["rows"])
+            self.assertTrue(any(note.startswith("cap MAX_RSI_VALUE_CHARS (40) reached")
+                                for note in rsi["notes"]), rsi["notes"])
+            self.assertIn("MAX_RSI_VALUE_CHARS",
+                          [row["name"] for row in model["caps"] if row["hit"]])
+            self.assertNotIn("x" * 200, db.render_page(model, _FAKE_HOME.name))
+            self.assertIn(long_value, self.status()["known_versions"])  # data, just not rendered
+
+    # -- the kit ---------------------------------------------------------------------------------
+
+    def test_the_rsi_kit_tables_come_from_the_synthetic_kit(self):
+        rsi = self.rsi(self.model())
+        self.assertEqual(self.block(rsi, ["id", "title", "status", "model"])["rows"], [
+            ["R1", "a synthetic finished RSI task", "done", db.SYNTHETIC_MODEL],
+            ["R2", "a synthetic pending RSI task", "pending", db.SYNTHETIC_MODEL],
+            ["R3", "a synthetic pending RSI task after it", "pending", db.SYNTHETIC_MODEL]])
+        self.assertEqual(tuple(kc.STATUSES), ("pending", "in-progress", "done", "blocked"))
+        self.assertEqual(self.counts_in(rsi, "task status counts — "), [2, 0, 1, 0])
+        outcomes = self.block(rsi, ["task", "result", "dispatched model", "observed model", "run"])
+        self.assertEqual(outcomes["rows"], [["R1", "pass", db.SYNTHETIC_MODEL, None, db.DEMO_RUN]])
+        self.assertEqual(self.counts_in(rsi, "actual-use: lines "), [1, 1])
+        kits_namespace = rd.project_namespace(self.world["checkout"] / "tasks" / "kits")
+        pointer = next(b for b in rsi["blocks"] if b.get("type") == "p"
+                       and kits_namespace in (b.get("parts") or ()))
+        self.assertIn("not among the namespaces mapped in this build", pointer["parts"])
+        section = _section(db.render_page(self.model(), _FAKE_HOME.name), "rsi")
+        self.assertIn(f"<td>R1</td><td>pass</td><td>{db.SYNTHETIC_MODEL}</td>"
+                      f"<td>{UNKNOWN_SPAN}</td><td>{db.DEMO_RUN}</td>", section)
+        # With the kits namespace in the data home, the pointer sends the reader to the Attempts
+        # panel instead.
+        al.AttemptLedger(self.world["data_home"] / kits_namespace / al.STORE, db.RSI_KIT) \
+            .record_started(db.DEMO_RUN, "R1", "initial", db.SYNTHETIC_MODEL)
+        pointer = next(b for b in self.rsi(self.model())["blocks"] if b.get("type") == "p"
+                       and kits_namespace in (b.get("parts") or ()))
+        self.assertIn("mapped in this build; its ledger facts are in the Attempts panel",
+                      pointer["parts"])
+
+    def test_oversize_rsi_tasks_md_and_notes_md_get_cap_notes_and_are_never_read(self):
+        kit = self.world["rsi_kit_dir"]
+        tasks_size = (kit / "TASKS.md").stat().st_size
+        notes_size = (kit / "NOTES.md").stat().st_size
+        rsi = self.rsi(self.model({"MAX_TASKS_MD_BYTES": 16, "MAX_KIT_NOTES_BYTES": 16}))
+        for cap, name, size in (("MAX_TASKS_MD_BYTES", "TASKS.md", tasks_size),
+                                ("MAX_KIT_NOTES_BYTES", "NOTES.md", notes_size)):
+            self.assertTrue(any(note.startswith(f"cap {cap} (16) reached — ") and note.endswith(
+                f"tasks/kits/recursive-improvement/{name} is {size} bytes — never read")
+                for note in rsi["notes"]), (cap, rsi["notes"]))
+            self.assertIn({"type": "p", "text": f"{name} not read — see the notes above."},
+                          rsi["blocks"])
+        with mock.patch.object(db, "MAX_TASKS_MD_BYTES", 16), \
+                mock.patch.object(db, "MAX_KIT_NOTES_BYTES", 16):
+            _section_html, page, receipt, _stdout = self.built()
+        hit = json.loads(receipt)["caps_hit"]
+        self.assertIn("MAX_TASKS_MD_BYTES", hit)
+        self.assertIn("MAX_KIT_NOTES_BYTES", hit)
+        self.assertNotIn("a synthetic finished RSI task", _section(page, "rsi"))
+
+    def test_a_symlinked_notes_md_is_noted_and_never_read(self):
+        canary = "CANARY-LINKED-RSI-NOTES-2b7c"
+        outside = self.tmp / "outside-notes.md"
+        outside.write_text(f"- outcome: R1 model=sonnet attempts=1 result=pass run={canary}\n",
+                           encoding="utf-8")
+        notes_md = self.world["rsi_kit_dir"] / "NOTES.md"
+        notes_md.unlink()
+        notes_md.symlink_to(outside)
+        model = self.model()
+        rsi = self.rsi(model)
+        self.assertTrue(any(note.endswith("tasks/kits/recursive-improvement/NOTES.md is a symlink, "
+                                          "not a regular file — never read")
+                            for note in rsi["notes"]), rsi["notes"])
+        self.assertIn({"type": "p", "text": "NOTES.md not read — see the notes above."},
+                      rsi["blocks"])
+        self.assertFalse([b for b in rsi["blocks"] if b.get("type") == "table"
+                          and b.get("headers", [None])[0] == "task"])
+        self.assertNotIn(canary, _section(db.render_page(model, _FAKE_HOME.name), "rsi"))
+
+    def test_undecodable_rsi_kit_files_are_named_by_type(self):
+        kit = self.world["rsi_kit_dir"]
+        (kit / "TASKS.md").write_bytes(b"# TASKS \xff\xfe\n")
+        (kit / "NOTES.md").write_bytes(b"- outcome: R1 \xff\xfe\n")
+        rsi = self.rsi(self.model())
+        for suffix in ("tasks/kits/recursive-improvement/TASKS.md could not be parsed "
+                       "(UnicodeDecodeError)",
+                       "tasks/kits/recursive-improvement/NOTES.md could not be decoded "
+                       "(UnicodeDecodeError)"):
+            self.assertTrue(any(note.endswith(suffix) for note in rsi["notes"]),
+                            (suffix, rsi["notes"]))
+
+    def test_an_absent_rsi_kit_is_said_in_words(self):
+        shutil.rmtree(self.world["rsi_kit_dir"])
+        rsi = self.rsi(self.model())
+        self.assertIn({"type": "p", "text": db.RSI_KIT_ABSENT}, rsi["blocks"])
+        self.assertTrue(rsi["summary"].endswith("RSI kit present in 0, unknown in 0"),
+                        rsi["summary"])
+
+    # -- the guard, the summary, and what is never probed ----------------------------------------
+
+    def test_rsi_record_kind_names_known_unknown_and_non_records(self):
+        known = (self.VERSION_A, self.VERSION_B)
+        self.assertEqual(db.rsi_record_kind({"v": self.VERSION_A}, known),
+                         ("known", self.VERSION_A))
+        newer = "polytropos.rsi-fixture-a/2"
+        self.assertEqual(db.rsi_record_kind({"v": newer, "payload": 1}, known), ("unknown", newer))
+        for obj in (None, self.VERSION_A, [{"v": self.VERSION_A}], {}, {"v": 7}, {"v": None},
+                    {"v": "polytropos.workflow-eval/1"}, {"version": self.VERSION_A}):
+            with self.subTest(obj=obj):
+                self.assertEqual(db.rsi_record_kind(obj, known), ("not-a-record", None))
+        # One known version handed as a bare string is one version, never a substring test.
+        self.assertEqual(db.rsi_record_kind({"v": "polytropos.rsi-fixture"}, self.VERSION_A),
+                         ("unknown", "polytropos.rsi-fixture"))
+        self.assertEqual(db.rsi_record_kind({"v": self.VERSION_A}, None),
+                         ("unknown", self.VERSION_A))
+        self.engine(self.STUB)
+        self.assertEqual(db.rsi_record_kind({"v": self.VERSION_B}, self.status()["known_versions"]),
+                         ("known", self.VERSION_B))
+
+    # -- T10 retry (attempt 2 of 2): the red-team's three findings ------------------------------
+
+    @unittest.skipUnless(hasattr(signal, "SIGALRM"), "needs SIGALRM")
+    def test_the_parse_is_linear_in_reader_shaped_names(self):
+        # R1: the reader de-duplication scanned a growing list, so 40,000 names holding READ took
+        # about 10 s where as many plain names take a fraction of one. A set makes each name O(1).
+        # The bound fails the old scan several times over; the alarm keeps any regression from
+        # hanging the suite.
+        count = 40_000
+        tree = ast.parse("".join(f"READ_{index} = {index}\n" for index in range(count)))
+        previous = signal.signal(signal.SIGALRM, _on_alarm)
+        signal.alarm(60)
+        try:
+            started = time.monotonic()
+            facts = db._rsi_parse(tree)
+            elapsed = time.monotonic() - started
+        except _BuildHung:
+            self.fail(f"parsing {count} reader-shaped names ran past 60 s")
+        finally:
+            signal.alarm(0)
+            signal.signal(signal.SIGALRM, previous)
+        self.assertEqual(len(facts["readers"]), count)
+        self.assertLess(elapsed, 3.0, f"{count} reader-shaped names took {elapsed:.1f} s")
+        # Each `[name, where]` is still kept once, at its first binding.
+        facts = db._rsi_parse(ast.parse("READ_A = 1\nREAD_A = 2\ntry:\n    READ_A = 3\n"
+                                        "except ImportError:\n    pass\n"))
+        self.assertEqual(facts["readers"], [["READ_A", "at the top level"],
+                                            ["READ_A", "inside a block"]])
+
+    def test_a_statement_nested_past_the_recursion_limit_is_still_read(self):
+        # R1, the walk: `ast.parse` accepts a left-nested chain several times deeper than the
+        # interpreter's recursion limit. A recursive walk raised there and the whole engine read
+        # as unparsed; the walk keeps its own stack, so the deepest binding is found.
+        depth = 3000
+        if sys.getrecursionlimit() >= depth:
+            self.skipTest("the recursion limit is raised past this test's depth")
+        chain = ("x = (READ_DEEP := 0) + "
+                 + " + ".join(f"(w{index} := 0)" for index in range(depth)) + "\n")
+        self.engine(self.STUB + chain)
+        status = self.status()
+        self.assertEqual((status["present"], status["parsed"]), (True, True), status.get("notes"))
+        self.assertEqual(status["known_versions"], [self.VERSION_A, self.VERSION_B])
+        self.assertEqual(status["readers"], [["READ_DEEP", "at the top level"]])
+
+    @unittest.skipUnless(hasattr(signal, "SIGALRM"), "needs SIGALRM")
+    def test_rsi_record_kind_never_drains_an_iterator_and_reads_a_sized_collection(self):
+        # R2: `known_versions` is a string or a finite, sized collection. A generator or an
+        # iterator is no known version at all and is never iterated; a collection is read no
+        # further than its own length.
+        version = self.VERSION_A
+
+        class EndlessCollection(collections.abc.Collection):
+            """Says it holds one item, and would iterate forever if trusted past that."""
+
+            def __len__(self):
+                return 1
+
+            def __iter__(self):
+                return itertools.repeat(version)
+
+            def __contains__(self, item):
+                return item == version
+
+        def slow_and_endless():
+            # Endless, but slow, so a regression that drains it holds a few hundred items when
+            # the alarm fires rather than filling memory for five seconds.
+            while True:
+                time.sleep(0.01)
+                yield "polytropos.rsi-never/1"
+
+        previous = signal.signal(signal.SIGALRM, _on_alarm)
+        signal.alarm(5)
+        try:
+            endless = db.rsi_record_kind({"v": version}, slow_and_endless())
+            capped = db.rsi_record_kind({"v": version}, EndlessCollection())
+        except _BuildHung:
+            self.fail("rsi_record_kind iterated its known versions without a bound")
+        finally:
+            signal.alarm(0)
+            signal.signal(signal.SIGALRM, previous)
+        self.assertEqual(endless, ("unknown", version))
+        self.assertEqual(capped, ("known", version))
+        untouched = iter([version])
+        self.assertEqual(db.rsi_record_kind({"v": version}, untouched), ("unknown", version))
+        self.assertEqual(next(untouched), version)  # nothing was taken from it
+        for known in ({"a": version}.values(), {version: 1}.keys(), {version},
+                      frozenset([version]), [version], (version,)):
+            with self.subTest(known=type(known).__name__):
+                self.assertEqual(db.rsi_record_kind({"v": version}, known), ("known", version))
+
+    def test_a_reassigned_name_sits_at_its_final_binding_with_its_final_value(self):
+        # R3: running the file leaves A_VERSION holding its last value, set by its last
+        # assignment, so its row sits there -- after B_VERSION -- and never shows the first value.
+        # A name unsettled twice has its note at the later statement too.
+        self.engine('A_VERSION = "polytropos.rsi-a/1"\n'
+                    'B_VERSION = "polytropos.rsi-b/1"\n'
+                    'A_VERSION = "polytropos.rsi-a/2"\n'
+                    "C_VERSION = 1\n"
+                    "D_VERSION = 2\n"
+                    'C_VERSION = f"polytropos.rsi-c/{3}"\n')
+        status = self.status()
+        self.assertEqual(status["versions"], [["B_VERSION", "polytropos.rsi-b/1"],
+                                              ["A_VERSION", "polytropos.rsi-a/2"]])
+        self.assertEqual(status["known_versions"], ["polytropos.rsi-b/1", "polytropos.rsi-a/2"])
+        self.assertEqual(status["not_rendered"], [["D_VERSION", "is not a string"],
+                                                  ["C_VERSION", "is not a literal"]])
+        rsi = self.rsi(self.model())
+        self.assertEqual(self.block(rsi, ["constant", "contract version"])["rows"],
+                         status["versions"])
+        self.assertNotIn("polytropos.rsi-a/1", json.dumps(rsi))
+
+    def test_the_rsi_summary_is_fixed_words_and_counts_only(self):
+        # P3 review M2 / T10 A3: `summary_lines` relays the summary verbatim to the session.
+        arm = "ARM-CANARY-9c1d"
+        self.engine(self.STUB.replace('"C")', f'"{arm}")') + 'STORE = "telemetry"\n')
+        section, _page, receipt, stdout = self.built()
+        summary = next(p["summary"] for p in json.loads(receipt)["panels"] if p["id"] == "rsi")
+        for text in (self.VERSION_A, self.VERSION_B, "FIXTURE_A_VERSION", arm, "telemetry",
+                     "a synthetic finished RSI task", "R1", "recursive", "/", "~",
+                     "Error"):
+            self.assertNotIn(text, summary)
+        self.assertEqual(re.sub(r"\d+", "N", summary), self.SUMMARY_TEMPLATE)
+        self.assertEqual(summary, "engine present in 1 of 1 checkout(s), parsed in 1, unknown in "
+                                  "0; RSI kit present in 1, unknown in 0")
+        self.assertIn(f"  {'rsi':<11} {summary}", stdout.splitlines())
+        self.assertIn(arm, section)  # on the page, as data
+
+    def test_the_plugin_root_is_never_probed_for_an_rsi_engine_or_kit(self):
+        # T10 A7: the plugin install is not a checkout, so nothing under its root is looked for.
+        root = self.world["plugin_root"]
+        canary, title = "polytropos.rsi-plugin-root-canary/1", "CANARY-PLUGIN-RSI-TITLE-4e5f"
+        (root / "bin").mkdir()
+        (root / "bin" / "recursive_improvement.py").write_text(f'PLUGIN_VERSION = "{canary}"\n',
+                                                               encoding="utf-8")
+        kit = root / "tasks" / "kits" / db.RSI_KIT
+        kit.mkdir(parents=True)
+        (kit / "TASKS.md").write_text(f"# TASKS\n\n### PR1 — {title}\n- status: done\n"
+                                      f"- model: sonnet\n", encoding="utf-8")
+        with _paths_touched_inside(root) as touched:
+            _out, model, receipt, page = db.assemble_build(
+                self.world["checkout"], data_home=self.world["data_home"],
+                out_dir=self.tmp / "out", flags=[str(self.world["checkout"])], git=False,
+                projects_dir=self.projects, home=_FAKE_HOME.name, plugin_root=root)
+        self.assertEqual(touched, [])
+        everything = page + json.dumps(model) + json.dumps(receipt)
+        self.assertNotIn(canary, everything)
+        self.assertNotIn(title, everything)
+        self.assertEqual(self.rsi(model)["summary"],
+                         "engine present in 0 of 1 checkout(s), parsed in 0, unknown in 0; RSI "
+                         "kit present in 1, unknown in 0")
+
+    def test_no_checkout_is_a_plain_sentence_and_a_count_free_summary(self):
+        rsi = self.rsi(db.build_model(self.world["data_home"], [], _opts(self), None))
+        self.assertEqual(rsi["summary"], "no checkout discovered — nothing probed")
+        self.assertEqual(rsi["blocks"], [{"type": "p", "text": "No checkout discovered — no RSI "
+                                                               "engine or kit to look for."}])
+
+
+class RsiSourceTests(unittest.TestCase):
+    """T10 A1 and A5, read off the engine's own source: nothing in it can import or run a
+    checkout's code, and the RSI contract prefix is spelled once."""
+
+    def test_no_checkout_code_is_imported_or_run_by_the_engine(self):
+        source = DASHBOARD_PATH.read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        functions = {node.name: node for node in tree.body if isinstance(node, ast.FunctionDef)}
+
+        def calls_in(node):
+            return {id(call) for call in ast.walk(node) if isinstance(call, ast.Call)}
+
+        in_load, in_mod = calls_in(functions["_load"]), calls_in(functions["_mod"])
+        offenders, loaded = [], []
+        for call in (node for node in ast.walk(tree) if isinstance(node, ast.Call)):
+            func = call.func
+            if isinstance(func, ast.Name) and func.id in ("exec", "eval", "compile", "__import__"):
+                offenders.append(func.id)
+            if isinstance(func, ast.Attribute) and func.attr in (
+                    "exec_module", "spec_from_file_location", "module_from_spec",
+                    "import_module", "run_path", "run_module", "reload") \
+                    and id(call) not in in_load:
+                offenders.append(func.attr)
+            if isinstance(func, ast.Name) and func.id in ("_mod", "_load") \
+                    and id(call) not in in_mod:
+                # Every other loader call names its owner as a literal, so it can be read here.
+                self.assertTrue(call.args and isinstance(call.args[0], ast.Constant),
+                                ast.dump(call))
+                loaded.append(call.args[0].value)
+        self.assertEqual(offenders, [])
+        # The one module loader reads siblings from PLUGIN_ROOT's own bin/, and nothing asks it
+        # for the RSI engine.
+        self.assertIn('PLUGIN_ROOT / "bin"', ast.get_source_segment(source, functions["_load"]))
+        self.assertIn("kit_contract", loaded)
+        self.assertNotIn("recursive_improvement", loaded)
+        self.assertNotIn("runpy", source)
+
+    def test_the_rsi_contract_prefix_is_spelled_on_one_line_only(self):
+        lines = [line for line in DASHBOARD_PATH.read_text(encoding="utf-8").splitlines()
+                 if re.search(r"polytropos.rsi-", line)]
+        self.assertEqual(len(lines), 1, lines)
+        self.assertIn("startswith(", lines[0])
 
 
 if __name__ == "__main__":

@@ -898,7 +898,7 @@ POLYTROPOS_DATA_HOME="$(mktemp -d)" python3 -m unittest discover -s tests -v
 ### T10 — RSI status panel from what exists on `main` today
 - id: T10
 - title: RSI status panel from what exists on `main` today
-- status: pending
+- status: done
 - model: opus
 - depends: T7
 

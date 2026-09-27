@@ -238,8 +238,8 @@ and the sentinel exposure.
 ### claude/dashboard
 - verdict: keep
 - skill-md: added after the original audit, by the observability-dashboard kit's T8 — a
-  1228-word body (frontmatter stripped; 1138 at T8, grown by the P3 fix round's plugin-install
-  and accuracy edits) resolving `bin/dashboard.py build --checkout` behind a checkout-existence
+  1263-word body (frontmatter stripped; 1138 at T8, grown by the P3 fix round's plugin-install
+  and accuracy edits and by T10's RSI paragraph, which describes the panel as built) resolving `bin/dashboard.py build --checkout` behind a checkout-existence
   check (`git rev-parse --show-toplevel` first; outside a checkout it builds nothing and asks for
   `--checkout <path>` instead, since an empty `--checkout` makes the engine refuse), the binding
   context-hygiene law (never reads `index.html`/`build.json` into the session, never pastes,

@@ -140,10 +140,13 @@ never a figure this skill or the engine invented itself:
   approvals and activation come from the owner's own preferences read set, never a wider scan.
   The plugin install's runs and policy are read too, labelled "plugin install".
 - **Training data readiness** — the training pipeline's own switches, store path and notes.
-- **RSI status** — whether each checkout's recursive-improvement engine and its
-  `tasks/kits/recursive-improvement` kit exist at all; contract versions render as data read
-  from the module at run time, never typed in here, and it says plainly when there is nothing
-  yet to show rather than guessing.
+- **RSI status** — per checkout, whether the recursive-improvement engine
+  (`bin/recursive_improvement.py`) is present and, when it is, its contract versions, arms and
+  any record store or reader it defines — read from the file as text, never run, never typed in
+  here; then the `tasks/kits/recursive-improvement` kit's task statuses and `outcome:` lines,
+  with its `actual-use:` and `routing:` lines counted, not parsed. RSI records themselves are
+  not rendered yet, and the panel says plainly when there is nothing to show rather than
+  guessing.
 
 Honesty rules hold across every panel above: an owner's `labels` and `notes` render verbatim
 and in full, never shortened or dropped to make a table fit; a value the owner did not report
