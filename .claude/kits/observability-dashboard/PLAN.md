@@ -1,7 +1,7 @@
 # PLAN — observability-dashboard: one offline HTML page over the ledger, the scorecard, the telemetry and the evals
 
 autonomy: advisory
-budget: max-dispatches=22 max-escalations=4 max-consults=3
+budget: max-dispatches=26 max-escalations=4 max-consults=3
 roles: red-team security-auditor
 workflow: extended
 
@@ -21,6 +21,13 @@ analysis authority, never a server, never a hosted artifact, never a terminal ca
 The recursive-improvement work (RSI) is in flight on a Codex branch. The RSI panel therefore
 lands as its own phase: what exists on `main` today is rendered now, and the record-consuming
 task is gated on Codex's R02 read seam merging (D12).
+
+Budget, amended 2026-09-27 (T11 re-plan): `max-dispatches` 22 → 26. The contract's counter
+(`kit_contract.count_plan_budget_usage`, `outcome:` attempts only) read 19 at the re-plan;
+counted by hand with the four fix rounds it never counts, the run stood at 23, one past the
+old cap by the user's approval. 26 covers T11's initial dispatch and its one retry (21 by the
+counter) and leaves the hand count room for one Phase 4 fix round (23 + 2 + 1 = 26). It is a
+ceiling for the re-planned T11 only, not a licence to add tasks.
 
 ## Done means (all checkable from the checkout root)
 
@@ -84,11 +91,15 @@ NOTHING except the two read-only `git` verbs of D4.
 | Journal digests | thin adapter: `journal/<YYYY-MM-DD>/digest.json`, gated on `schema_version == 1` (`journal_collect.SCHEMA_VERSION`, read from the module, never hardcoded) | per day: `totals.usd_priced` (labelled as the journal's own priced total), `totals.sessions`, `sources_active`, `unpriced_sources`; per source: `available`, `priced`, `sessions`, `usd`; NO free-text field (inbox items, `signals` prose) in v1 |
 | Evals / policy / activation / training | `workflow_eval.list_runs(store_dir)`, `workflow_eval.read_envelope` + `workflow_eval.build_card`, `workflow_eval.policy_report(prefs_dir)`, `workflow_eval.approval_report(prefs_dir)`, `workflow_eval.activation_report(prefs_dir)`, `training_data.status(repo_root=<checkout>)` | run rows; per run (bounded) the card's `variants` with `below_floor`, `spend`, `sample`, `labels` verbatim, `ranking` ONLY when the owner set it non-`None`; policy in force / history versions / proposals with decisions; approvals with states and refusals; activation scopes and `confined_dispatch_wired`; training switches, store path, notes |
 | Kits in flight (checkout-local) | `kit_contract.parse_tasks(text)` + `kit_contract.validate_graph` / `kit_contract.graph_state` per kit dir | per kit: task status counts and graph state; per checkout: `.claude/kits/*` and `tasks/kits/*` |
-| RSI (Phase 4) | presence of `bin/recursive_improvement.py` in each checkout, its `*_VERSION` constants read as data; the `tasks/kits/recursive-improvement` kit through the kits-in-flight path and `attempt_history.notes_records`; records ONLY through the read seam R02 lands (T11) | engine present/absent, contract versions, R-task statuses and outcome lines, and until T11: the sentence "no RSI records exist yet — R02 (durable links and history projection) has not landed on main" |
+| RSI (Phase 4) | T10: presence of `bin/recursive_improvement.py` in each checkout, read as TEXT (`ast.parse` + `ast.literal_eval`, never imported — user decision 2026-09-26) for its `*_VERSION` constants, `ARMS`, `STORE` and reader-shaped names; the `tasks/kits/recursive-improvement` kit through `kit_contract.parse_tasks` and `attempt_history.notes_records`. T11 (amended 2026-09-27): R02's projections `recursive_improvement.outcome_eligibility_inventory(ledger)` and `recursive_improvement.derived_lineage(ledger)`, called ONLY on the engine in the plugin tree this page runs from (`plugin_root/bin`, the same trust as every other owner `_mod` loads), over `attempt_ledger.AttemptLedger` objects for mapped namespaces' ledgers | engine present/absent/parsed per checkout, contract versions as data, R-task statuses and outcome lines; then, per projected ledger, the inventory's `v`, `counts`, `integrity_reasons`, `claim_gate` and bounded `rows` and the lineage's `v` and bounded `records`, every count, label and reason in the owner's words; or the fixed line that the installed plugin carries no engine, so no projection was read |
 
 Three thin adapters exist and no more: the journal digest reader (above), the residue
 classifier (D4), and the RSI presence probe (D12). Each is version- or shape-gated and renders
-"unknown version, not rendered" for anything it does not recognise.
+"unknown version, not rendered" for anything it does not recognise. (Amended 2026-09-27: the
+original row 7 sentence "no RSI records exist yet — R02 … has not landed on main" asserted a
+plan state no owner emits and was removed by the P4 fix round; the panel now states only what
+the file shows and what the page does. T11's owner call is not a fourth adapter — it is an
+import-and-call of a sibling owner like every other row, gated on the owner's own `v`.)
 
 **D4 — Scope is every checkout, and namespaces are mapped one way.** `bin/runtime_data.py`
 namespaces the data home per checkout as `<basename>-<sha256(realpath)[:8]>`; the digest
@@ -109,7 +120,16 @@ namespace roots are `C` and `C/tasks/kits`, because `attempt_ledger.kit_repo_roo
 home holds a `kits-<digest>` namespace beside `polytropos-<digest>`. A namespace matching a
 candidate is labelled with the scrubbed checkout path; one matching nothing is "unmapped" and
 is read only through the ledger owner with shallow stats; one matching the residue heuristic
-is "residue". The residue rule (measured 2026-09-25: 1,508 of 1,512 namespaces) is a
+is "residue". Amended 2026-09-27 (user decision 2026-09-26, P3 review M1): the plugin install
+the engine runs from (`PLUGIN_ROOT`, the `assemble_build(..., plugin_root=)` seam) is a
+MAPPING-ONLY candidate with exactly one namespace, `runtime_data.project_namespace(plugin_root)`,
+labelled "plugin install" — the engines the plugin runs (telemetry, journal, evals) write their
+stores there. It is never a checkout: git never runs in it, no kits dir is read from it, it is
+never a history-join target, and when it resolves to a discovered checkout's namespace the
+checkout's entry stands. Since the T11 re-plan the same `plugin_root` is also the ONE tree
+whose `bin/recursive_improvement.py` the page may import and call (D12) — it is the tree this
+engine's own code was loaded from, so it adds no trust the page did not already extend to
+`_mod`. The residue rule (measured 2026-09-25: 1,508 of 1,512 namespaces) is a
 HEURISTIC and says so on the page: directory name matches
 `RESIDUE_NAMESPACE_RE = ^tmp[a-z0-9_]{8}-[0-9a-f]{8}$` (a `tempfile` basename plus the digest)
 AND its top-level entries are a subset of `{"attempts"}`. Residue is counted, listed as a
@@ -135,7 +155,9 @@ store may be written by a second engine, so the page cannot live under `telemetr
 `runtime_data.store_path("dashboard", <primary checkout>)`, resolved inside `main` at call
 time — never at import (a parse-time default captures the wrong environment) and never
 against `PLUGIN_ROOT` (the page belongs to the checkout being observed, and the plugin
-cache must never own a store); the store holds `index.html` and `build.json` (the
+cache must never own the DASHBOARD store — amended 2026-09-27: other engines the plugin runs
+do own stores under the plugin install's namespace, which D4 now maps read-only; the
+dashboard still never writes there); the store holds `index.html` and `build.json` (the
 receipt: `schema_version`, built-at, data home (scrubbed), checkouts, namespace counts by
 class, per-panel source dates, caps hit, notes). `build.json` carries an integer
 `BUILD_SCHEMA_VERSION = 1` on the `telemetry_snapshot.STORE_SCHEMA_VERSION` precedent and is
@@ -216,7 +238,10 @@ an undecodable file — each becomes a note on the panel, never a crash and neve
 
 **D11 — One Claude-side skill, no ports in v1.** `skills/dashboard/SKILL.md` (name
 `dashboard`, `allowed-tools: Bash`) runs `build`, then relays the path and the one-screen
-summary from `build --json`. Its context-hygiene law: never `cat`, `Read`, `grep` or otherwise
+summary from `build --json` (amended 2026-09-27, per the Phase 3 adjudication: the skill runs
+the PLAIN `build` and relays only the page path and the summary's fixed-words-plus-counts
+lines; it never runs `--json` and never relays a note — asked for the receipt it gives only
+the path the plain build printed). Its context-hygiene law: never `cat`, `Read`, `grep` or otherwise
 load `index.html` into the session (the page is for a browser; the summary is for the
 session); never paste, publish, attach or upload the page or the receipt anywhere; opening
 the file is the user's action, not the skill's (no `open`/`xdg-open`). Copilot, Codex and
@@ -234,21 +259,55 @@ count 15 → 16 (its own comment calls it a roster tripwire to re-derive when a 
 bin/docs_build.py build`. `copilot_docs.py` and `sync_codex_surfaces.py` are unaffected
 because their rosters are the bundles'.
 
-**D12 — Phasing, and how the RSI gate works.** Phases 1–3 deliver a useful, honest v1 from the
-sources that exist on `main` today. Phase 4 is RSI: T10 renders what exists on `main` now —
-whether `bin/recursive_improvement.py` is present in each checkout (it is not on `main` at
-kit-authoring time; it is on `feat/rsi-evidence-foundation`), its `*_VERSION` constants read
-as data by `importlib` when present, the `tasks/kits/recursive-improvement` kit's task
-statuses and `outcome:` lines, and the plain sentence that no RSI records exist yet. T11
-consumes RSI records through the read seam R02 ("Durable links, recovery and history
-projection") lands, and is GATED: before dispatching T11 the orchestrator runs the gate
-command in T11's brief (the module must exist on the executing checkout AND expose a read
-function over stored RSI records; on 2026-09-25 R01's module is validators only and has no
-store). If the gate fails, T11 is set to `blocked` WITHOUT a dispatch, with a plain NOTES.md
-line naming the gate (not an `outcome:` line — nothing ran), and the kit is reported as
-complete except T11; re-run execute after the RSI branch merges to `main`. Tolerance of
-unknown or newer RSI record versions (render "unknown version, not rendered") is a T10
-deliverable that T11 inherits, so a Codex schema bump can never crash the page.
+**D12 — Phasing, and how the RSI gate works.** (Amended 2026-09-27 by the T11 re-plan; the
+original text follows the amendment for the record.) Phases 1–3 deliver a useful, honest v1
+from the sources that exist on `main` today. Phase 4 is RSI, under two facts that overturned
+the original wording:
+
+- *Parse, never import* (user decision 2026-09-26, P3 review M3). The dashboard never imports
+  or executes code from any checkout it observes. T10 reads each checkout's
+  `bin/recursive_improvement.py` with `ast` only. The dashboard DOES import its own sibling
+  owners from `PLUGIN_ROOT/bin` — the tree its own code was loaded from — through
+  `_load`/`_mod`; that tree is the trust boundary, and it is the only one.
+- *R02 is a projection, not a store* (confirmed from the branch text 2026-09-27). The engine
+  is "deliberately a coordinator, not a second attempt ledger", binds no `STORE`, and reads
+  RSI records nowhere: its read seam is two pure projection functions over an
+  `attempt_ledger.AttemptLedger` object, `outcome_eligibility_inventory(ledger, captures=(),
+  *, declared_attempt_count=None)` and `derived_lineage(ledger, captures=())`, each returning
+  a dict stamped `v` with a `*_VERSION` constant. There are no RSI records on disk for a
+  reader to read; the "records" are the ledger's own events, projected.
+
+So T11 calls those two functions ONLY on the engine in the plugin tree this page runs from
+(`plugin_root/bin/recursive_improvement.py`, where `plugin_root` is the `assemble_build` seam
+`main` fills with `PLUGIN_ROOT`), feeds them the same `AttemptLedger` objects the attempts
+panel already constructs for mapped namespaces, and renders what comes back verbatim, gated
+on `rsi_record_kind` against the loaded owner's own `*_VERSION` values. A checkout's engine
+file stays parse-only (T10, unchanged). When the plugin tree carries no engine, the page says
+so in a fixed sentence and projects nothing — whatever a checkout's file defines. When the
+loaded owner's signature or return shape differs from what T11's brief pins, the owner is
+authoritative: the adapter renders the fixed "owner shape differs" line plus a note naming the
+mismatch by parameter or key name, never a guess, and the delta is recorded in NOTES.md (D10,
+R12).
+
+The GATE is mechanical and executes nothing: the orchestrator runs the `ast`-only command in
+T11's brief from the checkout root BEFORE dispatching. It passes when `main` carries
+`bin/recursive_improvement.py` (`git cat-file -e`, a read-only verb) AND the executing
+checkout's copy parses with both projection functions defined at module scope, each taking
+`ledger` as its first positional parameter, AND both `OUTCOME_INVENTORY_VERSION` and
+`LINEAGE_VERSION` bound to string literals at module scope. If it fails, T11 is set to
+`blocked` WITHOUT a dispatch, with a plain NOTES.md line naming the gate (not an `outcome:`
+line — nothing ran), and the kit is reported complete except T11; re-run execute after the RSI
+branch merges to `main`. Tolerance of unknown or newer RSI record versions ("unknown version,
+not rendered", which T11 names as a constant) is a T10 deliverable that T11 inherits, so a
+Codex schema bump can never crash the page.
+
+*Original D12 text (2026-09-25, superseded):* "T10 renders what exists on `main` now — whether
+`bin/recursive_improvement.py` is present in each checkout, its `*_VERSION` constants read as
+data by `importlib` when present, … and the plain sentence that no RSI records exist yet. T11
+consumes RSI records through the read seam R02 lands, and is GATED: … the module must exist on
+the executing checkout AND expose a read function over stored RSI records." Both the
+`importlib` load and the "store + reader" gate were wrong under the facts above: the first ran
+checkout code inside the dashboard, and the second could never pass on R02's storeless design.
 
 **D13 — Roles: `red-team` and `security-auditor`, declared to test them against stated
 risks.** The `--roles` card (2026-09-25) records no dispatch of either role in any kit, so
@@ -305,6 +364,13 @@ that file — it is named as unfinished in T9 rather than squeezed in.
   being fixed in a separate PR and kit execution must never add residue to the real home.
 - Never invoke the real `claude` / `codex` / `copilot` / `agent` CLI; the engine's only
   subprocesses are the two read-only git verbs of D4, through `bin/proc_runner.py`.
+- (Added 2026-09-27.) The engine imports Python from exactly one tree: the plugin root its own
+  code runs from (`PLUGIN_ROOT`, or the `plugin_root` seam a test fills with a fixture tree).
+  Nothing under a discovered checkout, a `--checkout` flag, a config entry, a data-home
+  namespace or a store is ever imported, `exec`'d or compiled to run; checkout source is read
+  as text with `ast` and never followed through a symlink. Tests never import the RSI branch's
+  engine (it is not on `main`) and never touch the RSI worktree; they exercise the owner seam
+  with a fixture module in the owner's documented shape.
 - The engine writes only under its own store or `--out-dir`; it never writes, moves or
   deletes anything in any other store, any namespace, any harness home or the checkout.
 - No hardcoded prices, model ids, pricing dates, plan facts or contract-version strings
@@ -390,4 +456,6 @@ that file — it is named as unfinished in T9 rather than squeezed in.
 
 Kit ready at `.claude/kits/observability-dashboard/`. Run `/polytropos:execute
 observability-dashboard` from the daily driver; T11 stays gated until Codex's R02 merges to
-`main`, and the executor recognises the gate by the command in T11's brief.
+`main`, and the executor recognises the gate by the command in T11's brief. (2026-09-27: T1–T10
+are merged to `main` and installed as plugin 0.6.8; T11 was re-planned in place under the
+amended D12 and is the kit's only open task.)

@@ -16,11 +16,14 @@ parallel edits to those collide. The declared roles (`red-team` per task after t
 verifier, `security-auditor` per phase beside the reviewer) are sequenced by the
 interactive execute skill; a headless driver refuses or discloses them.
 
-**T11 is gated (PLAN D12).** Before dispatching T11, run the gate command in its brief. On
-exit 3, set T11's `- status:` to `blocked`, append ONE plain prose line to `NOTES.md`
-naming the gate and the date (no ledger token at column one — nothing was dispatched, so
-no `outcome:` line), report the kit as complete except T11, and stop. Re-run execute after
-`feat/rsi-evidence-foundation` merges to `main`.
+**T11 is gated (PLAN D12, amended 2026-09-27).** Before dispatching T11, run the gate command
+in its brief — it is `ast`-only and executes nothing. On exit 3, set T11's `- status:` to
+`blocked`, append ONE plain prose line to `NOTES.md` naming the gate and the date (no ledger
+token at column one — nothing was dispatched, so no `outcome:` line), report the kit as
+complete except T11, and stop. Re-run execute after `feat/rsi-evidence-foundation` merges to
+`main`. When the gate passes, flip `- status:` to `pending` and dispatch T11 as one task
+(opus); its red-team follows the verifier as for every task, and Phase 4's reviewer and
+security-auditor run again at its end, since T11 changes what the page executes.
 
 Standing rules for every task:
 
@@ -986,67 +989,336 @@ PY
 POLYTROPOS_DATA_HOME="$(mktemp -d)" python3 -m unittest discover -s tests -v
 ```
 
-### T11 — RSI records through the read seam R02 lands (GATED on Codex's branch merging)
+### T11 — RSI projections through the installed plugin's own engine (GATED on R02 reaching `main`)
 - id: T11
-- title: RSI records through the read seam R02 lands (GATED on Codex's branch merging)
+- title: RSI projections through the installed plugin's own engine (GATED on R02 reaching `main`)
 - status: blocked
 - model: opus
 - depends: T10
 
-**Brief.** PLAN D12. Files: `bin/dashboard.py`, `tests/test_dashboard.py`. **Gate — the
-orchestrator runs this from the checkout root BEFORE dispatching, and reads the result:**
+**Re-planned 2026-09-27 (architect).** The original T11 brief was unexecutable under two
+facts: the user's decision "parse, never import" (2026-09-26; the dashboard never runs a
+checkout's code), and R02's actual design (no `STORE`, no stored records, no reader — two
+projection functions over the attempt ledger). Its gate `exec`'d the engine and demanded a
+`STORE` string, so it could never pass; its item (2) called readers on each checkout's
+engine, which meant importing checkout code. Everything below replaces that brief.
+
+**Brief.** PLAN D12 (as amended), D3 row 7, D2, D4, D7, D8, D10; R3, R4, R12. Files:
+`bin/dashboard.py`, `tests/test_dashboard.py`, `skills/dashboard/SKILL.md` (its RSI
+paragraph only — no frontmatter change), `.claude/kits/docs-site/AUDIT.md` (the word count in
+the `### claude/dashboard` entry only, if the body's word count changes), then `python3
+bin/docs_build.py build` for the generated mirror. Nothing else. T10's parse-only reading of
+each checkout's engine is UNCHANGED.
+
+**Gate — the orchestrator runs this from the checkout root BEFORE dispatching, and reads the
+result. It parses; it never imports, `exec`s or runs the engine:**
 
 ```bash
-test -f bin/recursive_improvement.py && python3 - <<'PY'
-import importlib.util, inspect
-spec = importlib.util.spec_from_file_location("ri", "bin/recursive_improvement.py")
-m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
-readers = [n for n, f in inspect.getmembers(m, inspect.isfunction)
-           if n.startswith(("read_", "list_", "iter_", "load_", "inventory", "project", "history"))]
-store = getattr(m, "STORE", None)
-print("readers:", readers); print("STORE:", store)
-raise SystemExit(0 if (readers and isinstance(store, str)) else 3)
+cd "$(git rev-parse --show-toplevel)"
+git cat-file -e main:bin/recursive_improvement.py || { echo "gate: bin/recursive_improvement.py is not on main"; exit 3; }
+test -f bin/recursive_improvement.py || { echo "gate: bin/recursive_improvement.py absent from this checkout"; exit 3; }
+python3 - <<'PY'
+import ast
+tree = ast.parse(open("bin/recursive_improvement.py", "rb").read(), filename="recursive_improvement.py")
+defs = {n.name: n for n in tree.body if isinstance(n, ast.FunctionDef)}
+strings = {t.id for n in tree.body if isinstance(n, ast.Assign)
+           and isinstance(n.value, ast.Constant) and isinstance(n.value.value, str)
+           for t in n.targets if isinstance(t, ast.Name)}
+def first_param(name):
+    f = defs.get(name)
+    return f.args.args[0].arg if f is not None and f.args.args else None
+found = {name: first_param(name) for name in ("outcome_eligibility_inventory", "derived_lineage")}
+versions = sorted(s for s in strings if s.endswith("_VERSION"))
+ok = (all(param == "ledger" for param in found.values())
+      and {"OUTCOME_INVENTORY_VERSION", "LINEAGE_VERSION"} <= strings)
+print("gate:", "met" if ok else "UNMET", "| first params:", found, "| version constants:", versions)
+raise SystemExit(0 if ok else 3)
 PY
 ```
 
-Exit 3 (or the file absent) means the gate is UNMET: set this task's `- status:` to
-`blocked`, append one plain prose line to `NOTES.md` — "T11 gated <date>:
-`bin/recursive_improvement.py` <absent | present with no reader/store>; waiting on
-feat/rsi-evidence-foundation R02 to merge to main" — dispatch nothing, write no `outcome:`
-line, and report the kit complete except T11. The gate is mechanical first and judgement
-second: if it exits 3 but the module's docstring plainly describes a stored-record reader
-under other names, treat the gate as met and record why in `NOTES.md`.
+Exit 3 means the gate is UNMET: set this task's `- status:` to `blocked`, append one plain
+prose line to `NOTES.md` — "T11 gated <date>: `bin/recursive_improvement.py` <not on main |
+absent | present without both projection functions taking `ledger` first, or without both
+version constants>; waiting on feat/rsi-evidence-foundation R02 to merge to main" — dispatch
+nothing, write no `outcome:` line, and report the kit complete except T11. The gate is
+mechanical only; there is no judgement clause. If the engine on `main` has the functions
+under other names or shapes, that is a re-plan, not a dispatch.
 
-When the gate is met, the implementer: (1) reads the module's docstring and the reader
-API it exposes — those are the contract; this brief cannot pin field names that do not
-exist yet, and says so — and records in `NOTES.md` which version constants and which
-reader it bound to; (2) for each mapped checkout resolves the RSI store the owner defines
-(`runtime_data.store_path(m.STORE, checkout)` when `STORE` is in `runtime_data.STORES`,
-else the module's own default-path function if it has one, else a note "store location
-unknown") and calls the reader(s) inside `try/except Exception` → note with the exception
-type; (3) renders records grouped by version constant with the owner's own field names as
-column headers, every `v` outside the module's known versions as "unknown version, not
-rendered" via `rsi_record_kind`, and R02's eligibility inventory exactly as the owner emits
-it — counts of eligible and excluded rows, exclusion reasons verbatim, candidate and
-corroborated labels in separate columns under the owner's names — computing no lineage,
-eligibility, score or attribution itself (R07 owns analysis; the inventory "neither scores
-a judge nor changes routing"); (4) never renders task text or source bytes (the contract
-forbids them in records; assert their absence anyway by grepping the page for the
-fixture's canary); (5) writes tests in a class named `RsiRecordsTests` over a synthetic
-store built through the OWNER's own writer or, when the owner has no writer, files in the
-owner's documented shape with synthetic ids and digests, including one record with an
-unknown version and one undecodable file.
+**What R02's engine looks like, confirmed from the branch TEXT on 2026-09-27** (`git show
+feat/rsi-evidence-foundation:bin/recursive_improvement.py`; line numbers are that blob's, and
+the engine ON `main` at dispatch time is authoritative where it differs — D10, R12; record any
+delta in `NOTES.md` and adapt only the dashboard's adapter). Never read, list or run anything
+in the RSI worktree.
 
-**Acceptance.** RSI records render through the owner's reader only; unknown versions are
-named; the inventory's labels and exclusion reasons are verbatim; no analysis is
-computed; `RsiRecordsTests` green; full suite green; `NOTES.md` records the binding.
+- Module docstring (lines 2–15): "deliberately a coordinator, not a second attempt ledger,
+  proposal store, evaluator, or admission path". No `STORE` anywhere. It loads its own
+  siblings (`attempt_ledger`, `proc_runner`, `decision_contract`, `workflow_eval`) from
+  `Path(__file__).resolve().parent` with `spec_from_file_location` on EVERY call of `_al()`
+  etc. (lines 43–64: no cache) — so when it is loaded from `plugin_root/bin` its siblings come
+  from that same tree, and its per-event cost includes re-executing `attempt_ledger.py`. Its
+  projection is also quadratic in events by inspection (`_terminal_for` scans every event per
+  `attempt.started`, lines 1010–1105 and 1163). Both facts are why the caps in item 2 exist.
+- Versions (lines 26–31), all module-scope string literals: `GENERATION_VERSION`,
+  `IMPROVER_VERSION`, `EXPERIMENT_VERSION`, `LINEAGE_VERSION`, `SOURCE_CAPTURE_VERSION`,
+  `OUTCOME_INVENTORY_VERSION`. `ARMS = ("A", "B", "C")` (line 33). Read these AS DATA off the
+  loaded module at run time; never type a version string into `bin/dashboard.py` (the literal
+  prefix `polytropos.rsi-` stays exactly once there, in `rsi_record_kind` — T10's verify counts
+  it and still must pass).
+- `outcome_eligibility_inventory(ledger, captures=(), *, declared_attempt_count=None)` (line
+  1108). `ledger` must have `.events()` (else `TypeError`, line 1116); it reads
+  `getattr(ledger, "corrupt", 0)` and, for a candidate row with source refs, calls
+  `ledger.read_rsi_source(ref)` inside its own `try/except Exception` (lines 1204–1212), so a
+  ledger without that method yields the owner's own `missing-source-artifact` reason, not a
+  crash. `captures` is "an accepted compatibility argument … never evidence" (lines 1139–1141):
+  pass nothing. `declared_attempt_count` is a claim the caller makes; the page makes none: pass
+  nothing. Returns (lines 1308–1316) `{"v": OUTCOME_INVENTORY_VERSION, "rows": [...], "counts":
+  {"recorded_dispatches", "candidates", "corroborated"}, "integrity_reasons": [...],
+  "claim_gate": {"eligible": bool, "reason": str | None}}`. Each row (lines 1258–1268):
+  `attempt`, `run`, `task` (strings or `None`), `dispatch` and `terminal` (a V1 ledger ref
+  `{"id", "sha", "v"}` or `None`), `sources` (list of refs), `source_digest` (str or `None`),
+  `candidate`, `corroborated` (bools), `label` (exactly one of `corroborated` | `candidate` |
+  `excluded`), `exclusion_reasons` (sorted list of strings).
+- Exclusion reasons the text emits, verbatim: `ambiguous-dispatch`, `invalid-dispatch-event`,
+  `role-not-implementer`, `invalid-dispatch-source-fields`, `missing-terminal-outcome`,
+  `ambiguous-task-projection`, `ambiguous-attempt-terminal`, `ambiguous-verify-terminal`,
+  `invalid-terminal-event`, `invalid-terminal-order`, `invalid-cross-run-terminal`,
+  `unresolved-task-projection-comparison`, `contradictory-task-projection`,
+  `unresolved-terminal-outcome`, `invalid-terminal-outcome`, `missing-dispatch-source-link`,
+  `invalid-dispatch-source-reference`, `legacy-source-capture-version`,
+  `unsupported-source-capture-version`, `corrupt-source-artifact`, `stale-source-artifact`,
+  `missing-source-artifact`, `source-after-dispatch`, `unresolved-dispatch-source-proof`,
+  `missing-dispatch-source-digest`. Integrity reasons: `corrupt-ledger-event`,
+  `malformed-ledger-event`, `orphan-terminal-event`, `mismatched-attempt-count`. Claim-gate
+  reasons: the first integrity reason, `unresolved-inventory-row`, `no-corroborated-outcome`,
+  or `None`. The page renders WHATEVER strings the owner returns — this list is so the
+  implementer and the verifier can recognise them, not an allowlist, and none of them is
+  typed into `bin/dashboard.py`.
+- `derived_lineage(ledger, captures=())` (line 1319) calls the inventory again and returns
+  `{"v": LINEAGE_VERSION, "records": [{"dispatch", "terminal", "sources", "source_digest"}
+  for each corroborated row], "inventory": <the inventory dict>}`.
+- On the branch `attempt_ledger.py` also gains `read_rsi_source`, `RSI_SOURCES_DIR` and a
+  `_ri()` sibling load; on `main` today it has `LEDGER_VERSION`, `REF_FIELDS`,
+  `REF_PART_CHARS`, `make_ref`, `read_ref`, `OUTCOME_UNKNOWN` and `AttemptLedger(root,
+  namespace)` with `.events()`, `.corrupt` and `.open_attempts()` and a constructor that
+  writes nothing. The engine's ledger dependencies arrive with the same merge; the dashboard
+  constructs the ledger through the owner and never inspects which methods it has.
+
+1. **The owner seam — `rsi_owner(plugin_root) -> dict`**, the ONE place the page loads
+   `recursive_improvement`. It looks up `plugin_root/bin/recursive_improvement.py` with
+   `_no_follow_walk` (a link anywhere in the path → not loaded); the leaf must be a regular
+   file. Absent → `{"state": "absent"}`. A link or non-regular leaf → `{"state": "refused",
+   "detail": <leaf kind>}`. Present → load it exactly as `_load` does (`spec_from_file_location`
+   + `exec_module`) inside `try/except Exception as exc` → `{"state": "error", "detail":
+   type(exc).__name__}` (message never rendered) or `{"state": "loaded", "module": m,
+   "versions": [[name, value] …], "known_versions": [values]}` where `versions` is every
+   module attribute whose name ends `_VERSION` and whose value is a `str`, in `sorted(dir(m))`
+   order. Then the shape check, by `inspect.signature`: for each of
+   `outcome_eligibility_inventory` and `derived_lineage`, the attribute must be callable and its
+   first parameter must be named `ledger` and be positional; a miss → `{"state":
+   "shape-mismatch", "detail": "<function name>: <missing | first parameter is '<name>'>"}`
+   (parameter NAMES are safe to render; nothing else from the module is). The loaded module is
+   held in the build `ctx` (key `rsi_owner`), resolved once per build in `build_model` from
+   `opts["plugin_root"]` — the seam `assemble_build` already fills with `PLUGIN_ROOT` for
+   `build`, the synthetic plugin root for `demo`, and whatever a test passes. It is NEVER put
+   in `_MODULES` (that cache is keyed by name and bound to `PLUGIN_ROOT`; a fixture tree must
+   not poison it) and NEVER resolved from a checkout, a flag, a config entry or a store.
+   `demo`'s synthetic plugin root carries no engine, so the demo page shows the absent state
+   (Done-means 1 unchanged, and `demo` still executes no file it wrote).
+2. **Which ledgers are projected, and the caps.** A new sub-section of the RSI panel, "RSI
+   projections (through the installed plugin's engine)", rendered after the per-checkout
+   sections, inside its own `_guarded_section`. Its inputs are the MAPPED namespace rows of
+   `read_namespaces(ctx, plugin_install=False)` with `kind` in `("checkout", "codex-kits")` —
+   the same rows and order the attempts panel's ledger facts read, so the RSI kit's own ledger
+   (the `kits-<digest>` namespace, PLAN D4) is included. Unmapped namespaces are never
+   projected (D4: read through shallow stats only), residue never opened, and the plugin
+   install's namespace never projected (it is not a checkout and holds no kit ledger by
+   design). Per row, every `attempts/<ledger>` subdir passes the SAME regular-file and
+   `MAX_LEDGER_BYTES` gate as `_ledger_fact_rows` — extract that stat/kind/size gate into one
+   helper both call so the logic exists once (behaviour unchanged; the existing ledger-facts
+   tests must stay green unmodified). Then two new caps, both in `CAP_NAMES` and
+   `default_caps()`, each hit a `cap_note` on the panel, in bounds and in `build.json`:
+   - `MAX_RSI_PROJECTED_LEDGER_BYTES` — a ledger whose `events.jsonl` is larger is NOT handed
+     to the owner (note: "… bytes — not projected; the owner's projection is quadratic in
+     events and reloads its siblings per event"). Set it from a MEASUREMENT at dispatch time:
+     time `outcome_eligibility_inventory` + `derived_lineage` over synthetic ledgers written
+     through `AttemptLedger.record_started`/`record_finished` in a temp dir at 25%, 50% and
+     100% of the candidate cap, choose the cap so one ledger's two calls take about one second
+     on this machine, and record the three timings, the machine, and the cap in `NOTES.md`.
+     The comment beside the constant states the measured basis. Never truncate a ledger's
+     events to fit: a truncated event list would manufacture `missing-terminal-outcome` rows
+     the owner never emitted (R3/R4 in spirit — a fabricated exclusion is a fabricated figure).
+   - `MAX_RSI_LEDGERS_PROJECTED` — how many ledgers across the build are handed to the owner
+     (mapped order, checkout namespaces before `codex-kits`); the rest get one note naming how
+     many were skipped.
+   Each projected ledger is `al.AttemptLedger(attempts_root, ledger_name)` — the owner's own
+   object, constructed exactly as `_one_ledger_fact` does. Each of the two owner calls is
+   positional-`ledger`-only (`fn(ledger)`), inside `try/except Exception` per ledger → a note
+   "RSI projection for <ns>/<ledger>: <function> raised (<TypeName>)" and the fixed line that
+   this ledger's projection could not be built; the other ledgers still render.
+3. **Rendering, verbatim and version-gated.** Each returned object goes through
+   `rsi_record_kind(obj, owner["known_versions"])` first: `"known"` → render; `"unknown"` →
+   render only the new constant `RSI_UNKNOWN_VERSION = "unknown version, not rendered"` plus
+   the version string; `"not-a-record"` → the fixed line "the owner returned no versioned
+   record (<type name>)". For a known inventory render: a two-column table of `counts` with
+   the owner's KEY NAMES as row labels and `{"fmt": "count"}` cells (a missing key renders
+   `unknown`, never 0); the `v`; `integrity_reasons` as a list, verbatim, with the empty text
+   "integrity_reasons: none reported by the owner"; `claim_gate` as "eligible: true|false"
+   and "reason: <string> | null (the owner set none)"; then a `<details>` table of `rows`
+   with the owner's field names as headers — `attempt`, `run`, `task`, `label`,
+   `exclusion_reasons` (joined with "; ", each string whole), `candidate`, `corroborated`
+   (the words `true`/`false`), `dispatch` and `terminal` as their `id` (or `null`), `sources`
+   as a count of refs (counting what you were handed is allowed, D2), `source_digest` whole or
+   `null`. Rows are bounded by a third cap `MAX_RSI_INVENTORY_ROWS_RENDERED` (the `counts`
+   table stays complete because the owner computed it). For a known lineage render: `v`, the
+   count of `records`, and a `<details>` table of `records` under the same row cap with
+   `dispatch.id`, `terminal.id`, sources count, `source_digest`; its embedded `inventory` is
+   NOT rendered again (it is the same object). Nothing is scored, ranked, attributed, summed
+   or re-labelled: if a figure the reader wants is not in the owner's output the page says the
+   owner does not report it. Every string through `esc()` (the typed-cell path, once); every
+   path through `scrub`. Honesty (D7): a `None` count is `unknown`; a `None` reason is `null`;
+   booleans are words. The panel `summary` stays fixed words plus integers and gains one
+   clause: "; projections read for J of K ledger(s) through the installed plugin's engine"
+   or "; no projection — the installed plugin carries no RSI engine" (or "… engine not
+   loaded" for `refused`/`error`/`shape-mismatch`). Nothing read out of the owner's output
+   rides in the summary (P3 review M2).
+4. **The states of the projections section**, each a fixed constant that names no plan
+   state (the `test_no_rsi_line_names_plan_state` sweep must keep passing: no `R02`,
+   `landed`, `main`, `PLAN`): `absent` → `RSI_OWNER_ABSENT`: "The installed plugin this page
+   was built by carries no bin/recursive_improvement.py, so no RSI projection was read. A
+   checkout's own engine is parsed as text above and never run."; `refused`/`error` → the
+   fixed line that the plugin's engine was not loaded, plus a note with the leaf kind or the
+   exception type; `shape-mismatch` → `RSI_OWNER_SHAPE_DIFFERS`: "The installed plugin's
+   bin/recursive_improvement.py does not expose the projection functions in the shape this
+   page binds to, so nothing was projected — see the notes above." plus the note with the
+   detail; `loaded` with no eligible ledger → "no mapped ledger to project" (a fact, not a
+   zero). Also reword T10's two sentences so they stay TRUE once projections exist:
+   `RSI_NOTHING_TO_RENDER` ends "… This page does not call into this checkout's engine." and
+   `RSI_RECORDS_NOT_READ` ends "… but this page does not call into this checkout's engine;
+   any RSI projection on this page comes only from the installed plugin's own engine (see
+   'RSI projections' below)." — the same facts T10 stated, minus the now-false "reads no RSI
+   records". Update the `skills/dashboard/SKILL.md` RSI paragraph in the same task: its
+   sentence "The panel reads no RSI records itself …" becomes a sentence saying the panel
+   parses each checkout's engine as text and never runs it, and renders the outcome-eligibility
+   inventory and derived lineage that the INSTALLED plugin's own engine projects from the
+   attempt ledger, verbatim, computing nothing itself. Recount the body's words; if the count
+   changes, update the number in `.claude/kits/docs-site/AUDIT.md`'s `### claude/dashboard`
+   entry (T8 precedent — the audit test compares it). Run `python3 bin/docs_build.py build`
+   and confirm `python3 bin/docs_build.py check` exits 0.
+5. **Tests — `RsiRecordsTests` in `tests/test_dashboard.py`**, every build through
+   `assemble_build(cwd, data_home=…, out_dir=…, git=False, projects_dir=<empty temp>,
+   plugin_root=<fixture tree>)` (the module-level `setUpModule` data-home patch applies; zero
+   `Path.home()`). The fixture tree is `<tmp>/plugin/bin/recursive_improvement.py`, a
+   SYNTHETIC module in the owner's documented shape: `OUTCOME_INVENTORY_VERSION =
+   "polytropos.rsi-fixture-inventory/1"`, `LINEAGE_VERSION = "polytropos.rsi-fixture-lineage/1"`,
+   `ARMS`, `outcome_eligibility_inventory(ledger, captures=(), *, declared_attempt_count=None)`
+   that asserts `hasattr(ledger, "events")`, calls `ledger.events()` and returns the branch's
+   shape with deterministic rows whose reasons are fixture words (e.g.
+   `fixture-reason-alpha`), and `derived_lineage(ledger, captures=())`. The data home holds a
+   mapped checkout namespace and a `tasks/kits` namespace, each with a ledger written through
+   `attempt_ledger.AttemptLedger`'s own writers (never hand-written JSONL — the owner's writer
+   is the fixture), plus a checkout whose OWN `bin/recursive_improvement.py` writes a canary
+   file and raises if executed. Assert at least: (a) the inventory's `counts` keys, values,
+   `v`, every fixture reason and label, and `claim_gate` render verbatim and escaped; (b) a
+   fixture whose inventory `v` is not among its `*_VERSION` values renders
+   `RSI_UNKNOWN_VERSION` plus that version and none of its rows; (c) a fixture returning a
+   list renders the not-a-record line; (d) a fixture whose `derived_lineage` raises
+   `RuntimeError` yields the type name in a note, no message text, and the inventory still
+   renders; (e) a fixture with `def outcome_eligibility_inventory(store, ...)` renders
+   `RSI_OWNER_SHAPE_DIFFERS` with the parameter name in a note and calls nothing; (f) a fixture
+   tree with no engine renders `RSI_OWNER_ABSENT`, and a tree whose `bin` is a symlink renders
+   the not-loaded line; (g) the checkout's canary engine is never executed (no canary file;
+   T10's parsed table still renders it) while the plugin fixture IS called — the ONLY module
+   loaded is the plugin tree's; (h) a ledger over `MAX_RSI_PROJECTED_LEDGER_BYTES` (caps
+   overridden to 1 through the caps seam, the T10 precedent) is not handed to the owner (a
+   fixture counter proves zero calls) and the cap note appears on the panel, in bounds and in
+   `build.json`; likewise `MAX_RSI_LEDGERS_PROJECTED` and `MAX_RSI_INVENTORY_ROWS_RENDERED`;
+   (i) the unmapped and residue namespaces' ledgers and the plugin install's namespace are
+   never handed to the owner; (j) no `sum(` over owner values, no `$`, no `Traceback`, no
+   fake home path, no fixture canary string on the page; (k) `summary_lines` still relays a
+   summary of fixed words and integers only, with the new clause. Add ONE more class,
+   `RsiRealOwnerShapeTests`, decorated `@unittest.skipUnless((PLUGIN_ROOT / "bin" /
+   "recursive_improvement.py").is_file(), "the RSI engine is not in this checkout")`: with
+   `plugin_root=PLUGIN_ROOT` (this checkout — this repo's own code, the same trust every owner
+   test extends) over a synthetic ledger written through the owner's writers, it asserts the
+   section renders the inventory's `v` equal to the module's `OUTCOME_INVENTORY_VERSION`, the
+   three `counts` keys, and the lineage's `v`; and that `rsi_owner(PLUGIN_ROOT)["state"] ==
+   "loaded"`. That class is skipped on a tree without the engine and RUNS at T11's verify
+   (the verify's `test -f` guarantees it is not skipped there). It never reads the branch.
+6. **`NOTES.md` delta record.** Record: the engine's actual signatures and return keys on
+   `main` at dispatch (from `inspect.signature` and one real call over a fixture ledger),
+   every place they differed from this brief, the three cap timings and the machine, and the
+   `_MODULES`/`ctx` decision as built.
+
+**Acceptance.** Projections come ONLY from the plugin tree's own engine, over
+`attempt_ledger.AttemptLedger` objects, and a checkout's engine is still never executed;
+every count, label, reason and gate value is the owner's, verbatim, version-gated by
+`rsi_record_kind`, with `RSI_UNKNOWN_VERSION` a named constant; unknown counts render
+`unknown`, null reasons `null`, booleans as words; nothing is scored, summed, ranked or
+re-labelled; every read is behind a named cap whose hit is visible in three places; the
+owner's shape differing degrades to a fixed line plus a note, never a guess; T10's sentences
+and the skill's RSI paragraph are true of the page as built; `RsiRecordsTests` and
+`RsiRealOwnerShapeTests` green (the second not skipped); full suite green; `docs_build check`
+exits 0; `NOTES.md` records the binding and the timings.
 
 **Verify.**
 ```bash
 cd "$(git rev-parse --show-toplevel)"
 test -f bin/recursive_improvement.py
-POLYTROPOS_DATA_HOME="$(mktemp -d)" python3 -m unittest discover -s tests -p 'test_dashboard.py' -k RsiRecords -v
-grep -q "RsiRecordsTests" tests/test_dashboard.py
-grep -q "T11" .claude/kits/observability-dashboard/NOTES.md
+grep -c "polytropos.rsi-" bin/dashboard.py | grep -qx 1
+grep -c 'RSI_UNKNOWN_VERSION = "unknown version, not rendered"' bin/dashboard.py | grep -qx 1
+grep -q "RSI_OWNER_ABSENT" bin/dashboard.py && grep -q "RSI_OWNER_SHAPE_DIFFERS" bin/dashboard.py
+grep -q "def rsi_owner(" bin/dashboard.py
+for cap in MAX_RSI_PROJECTED_LEDGER_BYTES MAX_RSI_LEDGERS_PROJECTED MAX_RSI_INVENTORY_ROWS_RENDERED; do grep -q "\"$cap\"" bin/dashboard.py || exit 1; done
+! grep -q "reads no RSI records" bin/dashboard.py skills/dashboard/SKILL.md
+grep -q "class RsiRecordsTests" tests/test_dashboard.py && grep -q "class RsiRealOwnerShapeTests" tests/test_dashboard.py
+t11_out="$(mktemp)"
+POLYTROPOS_DATA_HOME="$(mktemp -d)" python3 -m unittest discover -s tests -p 'test_dashboard.py' -k RsiRecords -k RsiRealOwner -v > "$t11_out" 2>&1; rc=$?; tail -5 "$t11_out"; test $rc -eq 0
+! grep -q "skipped=" "$t11_out"
+python3 - <<'PY'
+import importlib.util, tempfile, textwrap
+from pathlib import Path
+spec = importlib.util.spec_from_file_location("dashboard", "bin/dashboard.py")
+db = importlib.util.module_from_spec(spec); spec.loader.exec_module(db)
+# The real owner in THIS checkout loads and has the shape the page binds to.
+owner = db.rsi_owner(db.PLUGIN_ROOT)
+assert owner["state"] == "loaded", owner.get("state")
+assert any(name == "OUTCOME_INVENTORY_VERSION" for name, _v in owner["versions"]), owner["versions"]
+# A checkout engine that would write a canary is never executed; a fixture plugin tree is called.
+with tempfile.TemporaryDirectory() as td:
+    root = Path(td); world = db.synthetic_world(root)
+    canary = root / "canary"
+    eng = Path(world["checkout"]) / "bin"; eng.mkdir(exist_ok=True)
+    (eng / "recursive_improvement.py").write_text(
+        f"import pathlib\npathlib.Path({str(canary)!r}).write_text('ran')\nraise RuntimeError('executed')\n"
+        "CHECKOUT_VERSION = 'polytropos.rsi-checkout/1'\n")
+    plug = root / "plug" / "bin"; plug.mkdir(parents=True)
+    (plug / "recursive_improvement.py").write_text(textwrap.dedent('''
+        OUTCOME_INVENTORY_VERSION = "polytropos.rsi-fixture-inventory/1"
+        LINEAGE_VERSION = "polytropos.rsi-fixture-lineage/1"
+        def outcome_eligibility_inventory(ledger, captures=(), *, declared_attempt_count=None):
+            assert hasattr(ledger, "events"); ledger.events()
+            return {"v": OUTCOME_INVENTORY_VERSION, "rows": [],
+                    "counts": {"recorded_dispatches": 3, "candidates": 1, "corroborated": 0},
+                    "integrity_reasons": ["fixture-integrity-zeta"],
+                    "claim_gate": {"eligible": False, "reason": "fixture-gate-omega"}}
+        def derived_lineage(ledger, captures=()):
+            return {"v": LINEAGE_VERSION, "records": [], "inventory": outcome_eligibility_inventory(ledger)}
+    '''))
+    out = root / "out"; proj = root / "proj"; proj.mkdir()
+    _o, model, receipt, page = db.assemble_build(
+        str(world["checkout"]), data_home=str(world["data_home"]), out_dir=str(out),
+        flags=[str(world["checkout"])], git=False, projects_dir=str(proj),
+        plugin_root=str(root / "plug"))
+    assert not canary.exists(), "a checkout engine was executed"
+    for needle in ("fixture-integrity-zeta", "fixture-gate-omega", "recorded_dispatches",
+                   "polytropos.rsi-fixture-inventory/1", "polytropos.rsi-fixture-lineage/1",
+                   "eligible: false"):
+        assert needle in page, needle
+    assert "Traceback" not in page and "executed" not in page
+    rsi = next(p for p in model["panels"] if p["id"] == "rsi")
+    assert "projections read for" in rsi["summary"] and "fixture" not in rsi["summary"], rsi["summary"]
+print("T11 probe OK")
+PY
+python3 bin/docs_build.py check
 POLYTROPOS_DATA_HOME="$(mktemp -d)" python3 -m unittest discover -s tests -v
 ```

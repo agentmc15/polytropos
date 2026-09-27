@@ -9,9 +9,24 @@ Absolute rules (money / live tooling / user data / concurrent work — no judgem
 - **The page can never reach the network, and nothing reads the HTML into a session.** The
   output carries the CSP meta tag `default-src 'none'; style-src 'unsafe-inline'; img-src
   data:` exactly, no `<script`, no `src=`, no `href` to a URL, no `@import`, no `url(`, no
-  webfont, no iframe, no form. The skill relays the path and the `--json` summary and never
-  `cat`s, `Read`s or `grep`s `index.html`; it never pastes, publishes, attaches, uploads or
-  opens the page — opening it is the user's own action in their own browser.
+  webfont, no iframe, no form. The skill relays the path and the plain build's summary lines
+  (fixed words plus counts; amended 2026-09-27 — it never runs `--json` and never relays a
+  note) and never `cat`s, `Read`s or `grep`s `index.html`; it never pastes, publishes,
+  attaches, uploads or opens the page — opening it is the user's own action in their own
+  browser.
+- **Parse, never import — the engine runs code from one tree only (added 2026-09-27; user
+  decision 2026-09-26).** The only Python the dashboard imports is its sibling owners under the
+  plugin root its own code runs from (`PLUGIN_ROOT/bin` through `_load`/`_mod`, or the
+  `plugin_root` seam a test fills with a fixture tree). A checkout's
+  `bin/recursive_improvement.py` — or any other file under a discovered checkout, a
+  `--checkout` flag, a `config.json` entry, a namespace or a store — is read as TEXT with
+  `ast`, never imported, `exec`'d, compiled to run or followed through a symlink. T11's RSI
+  projections therefore call `recursive_improvement` from the plugin tree alone, over
+  `attempt_ledger.AttemptLedger` objects, and render its output verbatim; when the plugin tree
+  has no engine the page says so and projects nothing. Tests never import the RSI branch's
+  engine and never touch the RSI worktree: the owner seam is exercised with a synthetic module
+  in the owner's documented shape, plus one `skipUnless`-guarded shape test over this
+  checkout's own `bin/recursive_improvement.py` once it exists on `main`.
 - **NEVER invoke the real `claude` / `codex` / `copilot` / `agent` CLI** from any code path,
   test, verify probe or role dispatch in this kit. The engine's only subprocesses are two
   read-only git verbs, `git rev-parse --show-toplevel` and `git worktree list --porcelain`,

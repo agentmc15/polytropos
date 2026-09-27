@@ -2649,3 +2649,38 @@ session: 2f6e4acb-ed7e-4113-84aa-b3c76076d710
     one of the two leaky suites, and its reported 128 runs would not produce three bursts of 6.
   - So a concurrent suite run in an unfixed checkout is the likelier source. It is not proven
     from here, because the RSI worktree is fenced.
+
+- **T11 re-plan (architect), 2026-09-27.** T11 stays `blocked`; its brief, gate and PLAN
+  text were rewritten in place under two facts the Phase 4 review's S3 named: the user's
+  parse-never-import decision (2026-09-26) and R02's actual design. R02 was confirmed from the
+  branch text alone (`git show feat/rsi-evidence-foundation:bin/recursive_improvement.py`;
+  the worktree was never opened): the engine is "deliberately a coordinator, not a second
+  attempt ledger", binds no `STORE`, and its read seam is two projection functions over an
+  `attempt_ledger.AttemptLedger` object — `outcome_eligibility_inventory(ledger, captures=(),
+  *, declared_attempt_count=None)` at line 1108 and `derived_lineage(ledger, captures=())` at
+  line 1319 — each returning a dict stamped `v` with `OUTCOME_INVENTORY_VERSION` or
+  `LINEAGE_VERSION` (lines 26–31 hold six version literals; `ARMS` is line 33). So there are
+  no stored RSI records to read; the old gate (`exec_module`, `readers and isinstance(STORE,
+  str)`) could never pass, and its item (2) ran checkout code. Decisions, each with its why
+  in the new T11 block: the projections are called only on the engine in the plugin tree the
+  page runs from (`opts["plugin_root"]`, the seam the plugin-store mapping already uses;
+  `PLUGIN_ROOT` for `build`, the synthetic root for `demo`, a fixture tree for tests), never a
+  checkout's file, which T10 keeps parse-only; the ledgers fed are the mapped `checkout` and
+  `codex-kits` namespaces' own `AttemptLedger` objects, behind `MAX_RSI_PROJECTED_LEDGER_BYTES`
+  (set from a measurement at dispatch, because the branch text reloads its siblings on every
+  `_al()` call and scans every event per dispatch) and `MAX_RSI_LEDGERS_PROJECTED`, never a
+  truncated event list (a truncation would manufacture exclusion reasons the owner never
+  emitted); the page renders the owner's counts, labels, reasons and gate verbatim, gated by
+  `rsi_record_kind` with `RSI_UNKNOWN_VERSION` as a named constant, and computes nothing; a
+  differing owner shape degrades to `RSI_OWNER_SHAPE_DIFFERS` plus a note naming the
+  parameter; an absent plugin engine renders `RSI_OWNER_ABSENT`, whatever a checkout holds.
+  The gate is now `ast`-only: `main` must carry the file, and the executing checkout's copy
+  must define both functions with `ledger` first and both version constants as literals; it
+  has no judgement clause. Model pin stays opus (D14: tolerating a concurrent branch's
+  contract is a safety-class decision). One task, not two: the panel wording, the skill's RSI
+  sentence and the AUDIT word count must change together or the tree is red between them.
+  Budget: `max-dispatches` 22 → 26 in PLAN, dated, so the counter (19) admits T11 and one
+  retry and the hand count (23) fits one more fix round. Stale architect text amended and
+  dated in PLAN (D3 row 7, D4, D6, D11, D12, a Constraints bullet, the Handoff) and
+  GUARDRAILS (the `--json` sentence; a new parse-never-import rule). Nothing was dispatched
+  and no owner, agent, `tasks/kits/**`, pricing file or generated mirror was touched.
