@@ -207,25 +207,32 @@ shape, and the not-counted and `BACKFIRED` reporting paths.
 How the demotion interacts with the escalation ladder inside one `run` is described where that
 ladder is: [COPILOT-WORKFLOW.md](COPILOT-WORKFLOW.md#budget-mode).
 
-### `goliath` — a five-role pipeline policy
+### `goliath` — a ten-role pipeline policy
 
 `copilot/.github/skills/goliath/SKILL.md` is a Copilot-CLI-only orchestration *policy*. The
-architect plans first, then five execution roles run — implementer, test-author, verifier,
-orchestrator/reviewer, and a mandatory red-team pass — and the work is accepted only when all five
-report success against the architect's plan; on failure the exact evidence goes back to the
-responsible role and only the failed stage reruns. It ships no driver and no agent of its own: it
-is instructions for sequencing dispatches (`copilot -p "<role brief>" --model <resolved-id>`) plus
-a reporting contract — a closing ledger naming each role, the model actually used, any fallback
-taken, files changed, verify commands and their results, the reviewer decision, and the red-team
-findings, and no success claim when a required role could not run.
+architect plans first, then the full R10 tier from [ROLE-EXPERIMENT.md](ROLE-EXPERIMENT.md)
+runs in its canonical order — scout, implementer, test-author, verifier, second-verifier,
+red-team, reviewer, security-auditor, docs-editor, and synthesizer — and the work is accepted
+only when all ten report success against the architect's plan (the three roles that produce no
+adjudicable findings by completing their duty); on failure the exact evidence goes back to the
+responsible role and only the failed stage reruns. It ships no driver and no agent of its own:
+it is instructions for sequencing dispatches
+(`copilot -p "<role brief>" --model <resolved-id> --effort=max`) plus a reporting contract — a
+closing ledger naming each role, the model actually used, any fallback taken, files changed,
+verify commands and their results, the reviewer decision, and the red-team and
+security-auditor findings, and no success claim when a required role could not run.
 
-Its per-role model table lives in the skill as a primary plus an ordered fallback per role, by
-display name only; the skill requires resolving each row against
-`python3 bin/copilot_pricing.py models` and the live `/model` picker before dispatch, and if every
-candidate for a role is unavailable the run stops and names the missing role rather than
-substituting another role's model. Two roster rows exist because of this skill: `grok-4.6` and
-`gemini-3.7-flash` were added to `data/pricing.copilot.json` for it, which is why both carry the
-`price-unverified` caveat in the table above.
+Its per-role model table lives in the skill as a primary plus one fallback per role, by display
+name only, with every dispatch at Max reasoning effort. The implementer's own model doubles as
+every role's fallback, so a checking role that falls back shares the implementer's model and
+the ledger must flag it. The skill requires resolving each row against
+`python3 bin/copilot_pricing.py models` and the live `/model` picker before dispatch, and if
+every candidate for a role is unavailable the run stops and names the missing role rather than
+substituting a model outside that role's row. Because `bin/copilot_execute.py` forwards no
+effort flag, a goliath run dispatches directly instead of through that driver. `grok-4.6` and
+`gemini-3.7-flash` were originally added to `data/pricing.copilot.json` for an earlier goliath
+roster, which is why both carry the `price-unverified` caveat in the table above; the current
+roster uses neither Grok nor Gemini.
 
 ## Statusline (experimental)
 
