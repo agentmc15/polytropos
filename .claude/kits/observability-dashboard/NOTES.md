@@ -1541,3 +1541,155 @@ agent: P2fix id=aeb292b53d0e06e49 role=implementer model=opus
     module's `HOME` patch kept real transcripts out of reach. A test-only guard now refuses
     any other projects dir.
 reviewer: P2 model=opus findings=11 confirmed=11 result=accepted
+
+## Phase 3 (fences re-read from disk at the phase start)
+
+- T8 adjudications, applied at dispatch; they win over the brief's wording, and the brief's
+  semantics hold:
+  - (a) From the P2 security auditor: the skill relays the page path and the engine's
+    one-screen summary, which carries counts only. It never relays note text. When it uses
+    `build --json`, it relays only the page path, receipt path, build time, class counts,
+    cap-hit names and panel ids and summaries, never the receipt's `notes`. A note can
+    interpolate a kit, namespace or ledger name from a cloned repository, which is untrusted
+    text.
+  - (b) From the P2 reviewer: the per-panel paragraphs describe the fixed grain. Eval cards
+    are read per vetted run directory, and an excluded run is noted while the others render.
+    The prefs pre-scan covers the owner's read set. A link is noted and its content is never
+    rendered.
+
+- **T8 (the `/polytropos:dashboard` skill and its docs-site surfaces).** New:
+  `skills/dashboard/SKILL.md`, `docs-src/fragments/skills/claude/dashboard.md`. Edited:
+  `mkdocs.yml` (Claude nav, alphabetical between `cost-report` and `escalate`),
+  `tests/test_docs_build.py` (`LiveTreeInventoryTests` Claude count 15 → 16),
+  `docs/REFERENCE.md` (census row, the heading and its two "fifteen" mentions → sixteen, a new
+  `/polytropos:dashboard` paragraph), `.claude/kits/docs-site/AUDIT.md` (new
+  `### claude/dashboard` entry, disposition tally 39 → 40 `keep`). Applied the two adjudications
+  above verbatim: the skill's `--json` guidance names exactly the receipt fields to relay (page,
+  receipt, build time, class counts, cap-hit names, panel id+summary) and says never the
+  `notes` array; the evals/prefs paragraph says cards are read per vetted run directory (never a
+  declared run id), that any excluded run drops the whole runs-summary table for that build
+  while the other cards still render, and that policy/approvals/activation read the owner's own
+  preferences set.
+  - **RSI status is documented ahead of the engine — a sequencing delta, not a defect.** T10
+    (Phase 4) depends only on T7, same as T8, and has not landed on this checkout as this task
+    runs: `bin/dashboard.py`'s `PANELS` list carries no `rsi` entry yet (confirmed by reading the
+    module before writing anything). The brief's item (c) names "RSI status" as one of the panel
+    paragraphs the skill must carry, matching PLAN.md's own D3 table, which lists RSI as a
+    Phase-4 panel by design. The skill's paragraph is written evergreen — what the panel
+    reports (engine and kit presence, contract versions as data, a plain "nothing yet to show"
+    rather than a guess), never a claim about a specific checkout's current finding — so it
+    needs no edit once T10 lands. Read T9's and T10's briefs before writing this: neither
+    touches the skill or the fragment, so this is the only place that sentence gets written.
+  - **AUDIT.md's `claude/dashboard` entry is a `keep` addendum**, the `claude/assess-improvement`
+    precedent: added after the original 39-skill pass, so no D1 body-budget judgment is
+    claimed. Its measured body is 1027 words (frontmatter stripped) against the ~900-word norm
+    the original pass held non-orchestration skills to — over that norm, like `claude/journal`
+    (1079, `relocate`) and `claude/context-weight` (2349, `relocate`), but this task's brief
+    named no `references/` split (AUDIT step 3 pins `references: none`) and asked for the full
+    lettered content (engine resolution, the hygiene law, nine panel paragraphs plus the
+    honesty-rules paragraph, refresh guidance, flags, refusals, privacy) in one file, so the
+    length is the brief's own design, not an oversight; a later pass may reconsider it as a real
+    D1 measurement.
+  - **`docs/REFERENCE.md` placement.** The brief pins no subsection, only "beside the other
+    skill paragraphs in that section, in their register". The new paragraph was placed at the
+    end of "### Evidence and memory" (after `repo-bench`, before "### Harness maintenance"),
+    since that subsection already groups the skills reading the same evidence stores (`memory`,
+    `journal`, `repo-bench`) this page renders.
+  - Fragment measures 458 `wc -w` total, 449 words of prose (fenced block and table rows
+    excluded per TEMPLATE.md's own method) — inside the 150–550/450 bands with a 1-word margin
+    on the tighter ceiling.
+  - Verify, from the checkout root: the task's own Verify block (frontmatter/hygiene probe on
+    the skill, the six-section probe on the fragment, the `mkdocs.yml`/AUDIT.md/REFERENCE.md
+    greps, `docs_build.py check`) and the full suite under an isolated `POLYTROPOS_DATA_HOME`,
+    both green — tails in the hand-off.
+agent: T8 id=a1d29af73377319df role=implementer model=sonnet
+
+- T8 stop-and-report, verified by the orchestrator. `tests/test_codex_portable_skills.py::
+  test_every_claude_workflow_has_a_codex_entry_or_native_equivalent` (added in 9947500,
+  2026-09-24, before this PLAN) pins `len(claude) == 15`, and requires every Claude skill to
+  have a Codex skill or a mapped native name. A Claude-only `dashboard` skill fails it however
+  the count is bumped.
+  - PLAN D11 makes the skill Claude-only ("Copilot, Codex and Cursor ports are OUT of scope"),
+    and says `copilot_docs.py`/`sync_codex_surfaces.py` "are unaffected because their rosters
+    are the bundles'". GUARDRAILS fences "their roster tests". This parity test is exactly
+    such a test, and D11 did not know it.
+  - T8's other work is complete. The three extra count tripwires the implementer bumped
+    (`tests/test_docs_build_adversarial.py`, `tests/test_docs_build_cli.py`,
+    `tests/test_primitives_doc_adversarial.py`) are Claude-side docs inventory counts that move
+    by exactly one: paired edits under R10, not fence crossings.
+  - Resolving the parity test needs a decision outside the kit's fence, so it goes to the
+    user.
+defect: - kind=stale-plan-decision
+
+- T8 stop-and-report resolved. The user's decision, relayed by the coordinator: exempt
+  `dashboard` by name in `tests/test_codex_portable_skills.py`. The edit made is exactly the
+  one specified and nothing else in that file changed: a `claude_only = {"dashboard"}` set,
+  separate from `native_names`, with a comment naming PLAN D11 and requiring each further
+  entry to be its own deliberate, recorded decision; the count assertion 15 → 16; `claude_only`
+  filtered out of the Claude set before the `issubset` check.
+agent: T8 id=afd0f980fb352eb4d role=verifier model=sonnet findings=1 confirmed=1 result=accepted
+
+- T8 verifier: PASS, with one finding the orchestrator confirmed by measuring. The
+  `claude/dashboard` AUDIT.md entry says the fragment is "459 `wc -w`", but `wc -w` gives 458
+  (and NOTES.md already says 458). The verifier also confirmed:
+  - the parity-test exemption is exactly the user's recorded decision and loosens nothing
+    else;
+  - each of the four inventory bumps moved by exactly one;
+  - every documented flag and relayed line exists in the engine;
+  - there is no home path, price, model id or date in the skill or the fragment.
+agent: T8 id=a3ea1370504a6201b role=red-team model=sonnet findings=3 confirmed=2 marginal=2 result=accepted
+
+- T8 red-team adjudication: three claims, two confirmed and marginal.
+  - (A) Confirmed. `build --json` prints the WHOLE receipt, `notes` included, to stdout. A
+    tool result lands in the model's context before any "relay only these fields" rule can
+    apply, so Phase 3 adjudication (a) could not hold while the skill was allowed to run
+    `--json`. The red-team demonstrated it with a symlinked kit dir named with a
+    right-to-left override. The resolution narrows the brief's "(or `--json` for the
+    receipt)": the skill runs the plain `build`, relays its summary lines (counts only; the
+    verifier matched them to `summary_lines`), and NEVER runs `--json` in a session. If the
+    user wants the receipt, the skill gives its path. D11's intent, "the one-screen summary is
+    for the session", is kept.
+  - (B) Confirmed. Outside any git repo, `--checkout "$(git rev-parse --show-toplevel)"`
+    becomes `--checkout ""`, and the engine refuses it (exit 2). Neither the skill nor the
+    fragment says so. The skill now checks for a checkout first, and the fragment names that
+    failure mode.
+  - (C) Not confirmed as a T8 defect. The `${CLAUDE_PLUGIN_ROOT}` fallback is stated in prose,
+    which is the repo-wide convention CLAUDE.md prescribes ("relative to this SKILL.md" as
+    the stated fallback) and is copied from `skills/update/SKILL.md`, as the brief directed.
+- T8's retry also corrects the verifier's 459 → 458.
+
+- **T8 retry (attempt 2 of 2), the three confirmed items fixed.**
+  - **(1) Word counts corrected and re-measured after the other edits below.** AUDIT.md's
+    `claude/dashboard` entry said the fragment was "459 `wc -w`"; `wc -w` gives 458, matching
+    what NOTES.md already said. After items (2) and (3) changed both files, the counts were
+    re-measured fresh rather than assumed: fragment 458 `wc -w` total / 449 words of prose
+    (same numbers as before the edit, coincidentally — the content changed, the count did not),
+    skill body 1027 → **1138** words (frontmatter stripped; the checkout-check paragraph and the
+    stronger `--json` prohibition added more than the old relay-guidance paragraph removed).
+    AUDIT.md's entry now states 1138 and 458, and its "skill-md" clause describing `--json`
+    handling was also rewritten to match (2), since leaving the old wording ("relays only the
+    named receipt fields under `--json`") in place would have had AUDIT.md contradict the skill
+    it describes.
+  - **(2) The skill never runs `--json` in a session.** `skills/dashboard/SKILL.md`'s "Context
+    hygiene" section no longer tells the session what to relay from a `--json` receipt; it now
+    reads "**Never run `build --json` in this session, under any circumstance,**" states why
+    (the whole receipt, `notes` included, lands as tool output before any relay rule could
+    apply), and says that if the user wants the receipt, the skill gives its path — printed by
+    the plain `build` it always runs — and lets them open it. `--json` is named once, as
+    existing for a script outside a session, never for this skill. The hygiene law's
+    never-cat/Read/grep/head, never-paste/publish/open wording and the word `index.html` all
+    stayed intact (the Verify probe's own checks). The fragment's Worked Example dropped its
+    "`--json` prints that receipt as data" line the same way.
+  - **(3) Outside a checkout.** The engine-resolution section now runs `git rev-parse
+    --show-toplevel` as its own first step; prose says that if it fails the skill builds
+    nothing and tells the user to run from inside a checkout or pass `--checkout <path>`
+    themselves, and only then shows the (unchanged) build command — so the fragment's Worked
+    Example needed no change to its command, only a new Failure-modes bullet naming the same
+    failure mode. The Refreshing section's rebuild line now points back at the same check
+    rather than repeating it. The fragment was re-trimmed back inside TEMPLATE.md's bands after
+    the new bullet: 458 `wc -w` total, 449 words of prose.
+  - Verify: `python3 bin/docs_build.py build` (1 page rewritten, 85 unchanged), the task's own
+    Verify block under `set -e`, and the full suite in the foreground last — tails in the
+    hand-off.
+agent: T8 id=a1d29af73377319df role=implementer model=sonnet
+outcome: T8 model=sonnet attempts=2 result=retry-pass review=revised run=2026-09-25-7e3a

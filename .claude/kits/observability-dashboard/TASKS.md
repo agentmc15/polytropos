@@ -735,7 +735,7 @@ POLYTROPOS_DATA_HOME="$(mktemp -d)" python3 -m unittest discover -s tests -v
 ### T8 — The `/polytropos:dashboard` skill and its docs-site surfaces
 - id: T8
 - title: The `/polytropos:dashboard` skill and its docs-site surfaces
-- status: pending
+- status: done
 - model: sonnet
 - depends: T7
 

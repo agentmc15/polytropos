@@ -304,7 +304,9 @@ class CensusBumpTripwireTests(unittest.TestCase):
     three moved by one again when D29 added docs/DECISION-IMPROVEMENT-CONFORMANCE.md
     (33 / 35 / 78), for the same reason. 2026-09-21: all three moved by one once more
     when D30 added docs/DECISION-IMPROVEMENT-V1-HANDOFF.md (34 / 36 / 79). 2026-09-24: all three
-    moved by one again when docs/REFERENCE.md took the long-form page out of README.md (35 / 37 / 85)."""
+    moved by one again when docs/REFERENCE.md took the long-form page out of README.md (35 / 37 / 85).
+    2026-09-26: the doc pins (35 / 37) did NOT move when the observability-dashboard kit's T8
+    added skills/dashboard, but the total did, for the same reason as D25 (35 / 37 / 86)."""
 
     def test_pinned_counts_match_the_real_tree(self):
         docs_build = _load("_t8_docs_build_real", BIN_DIR / "docs_build.py")
@@ -312,10 +314,11 @@ class CensusBumpTripwireTests(unittest.TestCase):
         self.assertEqual(len(md_sources), 35)
         page_map = docs_build.deep_dive_page_map(REPO_ROOT)
         self.assertEqual(len(page_map), 37)
-        # 85 after docs/REFERENCE.md; 84 after five Codex skill parity pages; 79 since D30's V1 handoff
+        # 86 once the observability-dashboard kit's T8 added skills/dashboard; 85 after
+        # docs/REFERENCE.md; 84 after five Codex skill parity pages; 79 since D30's V1 handoff
         # (78 after D29's conformance report, 77 after D34's readiness runbook, 76 before).
         # Unlike 35/37 above, this total is not a doc-only pin: every skill page counts too.
-        self.assertEqual(len(docs_build.expected_pages(REPO_ROOT)), 85)
+        self.assertEqual(len(docs_build.expected_pages(REPO_ROOT)), 86)
 
     def test_one_more_doc_breaks_the_pinned_counts(self):
         docs_build = _load("_t8_docs_build_copy", BIN_DIR / "docs_build.py")
