@@ -838,7 +838,7 @@ POLYTROPOS_DATA_HOME="$(mktemp -d)" python3 -m unittest discover -s tests -v
 ### T9 — Wiring: kit sentinel, engine documentation, census, and the generator checks
 - id: T9
 - title: Wiring: kit sentinel, engine documentation, census, and the generator checks
-- status: pending
+- status: done
 - model: haiku
 - depends: T8
 

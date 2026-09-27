@@ -1693,3 +1693,60 @@ agent: T8 id=a3ea1370504a6201b role=red-team model=sonnet findings=3 confirmed=2
     hand-off.
 agent: T8 id=a1d29af73377319df role=implementer model=sonnet
 outcome: T8 model=sonnet attempts=2 result=retry-pass review=revised run=2026-09-25-7e3a
+
+- T9 brief defect, confirmed before dispatch. The pinned sentinel `"the page can never reach
+  the network"` (lowercase) does not occur verbatim in GUARDRAILS.md, which has "**The page
+  can never reach the network, …**". `tests/test_guardrails_layout.py` matches sentinels with
+  a case-sensitive `assertIn`, and T9's Verify greps the lowercase phrase in both files. So
+  the block as written can never pass without editing GUARDRAILS.md, which the brief
+  forbids.
+- Bounded adaptation, keeping the brief's semantics (a sentinel that exists verbatim in the
+  kit's GUARDRAILS): the entry uses the exact-case "The page can never reach the network".
+  The orchestrator runs T9's Verify with only those two greps case-corrected
+  (`verify-T9-adapted.sh`), and says so.
+- The engine census is also stale: REFERENCE.md says 69, while `ls bin/*.py | wc -l` gives 70
+  since T2 added `bin/dashboard.py`. T9's own census step fixes that.
+defect: T9 kind=stale-pin
+
+## T9 — Documentation consequences and engine registry
+
+The task adds the new `bin/dashboard.py` engine to the documentation landscape: the sentinel
+to `tests/test_guardrails_layout.py` KIT_SENTINELS (case-corrected from the brief), the engine
+family row to `docs/REFERENCE.md`, the addition to the `docs/HOW-IT-WORKS.md` Memory row, and
+a regeneration of the doc site and all generated mirrors. CLAUDE.md, which would normally gain
+a run-line naming `bin/dashboard.py`, sits at its byte ceiling; the run-line for the engine
+remains unfinished and deferred.
+
+agent: T9 id=a795f0bfcccd795b5 role=implementer model=haiku
+
+- T9's haiku implementer wrote its own ledger line, `outcome: T9 model=haiku result=done`,
+  breaking the no-ledger-token rule. The line had no `attempts=`, and `done` is not an outcome
+  result, so the scorecard would have parsed a malformed record. The orchestrator removed it
+  before any commit. T9's real `outcome:` line is appended after verification, like every other.
+- T9 adaptation: REFERENCE.md's engine table has three columns (family, engines,
+  description), so the brief's two-column row could not be pasted as written. The implementer
+  added an `Observability` family row, placed after the store-reading "Memory, lessons,
+  telemetry" family, and the brief's `` `bin/dashboard.py` `` grep still holds.
+agent: T9 id=ab7301ae7b2fd4d42 role=verifier model=sonnet findings=0 confirmed=0 result=accepted
+
+- The Done-means 3 real build: the user decided to run it with `--no-git`, 2026-09-26. Run
+  with no flags, as the PLAN says, D4's worktree discovery would find all three checkouts of
+  this repository, Codex's RSI worktree among them. The engine would then read that worktree's
+  kit files and run `git worktree list` inside it, which the kit's out-of-scope fence forbids
+  while the kit runs ("never opened or run").
+  - With `--no-git`, the engine skips both git verbs. The primary checkout is the working
+    directory (the repo root), so the store location is unchanged.
+  - Every other namespace in the data home still appears, as unmapped and ledger-only.
+  - The user's own runs after the kit discover every worktree, as D4 designs.
+agent: T9 id=ac4e0db334e818047 role=red-team model=sonnet findings=2 confirmed=0 marginal=0 result=accepted
+
+- T9 red-team: two observations, both outside T9, and both reported to the user as
+  follow-ups. Neither produced a T9 artifact, so neither is confirmed.
+  - (1) `docs/HOW-IT-WORKS.md`'s "Codex harness" family row omits `codex_repo_bench`, which
+    REFERENCE.md lists. It has been there since Codex's 9947500, and this kit did not cause it.
+  - (2) No standing test re-derives REFERENCE.md's engine census, which is why the 69-vs-70
+    drift from T2 onward went unnoticed until T9's dispatch check.
+  The red-team also confirmed that every engine claim in the new rows matches `bin/dashboard.py`,
+  that the sentinel cannot pass for the wrong kit, that the regeneration mirrors exactly the
+  two source hunks, and that the other census rows match the live tree.
+outcome: T9 model=haiku attempts=1 result=pass review=clean run=2026-09-25-7e3a

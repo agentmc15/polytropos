@@ -18,7 +18,7 @@ That is the one-line version. The longer version is that polytropos is a **routi
 | Skills (Copilot bundle) | 13 | `ls -d copilot/.github/skills/*/` |
 | Skills (Codex bundle) | 17 | `ls -d codex/skills/*/` |
 | Skills (Cursor bundle) | 2 | `ls -d cursor/skills/*/` |
-| Engines (`bin/*.py`) | 69 | `ls bin/*.py \| wc -l` |
+| Engines (`bin/*.py`) | 70 | `ls bin/*.py \| wc -l` |
 | Pricing files (one per harness, never merged) | 4 | `ls data/pricing*.json` |
 | Runtime stores, all outside the tree | 10 | `python3 bin/runtime_data.py where` |
 | Capability rows in the operational registry | 62 | `python3 bin/harness_adapter.py` |
@@ -366,6 +366,7 @@ A skill's `SKILL.md` **is** its runtime behavior, not documentation of it. All s
 | **Install, capability, freshness** | `harness_select` `harness_adapter` `harness_update` `plugin_staleness` | What is installed where, what each harness may actually be relied on to do, and what has drifted. `harness_select` classifies every destination before writing and never overwrites what it does not own |
 | **Daily journal** | `journal_collect` `journal_sources` `journal_summarize` `journal_schedule` `journal_plan` `journal_askpack` `journal_advisor` | Read-only, JSONL-only ingestion into a metadata-only digest, a routed summarizer, a next-day runbook, an offline ask-the-tools prompt pack, and a launchd surface that never runs `launchctl` for you |
 | **Memory, lessons, telemetry** | `memory_store` `memory_recall` `lessons_store` `lessons_promote` `telemetry_snapshot` | Durable facts with pull-only budget-capped recall, scoped lessons that become rules only by recurrence or an explicit ask, and dated telemetry envelopes |
+| **Observability** | `bin/dashboard.py` | One offline HTML page over the attempt ledger and history, the routing scorecard across checkouts, the telemetry snapshots, journal digests and evaluation/policy/training status — a consumer that renders the owners' labels verbatim, sums nothing, and writes only its own `dashboard` store |
 | **Graph grounding** | `graph_brief` `graph_ground` | Read a graphify `graph.json`: an architect-grounding card, freshness against the working tree, bounded impact, a search fallback. Neither ever invokes graphify |
 | **Primitive model** | `primitives` | A read-only validator and preview over `primitives/*.json` — see [docs/PRIMITIVES.md](PRIMITIVES.md) |
 | **Generated output and the release gate** | `docs_build` `copilot_docs` `sync_pricing_refs` `sync_codex_surfaces` `release_gate` | Every generated surface has exactly one writer and a `check` that fails on drift. Edit the SOURCE and rebuild; never hand-edit the output |
