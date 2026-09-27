@@ -14,9 +14,10 @@
 > it was written and should be re-derived, never quoted forward.
 >
 > **Observability dashboard (note added 2026-09-27).** The kit on branch
-> `kit/observability-dashboard` was merged into `main` on 2026-09-27. T11 stays gated. The
-> last section of this file is the summary to resume from. The full record, with every adjudication, ledger line and user
-> decision, is `.claude/kits/observability-dashboard/NOTES.md`.
+> `kit/observability-dashboard` was merged into `main` on 2026-09-27, released as plugin 0.6.8
+> and installed. T11 stays gated. The last section of this file is the summary to resume from.
+> The full record, with every adjudication, ledger line and user decision, is
+> `.claude/kits/observability-dashboard/NOTES.md`.
 
 **As of 2026-09-07.** Steps 01–15 are committed as a single change set on top of `fb40925`:
 66 files modified, 17 added, +5,485 / −1,860 lines. Full suite green: **3,727 tests, OK
@@ -967,7 +968,35 @@ The commit that adds this note follows 4abd7d6.
     leaky suites.
   - So a concurrent suite run in an unfixed checkout is the likelier source, though that is
     not proven from here.
-  - The new namespaces fall under the residue criterion below.
+  - They were deleted with the rest on 2026-09-27 (below).
+
+**After the run (2026-09-27, each on the user's explicit ask).**
+- **Released 0.6.8.** 3ba6818 bumps the version, c80015d updates this note, and the merge is
+  3e19395, pushed. Its docs-site CI run succeeded.
+  - The first full-suite run on the bump failed one test. `test_proc_runner`'s
+    `test_output_under_the_limit_is_untouched` got empty stdout from its child process.
+  - That module passed three re-runs, and a second full run was green.
+- **Installed 0.6.8.**
+  - The install clone was pulled to 3e19395, and its stray `bin/__pycache__` removed.
+  - The preflight passed all 8 gates.
+  - `claude plugin update` reported 0.6.7 → 0.6.8.
+  - `harness_update check`: Claude in sync (923 of 923 files), Copilot up to date.
+- **Residue cleaned.** 1,700 `tmp*` namespaces were deleted, each holding only `attempts/kit`.
+  The data home now holds 5 namespaces. The tarball backup lived in the session scratchpad
+  only.
+- **Codex drift fixed** with `bin/codex_app_policy.py`.
+  - `kit-verifier` and `phase-reviewer` now pin `gpt-6-sol`, not `gpt-5.6-sol`, with a
+    read-only sandbox, in `~/.codex/agents` and in the primary checkout.
+  - `~/.codex/config.toml`'s model is now `gpt-6-astra`, the policy's orchestrator, as the
+    user chose.
+  - `~/.codex/AGENTS.md` is byte-identical to before, and its managed block is owned by the
+    tool again. The earlier conflict was the file's own later edit.
+  - The runtime model list was transcribed from Codex's `/model` picker.
+  - Backups are in `~/Library/Application Support/polytropos-codex-backups/`: the tool's own
+    set, and the original `AGENTS.md`.
+  - `harness_update check` still exits 3 by design. It counts 4 agent files as missing from
+    the install clone, where they are never installed, and 45 optional legacy copies the
+    plugin replaced.
 
 **Seeing the page.** Open `index.html` from the `dashboard` row of `runtime_data.py where` in a
 browser. For this checkout that is
@@ -975,7 +1004,7 @@ browser. For this checkout that is
 Rebuild it with `python3 bin/dashboard.py build --no-git` from the checkout.
 - A build run from a development checkout treats that checkout as its own plugin root.
 - The plugin install's store (`polytropos-install`) appears when the engine runs from the
-  installed plugin, after an install refresh, or once that folder is added to the
+  installed plugin (`/polytropos:dashboard`, 0.6.8), or once that folder is added to the
   `checkouts` list in `<dashboard store>/config.json`.
 - Without `--no-git`, the build walks every worktree of the repository, Codex's RSI worktree
   included.
@@ -993,12 +1022,14 @@ Rebuild it with `python3 bin/dashboard.py build --no-git` from the checkout.
     - all four generator `check`s exited 0;
     - the full suite passed (5977 tests, 2 skipped).
     The real merge re-ran those checks on its own tree before it was pushed.
-- **Install refresh.** It runs only on your explicit ask; a session never refreshes the plugin
-  unprompted. Pull `main` into `reposV2/polytropos-install`, then run the usual pull,
-  preflight, update and restart, and `/polytropos:dashboard` appears.
-  - `plugin update` re-copies only when the version differs, so the preflight's
-    `version-changed` gate refuses a refresh that would copy nothing.
-  - 0.6.8 (`release/0.6.8`) was cut for exactly this, on 2026-09-27.
+- **Restart Claude Code** to load 0.6.8, then run
+  `python3 "${CLAUDE_PLUGIN_ROOT}/bin/plugin_staleness.py" --loaded "${CLAUDE_PLUGIN_ROOT}"`.
+  It also prints the lines that prune the old 0.6.7 cache copy. `/polytropos:dashboard` is
+  available after the restart.
+- **Start a new Codex session** so the app-policy changes load.
+- **Future install refreshes** run only on your explicit ask. `plugin update` re-copies only
+  when the version differs, so a refresh needs a `release_gate.py bump` first. The
+  preflight's `version-changed` gate says so.
 - **T11 needs the architect before any dispatch.**
   - Its gate runs `exec_module` on the engine and requires a `STORE` string. R02's engine has
     none by design, and its readers are `outcome_eligibility_inventory` and `derived_lineage`.
@@ -1010,9 +1041,9 @@ Rebuild it with `python3 bin/dashboard.py build --no-git` from the checkout.
     never runs `--json`.
   - D4 and D6 assume the plugin never owns a store.
   - D12 and D3 row 7 prescribe `importlib`, and a sentence claiming R02 has not landed.
-- **Residue.** About 1,680 `tmp*` namespaces left by the old test leak sit in the data home. The
-  page counts them as residue and never opens them. Deleting them happens only on your
-  go-ahead, and only for directories named `tmp[a-z0-9_]{8}-[0-9a-f]{8}` whose only content is
+- **Residue will come back** until Codex's worktrees take main's PR #25 fix. Each unisolated
+  suite run there adds 6 namespaces. Cleaning up again uses the same criterion, and only on
+  your go-ahead: directories named `tmp[a-z0-9_]{8}-[0-9a-f]{8}` whose only content is
   `attempts/kit`.
 
 **Owner defects found (the kit may not edit these files):**
@@ -1029,6 +1060,11 @@ Rebuild it with `python3 bin/dashboard.py build --no-git` from the checkout.
 - `routing_scorecard` follows a symlinked kit dir. The page notes it.
 - `tests/test_kit_scheduler.py` has an intermittent `FileNotFoundError` race: 3 in 128
   isolated runs, predating this kit.
+- `tests/test_proc_runner.py`'s `test_output_under_the_limit_is_untouched` once got empty
+  stdout from its child process, in one full run on 2026-09-27. `proc_runner` was unchanged,
+  and the module passed three re-runs.
+- `harness_update check --repo-root <install clone>` counts the 4 project agents as drift,
+  though the clone never carries them. It could skip project agents for the install clone.
 
 **Known limits the kit leaves** (all in NOTES.md):
 - `caps_report` can over-claim a cap hit when text read from a checkout contains "cap NAME (".
@@ -1045,7 +1081,7 @@ Rebuild it with `python3 bin/dashboard.py build --no-git` from the checkout.
 
 ```bash
 cd ~/Developer/reposV2/polytropos-decision-improvement-plan     # the kit's worktree
-git status --short && git log --oneline -5 kit/observability-dashboard
+git status --short && git log --oneline -6 main
 POLYTROPOS_DATA_HOME="$(mktemp -d)" python3 -m unittest discover -s tests   # isolated data home, always
 python3 bin/dashboard.py demo                                    # synthetic page in a temp dir, removed after
 python3 bin/kit_contract.py graph --kit .claude/kits/observability-dashboard   # T1–T10 done, T11 blocked
