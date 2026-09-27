@@ -989,7 +989,7 @@ POLYTROPOS_DATA_HOME="$(mktemp -d)" python3 -m unittest discover -s tests -v
 ### T11 — RSI records through the read seam R02 lands (GATED on Codex's branch merging)
 - id: T11
 - title: RSI records through the read seam R02 lands (GATED on Codex's branch merging)
-- status: pending
+- status: blocked
 - model: opus
 - depends: T10
 

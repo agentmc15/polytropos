@@ -2429,3 +2429,5 @@ agent: T10 id=a6f10556a35363672 role=red-team model=sonnet findings=3 confirmed=
     reaches the cap of 22. The grammar counts 19 attempts.
 agent: T10 id=a51fc341301af5b24 role=implementer model=opus
 outcome: T10 model=opus attempts=2 result=retry-pass review=revised run=2026-09-25-7e3a
+
+T11 gated 2026-09-27: `bin/recursive_improvement.py` absent; waiting on feat/rsi-evidence-foundation R02 to merge to main
