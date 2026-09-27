@@ -988,6 +988,15 @@ Rebuild it with `python3 bin/dashboard.py build --no-git` from the checkout.
   - A conflict in the generated block of `docs/RELEASE.md`, or its mirror, is resolved only by
     regenerating: `python3 bin/release_gate.py build`, then `python3 bin/docs_build.py build`
     (R2).
+  - Checked 2026-09-27 at f69dd16. `origin/main` was at 73499e0 (Codex's goliath R10 roster
+    merge, two commits past this branch's base). The branch was not on the remote. In a
+    throwaway detached worktree, since removed, `git merge --no-commit origin/main` was
+    clean:
+    - the one file both sides touched, the generated `docs-site/skills/index.md`,
+      auto-merged;
+    - all four generator `check`s exited 0;
+    - the full suite passed (5977 tests, 2 skipped).
+    Re-fetch before merging, since main may have moved again.
 - **T11 needs the architect before any dispatch.**
   - Its gate runs `exec_module` on the engine and requires a `STORE` string. R02's engine has
     none by design, and its readers are `outcome_eligibility_inventory` and `derived_lineage`.
