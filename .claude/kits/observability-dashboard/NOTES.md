@@ -1881,3 +1881,241 @@ defect: T9 kind=unspecified-path
   - `demo` passes a synthetic plugin root, so the demo page never names the real one.
 - **T10 reads the RSI engine as text (M3, user decision 2026-09-26).** It parses the file and
   never imports it. The dispatch carries the exact shape.
+
+- **P3 fix round (implementer).** Changed `bin/dashboard.py`, `tests/test_dashboard.py`,
+  `skills/dashboard/SKILL.md`, `docs-src/fragments/skills/claude/dashboard.md`,
+  `docs/REFERENCE.md`, `docs/HOW-IT-WORKS.md` and the `claude/dashboard` entry of
+  `.claude/kits/docs-site/AUDIT.md`, and regenerated three docs-site pages with `python3
+  bin/docs_build.py build`. No owner, PLAN, GUARDRAILS, TASKS or other kit's NOTES was touched.
+  - M1, the seam. `assemble_build(..., plugin_root=PLUGIN_ROOT)` is the new keyword. `None`
+    disables the mapping, and a blank value is refused like every other blank path. It rides
+    in `opts["plugin_root"]` to `build_model`, which hands it to `classify_namespaces(...,
+    plugin_root=)` and to `_unknown_classes`, and to nothing else. `discover_checkouts` never
+    sees it, so no git verb, kits read or history join can use it. `_cmd_build` passes
+    PLUGIN_ROOT, and `_cmd_demo` passes the synthetic world's `plugin_root`.
+  - M1, the mapping. `_plugin_candidate` hashes the plugin root's real path to one namespace;
+    its `tasks/kits` is not mapped. When a checkout's namespace roots already name it, the
+    checkout's entry stands (state `checkout`) and nothing is duplicated. Otherwise it joins
+    the expected names and is looked up by name with `os.lstat`, exactly as a checkout's are:
+    - found, it is a mapped row of kind `plugin-install` (PLUGIN_INSTALL_KIND) whose
+      `checkout` is the plugin root;
+    - a link or other non-directory at its name is skipped with the existing note and reads
+      `absent`;
+    - a failed lookup reads `unknown` and makes the mapped count a lower bound.
+    `classes["plugin_install"]` is `{root, namespace, state}` over PLUGIN_INSTALL_STATES. With
+    `plugin_root=None` that key is absent and the classes are exactly what they were before.
+    The receipt's pinned `classes` shape is unchanged. The namespaces panel shows the row as
+    "<root> (plugin install)" and gives it one sentence per state.
+  - M1, the readers. `_namespace_label` names the row "<root> (plugin install)", so every
+    section, caption and note the telemetry, journal and evals/prefs panels build from it says
+    so. They take it from `read_namespaces(ctx)` as a mapped row, through the same guards as
+    any other, and it leaves their unmapped-store counts. The training, scorecard and kits
+    panels read `ctx["checkouts"]`, which never holds it.
+  - M1, how the attempts panel keeps its old path. Its ledger facts depend on class: mapped
+    rows are read first, then unmapped ones by name, and the read cap cuts the tail. So
+    `_ledger_facts_blocks` calls `read_namespaces(ctx, plugin_install=False)`. That view drops
+    the plugin row from the mapped rows. It puts the row back among the unmapped rows, in name
+    order, only when the data-home listing would have classed it unmapped. The classifier
+    records that as the row's `listed_as` (`unmapped`, `residue`, or None when the listing
+    never reached it), worked out from step 1's single listing of it. `_history_targets` skips
+    every kind but `checkout` and `codex-kits`, so the row is never a history target. One
+    difference is deliberate. A residue-shaped plugin namespace (a root named `tmp` plus eight
+    characters, holding only a ledger) is mapped now, not residue, so the residue count drops
+    by one; the attempts panel still never opens it.
+  - M1, the demo and the comments. `synthetic_world` always creates `root/plugin` (its
+    `plugin_root`). With `plugin_install=True` it also writes one `cost_report` envelope, one
+    journal digest (its inbox carrying the existing canary) and one evaluation run into that
+    namespace, dated DEMO_PLUGIN_DAY; the default leaves every other fixture unchanged. The demo
+    now prints "2 mapped · 1 unmapped · 30 residue", and its page never names the real plugin
+    root. The comments stating D4's rule now record the amendment: the module docstring, the
+    PLUGIN_ROOT comment, `discover_checkouts`, `classify_namespaces`, the `read_namespaces`
+    block, `_history_targets`, and the telemetry/journal and evals blocks. `_primary_checkout`
+    is unchanged.
+  - M2. `test_plain_build_stdout_never_carries_checkout_text` runs a plain `build` over five
+    canaries: a symlinked kit dir under `.claude/kits`, an unmapped namespace holding a stray
+    file, a second `--checkout`, an unregistered telemetry source dir, and an evals entry that
+    is not a run. Each appears 0 times in stdout and at least once in build.json.
+    `plant_canaries` returns a `{canary: placement}` dict, so T10's RSI version-string canary is
+    one more entry.
+  - The summary line. RESIDUE_SUMMARY_QUALIFIER, " (residue only: a heuristic — counted, never
+    opened)", now follows the residue count alone, and nothing qualifies the mapped or unmapped
+    counts. No test pinned the old text; one now pins the new line exactly.
+  - S10. The test runs `main(["build", ...])` without `--no-git` from inside the synthetic
+    checkout, after `git init` through `proc_runner`. Isolation: every inherited `GIT_*`
+    variable is dropped; `GIT_CONFIG_GLOBAL` is an empty temp file; `GIT_CONFIG_NOSYSTEM` is
+    set; `HOME` is the temp home; `GIT_CEILING_DIRECTORIES` sits at the temp root. A spy wraps
+    `proc_runner.run` and calls through. The test asserts:
+    - rc 0 and a written page;
+    - the repo as the primary checkout and the only checkout;
+    - no git-failure or `--no-git` note;
+    - exactly two git calls, both in the repo.
+    It skips when `shutil.which("git")` is None. It is the one build in the file without
+    `--no-git`. That departs from the letter of GUARDRAILS ("--no-git to every build it runs")
+    by the brief's explicit direction, and the module's safety contract names it as the one
+    exception.
+  - S1. The REFERENCE dashboard paragraph now relays only the plain summary's counts plus the
+    page and receipt paths, never a note and never `--json`. It gives S5's reason for
+    `--checkout`, states D2's arithmetic in full (counting, the age between two dates, the
+    latest of a set of dated things), and names the plugin install store. It keeps a
+    `bin/dashboard.py` code span, so T9's grep still holds after S3.
+  - S2. The heading reads "the seventy engines". `ls bin/*.py | wc -l` gives 70, the census row
+    says 70, and a script over the family table found 70 distinct engines, none duplicated and
+    none missing.
+  - S3. HOW-IT-WORKS's Memory row is back to its pre-T9 text, byte for byte. `dashboard` has its
+    own Observability row: "One offline HTML page over the ledger, scorecard, telemetry,
+    journal, evals and training stores…". REFERENCE's Observability row names `dashboard` bare,
+    like its neighbours.
+  - S4. The AUDIT sentinels line names what each test pins, each checked by grep:
+    - the four count tripwires;
+    - `tests/test_codex_portable_skills.py`'s `claude_only` exemption;
+    - `tests/test_docs_site.py` (its SKILL.md body read and its nav check);
+    - `tests/test_docs_audit.py`, whose roster needs the entry. The brief did not list this
+      one, but it does notice the skill.
+  - S5–S7 in the skill. S5: the engine already takes the working directory's git toplevel as
+    its primary checkout, and the flag keeps the repo mapped if the engine's own lookup fails.
+    S6: transcript and prompt text are absent because no engine it calls returns any (the
+    ledger stores the prompt as a digest); report, tail and inbox text are left out by
+    selection. S7: one history card over every kits dir found together, then role value per
+    kits dir.
+  - S8, scoped. The skill says "in the telemetry, journal and evaluation stores, a link is noted
+    and its content is never rendered", not "across every panel". The scorecard's and the
+    history join's owners follow a symlinked kit dir, and the page only names it. The fragment
+    carries the clause as a failure-mode example: "a linked telemetry, journal or evals entry".
+  - S9. The `--no-transcripts` bullet now reads the right way round. The page's stylesheet is
+    called what it is, an inline one: the fragment says "no external stylesheet". "Reading is
+    the whole job" became "reads every other store read-only … writes only its own dashboard
+    store", beside the refresh snapshot's own write. Lines :13 and :53 stay and are now true:
+    the journal and telemetry skills run their engines from `${CLAUDE_PLUGIN_ROOT}`, so their
+    captures land in the mapped plugin install namespace.
+  - M1 in the skill. The Namespaces paragraph says why the plugin install is mapped. The
+    telemetry, journal and evals paragraphs and the refresh recipe each say that the plugin's
+    captures land in the plugin install store, which the page reads and labels "plugin
+    install".
+  - Word counts, re-measured last. The skill body is 1225 words with frontmatter stripped (1138
+    before; about 30 words trimmed against the additions). The fragment is 456 `wc -w` and 447
+    words of prose (it was 458 and 449). AUDIT.md states both.
+  - Tests added: 14.
+    - `CliTests`: `test_the_demo_page_shows_a_plugin_install_and_never_names_the_real_one`,
+      `test_the_summary_scopes_the_heuristic_to_the_residue_count_alone`.
+    - `PluginInstallTests`:
+      `test_telemetry_journal_and_evals_read_the_plugin_install_labelled_as_such`,
+      `test_kits_dirs_under_the_plugin_root_are_never_read_or_shown` (a spy records any path
+      inside the plugin root that anything stats, lists or opens, and finds none),
+      `test_git_never_runs_with_the_plugin_root_as_its_working_directory`,
+      `test_a_plugin_root_that_is_the_checkout_gives_one_namespace_entry`,
+      `test_a_symlinked_plugin_namespace_is_noted_and_never_followed`,
+      `test_the_attempts_panel_model_is_identical_with_and_without_the_plugin_root` (default
+      caps, a read cap of 2, and a listing cap of 5),
+      `test_a_residue_shaped_plugin_namespace_is_never_opened_by_the_attempts_panel`,
+      `test_every_plugin_install_state_has_exactly_one_sentence`,
+      `test_with_no_data_home_the_plugin_install_is_unknown_never_absent`,
+      `test_plugin_root_none_maps_nothing_extra`.
+    - `PlainBuildStdoutCanaryTests.test_plain_build_stdout_never_carries_checkout_text`.
+    - `GitEnabledBuildTests.test_a_git_enabled_build_maps_the_temp_repo_as_its_primary_checkout`.
+    Intended paired edits: the demo test expects "2 mapped"; the blank-path test covers
+    `plugin_root`; `_WorldCase` gained `plugin_install = False`.
+  - What shows the tests can fail. Fifteen mutations were each applied to a scratch copy of the
+    tree, never the checkout, and each made its guarding tests fail; the unmutated copy passed
+    them all. The mutations: the attempts panel reading the plugin row as mapped, no restored
+    row, `listed_as` ignoring the listing's reach, `listed_as` ignoring residue, the plugin row
+    as a history target, the plugin root admitted as a checkout, no label, the lookup following
+    links, the checkout entry not winning, None still mapping PLUGIN_ROOT, the demo naming the
+    real root, a summary carrying a namespace name, the old summary qualifier, a broken git
+    verb, and a blank plugin root accepted.
+  - Brief deltas and items left alone.
+    - `.claude/kits/docs-site/TEMPLATE.md` does not exist. The word-count method was read from
+      `docs-src/fragments/TEMPLATE.md`, PLAN D11's path.
+    - A legacy in-tree store under the plugin root is not noted; `_legacy_notes` still covers
+      checkouts only. `runtime_data` would keep writing to such a store, and the page would not
+      read it. This is outside the brief and is left for the user.
+    - The engine's module docstring still says "no owner the dashboard calls returns any"
+      report, tail or inbox text. S6 fixed only the skill's version of that reason, as scoped.
+    - The skill's Namespaces item still has "residue (a heuristic: …)", worded like the old
+      summary line. The brief scoped that fix to `summary_lines` alone.
+  - Follow-up (fence correction). The coordinator ruled that S10's git-enabled `main(["build",
+    ...])` crossed an absolute fence. GUARDRAILS requires every test build to pass `--no-git`,
+    and the brief had directed otherwise. This sub-bullet supersedes the S10 sub-bullet above.
+    - The rework. `GitEnabledBuildTests` is now
+      `GitEnabledDiscoveryTests.test_real_git_discovery_maps_the_temp_repo_as_its_primary_checkout`,
+      and it runs no build. It calls `discover_checkouts(<repo>, flags=(<repo>,), git=True)`
+      with no injected runner, so `_git` goes through `proc_runner`. It uses the same isolated
+      `git init` temp repo and the same pass-through spy. It asserts:
+      - the spy saw exactly the two read-only verbs, both in the repo, both `ok`;
+      - git's own toplevel is the repo, not a fallback to the working directory;
+      - `git worktree list` yields only the repo;
+      - the checkouts are that repo alone, with no note at all.
+      It still skips without git. The safety docstring no longer calls anything an exception: it
+      says no build spawns a process and names the one discovery-level test that runs git.
+    - The audit. Statically, every build argv carries `--no-git`. Dynamically, the whole suite
+      ran with `main`, `assemble_build` and `discover_checkouts` wrapped: 115 CLI builds, every
+      one with `--no-git`. Git is enabled in only three places:
+      - three `DiscoveryTests`, with stub runners;
+      - `test_git_never_runs_with_the_plugin_root_as_its_working_directory`, a function-level
+        `assemble_build(git=True, runner=<stub>)` that never goes through a CLI build and whose
+        stub spawns nothing;
+      - the reworked discovery test, the only real runner.
+    - Two items listed above as left alone are now done. The engine module docstring's privacy
+      paragraph gives PLAN D8's reason: transcript and prompt text are absent because no owner
+      returns any (the ledger keeps a prompt only as a digest), and report, tail and inbox text
+      are left out by selection. The skill's Namespaces item reads "residue (residue only: a
+      heuristic — …)", matching `summary_lines`.
+    - Measurements. The skill body is 1228 words (frontmatter stripped) and AUDIT.md says so.
+      `docs_build.py build` rewrote one page. The fragment is unchanged at 456 `wc -w` and 447
+      words of prose.
+    - Proof. The mutation proof was re-run with sixteen mutations. The new one makes
+      `_primary_checkout` fall back to the working directory even when git answers. Each
+      mutation made its guarding tests fail, and the unmutated copy passed them.
+    - Verification, from the checkout root. The dashboard suite passed with 273 tests.
+      `docs_build.py check` exited 0, and `copilot_docs`, `sync_codex_surfaces` and
+      `release_gate` `check` each exited 0 too. The full suite ran into a file with an isolated
+      `POLYTROPOS_DATA_HOME`: exit 0, "Ran 5943 tests", "OK (skipped=2)".
+
+- **P3 fix round, orchestrator's verification.**
+  - The orchestrator re-ran from the checkout root:
+    - the dashboard suite;
+    - a doc grep for every S item;
+    - all four generator checks;
+    - the T8 and T9 verify probes, as a regression check;
+    - its own plugin-install probe: `assemble_build(..., plugin_root=)` over the synthetic
+      world, with a telemetry copy in the plugin namespace and a kit under the plugin root. The
+      label renders with the root and never without it, and the kit is never read;
+    - the full suite, whose verdict it read from a file.
+
+    The before/after snapshot shows exactly the round's 11 files, and the NOTES diff is a pure
+    append.
+  - One item crossed an absolute fence. The error was in the orchestrator's brief, not the
+    implementer's work.
+    - GUARDRAILS' third absolute rule has every test pass `--no-git` to every `build` it runs.
+      The P3 dispatch directed a git-enabled `main(["build", ...])` for S10, and the
+      implementer flagged that it departed from the rule.
+    - One follow-up message to the same implementer, a continuation rather than a new dispatch,
+      moved the test to the discovery level: `GitEnabledDiscoveryTests` runs
+      `discover_checkouts` with the real `proc_runner` in an isolated `git init` temp repo.
+    - An AST scan of every "build" argv literal in `tests/test_dashboard.py` flagged that test
+      before the follow-up. It now finds each literal run as a build carrying `--no-git`.
+    - S10 is closed as far as the fences allow. The real runner and real git output are
+      exercised through discovery, the only step `--no-git` changes. A git-enabled real build
+      stays the user's own action.
+  - The implementer narrowed S8, honestly. "A link is noted and its content never rendered"
+    holds for the telemetry, journal and evaluation stores. It does not hold for kits dirs:
+    `routing_scorecard` and the history join follow a symlinked kit dir. T5 retry R3 already
+    recorded this, and the page notes it. So the skill scopes the clause to those stores.
+  - The implementer also fixed the engine docstring's twin of S6 and the skill's residue
+    qualifier, in the follow-up.
+  - Follow-ups for the user, outside this kit:
+    - a legacy in-tree store under the plugin root is not noted, because `_legacy_notes` covers
+      checkouts only;
+    - the owners follow symlinked kit dirs, as above.
+  - Self-correction. The orchestrator's own P2fix verify script had a no-op clause: `! grep -qE
+    '…' bin/dashboard.py` under `set -e` never trips, because bash exempts a `!`-negated
+    command from errexit.
+    - The property it meant to check holds at 117a210 and at HEAD, re-checked by hand: no
+      `routing-policy.json`, `capture_hook`, `collection_scope`, `persist(` or `snapshot(` in
+      `bin/dashboard.py`.
+    - No commit message relied on it.
+    - From P3 on, the orchestrator's negative checks use an explicit if-grep-then-exit helper,
+      proven to trip.
+  - Budget. Counted by hand, the fix round is the run's twentieth implementer dispatch against
+    the cap of 22. Its follow-up was a message to the same agent, not a spawn.
+agent: P3fix id=a091ef9727b4feff7 role=implementer model=opus
+reviewer: P3 model=opus findings=14 confirmed=14 result=accepted

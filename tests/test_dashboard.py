@@ -12,10 +12,15 @@ SAFETY CONTRACT (binds every test in this file):
 * Every `build` passes `--out-dir`, `--projects-dir` (an empty temp dir) and `--no-git`, and
   runs from inside a synthetic checkout. Namespaces, ledgers and checkouts are built by
   `dashboard.synthetic_world` inside temp dirs.
-* Nothing here spawns a process: git verbs are disabled, or answered by an injected runner.
+* No build spawns a process: git verbs are disabled, or answered by an injected runner that
+  spawns nothing. Git itself runs only in `GitEnabledDiscoveryTests` -- `git init` and the
+  engine's two read-only verbs, through `discover_checkouts`, never through a build -- inside a
+  temp repo, with the user's git configuration isolated and every call recorded to prove it ran
+  there. It skips when git is not installed.
 * A built `index.html` is only ever probed with assertions, never printed.
 """
 
+import builtins
 import contextlib
 import html
 import importlib.util
@@ -24,6 +29,7 @@ import json
 import math
 import os
 import re
+import shutil
 import signal
 import stat
 import tempfile
@@ -208,12 +214,15 @@ class _WorldCase(unittest.TestCase):
     """A fresh synthetic world per test, with the process sitting inside its checkout."""
 
     residue = 30
+    # P3 fix round M1: True also writes the synthetic plugin install's captures into its namespace.
+    plugin_install = False
 
     def setUp(self):
         tmp = tempfile.TemporaryDirectory(prefix="dashboard-test-")
         self.addCleanup(tmp.cleanup)
         self.tmp = Path(tmp.name)
-        self.world = db.synthetic_world(self.tmp / "world", residue=self.residue)
+        self.world = db.synthetic_world(self.tmp / "world", residue=self.residue,
+                                        plugin_install=self.plugin_install)
         self.projects = self.tmp / "projects"
         self.projects.mkdir()
         self.addCleanup(os.chdir, os.getcwd())
@@ -917,7 +926,9 @@ class EmptyPathFlagTests(_WorldCase):
         for blank in ("", "  "):
             with self.assertRaises(refused):
                 db.write_page(blank, "<!doctype html>\n", {})
-        for name in ("out_dir", "data_home", "projects_dir"):
+        # P3 fix round M1: a blank plugin root would hash the working directory as the plugin
+        # install, so it is refused like every other blank path.
+        for name in ("out_dir", "data_home", "projects_dir", "plugin_root"):
             with self.subTest(name=name):
                 kwargs = {"data_home": self.world["data_home"], "out_dir": self.tmp / "out",
                           "projects_dir": self.projects, name: ""}
@@ -2813,12 +2824,36 @@ class CliTests(unittest.TestCase):
         self.assertEqual(rc, 0, stderr)
         self.assertEqual(os.listdir(scratch), [])
         self.assertEqual(os.listdir(_DATA_HOME.name), [])
-        self.assertIn("1 mapped · 1 unmapped · 30 residue", stdout)
+        # P3 fix round M1: the demo maps its synthetic plugin install beside the checkout -- an
+        # intended paired edit (this read "1 mapped" before the plugin install was mapped).
+        self.assertIn("2 mapped · 1 unmapped · 30 residue", stdout)
         page_line = [line for line in stdout.splitlines() if line.startswith("page (removed")]
         self.assertEqual(len(page_line), 1, stdout)
         page_path = page_line[0].split(": ", 1)[1]
         self.assertTrue(page_path.startswith(str(scratch)), page_path)
         self.assertFalse(os.path.exists(page_path))
+
+    def test_the_demo_page_shows_a_plugin_install_and_never_names_the_real_one(self):
+        # P3 fix round M1: `demo` hands the build a synthetic plugin root, so its page shows the
+        # plugin install class without ever naming the real PLUGIN_ROOT or its namespace. The
+        # page is removed when the demo exits, so the writer is wrapped to see what it wrote.
+        written = {}
+        real_write = db.write_page
+
+        def capture(out_dir, page_text, receipt):
+            written["page"], written["receipt"] = page_text, json.dumps(receipt)
+            return real_write(out_dir, page_text, receipt)
+
+        with mock.patch.object(db, "write_page", capture):
+            rc, _stdout, stderr = _run(["demo"])
+        self.assertEqual(rc, 0, stderr)
+        page = written["page"]
+        self.assertIn(f"({db.PLUGIN_INSTALL_LABEL}):", _section(page, "telemetry"))
+        self.assertIn(db.DEMO_PLUGIN_LABEL, _section(page, "telemetry"))
+        for real in {str(db.PLUGIN_ROOT), os.path.realpath(db.PLUGIN_ROOT),
+                     rd.project_namespace(db.PLUGIN_ROOT)}:
+            self.assertNotIn(real, page)
+            self.assertNotIn(real, written["receipt"])
 
     def test_build_summary_fits_one_screen(self):
         world = db.synthetic_world(self.tmp / "world")
@@ -2835,6 +2870,24 @@ class CliTests(unittest.TestCase):
         self.assertTrue(any(line.startswith("caps hit:   none") for line in lines))
         self.assertTrue(any(line.startswith("  namespaces") for line in lines))
         self.assertTrue(any(line.startswith("  bounds") for line in lines))
+
+    def test_the_summary_scopes_the_heuristic_to_the_residue_count_alone(self):
+        # P3 fix round: "(heuristic: counted, never opened)" followed all three counts and read
+        # as covering the mapped and unmapped ones too. It now names residue itself, right after
+        # the residue count, and nothing qualifies the exact mapped and unmapped counts.
+        world = db.synthetic_world(self.tmp / "world")
+        projects = self.tmp / "projects"
+        projects.mkdir()
+        os.chdir(world["checkout"])
+        rc, stdout, stderr = _run(["build", "--data-home", str(world["data_home"]),
+                                   "--out-dir", str(self.tmp / "out"), "--projects-dir",
+                                   str(projects), "--no-git"])
+        self.assertEqual(rc, 0, stderr)
+        line = next(line for line in stdout.splitlines() if line.startswith("namespaces:"))
+        self.assertEqual(line, "namespaces: 1 mapped · 1 unmapped · 30 residue"
+                               + db.RESIDUE_SUMMARY_QUALIFIER)
+        self.assertIn("residue only", db.RESIDUE_SUMMARY_QUALIFIER)
+        self.assertEqual(stdout.count("heuristic"), 1)
 
 
 # ---------------------------------------------------------------------------------------------
@@ -4032,6 +4085,365 @@ class TrainingPanelTests(_WorldCase):
                 db.build_model(self.world["data_home"], [checkout], opts, None))
         status.assert_called_once_with(repo_root=checkout, env=None)
         self.assertFalse(any("page's data home" in note for note in training["notes"]))
+
+
+# ---------------------------------------------------------------------------------------------
+# The plugin install's store (P3 fix round M1, user decision 2026-09-26; amends PLAN D4 and D6).
+
+@contextlib.contextmanager
+def _paths_touched_inside(root):
+    """Record every absolute path strictly INSIDE `root` (either spelling) that anything stats,
+    lists or opens while the context is open -> that list. The root itself is not "inside":
+    hashing it for its namespace resolves it, and that is all the plugin root is ever for.
+    Relative paths (a `dir_fd` walk) and file descriptors cannot name `root` and are skipped."""
+    prefixes = tuple({os.path.abspath(os.fspath(root)) + os.sep,
+                      os.path.realpath(os.fspath(root)) + os.sep})
+    touched = []
+
+    def wrap(real):
+        def spy(*args, **kwargs):
+            path = args[0] if args else kwargs.get("path")
+            if isinstance(path, (str, os.PathLike)):
+                text = os.fspath(path)
+                if isinstance(text, str) and text.startswith(prefixes):
+                    touched.append(text)
+            return real(*args, **kwargs)
+        return spy
+
+    with contextlib.ExitStack() as stack:
+        for owner, name in ((os, "stat"), (os, "lstat"), (os, "listdir"), (os, "scandir"),
+                            (os, "open"), (io, "open"), (builtins, "open")):
+            stack.enter_context(mock.patch.object(owner, name, wrap(getattr(owner, name))))
+        yield touched
+
+
+class PluginInstallTests(_WorldCase):
+    """The plugin root is a MAPPING-ONLY candidate: its one namespace is looked up by name,
+    counted as mapped, labelled "plugin install", and read by the telemetry, journal and evals
+    panels alone. It is never a checkout -- no git verb runs in it, no kits dir under it is read,
+    it is never a history-join target -- and the attempts panel reads it exactly as it did before
+    it was mapped. Every build goes through the real seam, `assemble_build(...,
+    plugin_root=...)`."""
+
+    plugin_install = True
+
+    def assemble(self, plugin_root, **extra):
+        """One build, git off unless a test says otherwise -> (out_dir, model, receipt, page)."""
+        kwargs = {"data_home": self.world["data_home"], "out_dir": self.tmp / "out",
+                  "flags": [str(self.world["checkout"])], "git": False,
+                  "projects_dir": self.projects, "home": _FAKE_HOME.name,
+                  "plugin_root": plugin_root}
+        kwargs.update(extra)
+        return db.assemble_build(self.world["checkout"], **kwargs)
+
+    def plugin_label(self):
+        return f"{os.path.realpath(self.world['plugin_root'])} ({db.PLUGIN_INSTALL_LABEL})"
+
+    def test_telemetry_journal_and_evals_read_the_plugin_install_labelled_as_such(self):
+        _out, model, receipt, page = self.assemble(self.world["plugin_root"])
+        root = os.path.realpath(self.world["plugin_root"])
+        namespace = self.world["plugin_namespace"]
+        mapped = {row["namespace"]: row for row in model["classes"]["mapped"]}
+        self.assertEqual(sorted(mapped), sorted([self.world["namespace"], namespace]))
+        self.assertEqual((mapped[namespace]["kind"], mapped[namespace]["checkout"]),
+                         (db.PLUGIN_INSTALL_KIND, root))
+        self.assertEqual(mapped[namespace]["stores"], ["telemetry", "journal", "evals"])
+        self.assertEqual(model["classes"]["plugin_install"],
+                         {"root": root, "namespace": namespace, "state": "mapped"})
+        # It counts as mapped, and it leaves the unmapped class (and its store counts).
+        self.assertEqual(receipt["classes"]["mapped"], exact(2))
+        self.assertEqual(receipt["classes"]["unmapped"], exact(1))
+        label = html.escape(self.plugin_label())
+        telemetry = _section(page, "telemetry")
+        self.assertIn(f"Telemetry for {label}:", telemetry)
+        self.assertIn(db.DEMO_PLUGIN_LABEL, telemetry)
+        journal = _section(page, "journal")
+        self.assertIn(f"Journal digests for {label}:", journal)
+        self.assertIn(f"{label}: journal digests by day", journal)
+        self.assertIn("$3.21", journal)
+        evals = _section(page, "evals")
+        self.assertIn(f"Evaluation runs for {label}:", evals)
+        self.assertIn(f"Policy, approvals and activation for {label}:", evals)
+        self.assertIn(db.DEMO_PLUGIN_RUN, evals)
+        for lead in ("No unmapped namespace shows a telemetry store", "No unmapped namespace "
+                     "shows a journal store", "No unmapped namespace shows an evals store"):
+            self.assertIn(lead, page)
+        namespaces = _section(page, "namespaces")
+        self.assertIn(label, namespaces)
+        self.assertIn("It is never a checkout", namespaces)
+        # Only those three panels (and the namespaces census) name it.
+        for pid in ("attempts", "scorecard", "kits", "training"):
+            self.assertNotIn(db.PLUGIN_INSTALL_LABEL, _section(page, pid))
+            self.assertNotIn(root, _section(page, pid))
+        self.assertNotIn("CANARY-INBOX-TEXT-DO-NOT-RENDER", page)
+
+    def test_kits_dirs_under_the_plugin_root_are_never_read_or_shown(self):
+        root = self.world["plugin_root"]
+        planted = {root / ".claude" / "kits" / "plugin-claude-kit-x",
+                   root / "tasks" / "kits" / "plugin-codex-kit-y"}
+        for kit_dir in planted:
+            kit_dir.mkdir(parents=True)
+            (kit_dir / "TASKS.md").write_text(db.DEMO_TASKS_MD, encoding="utf-8")
+        with _paths_touched_inside(root) as touched:
+            _out, model, receipt, page = self.assemble(root)
+        self.assertEqual(touched, [])
+        everything = page + json.dumps(model) + json.dumps(receipt)
+        for kit_dir in planted:
+            self.assertNotIn(kit_dir.name, everything)
+        # The panels that read kits dirs still read the checkout's own.
+        self.assertIn(db.DEMO_KIT, _section(page, "kits"))
+        self.assertIn(db.CODEX_DEMO_KIT, _section(page, "kits"))
+        self.assertEqual(model["checkouts"], [os.path.realpath(self.world["checkout"])])
+
+    def test_git_never_runs_with_the_plugin_root_as_its_working_directory(self):
+        checkout = os.path.realpath(self.world["checkout"])
+        calls = []
+
+        def runner(argv, cwd, timeout, name):
+            calls.append((list(argv), os.path.realpath(cwd)))
+            if argv[:2] == ["git", "rev-parse"]:
+                return {"outcome": "ok", "rc": 0, "stdout": f"{checkout}\n"}
+            return {"outcome": "ok", "rc": 0,
+                    "stdout": f"worktree {checkout}\nHEAD {'a' * 40}\nbranch refs/heads/main\n"}
+
+        _out, model, _receipt, _page = self.assemble(self.world["plugin_root"], git=True,
+                                                    runner=runner)
+        self.assertEqual(calls, [(["git", "rev-parse", "--show-toplevel"], checkout),
+                                 (["git", "worktree", "list", "--porcelain"], checkout)])
+        self.assertNotIn(os.path.realpath(self.world["plugin_root"]),
+                         [cwd for _argv, cwd in calls])
+        self.assertEqual(model["checkouts"], [checkout])
+        self.assertEqual(model["classes"]["plugin_install"]["state"], "mapped")
+
+    def test_a_plugin_root_that_is_the_checkout_gives_one_namespace_entry(self):
+        _out, model, receipt, page = self.assemble(self.world["checkout"])
+        classes = model["classes"]
+        self.assertEqual([(row["namespace"], row["kind"]) for row in classes["mapped"]],
+                         [(self.world["namespace"], "checkout")])
+        self.assertEqual(receipt["classes"]["mapped"], exact(1))
+        self.assertEqual(classes["plugin_install"],
+                         {"root": os.path.realpath(self.world["checkout"]),
+                          "namespace": self.world["namespace"], "state": "checkout"})
+        self.assertNotIn(f"({db.PLUGIN_INSTALL_LABEL})", page)
+        self.assertEqual(_section(page, "telemetry").count("Telemetry for "), 1)
+        self.assertIn("so that checkout", _section(page, "namespaces"))
+
+    def test_a_symlinked_plugin_namespace_is_noted_and_never_followed(self):
+        data_home, namespace = self.world["data_home"], self.world["plugin_namespace"]
+        elsewhere = self.tmp / "elsewhere-plugin-namespace"
+        os.rename(data_home / namespace, elsewhere)
+        os.symlink(elsewhere, data_home / namespace)
+        _out, model, receipt, page = self.assemble(self.world["plugin_root"])
+        classes = model["classes"]
+        self.assertEqual([row["namespace"] for row in classes["mapped"]],
+                         [self.world["namespace"]])
+        self.assertNotIn(namespace, [row["namespace"] for row in classes["unmapped"]])
+        self.assertEqual(classes["plugin_install"]["state"], "absent")
+        self.assertEqual(receipt["classes"]["mapped"], exact(1))
+        skipped = [note for note in model["notes"]
+                   if "not a directory without following links" in note]
+        self.assertEqual(len(skipped), 1, model["notes"])
+        self.assertIn(namespace, skipped[0])
+        for never in (db.DEMO_PLUGIN_LABEL, db.DEMO_PLUGIN_RUN, "$3.21", elsewhere.name,
+                      f"({db.PLUGIN_INSTALL_LABEL}):"):
+            self.assertNotIn(never, page)
+        self.assertIn("this data home holds no namespace for it", _section(page, "namespaces"))
+
+    def test_the_attempts_panel_model_is_identical_with_and_without_the_plugin_root(self):
+        # A plugin root whose namespace sorts AFTER the unmapped ones: read as a mapped namespace
+        # it would come first and, under a lowered read cap, push a different namespace out.
+        root = self.tmp / "zz-plugin-root"
+        root.mkdir()
+        namespace = rd.project_namespace(root)
+        self.assertGreater(namespace, db.UNMAPPED_NAMESPACE)
+        ledger = al.AttemptLedger(self.world["data_home"] / namespace / al.STORE, "plugin-kit")
+        started = ledger.record_started("plugin-run", "T1", "initial", db.SYNTHETIC_MODEL)
+        ledger.record_finished("plugin-run", "T1", started, "ok", 0, "synthetic report")
+        checkouts = [str(self.world["checkout"])]
+        # The third variant cuts the data-home listing before it reaches the plugin namespace
+        # (names in order: checkout-, plugin-, tmp… x30, unmapped-, zz-): unlisted, it was never
+        # read before M1, so the attempts panel must not read it now either.
+        for caps in (None, {"MAX_NAMESPACES_READ": 2}, {"MAX_NAMESPACES_LISTED": 5}):
+            with self.subTest(caps=caps), _scandir_in_name_order():
+                before = db.build_model(self.world["data_home"], checkouts, _opts(self), caps)
+                after = db.build_model(self.world["data_home"], checkouts,
+                                       _opts(self, plugin_root=str(root)), caps)
+                panels = [next(p for p in model["panels"] if p["id"] == "attempts")
+                          for model in (before, after)]
+                self.assertEqual(json.dumps(panels[0], sort_keys=True),
+                                 json.dumps(panels[1], sort_keys=True))
+                # Not vacuous: the plugin root was in effect, and the classes differ.
+                self.assertNotIn(namespace, [r["namespace"] for r in before["classes"]["mapped"]])
+                self.assertIn(namespace, [r["namespace"] for r in after["classes"]["mapped"]])
+                self.assertEqual(after["classes"]["plugin_install"]["state"], "mapped")
+                listed = caps != {"MAX_NAMESPACES_LISTED": 5}
+                self.assertEqual(namespace in [r["namespace"] for r in
+                                               before["classes"]["unmapped"]], listed)
+                read = namespace in json.dumps(panels[1])
+                # Its ledger is read where it always was (last, by name): the lowered read cap
+                # cuts it, and the cut listing never reached it.
+                self.assertEqual(read, caps is None)
+
+    def test_a_residue_shaped_plugin_namespace_is_never_opened_by_the_attempts_panel(self):
+        # A plugin root named like a tempfile directory whose namespace holds only a ledger was
+        # residue before M1 and never opened. The attempts panel still never opens it; the class
+        # counts do change, deliberately: a hash match on the plugin root is not a heuristic, so
+        # that namespace is the mapped plugin install now, not residue.
+        root = self.tmp / "tmpplugin12"  # "tmp" + 8 name characters, as RESIDUE_NAMESPACE_RE wants
+        root.mkdir()
+        namespace = rd.project_namespace(root)
+        self.assertTrue(db.RESIDUE_NAMESPACE_RE.fullmatch(namespace), namespace)
+        al.AttemptLedger(self.world["data_home"] / namespace / al.STORE, "plugin-kit") \
+            .record_started("plugin-run", "T1", "initial", db.SYNTHETIC_MODEL)
+        checkouts = [str(self.world["checkout"])]
+        before = db.build_model(self.world["data_home"], checkouts, _opts(self), None)
+        after = db.build_model(self.world["data_home"], checkouts,
+                               _opts(self, plugin_root=str(root)), None)
+        plugin_row = next(r for r in after["classes"]["mapped"] if r["namespace"] == namespace)
+        self.assertEqual(plugin_row["listed_as"], "residue")
+        for model in (before, after):
+            attempts = next(p for p in model["panels"] if p["id"] == "attempts")
+            self.assertNotIn(namespace, json.dumps(attempts))
+        self.assertEqual(db.class_count(before["classes"], "residue"), exact(31))
+        self.assertEqual(db.class_count(after["classes"], "residue"), exact(30))
+
+    def test_every_plugin_install_state_has_exactly_one_sentence(self):
+        self.assertEqual(db.PLUGIN_INSTALL_STATES, ("mapped", "checkout", "absent", "unknown"))
+        self.assertEqual(set(db._PLUGIN_INSTALL_TEXT), set(db.PLUGIN_INSTALL_STATES))
+        block = db._plugin_install_block({"root": "/r", "namespace": "n", "state": "bogus"})
+        self.assertEqual(block["parts"][-1], db._PLUGIN_INSTALL_TEXT["unknown"])
+
+    def test_with_no_data_home_the_plugin_install_is_unknown_never_absent(self):
+        model = db.build_model(None, [str(self.world["checkout"])],
+                               _opts(self, plugin_root=str(self.world["plugin_root"])), None)
+        self.assertEqual(model["classes"]["plugin_install"]["state"], "unknown")
+        section = _section(db.render_page(model, _FAKE_HOME.name), "namespaces")
+        self.assertIn("whether this data home holds its namespace is unknown", section)
+        self.assertNotIn("holds no namespace for it", section)
+
+    def test_plugin_root_none_maps_nothing_extra(self):
+        _out, model, receipt, page = self.assemble(None)
+        classes = model["classes"]
+        self.assertNotIn("plugin_install", classes)
+        self.assertEqual([row["namespace"] for row in classes["mapped"]],
+                         [self.world["namespace"]])
+        self.assertIn(self.world["plugin_namespace"],
+                      [row["namespace"] for row in classes["unmapped"]])
+        self.assertEqual((receipt["classes"]["mapped"], receipt["classes"]["unmapped"]),
+                         (exact(1), exact(2)))
+        self.assertNotIn(db.PLUGIN_INSTALL_LABEL, page)
+        self.assertNotIn(db.DEMO_PLUGIN_LABEL, page)  # its telemetry is counted, never read
+        self.assertIn("1 unmapped namespace(s) show a telemetry store in their one shallow "
+                      "listing.", page)
+
+
+# ---------------------------------------------------------------------------------------------
+# The skill's relay promise (P3 fix round M2).
+
+class PlainBuildStdoutCanaryTests(_WorldCase):
+    """The skill relays the plain `build` stdout and promises every line of it is a count
+    (skills/dashboard/SKILL.md, "Context hygiene"): the page and receipt paths, the namespace
+    counts, each panel's `summary`, the caps hit and a bare count of notes. It relays each
+    summary verbatim, so a summary that interpolated a name read out of a checkout or the data
+    home would break that promise silently. Each canary is planted where the model is KNOWN to
+    carry it -- the build.json assertion proves it got there -- and must never reach stdout."""
+
+    def plant_canaries(self):
+        """Plant every canary -> ({canary: where}, extra build argv). One entry per placement; a
+        later panel's canary joins here (T10: an RSI version string)."""
+        world, canaries, argv = self.world, {}, []
+        target = self.tmp / "canary-kit-target"
+        target.mkdir()
+        os.symlink(target, world["kits_dir"] / "canarykitdir7f3a")
+        canaries["canarykitdir7f3a"] = "a symlinked kit dir under the checkout's .claude/kits"
+        stray = world["data_home"] / "canary-namespace-9b1c"
+        stray.mkdir()
+        (stray / "stray.txt").write_text("not a store\n", encoding="utf-8")
+        canaries["canary-namespace-9b1c"] = "an unmapped namespace's name in the data home"
+        second = self.tmp / "canary-checkout-c4d2"
+        second.mkdir()
+        argv += ["--checkout", str(second)]
+        canaries["canary-checkout-c4d2"] = "a second checkout's path given through --checkout"
+        (world["telemetry_dir"] / "canarysource1a2b").mkdir()
+        canaries["canarysource1a2b"] = "an unregistered telemetry source dir's name"
+        (world["evals_dir"] / "canary-not-a-run-3c4d").mkdir()
+        canaries["canary-not-a-run-3c4d"] = "an evals store entry that is not a run"
+        return canaries, argv
+
+    def test_plain_build_stdout_never_carries_checkout_text(self):
+        canaries, argv = self.plant_canaries()
+        rc, out, stdout, stderr = self.build("out", *argv)  # plain build: never --json
+        self.assertEqual(rc, 0, stderr)
+        self.assertTrue(stdout.startswith("page:"), stdout)
+        receipt_text = (out / "build.json").read_text(encoding="utf-8")
+        for canary, where in canaries.items():
+            with self.subTest(canary=canary, where=where):
+                self.assertEqual(stdout.count(canary), 0, stdout)
+                self.assertGreaterEqual(receipt_text.count(canary), 1)
+
+
+# ---------------------------------------------------------------------------------------------
+# The skill's default git path, through the real runner, at the discovery level (P3 fix round
+# S10, as corrected by its follow-up: GUARDRAILS gives every `build` `--no-git`, so no test here
+# runs a build with git on).
+
+class GitEnabledDiscoveryTests(unittest.TestCase):
+    """The two read-only git verbs the skill's default build runs, run for real:
+    `discover_checkouts(<repo>, flags=(<repo>,), git=True)` with no injected runner, so `_git`
+    goes through `proc_runner` -- inside a `git init` temp repo, `--checkout <repo>` as the skill
+    passes it. No `build` runs. The user's git configuration is isolated (every inherited `GIT_*`
+    variable dropped, `GIT_CONFIG_GLOBAL` an empty temp file, `GIT_CONFIG_NOSYSTEM`, the temp
+    `HOME`, and a ceiling at the temp root), and a spy that calls through records every git call
+    with its result, so the test fails if one ever ran outside that repo -- the real repository
+    and its worktrees included."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory(prefix="dashboard-git-")
+        self.addCleanup(tmp.cleanup)
+        self.tmp = Path(tmp.name)
+
+    def test_real_git_discovery_maps_the_temp_repo_as_its_primary_checkout(self):
+        if shutil.which("git") is None:
+            self.skipTest("git is not installed")
+        repo = self.tmp / "repo"
+        repo.mkdir()
+        real_repo = os.path.realpath(repo)
+        empty_config = self.tmp / "empty-gitconfig"
+        empty_config.write_text("", encoding="utf-8")
+        env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
+        env.update({"GIT_CONFIG_GLOBAL": str(empty_config), "GIT_CONFIG_NOSYSTEM": "1",
+                    "GIT_CEILING_DIRECTORIES": os.pathsep.join(
+                        sorted({str(self.tmp), os.path.realpath(self.tmp)})),
+                    "HOME": _FAKE_HOME.name})
+        pr = db._mod("proc_runner")
+        real_run = pr.run
+        calls = []
+
+        def spy(argv, cwd, **kwargs):
+            result = real_run(argv, cwd=cwd, **kwargs)
+            calls.append((list(argv), os.path.realpath(cwd), result))
+            return result
+
+        with mock.patch.dict(os.environ, env, clear=True):
+            init = real_run(["git", "init", "-q"], cwd=repo, timeout=db.GIT_TIMEOUT_SECONDS,
+                            name="git init (test fixture)")
+            self.assertEqual(init.get("outcome"), "ok", init)
+            with mock.patch.object(pr, "run", spy):
+                checkouts, notes = db.discover_checkouts(repo, flags=(str(repo),), git=True)
+        # The spy saw exactly the two read-only verbs, both run in the temp repo, both succeeding.
+        self.assertEqual([(argv, cwd) for argv, cwd, _result in calls],
+                         [(["git", "rev-parse", "--show-toplevel"], real_repo),
+                          (["git", "worktree", "list", "--porcelain"], real_repo)])
+        for _argv, _cwd, result in calls:
+            self.assertEqual(result.get("outcome"), "ok", result)
+        # The primary checkout is git's own toplevel -- the temp repo -- not a fallback to the
+        # working directory, and `git worktree list` yields that repo alone.
+        toplevel = calls[0][2]["stdout"].splitlines()[0]
+        self.assertEqual(os.path.realpath(toplevel), real_repo)
+        self.assertEqual([os.path.realpath(path)
+                          for path in db._porcelain_worktrees(calls[1][2]["stdout"])], [real_repo])
+        self.assertEqual(checkouts, [real_repo])
+        self.assertEqual(notes, [])  # no git-failure note, and no `--no-git` note
 
 
 if __name__ == "__main__":

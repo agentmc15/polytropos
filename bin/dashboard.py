@@ -29,10 +29,16 @@ WHAT IT REFUSES.
 THE PRIMARY CHECKOUT, AND WHY NEVER PLUGIN_ROOT ON ITS OWN. The page belongs to the checkout
 being observed: the git toplevel of the working directory, or the working directory itself when
 git is off or cannot say. PLUGIN_ROOT is where this file lives -- under a skill, a plugin cache,
-which is not a checkout and must never own a store -- so it is used only to load sibling
-modules. It is never added as a candidate and never used as a git working directory in its own
-right. A development clone that the working directory, a `--checkout` flag or `config.json`
-names is a candidate like any other, even when this file happens to live in it.
+which is not a checkout and must never own this engine's store. It loads sibling modules, and it
+names ONE namespace (P3 fix round M1, amending PLAN D4 and D6): the engines the plugin runs --
+`telemetry_snapshot`, `journal_collect`, `workflow_eval` -- resolve their stores against their
+own plugin root, so what the plugin captures lands in `runtime_data.project_namespace(
+PLUGIN_ROOT)`. That namespace is mapped, labelled "plugin install", and read by the telemetry,
+journal and evals panels only. It is never added as a candidate checkout, never a git working
+directory, never searched for kits and never a history-join target. A development clone that the
+working directory, a `--checkout` flag or `config.json` names is a candidate like any other,
+even when this file happens to live in it -- and then that checkout's own entry stands for the
+plugin install's namespace too.
 
 THE RESIDUE HEURISTIC, AND ITS LIMIT. Test runs that leaked into the real data home left
 namespaces named like a `tempfile` directory plus runtime_data's digest. A namespace counts as
@@ -42,9 +48,12 @@ never opened again. It is a heuristic and the page says so: a genuine checkout w
 is named like a temp dir, and whose only store is the attempt ledger, is miscounted as residue.
 
 PRIVACY. Every string is HTML-escaped and every path is scrubbed to `~` in the render layer
-(`scrub`, with the home directory resolved once in `main` and passed down). No transcript,
-prompt, report, tail or inbox text reaches the page: no owner the dashboard calls returns any,
-and the ledger's free-text fields are never rendered.
+(`scrub`, with the home directory resolved once in `main` and passed down). No transcript or
+prompt text reaches the page, because no owner the dashboard calls returns any (the ledger keeps
+a prompt only as a digest). Report, tail and inbox text is left out BY SELECTION (PLAN D8), not
+because it is absent: the ledger's events carry bounded `report` and `tail` fields, and a journal
+digest carries inbox lines and other signals prose. This engine reads past them and renders only
+the counts, names, labels and notes it selects.
 """
 
 import argparse
@@ -65,7 +74,9 @@ from pathlib import Path
 # ---------------------------------------------------------------------------------------------
 # Constants. Each bound says why its number is what it is.
 
-# Where this file lives: loads sibling modules only -- never a checkout, never a store owner.
+# Where this file lives. It loads sibling modules, and its one namespace -- where the plugin's own
+# telemetry, journal and evals captures land -- is mapped as the "plugin install" (P3 fix round
+# M1). Never a checkout (no git verb, no kits dir, no history join), never this engine's store.
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 
 # The runtime_data store this engine writes, and the only one.
@@ -195,6 +206,12 @@ DEMO_KIT = "demo-kit"
 DEMO_RUN = "2026-01-01-0001"
 SYNTHETIC_MODEL = "fake-cheap"
 UNMAPPED_NAMESPACE = "unmapped-cafef00d"
+# P3 fix round M1: the synthetic plugin install's directory under the fixture root, the day its
+# captures carry, its evaluation run's directory, and the label on its telemetry envelope.
+DEMO_PLUGIN_DIR = "plugin"
+DEMO_PLUGIN_DAY = "2026-01-04"
+DEMO_PLUGIN_RUN = "run-2026-01-04-plugin"
+DEMO_PLUGIN_LABEL = "synthetic plugin-install capture"
 DEMO_TASKS_MD = """# TASKS — demo-kit (synthetic)
 
 ## Phase 1 — synthetic
@@ -492,7 +509,9 @@ def discover_checkouts(cwd, flags=(), config=(), git=True, runner=None):
     far. Deduplicated by real path, which is also the form returned -- the one
     `runtime_data.project_namespace` hashes. A failed git verb or a candidate that is not a
     directory is a note, never an error; `git=False` spawns nothing at all. PLUGIN_ROOT is
-    never added here: only the working directory, the flags and the config name candidates.
+    never added here: only the working directory, the flags and the config name candidates. (Its
+    one namespace is mapped for its stores alone, by `classify_namespaces`'s `plugin_root` --
+    never as a checkout, so no git verb ever runs in it: P3 fix round M1.)
     """
     notes = []
     cwd = os.fspath(cwd)
@@ -549,6 +568,18 @@ LISTING_STATES = ("complete", "truncated", "failed", "absent")
 # What a class count claims: every one there is, at least that many, or nothing at all.
 COUNT_QUALIFIERS = ("exact", "lower_bound", "unknown")
 
+# P3 fix round M1 (amending PLAN D4): the kind of the plugin install's mapped row -- PLUGIN_ROOT's
+# one namespace, mapped for the stores its own engines write and never a checkout -- and how the
+# page and the notes name it.
+PLUGIN_INSTALL_KIND = "plugin-install"
+PLUGIN_INSTALL_LABEL = "plugin install"
+
+# Where the plugin install stands in `classes["plugin_install"]`: its namespace found and mapped;
+# the same namespace as a discovered checkout's own (whose entry stands for it); definitively
+# absent (a link or other non-directory at its name counts as absent, as for a checkout); or
+# unknown, because the lookup failed.
+PLUGIN_INSTALL_STATES = ("mapped", "checkout", "absent", "unknown")
+
 
 def namespace_roots(checkout):
     """The roots a checkout's engines namespace the data home by -> [(root, kind)].
@@ -591,11 +622,45 @@ def class_count(classes, name):
     return {"count": None, "qualifier": "unknown"}
 
 
-def _unknown_classes(checkouts=()):
+def _plugin_candidate(plugin_root, checkouts):
+    """The plugin install as a mapping-only candidate (P3 fix round M1) -> `{"root", "namespace",
+    "own"}`, or None when no plugin root was given (`plugin_root=None` maps nothing extra).
+    Exactly ONE namespace, `runtime_data.project_namespace(plugin_root)`: the plugin's own
+    engines resolve their stores against the plugin root itself, never its `tasks/kits`. `own` is
+    False when a checkout's namespace roots already name that namespace -- then the checkout's
+    entry stands for it and nothing is duplicated. `root` is the real path, the form
+    `discover_checkouts` gives every checkout."""
+    if plugin_root is None:
+        return None
+    rd = _mod("runtime_data")
+    root = os.path.realpath(os.fspath(plugin_root))
+    name = rd.project_namespace(root)
+    taken = {rd.project_namespace(namespace_root)
+             for checkout in checkouts or () for namespace_root, _kind in namespace_roots(checkout)}
+    return {"root": root, "namespace": name, "own": name not in taken}
+
+
+def _plugin_install_state(plugin, lookups):
+    """`classes["plugin_install"]` -> `{"root", "namespace", "state"}` (a PLUGIN_INSTALL_STATES
+    value), or None when no plugin root was given. A lookup that is missing reads as unknown,
+    never absent (the `by_checkout` rule)."""
+    if plugin is None:
+        return None
+    if not plugin["own"]:
+        state = "checkout"
+    else:
+        lookup = lookups.get(plugin["namespace"], "unknown")
+        state = "mapped" if lookup == "found" else "unknown" if lookup == "unknown" else "absent"
+    return {"root": plugin["root"], "namespace": plugin["namespace"], "state": state}
+
+
+def _unknown_classes(checkouts=(), plugin_root=None):
     """The classes when nothing could be classified (no data home given, or classification
-    raised): no rows, every count unknown, every checkout's namespace unknown -- never zeros."""
+    raised): no rows, every count unknown, every checkout's namespace unknown -- never zeros. The
+    plugin install, when given, is unknown too (or `checkout`, which needs no data home to know);
+    if even its namespace cannot be worked out, it is named by its root alone."""
     unknown = {"count": None, "qualifier": "unknown"}
-    return {
+    classes = {
         "listing": "failed",
         "mapped": [],
         "unmapped": [],
@@ -604,14 +669,24 @@ def _unknown_classes(checkouts=()):
         "by_checkout": [{"checkout": os.fspath(checkout), "state": "unknown"}
                         for checkout in checkouts or ()],
     }
+    if plugin_root is not None:
+        try:
+            plugin_install = _plugin_install_state(_plugin_candidate(plugin_root, checkouts), {})
+        except Exception:  # noqa: BLE001 -- the fallback path must not raise in its turn
+            plugin_install = {"root": os.fspath(plugin_root), "namespace": None,
+                              "state": "unknown"}
+        classes["plugin_install"] = plugin_install
+    return classes
 
 
-def _finish_classes(listing, mapped, unmapped, residue_seen, sample, lookups, checkout_names):
+def _finish_classes(listing, mapped, unmapped, residue_seen, sample, lookups, checkout_names,
+                    plugin=None):
     """The classes dict from what the lookups and the listing established.
 
     mapped is `exact` when every lookup by name succeeded (found, or definitively not there),
-    otherwise a lower bound. unmapped and residue come only from the listing: `exact` when it was
-    complete (or the data home is absent), a lower bound when it was cut, `unknown` when it
+    otherwise a lower bound -- the plugin install's lookup included, and its row counted as
+    mapped (P3 fix round M1). unmapped and residue come only from the listing: `exact` when it
+    was complete (or the data home is absent), a lower bound when it was cut, `unknown` when it
     failed. A checkout is `mapped` when one of its namespaces was found, `absent` when every
     lookup for it definitively found none, and `unknown` otherwise.
     """
@@ -628,7 +703,7 @@ def _finish_classes(listing, mapped, unmapped, residue_seen, sample, lookups, ch
         states = [lookups.get(name, "unknown") for name in names]
         state = "mapped" if "found" in states else "unknown" if "unknown" in states else "absent"
         by_checkout.append({"checkout": checkout, "state": state})
-    return {
+    classes = {
         "listing": listing,
         "mapped": mapped,
         "unmapped": unmapped,
@@ -636,6 +711,9 @@ def _finish_classes(listing, mapped, unmapped, residue_seen, sample, lookups, ch
         "counts": counts,
         "by_checkout": by_checkout,
     }
+    if plugin is not None:  # with no plugin root, the classes are exactly what they were pre-M1
+        classes["plugin_install"] = _plugin_install_state(plugin, lookups)
+    return classes
 
 
 def _examine_data_home(home_text):
@@ -756,22 +834,37 @@ def _legacy_notes(checkouts):
     return notes
 
 
-def classify_namespaces(data_home, checkouts, caps):
+def classify_namespaces(data_home, checkouts, caps, plugin_root=None):
     """Sort the data home's namespaces into mapped | unmapped | residue -> (classes, notes).
 
     Two steps, and the classes say how complete each was (PLAN D5, D7c):
 
     1. Every expected namespace -- `runtime_data.project_namespace` of each `namespace_roots`
-       root, at most two per checkout -- is looked up BY NAME with `os.lstat`, outside the
-       listing cap. A real directory is `mapped` and gets its one shallow listing for its
-       stores; a link or other non-directory is not a namespace (skipped with a note); a lookup
-       that fails is unknown (a note naming the error type). So the mapped class is exact
-       whenever the lookups succeeded, however the listing went.
+       root, at most two per checkout, plus the plugin install's one when `plugin_root` is given
+       -- is looked up BY NAME with `os.lstat`, outside the listing cap. A real directory is
+       `mapped` and gets its one shallow listing for its stores; a link or other non-directory
+       is not a namespace (skipped with a note); a lookup that fails is unknown (a note naming
+       the error type). So the mapped class is exact whenever the lookups succeeded, however the
+       listing went.
     2. One bounded `os.scandir` of the data home for everything else. An expected name is
        skipped (step 1 decided it); an entry that is not a directory without following links
        is skipped with a note; one `os.listdir` decides residue (RESIDUE_NAMESPACE_RE and
        nothing but an `attempts` store) -- a residue namespace is counted and never opened
        again -- and anything else is `unmapped`.
+
+    THE PLUGIN INSTALL (P3 fix round M1, amending PLAN D4): `plugin_root` is a MAPPING-ONLY
+    candidate with exactly one expected namespace, `project_namespace(plugin_root)` -- its
+    `tasks/kits` root is not mapped (`_plugin_candidate`). Found, it is a mapped row of kind
+    PLUGIN_INSTALL_KIND whose `checkout` is the plugin root; it is never a checkout, so it is
+    never in `by_checkout`, and only the telemetry, journal and evals panels read it. When a
+    checkout's own namespace has the same name, the checkout's entry stands and nothing is
+    duplicated. Its row also records `listed_as`: what step 2 classed that name as before the
+    plugin install was mapped -- `unmapped`, `residue`, or None when the listing did not reach
+    it -- worked out from step 1's one listing of it, never a second one. That is how the
+    attempts panel keeps reading it on its old path (`read_namespaces(ctx,
+    plugin_install=False)`). `classes["plugin_install"]` says where it stands
+    (`_plugin_install_state`); with `plugin_root=None` that key is absent, nothing extra is
+    mapped, and the classes are exactly what they were before M1.
 
     `classes["listing"]` is one of LISTING_STATES; `classes["counts"]` gives each class its
     count and qualifier (read them through `class_count`); `classes["by_checkout"]` says per
@@ -789,6 +882,9 @@ def classify_namespaces(data_home, checkouts, caps):
             names.append(name)
             expected.setdefault(name, (os.fspath(checkout), kind))
         checkout_names.append((os.fspath(checkout), names))
+    plugin = _plugin_candidate(plugin_root, checkouts)
+    if plugin is not None and plugin["own"]:
+        expected[plugin["namespace"]] = (plugin["root"], PLUGIN_INSTALL_KIND)
     notes.extend(_legacy_notes(checkouts))
 
     home_text = os.fspath(data_home)
@@ -796,14 +892,15 @@ def classify_namespaces(data_home, checkouts, caps):
     if home_state == "absent":
         notes.append(f"data home {home_text} {detail} — it holds no namespaces")
         lookups = {name: "absent" for name in expected}
-        return _finish_classes("absent", [], [], 0, [], lookups, checkout_names), notes
+        return _finish_classes("absent", [], [], 0, [], lookups, checkout_names, plugin), notes
     if home_state == "unknown":
         notes.append(f"data home {home_text} could not be examined ({detail}) — whether it holds "
                      f"namespaces is unknown")
         lookups = {name: "unknown" for name in expected}
-        return _finish_classes("failed", [], [], 0, [], lookups, checkout_names), notes
+        return _finish_classes("failed", [], [], 0, [], lookups, checkout_names, plugin), notes
 
     mapped, skipped, lookups, failed = [], [], {}, {}
+    plugin_row, plugin_residue = None, False
     for name in sorted(expected):
         state, error = _lookup_namespace(home_text, name)
         lookups[name] = state
@@ -811,8 +908,16 @@ def classify_namespaces(data_home, checkouts, caps):
             checkout, kind = expected[name]
             path = os.path.join(home_text, name)
             names, list_error = _one_listing(path)
-            mapped.append({"namespace": name, "checkout": checkout, "kind": kind,
-                           "stores": _stores(path, name, names, list_error, notes)})
+            row = {"namespace": name, "checkout": checkout, "kind": kind,
+                   "stores": _stores(path, name, names, list_error, notes)}
+            if kind == PLUGIN_INSTALL_KIND:
+                # What step 2 would have made of this name before M1, decided from THIS one
+                # listing: residue on the same rule, else unmapped. Set only if step 2 reaches it.
+                row["listed_as"] = None
+                plugin_row = row
+                plugin_residue = bool(list_error is None and RESIDUE_NAMESPACE_RE.fullmatch(name)
+                                      and set(names) <= RESIDUE_STORES)
+            mapped.append(row)
         elif state == "not-a-directory":
             skipped.append(name)
         elif state == "unknown":
@@ -829,6 +934,8 @@ def classify_namespaces(data_home, checkouts, caps):
     unmapped, residue_seen, sample = [], 0, []
     for name, is_dir in sorted(entries):
         if name in expected:
+            if plugin_row is not None and name == plugin_row["namespace"] and is_dir:
+                plugin_row["listed_as"] = "residue" if plugin_residue else "unmapped"
             continue  # looked up by name above: mapped, not a namespace, absent or unknown there
         if not is_dir:
             skipped.append(name)
@@ -849,7 +956,7 @@ def classify_namespaces(data_home, checkouts, caps):
             f"directory without following links ({_sample(skipped)})"
         )
     return (_finish_classes(listing, mapped, unmapped, residue_seen, sample, lookups,
-                            checkout_names), notes)
+                            checkout_names, plugin), notes)
 
 
 # ---------------------------------------------------------------------------------------------
@@ -924,7 +1031,9 @@ def build_model(data_home, checkouts, opts, caps):
     `opts` carries `notes` (discovery and config notes gathered before the build), and what
     later panels consume: `projects_dir`, `no_transcripts`, `git`, `data_home_explicit` (absent
     means True: a data home handed to this function is the caller's choice; `assemble_build`
-    sets it False when it resolved the process's own), and an optional `now`.
+    sets it False when it resolved the process's own), an optional `now`, and an optional
+    `plugin_root` -- the plugin install whose one namespace the classifier maps for its stores
+    (P3 fix round M1); absent or None maps nothing extra, which is what a direct caller gets.
     `caps` overrides `default_caps()` key by key. The model's `notes` are the page-wide list:
     the global notes, then every panel's own (the classification's ride on the namespaces
     panel), each prefixed with its panel id -- what the bounds panel and build.json show, and
@@ -938,14 +1047,20 @@ def build_model(data_home, checkouts, opts, caps):
     checkouts = [os.fspath(checkout) for checkout in checkouts or ()]
     notes = [str(note) for note in opts.get("notes") or ()]
     data_home = None if data_home is None or _blank(data_home) else Path(data_home)
+    plugin_root = opts.get("plugin_root")
+    if plugin_root is not None and _blank(plugin_root):
+        # A blank path would hash the working directory as the plugin install; refused as None.
+        notes.append("an empty plugin root was given — no plugin install namespace was mapped")
+        plugin_root = None
     if data_home is None:
-        classes = _unknown_classes(checkouts)
+        classes = _unknown_classes(checkouts, plugin_root)
         class_notes = ["no data home was given — nothing was classified"]
     else:
         try:
-            classes, class_notes = classify_namespaces(data_home, checkouts, caps)
+            classes, class_notes = classify_namespaces(data_home, checkouts, caps,
+                                                       plugin_root=plugin_root)
         except Exception as exc:
-            classes = _unknown_classes(checkouts)
+            classes = _unknown_classes(checkouts, plugin_root)
             class_notes = [f"namespace classification failed ({type(exc).__name__}); nothing "
                            f"was classified"]
     model = {
@@ -1047,6 +1162,31 @@ _EMPTY_TABLE_TEXT = {
 _EMPTY_TABLE_UNKNOWN = ("No namespace can be shown: the data home could not be listed, and no "
                         "checkout's namespace was found by name (see the notes).")
 
+# P3 fix round M1: the one sentence the namespaces panel gives the plugin install, by its
+# PLUGIN_INSTALL_STATES value. It is the only place the page says why that namespace is mapped
+# although it is not a checkout.
+_PLUGIN_INSTALL_TEXT = {
+    "mapped": ("its namespace is mapped for its stores only: the telemetry, journal and "
+               "evaluation panels read it, labelled plugin install. It is never a checkout, so "
+               "no git verb runs in it, no kits directory is read from it and no history is "
+               "joined to it."),
+    "checkout": ("its namespace is a discovered checkout's own, so that checkout's entry stands "
+                 "for it."),
+    "absent": "this data home holds no namespace for it.",
+    "unknown": ("whether this data home holds its namespace is unknown — it could not be looked "
+                "up (see the notes)."),
+}
+
+
+def _plugin_install_block(plugin):
+    """The namespaces panel's sentence about the plugin install -> a `p` block. The root is a
+    plain part, scrubbed and escaped at render time like every other path. A state outside
+    PLUGIN_INSTALL_STATES reads as unknown, never as mapped or absent."""
+    state = plugin.get("state")
+    text = _PLUGIN_INSTALL_TEXT[state if state in PLUGIN_INSTALL_STATES else "unknown"]
+    return {"type": "p", "parts": ["Plugin install (the plugin root this engine runs from) ",
+                                   plugin.get("root"), ": ", text]}
+
 
 def build_namespaces_panel(ctx):
     model = ctx["model"]
@@ -1056,7 +1196,8 @@ def build_namespaces_panel(ctx):
     residue = counts["residue"]
     rows = []
     for row in classes.get("mapped") or ():
-        rows.append([row["namespace"], "mapped", f"{row['checkout']} ({row['kind']})",
+        kind = PLUGIN_INSTALL_LABEL if row["kind"] == PLUGIN_INSTALL_KIND else row["kind"]
+        rows.append([row["namespace"], "mapped", f"{row['checkout']} ({kind})",
                      _stores_text(row["stores"])])
     for row in classes.get("unmapped") or ():
         rows.append([row["namespace"], "unmapped", "—", _stores_text(row["stores"])])
@@ -1100,6 +1241,9 @@ def build_namespaces_panel(ctx):
         {"type": "p", "text": (f"Checkouts mapped by hashing their roots "
                                f"({len(checkouts)}): {', '.join(checkouts) or 'none'}.")},
     ]
+    plugin = classes.get("plugin_install")
+    if isinstance(plugin, dict):
+        blocks.append(_plugin_install_block(plugin))
     # "No namespace … for X" only when every lookup for X definitively found none; a checkout
     # missing from `by_checkout` is unknown, never absent.
     states = {entry.get("checkout"): entry.get("state")
@@ -1130,19 +1274,42 @@ def build_namespaces_panel(ctx):
 # (PLAN D4, D5; P1 fix round S6). `read_namespaces` is the one bounded, ordered list later panels
 # (T6, T7) also read facts from directly: they use only its mapped entries and each notes the
 # unmapped count their own store's shallow listing shows (S6); T4's ledger facts use the whole
-# list.
+# list. P3 fix round M1: the plugin install's namespace is a mapped entry for the telemetry,
+# journal and evals panels, and the attempts panel alone reads it through the old path
+# (`plugin_install=False`), where it is what it was before M1 -- an unmapped namespace, when the
+# data-home listing reached it and did not class it as residue.
 
-def read_namespaces(ctx):
+def read_namespaces(ctx, plugin_install=True):
     """Mapped namespaces (as classified), then unmapped ones by name -> (rows, notes), bounded by
     MAX_NAMESPACES_READ. Each row is the classification's own dict for that namespace plus
     `"mapped": bool`, so a caller can tell the two apart without re-deriving it -- a mapped row
     also carries `checkout`/`kind`; an unmapped row carries only `namespace`/`stores`. A note is
     appended, once, when the cap cuts the combined list. The mapped rows are never among the ones
     a cut drops: they are complete-or-a-lower-bound already, from the classification's own
-    by-name lookups (PLAN D5), and they are listed first."""
+    by-name lookups (PLAN D5), and they are listed first.
+
+    `plugin_install=False` is the attempts panel's view (P3 fix round M1): the plugin install's
+    row (kind PLUGIN_INSTALL_KIND) is taken out of the mapped rows and, only when the data-home
+    listing classed its name as unmapped (`listed_as`), put back among the unmapped rows in name
+    order as a plain `{"namespace", "stores"}` row. That is exactly the list, the order and the
+    cap this function gave before the plugin install was mapped, so that panel reads its ledger
+    on its old path -- never earlier, never as a mapped namespace, never when it was residue or
+    beyond the listing's reach."""
     classes = ctx["model"]["classes"]
-    mapped = [dict(row, mapped=True) for row in classes.get("mapped") or ()]
-    unmapped = [dict(row, mapped=False) for row in classes.get("unmapped") or ()]
+    mapped_rows = list(classes.get("mapped") or ())
+    unmapped_rows = list(classes.get("unmapped") or ())
+    if not plugin_install:
+        plugin_rows = [row for row in mapped_rows if row.get("kind") == PLUGIN_INSTALL_KIND]
+        mapped_rows = [row for row in mapped_rows if row.get("kind") != PLUGIN_INSTALL_KIND]
+        restored = [{"namespace": row.get("namespace"), "stores": row.get("stores")}
+                    for row in plugin_rows if row.get("listed_as") == "unmapped"]
+        if restored:
+            # The classifier appends unmapped rows in name order; the restored row takes the
+            # place by name it had in that order before M1.
+            unmapped_rows = sorted(unmapped_rows + restored,
+                                   key=lambda row: str(row.get("namespace")))
+    mapped = [dict(row, mapped=True) for row in mapped_rows]
+    unmapped = [dict(row, mapped=False) for row in unmapped_rows]
     combined = mapped + unmapped
     limit = cap_value(ctx["caps"], "MAX_NAMESPACES_READ")
     notes = []
@@ -1168,7 +1335,9 @@ def _history_targets(classes):
     """Every mapped (checkout, kind) whose kits dir exists on disk -> a list of `{"label",
     "kits_dir", "namespace"}`, in the classification's own mapped order (PLAN D4: the two
     namespace roots per checkout, `C` and `C/tasks/kits`). A checkout with neither directory
-    contributes nothing -- a fact about the checkout, not a degraded scan."""
+    contributes nothing -- a fact about the checkout, not a degraded scan. The plugin install's
+    row (kind PLUGIN_INSTALL_KIND, P3 fix round M1) is never a target: it is not a checkout, and
+    no kits dir under the plugin root is ever looked at."""
     targets = []
     for row in classes.get("mapped") or ():
         checkout, namespace, kind = row.get("checkout"), row.get("namespace"), row.get("kind")
@@ -1503,12 +1672,14 @@ def _ledger_fact_rows(data_home, ns_row, caps, al, notes):
 
 def _ledger_facts_blocks(ctx, al, notes):
     """TASKS.md item 3: raw ledger facts for every namespace `read_namespaces` bounds to, mapped
-    then unmapped -- the only place an unmapped namespace's own ledger is read at all (PLAN D4)."""
+    then unmapped -- the only place an unmapped namespace's own ledger is read at all (PLAN D4).
+    P3 fix round M1: through `plugin_install=False`, so the plugin install's namespace is read,
+    ordered and capped here exactly as it was before it was mapped."""
     data_home = ctx["data_home"]
     if data_home is None:
         return [{"type": "p", "text": "No data home was given, so no ledger could be read "
                                        "directly."}]
-    ns_rows, cap_notes = read_namespaces(ctx)
+    ns_rows, cap_notes = read_namespaces(ctx, plugin_install=False)
     notes.extend(cap_notes)
     rows = []
     for ns_row in ns_rows:
@@ -2073,10 +2244,13 @@ def build_kits_panel(ctx):
 # because journal_collect.py exposes no reader for this shape (PLAN D3 row 4). Both panels read
 # ONLY the MAPPED entries of read_namespaces (P1 fix round S6): an unmapped namespace's
 # telemetry/journal store is counted, never opened, with a note saying config.json's checkouts
-# list would map it. Every telemetry source dir and envelope file is pre-scanned, no-follow, for
-# a link or an oversized file before any owner call (red-team B/C), and every source's/day's own
-# part is built by its own contained call (red-team A) -- one excluded, malformed or oversized
-# part never drops another.
+# list would map it. P3 fix round M1 (amending PLAN D4): the plugin install's namespace is one of
+# those mapped entries -- `telemetry_snapshot` and `journal_collect`, run by the plugin, resolve
+# their stores against its root -- read through the same guards, labelled "plugin install"
+# (`_namespace_label`), and no longer in the unmapped count. Every telemetry source dir and
+# envelope file is pre-scanned, no-follow, for a link or an oversized file before any owner call
+# (red-team B/C), and every source's/day's own part is built by its own contained call (red-team
+# A) -- one excluded, malformed or oversized part never drops another.
 
 TELEMETRY_PANEL = "telemetry"
 JOURNAL_PANEL = "journal"
@@ -2109,8 +2283,12 @@ _HEADLINE_DATE_PATHS = {("cost_report", ("pricing_cached_date",))}
 
 def _namespace_label(row):
     """A mapped `read_namespaces` row's checkout, with the `tasks/kits` root named like T4's own
-    history-target label -- so a reader sees the same checkout wording across every panel."""
+    history-target label -- so a reader sees the same checkout wording across every panel -- and
+    the plugin install's row named as such beside its root (P3 fix round M1), so what came from
+    it is never read as a checkout's."""
     checkout, kind = row.get("checkout"), row.get("kind")
+    if kind == PLUGIN_INSTALL_KIND:
+        return f"{checkout} ({PLUGIN_INSTALL_LABEL})"
     return f"{checkout} (tasks/kits)" if kind == "codex-kits" else str(checkout)
 
 
@@ -2771,6 +2949,8 @@ def build_journal_panel(ctx):
 # Evaluation runs, policy/approvals/activation, and training panels (T7): workflow_eval.py's
 # report functions per mapped namespace (PLAN D3 row 5) -- evals and prefs use ONLY the mapped
 # entries of read_namespaces (P1 fix round S6), each with its own qualified unmapped-store note;
+# the plugin install's namespace is one of them since the P3 fix round (M1: `workflow_eval`, run
+# by the plugin, resolves both stores against its root), labelled "plugin install";
 # training_data.status is per DISCOVERED CHECKOUT, not a namespace concept at all. This panel
 # never ranks, prices or judges: every label, verdict and figure is the owner's own, rendered
 # verbatim (`NOT_A_RANKING`, a below-floor label, `MECHANICS_NOT_PERFORMANCE_LABEL`-shaped
@@ -4301,10 +4481,19 @@ def build_receipt(model, home, out_dir):
     return _scrub_tree(receipt, home)
 
 
+# P3 fix round: the terminal summary's residue qualifier. It names residue inside itself and sits
+# right after the residue count, so it can never read as covering the mapped or unmapped count --
+# those are exact lookups and listings, not a heuristic.
+RESIDUE_SUMMARY_QUALIFIER = " (residue only: a heuristic — counted, never opened)"
+
+
 def summary_lines(receipt):
     """The one-screen summary `build` prints. Namespace counts follow the page's rules: an
     exact count is `N`, a lower bound `at least N`, anything else `unknown`, and an absent data
-    home is the word `absent` -- never a line of zeros."""
+    home is the word `absent` -- never a line of zeros. Every line is fixed words plus counts,
+    the page and receipt paths, and each panel's own `summary` -- which is what the skill relays
+    (`test_plain_build_stdout_never_carries_checkout_text` pins that none carries checkout
+    text)."""
     classes = receipt.get("classes") or {}
     listing = classes.get("listing")
     if listing == "absent":
@@ -4313,9 +4502,11 @@ def summary_lines(receipt):
                                        for name in CLASS_NAMES):
         namespaces = "namespaces: data home empty — no namespaces"
     else:
-        namespaces = ("namespaces: "
-                      + " · ".join(_count_text(classes.get(name), name) for name in CLASS_NAMES)
-                      + " (heuristic: counted, never opened)")
+        counts = []
+        for name in CLASS_NAMES:
+            text = _count_text(classes.get(name), name)
+            counts.append(text + RESIDUE_SUMMARY_QUALIFIER if name == "residue" else text)
+        namespaces = "namespaces: " + " · ".join(counts)
         if listing != "complete":
             namespaces += f"; data-home listing {listing or 'unknown'}"
     lines = [
@@ -4477,13 +4668,19 @@ def _scorecard_projects_dir():
 
 
 def assemble_build(cwd, data_home=None, out_dir=None, flags=(), git=True, projects_dir=None,
-                   no_transcripts=False, home=None, runner=None):
+                   no_transcripts=False, home=None, runner=None, plugin_root=PLUGIN_ROOT):
     """Everything a build decides before writing -> (out_dir, model, receipt, page). Never
     raises for a degraded input: every one of those is a note in the model. An EMPTY path
     argument is not degraded input but a mistake that would silently mean the working
-    directory, so it raises `safe_paths.SafePathError` before anything is read."""
+    directory, so it raises `safe_paths.SafePathError` before anything is read.
+
+    `plugin_root` is the plugin install whose one namespace is mapped for its stores (P3 fix
+    round M1, amending PLAN D4/D6): the engines the plugin runs write there. It is handed to the
+    classifier only -- never to checkout discovery, so no git verb, kits read or history join
+    ever uses it. `main` passes PLUGIN_ROOT, `demo` a synthetic root, and None maps nothing
+    extra."""
     for name, value in (("out_dir", out_dir), ("data_home", data_home),
-                        ("projects_dir", projects_dir)):
+                        ("projects_dir", projects_dir), ("plugin_root", plugin_root)):
         if _blank(value):
             raise _mod("safe_paths").SafePathError(
                 f"dashboard: {name} is empty, and an empty path would mean the working "
@@ -4508,7 +4705,8 @@ def assemble_build(cwd, data_home=None, out_dir=None, flags=(), git=True, projec
     opts = {"notes": notes,
             "projects_dir": None if projects_dir is None else os.fspath(projects_dir),
             "no_transcripts": bool(no_transcripts), "git": bool(git),
-            "data_home_explicit": data_home_explicit}
+            "data_home_explicit": data_home_explicit,
+            "plugin_root": None if plugin_root is None else os.fspath(plugin_root)}
     model = build_model(data_home, checkouts, opts, default_caps())
     # The page first: a panel whose rendering fails adds a note to the model, and the receipt
     # built after it carries that note too.
@@ -4520,7 +4718,7 @@ def assemble_build(cwd, data_home=None, out_dir=None, flags=(), git=True, projec
 # ---------------------------------------------------------------------------------------------
 # The one fixture builder, shared by `demo` and the tests.
 
-def synthetic_world(root, residue=30):
+def synthetic_world(root, residue=30, plugin_install=False):
     """A synthetic data home and checkout under `root` -> dict of paths.
 
     `root/checkout` holds `.claude/kits/demo-kit/{TASKS,NOTES}.md`,
@@ -4538,6 +4736,14 @@ def synthetic_world(root, residue=30):
     namespace with a ledger carrying one corrupt line. Every value is synthetic; nothing
     outside `root` is touched, and nothing here is oversized -- an over-size ledger is a
     T4-test-only fixture, not a `demo`/`synthetic_world` one (TASKS.md item 5).
+
+    P3 fix round M1: `root/plugin` is always created, an empty directory standing for a plugin
+    install (`plugin_root` in the result), so a build can be handed a synthetic plugin root and
+    never the real PLUGIN_ROOT. With `plugin_install=True` its namespace also holds what the
+    plugin's own engines would have captured there: one `cost_report` telemetry envelope
+    labelled DEMO_PLUGIN_LABEL, one schema-1 journal digest (its inbox carrying the same
+    canary string, never rendered) and one evaluation run `build_card` accepts -- all dated
+    DEMO_PLUGIN_DAY. The default leaves the data home exactly as before.
     """
     rd, al, sp = _mod("runtime_data"), _mod("attempt_ledger"), _mod("safe_paths")
     ts, jc, we = _mod("telemetry_snapshot"), _mod("journal_collect"), _mod("workflow_eval")
@@ -4550,8 +4756,9 @@ def synthetic_world(root, residue=30):
     scorecard_kit_dir = kits_dir / SCORECARD_KIT
     codex_kits_dir = checkout / "tasks" / "kits"
     codex_demo_dir = codex_kits_dir / CODEX_DEMO_KIT
+    plugin_root = root / DEMO_PLUGIN_DIR
     for directory in (data_home, kit_dir, notes_kit_dir, scorecard_kit_dir, codex_kits_dir,
-                      codex_demo_dir):
+                      codex_demo_dir, plugin_root):
         rd.ensure_private(directory)
     sp.confined_write_bytes(kit_dir, "TASKS.md", DEMO_TASKS_MD, what="synthetic kit")
     sp.confined_write_bytes(kit_dir, "NOTES.md", DEMO_NOTES_MD, what="synthetic kit")
@@ -4749,6 +4956,33 @@ def synthetic_world(root, residue=30):
     sp.confined_write_bytes(manifests_dir, "m1.json", "{}", what="synthetic eval manifest")
     sp.confined_write_bytes(manifests_dir, "m2.json", "{}", what="synthetic eval manifest")
 
+    # P3 fix round M1: what the plugin's own engines would have written into the plugin
+    # install's namespace -- only when asked, so every other fixture's data home is unchanged.
+    plugin_namespace = rd.project_namespace(plugin_root)
+    if plugin_install:
+        plugin_dir = data_home / plugin_namespace
+        plugin_telemetry = plugin_dir / "telemetry"
+        plugin_journal = plugin_dir / "journal"
+        plugin_evals = plugin_dir / "evals"
+        for directory in (plugin_telemetry, plugin_journal, plugin_evals / DEMO_PLUGIN_RUN):
+            rd.ensure_private(directory)
+        plugin_envelope = ts.build_envelope(
+            "cost_report", DEMO_PLUGIN_DAY, {"days": 30}, "ok", [DEMO_PLUGIN_LABEL], [],
+            {"totals": {"usd": 7.5}, "mode": "synthetic-mode",
+             "pricing_cached_date": DEMO_PLUGIN_DAY})
+        sp.confined_write_bytes(plugin_telemetry, f"cost_report/{DEMO_PLUGIN_DAY}.json",
+                                json.dumps(plugin_envelope),
+                                what="synthetic plugin-install telemetry envelope")
+        sp.confined_write_bytes(
+            plugin_journal, f"{DEMO_PLUGIN_DAY}/digest.json",
+            json.dumps(_synthetic_digest(DEMO_PLUGIN_DAY, 3.21, 1, canary=True)),
+            what="synthetic plugin-install journal digest")
+        sp.confined_write_bytes(
+            plugin_evals / DEMO_PLUGIN_RUN, "results.json",
+            json.dumps({**good_envelope, "run_id": DEMO_PLUGIN_RUN,
+                        "labels": ["synthetic plugin-install eval run"]}),
+            what="synthetic plugin-install eval run")
+
     return {
         "root": root,
         "data_home": data_home,
@@ -4773,6 +5007,8 @@ def synthetic_world(root, residue=30):
         "not_a_run_dir": not_a_run_dir,
         "manifests_dir": manifests_dir,
         "prefs_dir": prefs_dir,
+        "plugin_root": plugin_root,
+        "plugin_namespace": plugin_namespace,
     }
 
 
@@ -4849,7 +5085,7 @@ def _cmd_build(args, home):
     out_dir, _model, receipt, page = assemble_build(
         cwd, data_home=args.data_home, out_dir=args.out_dir, flags=args.checkout,
         git=not args.no_git, projects_dir=args.projects_dir,
-        no_transcripts=args.no_transcripts, home=home)
+        no_transcripts=args.no_transcripts, home=home, plugin_root=PLUGIN_ROOT)
     try:
         write_page(out_dir, page, receipt)
     except (sp.SafePathError, OSError) as exc:
@@ -4893,12 +5129,15 @@ def _cmd_demo(home):
     sp = _mod("safe_paths")
     with tempfile.TemporaryDirectory(prefix="polytropos-dashboard-demo-") as tmp:
         root = Path(tmp)
-        world = synthetic_world(root)
+        # P3 fix round M1: a synthetic plugin install, with captures in its own namespace, so the
+        # demo shows the class and its page never names the real PLUGIN_ROOT.
+        world = synthetic_world(root, plugin_install=True)
         projects = root / "projects"
         _mod("runtime_data").ensure_private(projects)
         out_dir, _model, receipt, page = assemble_build(
             world["checkout"], data_home=world["data_home"], out_dir=root / "out", flags=(),
-            git=False, projects_dir=projects, no_transcripts=False, home=home)
+            git=False, projects_dir=projects, no_transcripts=False, home=home,
+            plugin_root=world["plugin_root"])
         try:
             write_page(out_dir, page, receipt)
         except (sp.SafePathError, OSError) as exc:

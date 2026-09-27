@@ -237,26 +237,32 @@ and the sentinel exposure.
 
 ### claude/dashboard
 - verdict: keep
-- skill-md: added after the original audit, by the observability-dashboard kit's T8 — a new
-  1138-word body (frontmatter stripped) resolving `bin/dashboard.py build --checkout` behind a
-  checkout-existence check (`git rev-parse --show-toplevel` first; outside a checkout it builds
-  nothing and asks for `--checkout <path>` instead, since an empty `--checkout` makes the engine
-  refuse), the binding context-hygiene law (never reads `index.html`/`build.json` into the
-  session, never pastes, publishes or opens the page, and NEVER runs `build --json` itself —
-  asked for the receipt it gives only the path the plain build already printed), one paragraph
-  per panel plus the honesty rules that govern all of them, refresh guidance, its flags, what it
-  refuses to do, and its privacy statement. No D1 disposition or body-budget judgment is
-  asserted here, the `claude/assess-improvement` precedent — this pass never measured it against
-  the ~900-word norm the original 39 were held to.
+- skill-md: added after the original audit, by the observability-dashboard kit's T8 — a
+  1228-word body (frontmatter stripped; 1138 at T8, grown by the P3 fix round's plugin-install
+  and accuracy edits) resolving `bin/dashboard.py build --checkout` behind a checkout-existence
+  check (`git rev-parse --show-toplevel` first; outside a checkout it builds nothing and asks for
+  `--checkout <path>` instead, since an empty `--checkout` makes the engine refuse), the binding
+  context-hygiene law (never reads `index.html`/`build.json` into the session, never pastes,
+  publishes or opens the page, and NEVER runs `build --json` itself — asked for the receipt it
+  gives only the path the plain build already printed), one paragraph per panel (naming the
+  plugin install store the telemetry, journal and evals panels read) plus the honesty rules that
+  govern all of them, refresh guidance, its flags, what it refuses to do, and its privacy
+  statement. No D1 disposition or body-budget judgment is asserted here, the
+  `claude/assess-improvement` precedent — this pass never measured it against the ~900-word norm
+  the original 39 were held to.
 - references: none
 - fragment-notes: `docs-src/fragments/skills/claude/dashboard.md` was written the same task
-  (458 `wc -w`, 449 words of prose). The generated page must keep the hygiene law's verbs intact
-  — never cat/Read/grep/head the page, never paste/publish/open it, never `--json` — and its two
-  `bench-routing`/`repo-bench` and self-publish "not for" bullets, plus the outside-a-checkout
-  failure mode.
-- sentinels: `tests/test_docs_build.py`'s `LiveTreeInventoryTests` (the Claude skill-count
-  tripwire, now 16) is the only test that notices this skill exists; no test reads its SKILL.md
-  body.
+  (456 `wc -w`, 447 words of prose, re-measured after the P3 fix round). The generated page must
+  keep the hygiene law's verbs intact — never cat/Read/grep/head the page, never
+  paste/publish/open it, never `--json` — and its two `bench-routing`/`repo-bench` and
+  self-publish "not for" bullets, plus the outside-a-checkout failure mode.
+- sentinels: four count tripwires move with this skill — `tests/test_docs_build.py`'s
+  `LiveTreeInventoryTests` and `tests/test_docs_build_adversarial.py` (the Claude skill count,
+  16), `tests/test_docs_build_cli.py` (the page-set size, 86) and
+  `tests/test_primitives_doc_adversarial.py` (the expected-pages total, 86);
+  `tests/test_codex_portable_skills.py` names it in its `claude_only` exemption;
+  `tests/test_docs_site.py` reads every SKILL.md body (`test_no_skill_md_mentions_docs_site`)
+  and needs its page in the nav; and `tests/test_docs_audit.py` needs this entry in the roster.
 
 ### claude/escalate
 - verdict: keep
