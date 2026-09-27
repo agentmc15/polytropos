@@ -2639,3 +2639,13 @@ agent: P4fix id=a51fc341301af5b24 role=implementer model=opus
     blocked, and `CLAUDE.md` has no diff since the kit branched.
 reviewer: P4 model=opus findings=4 confirmed=4 result=accepted
 session: 2f6e4acb-ed7e-4113-84aa-b3c76076d710
+
+- Correction to the residue entry above, which leaned toward T10's flake loop as the source.
+  - The 18 namespaces came in three bursts of exactly 6. Six is the count one unisolated
+    full-suite run leaves in a checkout without the PR #25 fix, as recorded 2026-09-25 when
+    the fix merged. Codex's worktrees keep leaking until they take main.
+  - This checkout carries the fix through 0d47a47. Every full-suite run here was isolated and
+    green against the data-home canary. T10's loop ran only `test_kit_scheduler`, which is not
+    one of the two leaky suites, and its reported 128 runs would not produce three bursts of 6.
+  - So a concurrent suite run in an unfixed checkout is the likelier source. It is not proven
+    from here, because the RSI worktree is fenced.

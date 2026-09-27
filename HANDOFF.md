@@ -958,10 +958,16 @@ The commit that adds this note follows 4abd7d6.
 - Budget: the contract counts 19 of 22 dispatches. Counted by hand, with the four fix rounds,
   it is 23; the last was approved past the cap. The contract's counter shows 9 "escalations"
   against a cap of 4, but all nine were same-model retries. No model was ever escalated.
-- Residue grew by 18 `tmp*` namespaces between the two real builds, at 22:39–22:54 on
-  2026-09-26, inside T10's implementer run. Its unisolated loop over `test_kit_scheduler` is
-  the likeliest source but is not proven, and a concurrent session is also possible. The new
-  namespaces fall under the residue criterion below.
+- Residue grew by 18 `tmp*` namespaces between the two real builds. They came in three bursts
+  of exactly 6, at 22:39, 22:45 and 22:54 on 2026-09-26.
+  - Six is what one unisolated full-suite run leaves in a checkout without the PR #25 fix, as
+    recorded on 2026-09-25. Codex's worktrees keep leaking until they take main.
+  - This checkout carries the fix. Its suite runs were isolated and green against the
+    data-home canary. T10's flake loop ran only `test_kit_scheduler`, which is not one of the
+    leaky suites.
+  - So a concurrent suite run in an unfixed checkout is the likelier source, though that is
+    not proven from here.
+  - The new namespaces fall under the residue criterion below.
 
 **Seeing the page.** Open `index.html` from the `dashboard` row of `runtime_data.py where` in a
 browser. For this checkout that is
