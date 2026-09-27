@@ -78,8 +78,8 @@ never a figure this skill or the engine invented itself:
   (`bin/recursive_improvement.py`) is present and, when it is, its contract versions, arms and
   any record store or reader it defines — read from the file as text, never run, never typed in
   here; then the `tasks/kits/recursive-improvement` kit's task statuses and `outcome:` lines,
-  with its `actual-use:` and `routing:` lines counted, not parsed. RSI records themselves are
-  not rendered yet, and the panel says plainly when there is nothing to show rather than
+  with its `actual-use:` and `routing:` lines counted, not parsed. The panel reads no RSI
+  records itself, and says plainly what the file does and does not define rather than
   guessing.
 
 Honesty rules hold across every panel above: an owner's `labels` and `notes` render verbatim

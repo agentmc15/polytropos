@@ -3761,8 +3761,8 @@ def build_training_panel(ctx):
 # 2026-09-26 the engine file is read as TEXT: `ast.parse` builds its syntax tree and
 # `ast.literal_eval` reads its top-level constants, so no checkout code is ever imported, executed
 # or compiled to run. The kit is read through `kit_contract.parse_tasks` and
-# `attempt_history.notes_records`. RSI records themselves are T11's, gated on the read seam R02
-# lands (PLAN D12): nothing here calls into the engine, and the page says so. Every file is looked
+# `attempt_history.notes_records`. This panel reads no RSI records and calls nothing in the
+# engine, and the page says so (reading records is T11's, PLAN D12). Every file is looked
 # up one path component at a time without following a link, must be a regular file under its own
 # named cap, and is read bounded -- a link is noted and its content never rendered. Only
 # `ctx["checkouts"]` is probed: the plugin install is never a checkout, so nothing under the
@@ -3789,12 +3789,15 @@ RSI_ENGINE_NOT_PARSED = ("RSI engine present in this checkout (`bin/recursive_im
 RSI_ENGINE_PARSED = ("RSI engine present in this checkout (`bin/recursive_improvement.py`), read "
                      "as text with ast.parse — nothing in it was run. Only its top-level NAME = "
                      "<literal> statements are read as data.")
-RSI_NOTHING_TO_RENDER = ("no RSI record store or reader is defined by this engine version; nothing "
-                         "to render — R02 (durable links and history projection) has not landed "
-                         "here")
-RSI_RECORDS_NOT_READ = ("This engine version defines a record store or a reader-shaped name, but "
-                        "this page does not read RSI records: that waits on R02's read seam "
-                        "reaching main (PLAN D12). Nothing here calls into the engine.")
+# P4 fix round M1: the two lines below say only what the file shows and what this page does. They
+# never name a plan task's status, a branch, a PLAN decision or a kit task: no owner emits those
+# facts, and the file cannot show them.
+RSI_NOTHING_TO_RENDER = ("This engine version binds no STORE at module scope and defines no "
+                         "reader-shaped name (a module-scope read_, list_ or iter_ function, or a "
+                         "module-scope name containing READ). This page reads no RSI records.")
+RSI_RECORDS_NOT_READ = ("This engine version binds STORE at module scope or defines a "
+                        "reader-shaped name, but this page does not read RSI records. Nothing "
+                        "here calls into the engine.")
 RSI_STORE_UNKNOWN = "store kind unknown to runtime_data — not resolved"
 RSI_KIT_ABSENT = "RSI kit not present in this checkout (`tasks/kits/recursive-improvement`)"
 RSI_KIT_UNKNOWN = ("Whether the RSI kit is present in this checkout is unknown — see the notes "
@@ -3916,30 +3919,77 @@ def _read_checkout_leaf(checkout, parts, caps, cap_name, label, notes):
     return "read", data
 
 
-def _scope_bindings(node):
+def _postponed_annotations(tree):
+    """Whether the module opens with `from __future__ import annotations` -> bool. Only a future
+    import at the very top takes effect -- after nothing but a docstring and other future
+    imports; anywhere else the compiler rejects it -- so only those leading statements are read.
+    Postponed annotations are never evaluated, and the compiler rejects a walrus inside one, so
+    they bind nothing (P4 fix round S2)."""
+    body = tree.body
+    index = 1 if (body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant)
+                  and isinstance(body[0].value.value, str)) else 0
+    while index < len(body) and isinstance(body[index], ast.ImportFrom) \
+            and body[index].module == "__future__":
+        if any(alias.name == "annotations" for alias in body[index].names):
+            return True
+        index += 1
+    return False
+
+
+def _evaluated_at_definition(node, annotations):
+    """The expressions a function, class or lambda definition evaluates where it stands -- in
+    module scope, for everything this walk reaches -- so a walrus in one binds there (P4 fix round
+    S2): the decorators; a function's or lambda's defaults and keyword-only defaults; a class's
+    bases and keyword values; and, while `annotations` are evaluated, a function's parameter and
+    return annotations. Type-parameter bounds are evaluated lazily in a scope of their own and the
+    compiler rejects a walrus in them, so they are never walked; the body is another scope."""
+    if isinstance(node, ast.ClassDef):
+        return [*node.decorator_list, *node.bases, *(keyword.value for keyword in node.keywords)]
+    args = node.args
+    parts = [*getattr(node, "decorator_list", ()), *args.defaults,
+             *(default for default in args.kw_defaults if default is not None)]
+    if annotations and not isinstance(node, ast.Lambda):
+        parts += [arg.annotation for arg in (*args.posonlyargs, *args.args, args.vararg,
+                                             *args.kwonlyargs, args.kwarg)
+                  if arg is not None and arg.annotation is not None]
+        if node.returns is not None:
+            parts.append(node.returns)
+    return parts
+
+
+def _scope_bindings(node, annotations=True):
     """Every module-scope name the statement or expression `node` binds -> a list of `(name,
     kind)` pairs in source order, `kind` being `def` for a function and `bound` for anything else:
     a name stored or deleted, an import, a class, an `except ... as` name, a `match` capture, a
-    walrus. A function, class or lambda body is its own scope and is never entered (a def gives its
-    own name only); a comprehension's loop variable is the comprehension's own, while a walrus
-    anywhere else binds the module's. An annotation with no value binds nothing.
+    walrus. A function, class or lambda body is its own scope and is never entered; what the
+    definition evaluates where it stands -- decorators, defaults, class bases and keywords, and
+    annotations while they are evaluated -- is walked, because a walrus there binds the module's
+    name (`_evaluated_at_definition`, P4 fix round S2). A comprehension's loop variable is the
+    comprehension's own, while a walrus anywhere else binds the module's. `x: T` with no value
+    binds nothing, though a complex target's parts and, unless `annotations` is False (the module
+    postpones them), T are still evaluated.
 
     The walk keeps its own stack instead of recursing (T10 retry). A recursive generator hands
     each name back up the whole chain of generators above it, so a name nested d levels deep
     costs O(d); and past the interpreter's recursion limit it raises, although `ast.parse`
-    accepts left-nested expressions several times deeper than that limit. Here every node costs
-    O(1), however deep it sits."""
+    accepts left-nested expressions several times deeper than that limit. Here every node is
+    pushed once and costs O(1), however deep it sits."""
     found, stack = [], [node]
     while stack:
         current = stack.pop()
-        if isinstance(current, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            found.append((current.name, "def"))
+        if isinstance(current, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            found.append((current.name, "bound" if isinstance(current, ast.ClassDef) else "def"))
+            stack.extend(reversed(_evaluated_at_definition(current, annotations)))
             continue
-        if isinstance(current, ast.ClassDef):
-            found.append((current.name, "bound"))
+        if isinstance(current, ast.Lambda):
+            stack.extend(reversed(_evaluated_at_definition(current, annotations)))
             continue
-        if isinstance(current, ast.Lambda) or (isinstance(current, ast.AnnAssign)
-                                               and current.value is None):
+        if isinstance(current, ast.AnnAssign):
+            parts = ([current.target] if current.value is not None
+                     or not isinstance(current.target, ast.Name) else [])
+            parts += [current.annotation] if annotations else []
+            parts += [current.value] if current.value is not None else []
+            stack.extend(reversed(parts))
             continue
         if isinstance(current, ast.Name) and isinstance(current.ctx, (ast.Store, ast.Del)):
             found.append((current.id, "bound"))
@@ -3986,12 +4036,18 @@ def _rsi_parse(tree):
     top-level literal assignment settles it again; its note moves the same way, to the last
     statement that unsettled it. `readers` keeps each `[name, where]` once, at its first binding.
 
+    A walrus binds a module-scope name wherever the file evaluates it at module scope -- a
+    definition's decorators, defaults, class bases and keywords, and annotations unless the
+    module postpones them (`_postponed_annotations`) -- and such a binding unsettles the name like
+    any other form not read as data (P4 fix round S2).
+
     Every step is O(1) per name -- the dicts are popped and re-inserted, reader-shaped names are
     de-duplicated through a set, never by scanning the list (T10 retry: that scan made 40,000
     such names cost 10 s) -- and `_scope_bindings` is linear in the tree, so the work is linear in
     the file's size, which MAX_RSI_ENGINE_BYTES bounds."""
     versions, not_rendered, readers, seen_readers = {}, {}, [], set()
     facts = {"arms": None, "store": None, "store_defined": False}
+    annotations = not _postponed_annotations(tree)
 
     def unsettled(name, reason):
         versions.pop(name, None)
@@ -4011,11 +4067,15 @@ def _rsi_parse(tree):
         single = _rsi_single_assignment(node)
         if single is None:
             where = "inside a block" if isinstance(node, _RSI_BLOCKS) else "at the top level"
-            bindings = _scope_bindings(node)
+            bindings = _scope_bindings(node, annotations)
         else:
             name, value_node = single
             where = "at the top level"
-            bindings = _scope_bindings(value_node)  # a walrus inside the value binds too
+            # A walrus inside the value binds too, and so does one in `NAME: T = v`'s T while
+            # annotations are evaluated -- after the assignment, so it unsettles NAME.
+            bindings = _scope_bindings(value_node, annotations)
+            if annotations and isinstance(node, ast.AnnAssign):
+                bindings += _scope_bindings(node.annotation, annotations)
             if RSI_READ_MARK in name:
                 reader(name, where)
             if name == "STORE":
@@ -4390,9 +4450,10 @@ def _rsi_notes_blocks(checkout, label, caps, notes):
 
 
 def _rsi_ledger_pointer(checkout, ctx):
-    """Where this kit's attempt ledger would be: a `tasks/kits/<slug>` kit's ledger root is
-    `tasks/kits` (PLAN D4), so its namespace is that root's, and the Attempts panel reads it when
-    it is mapped."""
+    """Where this kit's attempt ledger would be: `attempt_ledger.kit_repo_root` gives a kit
+    outside `.claude/kits` its own parent as its ledger root, so a `tasks/kits/<slug>` kit's root
+    is `tasks/kits`, its namespace is that root's, and the Attempts panel reads it when it is
+    mapped. The line cites that owner, never a PLAN decision (P4 fix round M1)."""
     root = Path(checkout) / "tasks" / "kits"
     namespace = _mod("runtime_data").project_namespace(root)
     classes = (ctx.get("model") or {}).get("classes") or {}
@@ -4400,7 +4461,8 @@ def _rsi_ledger_pointer(checkout, ctx):
                  for row in classes.get("mapped") or ())
     return {"type": "p", "parts": [
         "This kit's attempt ledger, when a driver recorded one, is kept under the namespace of ",
-        os.fspath(root), " (a tasks/kits kit's ledger root, PLAN D4): ", namespace, " — ",
+        os.fspath(root), " (the root attempt_ledger.kit_repo_root gives a tasks/kits kit): ",
+        namespace, " — ",
         ("mapped in this build; its ledger facts are in the Attempts panel" if mapped
          else "not among the namespaces mapped in this build"), "."]}
 
@@ -4447,10 +4509,12 @@ def build_rsi_panel(ctx):
     store name, a path, a title, an exception -- may ride along (P3 review M2)."""
     checkouts = [os.fspath(checkout) for checkout in ctx.get("checkouts") or ()]
     caps = ctx["caps"]
+    # P4 fix round M1: unlike the other panels' source lines, this one cites no PLAN decision --
+    # the RSI panel's rendered text names only the file, the owners and what this page does.
     source = ("bin/dashboard.py — each discovered checkout's bin/recursive_improvement.py read as "
               "text (ast.parse and ast.literal_eval; never imported, never run) and its "
               "tasks/kits/recursive-improvement kit through kit_contract.parse_tasks and "
-              "attempt_history.notes_records (PLAN D3 row 7, D12)")
+              "attempt_history.notes_records")
     if not checkouts:
         return {"source": source, "observed": "live, at build time", "notes": [],
                 "summary": "no checkout discovered — nothing probed",

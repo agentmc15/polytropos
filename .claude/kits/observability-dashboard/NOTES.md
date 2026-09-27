@@ -2431,3 +2431,166 @@ agent: T10 id=a51fc341301af5b24 role=implementer model=opus
 outcome: T10 model=opus attempts=2 result=retry-pass review=revised run=2026-09-25-7e3a
 
 T11 gated 2026-09-27: `bin/recursive_improvement.py` absent; waiting on feat/rsi-evidence-foundation R02 to merge to main
+
+- **Phase 4 security audit (range `7de4639..HEAD`: the P3 fix round, T10 and the T11 gate
+  record): clean, no findings.** Each of the seven checks was reproduced in temp dirs, not
+  just read:
+  - an engine stub that would write a marker file and raise if run was parsed and never
+    executed, with the canary absent from the page, build.json and stdout;
+  - hostile `*_VERSION`, `ARMS` and `STORE` values (HTML, U+202E, BEL and ESC, a 500-char
+    string) rendered escaped or as `RSI_WITHHELD`, and none reached plain stdout;
+  - a spy saw no git call with the plugin root as cwd, and planted kits under the plugin
+    root never rendered;
+  - every CLI build in the tests carries `--no-git`, `--out-dir` and an empty
+    `--projects-dir`, and `GitEnabledDiscoveryTests` is isolated;
+  - there is zero `Path.home()`, and the full suite's data-home canary test passed;
+  - the exact CSP holds, with no network-capable output;
+  - no untouchable file changed, and the four generator checks exit 0;
+  - nothing references the RSI worktree outside PLAN's own fence line.
+
+  The auditor named one tension, not as a finding: T11's gate script (architect-owned)
+  would load this repo's own engine with `exec_module` once R02 lands. The orchestrator
+  raised that first, in the P3 records and the T11 gate commit.
+agent: P4 id=a5035b6fc06a0412f role=security-auditor model=sonnet findings=0 confirmed=0 marginal=0 result=accepted
+
+- **Phase 4 review (opus, a8d99f22d89e991e6): verdict revised; 4 findings, all confirmed.**
+  The fences hold. The reviewer proved no-execution with an audit hook across 35 engine and
+  kit states: no exec, no import of the engine, no process and no network events. All 124
+  CLI builds in the suite carry `--no-git`, and parsing is linear at 1 MiB.
+  - M1, must fix. `RSI_NOTHING_TO_RENDER` says "R02 (durable links and history projection)
+    has not landed here", and `RSI_RECORDS_NOT_READ` says records wait "on R02's read seam
+    reaching main". Both assert a plan state no owner emitted. The orchestrator confirmed the
+    first is false for the RSI branch's engine: `git show` shows R02 `status: done` in the
+    branch's TASKS.md, the engine has no `STORE`, and its readers are
+    `outcome_eligibility_inventory` and `derived_lineage`, which match no reader shape.
+    `git worktree list` registers the RSI worktree, so a git-enabled build would render
+    the false line today. T10's brief (item 1, A1) and PLAN D3 row 7 mandated the sentence.
+  - S1, a user decision. The Done-means 3 and 4 evidence comes from the Phase 3 real build,
+    which predates the plugin-store mapping and the RSI panel.
+  - S2. `_scope_bindings` never visits function or lambda defaults, decorators, annotations,
+    or class bases and keywords. A walrus there binds at module scope, so
+    `A_VERSION = ".../1"` followed by `def f(x=(A_VERSION := ".../2")): pass` renders `/1`
+    with no note. This happens in adversarial files only.
+  - S3. T11's brief is stale under the parse-never-import decision and R02's actual design.
+    The gate runs `exec_module` and needs a `STORE` string, but R02's engine has none by
+    design. Item (2) calls the readers, which means importing checkout code. The architect
+    must re-plan T11 before any dispatch.
+  - Carried forward as notes (N1–N7):
+    - a symlinked engine or kit dir counts as present in the summary, though its note
+      qualifies it;
+    - the RSI tables have no row cap (a hostile kit at the byte caps gives about 45k rows and
+      an 8 MB page, still linear);
+    - T11 must add "unknown version, not rendered" as a constant;
+    - the REFERENCE and HOW-IT-WORKS dashboard rows do not mention RSI;
+    - `AUDIT.md:242` is 158 characters;
+    - the race at intermediate components in `_read_bounded`;
+    - with an empty data home the evals panel says "no mapped namespace to read evaluation
+      runs", not PLAN's example "no evaluation runs". It is still text, not a zero.
+  - The reviewer agrees with the recorded calls. It adds that the T10 Verify clause is
+    tautological for a stronger reason: the panel's own fixed source line contains
+    "recursive-improvement".
+- **User decisions, 2026-09-27.**
+  - One P4 fix round for M1 and S2, approved over the hand-counted cap: it is the run's
+    twenty-third implementer dispatch against the cap of 22. The contract's counter, which
+    skips fix rounds, reads 19.
+  - A second real build at HEAD after the fix, with `--no-git`.
+defect: T10 kind=stale-plan-decision
+defect: T11 kind=stale-plan-decision
+
+- **P4 fix round (implementer).** The Phase 4 review's M1 and S2, fixed in `bin/dashboard.py`,
+  `tests/test_dashboard.py` and the RSI paragraph of `skills/dashboard/SKILL.md`, with `python3
+  bin/docs_build.py build` rewriting `docs-site/skills/claude/dashboard.md`. No owner, PLAN,
+  GUARDRAILS, TASKS, AUDIT or other kit's NOTES was touched, and nothing was committed.
+  - M1: the panel now says only what the file shows and what the page does.
+    - `RSI_NOTHING_TO_RENDER` reads: "This engine version binds no STORE at module scope and
+      defines no reader-shaped name (a module-scope read_, list_ or iter_ function, or a
+      module-scope name containing READ). This page reads no RSI records."
+    - `RSI_RECORDS_NOT_READ` reads: "This engine version binds STORE at module scope or
+      defines a reader-shaped name, but this page does not read RSI records. Nothing here
+      calls into the engine."
+    - The same sweep, over every rendered RSI string, found two more places that named a
+      PLAN decision. The panel's source line ended "(PLAN D3 row 7, D12)". The ledger pointer
+      said "(a tasks/kits kit's ledger root, PLAN D4)". Neither claimed a plan state, but D12
+      is the RSI gating decision and the rule was to name no PLAN decision. So the source line
+      now ends at the owners, and the pointer cites the function that carries its fact,
+      `attempt_ledger.kit_repo_root`, which gives a kit outside `.claude/kits` its own parent
+      as its ledger root. The other panels keep their PLAN citations; only this one changed.
+    - SKILL.md's last RSI sentence, "RSI records themselves are not rendered yet", was a
+      forward-looking claim. It now reads "The panel reads no RSI records itself, and says
+      plainly what the file does and does not define rather than guessing." It is exactly as
+      long as the old sentence, so the body stays at 1263 words and AUDIT.md's count stands.
+    - The section comment above the panel code no longer says records are gated on R02; it
+      says the panel reads none, and that reading them is T11's.
+    - The kit's task table still shows a kit's own R02 title and status when a kit carries
+      them. That is `kit_contract.parse_tasks` data, rendered as data, not a claim by the page.
+  - S2: the walk now visits everything a definition evaluates where it stands. Each case was
+    checked on this interpreter (3.12.7), by parsing, compiling and running small snippets of
+    my own in scratch, never checkout code.
+    - A walrus binds at module scope in: function and lambda defaults and keyword-only
+      defaults; decorators on functions and classes; class bases and keyword values;
+      parameter, vararg and return annotations; the annotation of `x: T = v` and of a bare
+      `x: T`; and the parts of a bare complex target such as `d[(A := 1)]: int`. Each is now
+      walked. Its name is noted as bound in a form not read as data and is never rendered; a
+      later top-level literal settles it again, as before.
+    - A `STORE` bound that way sets `store_defined`, so the page shows "STORE: bound, but not
+      read as data" and the records-not-read line.
+    - `_evaluated_at_definition` lists those expressions. `_scope_bindings` pushes them onto
+      its own stack, so the walk stays iterative and each node is visited once.
+    - Annotations are walked only while they are evaluated. With a leading `from __future__
+      import annotations` they are postponed, and the compiler rejects a walrus in one, so it
+      can never bind. `_postponed_annotations` reads only the leading statements (a docstring,
+      then future imports), because a future import anywhere else is itself a compile error.
+    - Type-parameter bounds and `type` alias values parse, but the compiler always rejects a
+      walrus in them, so they are not walked. A class body is the class's own scope and is not
+      entered.
+    - For `NAME: T = v`, the single-assignment path now also walks T while annotations are
+      evaluated. T runs after the assignment, so a walrus there unsettles NAME.
+    - Still linear, re-timed on the final code: 40,000 READ-names parse in 0.31 s, 1 MiB of
+      walrus chains takes about 0.55 s at depths 200 to 800, and 1.6 MB of definitions with
+      walruses in every S2 position takes 0.40 s.
+  - Five tests added; the dashboard suite went from 302 to 307:
+    - `test_an_engine_shaped_like_r02s_renders_no_plan_state`: no STORE, and readers named
+      `outcome_eligibility_inventory` and `derived_lineage`. The section, its source line and
+      its notes match none of `R02`, `landed`, `main` or `PLAN`.
+    - `test_no_rsi_line_names_plan_state`: every `RSI_` string constant.
+    - `test_a_walrus_in_a_default_unsettles_a_version_and_binds_store`: a `_VERSION` in a
+      default and `STORE` in a keyword-only default.
+    - `test_a_walrus_in_a_decorator_a_class_base_or_an_evaluated_annotation_unsettles`: 12
+      positions, each a subtest, including a misplaced future import that postpones nothing.
+    - `test_a_walrus_where_python_never_binds_it_leaves_the_version_settled`: a postponed
+      annotation and a type-parameter bound, each self-checked with `compile()` on the test's
+      own snippet, and a class body.
+  - What shows the tests can fail: 43 mutations ran in scratch copies of `bin/`, `tests/` and
+    `data/`, never the checkout. They are the earlier 27, with M08, M12 and M25 re-targeted at
+    the rewritten code, plus 16 for this round: the two old sentences restored; each PLAN
+    citation restored; each class of S2 position left unwalked; postponed annotations walked
+    anyway; a misplaced future import honoured; type-parameter bounds walked; and a class body
+    walked as module scope. Each made at least one test fail, and the unmutated copy passed.
+  - Verification, from the checkout root, on the final code:
+    - T10's Verify block, verbatim under `bash -e`, exit 0: "Ran 307 tests … OK", "T10 probe
+      OK", and the full suite "Ran 5977 tests … OK (skipped=2)".
+    - `docs_build check` exits 0.
+    - The reviewer's `reviewer-P4-branch-render.py` still exits 0, but it needs adapting. Its
+      first line prints whether `db.RSI_NOTHING_TO_RENDER` is on the page. That constant now
+      holds the new sentence, which the branch engine rightly shows, so "R02 sentence shown:
+      True" now means the new wording. An adapted copy in the scratchpad (the reviewer's file
+      is untouched) prints that "has not landed" and "reaching main" are gone. The panel's
+      prose and notes also match no `R02`, `landed`, `main` or `PLAN`. `R02` appears only in
+      the kit's own task table, as data.
+    - The final full-suite count is 5977.
+
+- **P4 fix round, orchestrator's verification.** From the checkout root, in
+  `verify-P4fix.sh`:
+  - Two probes: neither RSI sentence names R02, landed, main, PLAN, D12 or T11; and the
+    walrus-in-a-default case leaves `A_VERSION` noted rather than rendered at `/1`, while
+    a walrus-bound `STORE` counts as defined.
+  - A render of the RSI branch's engine, held in memory and never run, finds no stale
+    plan-state phrase. The reviewer's own script prints only booleans, so the orchestrator
+    ran a variant that checks the rendered text, and showed it trips on the pre-fix tree.
+  - The orchestrator's T10 probe passes after a correction of its own: it had pinned the
+    old phrase "nothing to render", which the fix rightly removed. It now asserts the
+    constant as escaped on the page.
+  - The `--no-git` scan is clean, and the four generator checks exit 0.
+  - T10's Verify block, verbatim, exits 0 (307 dashboard tests, the probe, and a full suite of 5977 tests, 2 skipped).
+  - The snapshot shows exactly the round's four files beside NOTES.md.
+agent: P4fix id=a51fc341301af5b24 role=implementer model=opus

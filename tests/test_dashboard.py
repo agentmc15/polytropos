@@ -4987,6 +4987,113 @@ class RsiPanelTests(_WorldCase):
                          status["versions"])
         self.assertNotIn("polytropos.rsi-a/1", json.dumps(rsi))
 
+    # -- P4 fix round: M1 (no plan state on the page) and S2 (module-scope walrus bindings) ------
+
+    PLAN_STATE = (r"\bR0\d\b", r"\blanded\b", r"\bmain\b", r"\bPLAN\b", r"\bT1\d\b")
+
+    def test_an_engine_shaped_like_r02s_renders_no_plan_state(self):
+        # M1: R02's engine has no STORE, and its readers are named outcome_eligibility_inventory
+        # and derived_lineage, which match no reader shape. The page says what the file shows and
+        # what the page does -- never a plan task's status, a branch or a PLAN decision.
+        self.engine(self.STUB
+                    + "def outcome_eligibility_inventory(ledger, captures=()):\n    return {}\n"
+                      "def derived_lineage(ledger, captures=()):\n    return []\n")
+        status = self.status()
+        self.assertEqual((status["store_defined"], status["readers"]), (False, []))
+        section, _page, receipt, _stdout = self.built()
+        self.assertIn(db.esc(db.RSI_NOTHING_TO_RENDER), section)
+        text = html.unescape(re.sub(r"<[^>]+>", " ", section))
+        rsi_notes = [note for note in json.loads(receipt)["notes"] if note.startswith("rsi:")]
+        rsi_source = next(p["source"] for p in json.loads(receipt)["panels"] if p["id"] == "rsi")
+        self.assertIn(rsi_source, text)  # the meta line is part of what the section renders
+        # The panel's own lines, source and notes name no plan task, branch or PLAN decision --
+        # the synthetic kit's titles carry none of these words either.
+        for pattern in (r"\bR02\b", r"\blanded\b", r"\bmain\b", r"\bPLAN\b"):
+            with self.subTest(pattern=pattern):
+                self.assertIsNone(re.search(pattern, text, re.IGNORECASE), text)
+                self.assertFalse([note for note in rsi_notes
+                                  if re.search(pattern, note, re.IGNORECASE)], rsi_notes)
+
+    def test_no_rsi_line_names_plan_state(self):
+        # M1, held for every fixed line the panel prints: no plan task, no branch, no PLAN
+        # decision, no kit task number.
+        lines = {name: value for name, value in vars(db).items()
+                 if name.startswith("RSI_") and isinstance(value, str)}
+        self.assertIn("RSI_NOTHING_TO_RENDER", lines)
+        self.assertIn("RSI_RECORDS_NOT_READ", lines)
+        for name, value in lines.items():
+            for pattern in self.PLAN_STATE:
+                with self.subTest(line=name, pattern=pattern):
+                    self.assertIsNone(re.search(pattern, value), value)
+
+    def test_a_walrus_in_a_default_unsettles_a_version_and_binds_store(self):
+        # S2: a default is evaluated where the def stands, so a walrus there binds at module
+        # scope. The version is no longer what its literal said, and STORE is bound but not
+        # read as data.
+        self.engine(self.STUB
+                    + 'def f(x=(FIXTURE_A_VERSION := "polytropos.rsi-fixture-a/2")):\n'
+                      "    pass\n"
+                      'def g(*, y=(STORE := "attempts")):\n    pass\n')
+        status = self.status()
+        self.assertEqual(status["versions"], [["FIXTURE_B_VERSION", self.VERSION_B]])
+        self.assertEqual(dict(status["not_rendered"]), {
+            "FIXTURE_A_VERSION": "is bound at the top level in a form not read as data",
+            "STORE": "is bound at the top level in a form not read as data"})
+        self.assertEqual((status["store"], status["store_defined"]), (None, True))
+        section, page, _receipt, _stdout = self.built()
+        self.assertIn("STORE: bound, but not read as data — see the notes above", section)
+        self.assertIn(db.esc(db.RSI_RECORDS_NOT_READ), section)
+        self.assertNotIn(db.esc(db.RSI_NOTHING_TO_RENDER), section)
+        for value in (self.VERSION_A, "polytropos.rsi-fixture-a/2"):
+            self.assertNotIn(value, page)
+
+    def test_a_walrus_in_a_decorator_a_class_base_or_an_evaluated_annotation_unsettles(self):
+        # S2: each of these is evaluated at module scope when the file runs (checked on this
+        # interpreter), so a walrus in one binds the module's name: noted, never rendered.
+        literal = 'A_VERSION = "polytropos.rsi-a/1"\n'
+        cases = {
+            "function decorator": "d = lambda g: g\n@(A_VERSION := d)\ndef f():\n    pass\n",
+            "class decorator": "d = lambda c: c\n@(A_VERSION := d)\nclass C:\n    pass\n",
+            "class base": "class C((A_VERSION := object)):\n    pass\n",
+            "class keyword": "class C(metaclass=(A_VERSION := type)):\n    pass\n",
+            "parameter annotation": "def f(x: (A_VERSION := int)):\n    pass\n",
+            "return annotation": "def f() -> (A_VERSION := int):\n    pass\n",
+            "annotation with a value": "x: (A_VERSION := int) = 1\n",
+            "bare annotation": "x: (A_VERSION := int)\n",
+            "its own annotation": 'A_VERSION: (A_VERSION := str) = "polytropos.rsi-a/2"\n',
+            "bare complex target": "d = {}\nd[(A_VERSION := 1)]: int\n",
+            "lambda default": "f = lambda x=(A_VERSION := 1): x\n",
+            "misplaced __future__ import": ("x = 1\nfrom __future__ import annotations\n"
+                                            "def f(a: (A_VERSION := int)):\n    pass\n"),
+        }
+        for label, source in cases.items():
+            with self.subTest(position=label):
+                facts = db._rsi_parse(ast.parse(literal + source))
+                self.assertEqual(facts["versions"], [])
+                self.assertEqual(facts["not_rendered"], [
+                    ["A_VERSION", "is bound at the top level in a form not read as data"]])
+
+    def test_a_walrus_where_python_never_binds_it_leaves_the_version_settled(self):
+        # S2's other edge. Postponed annotations are never evaluated, and a type-parameter bound
+        # is evaluated lazily in its own scope: the compiler rejects a walrus in either (checked
+        # here on this test's own snippets, never on checkout code), so it can never bind. A
+        # class body is the class's own scope. None of them unsettles the version.
+        literal = 'A_VERSION = "polytropos.rsi-a/1"\n'
+        never_compiles = {
+            "postponed annotation": ('"""doc"""\nfrom __future__ import annotations\n' + literal
+                                     + "def f(x: (A_VERSION := int)):\n    pass\n"),
+            "type-parameter bound": literal + "def f[T: (A_VERSION := int)]():\n    pass\n",
+        }
+        for label, source in never_compiles.items():
+            with self.subTest(position=label):
+                with self.assertRaises(SyntaxError):
+                    compile(source, "<the test's own snippet>", "exec")
+                facts = db._rsi_parse(ast.parse(source))
+                self.assertEqual(facts["versions"], [["A_VERSION", "polytropos.rsi-a/1"]])
+                self.assertEqual(facts["not_rendered"], [])
+        facts = db._rsi_parse(ast.parse(literal + "class C:\n    (A_VERSION := 2)\n"))
+        self.assertEqual(facts["versions"], [["A_VERSION", "polytropos.rsi-a/1"]])
+
     def test_the_rsi_summary_is_fixed_words_and_counts_only(self):
         # P3 review M2 / T10 A3: `summary_lines` relays the summary verbatim to the session.
         arm = "ARM-CANARY-9c1d"
