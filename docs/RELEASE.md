@@ -620,6 +620,7 @@ Every top-level tracked path and its role. `packaging` fails on a path with no r
 |---|---|
 | `attempts/` | present |
 | `benchruns/` | present |
+| `dashboard/` | present |
 | `evals/` | present |
 | `journal/` | present |
 | `memory/` | present |

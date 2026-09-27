@@ -243,8 +243,12 @@ class SnapshotTests(unittest.TestCase):
     def test_no_production_path_calls_the_capture_hook(self):
         """`CAPTURE_WIRED` is False, and this is what that claim is worth.
 
-        The one module that names this one is `release_gate`, which reads two version
-        constants for its contract table. It never captures anything, and the assertion is an
+        The two modules that name this one are `release_gate`, which reads two version
+        constants for its contract table, and `dashboard.py` (the observability-dashboard
+        kit, T7), which names the training store only through its pinned panel id
+        `TRAINING_PANEL = "training"` and reads each checkout's training status through this
+        owner's own `status()` function. It writes no training store, not even as a fixture:
+        its `synthetic_world` builds none. Neither captures anything, and the assertion is an
         exact set so a second importer cannot appear without this test saying so.
         """
         naming = set()
@@ -253,10 +257,12 @@ class SnapshotTests(unittest.TestCase):
                 continue
             if "training_data" in path.read_text(encoding="utf-8"):
                 naming.add(path.name)
-        self.assertEqual(naming, {"release_gate.py"})
+        self.assertEqual(naming, {"dashboard.py", "release_gate.py"})
         gate = (BIN_DIR / "release_gate.py").read_text(encoding="utf-8")
+        dashboard = (BIN_DIR / "dashboard.py").read_text(encoding="utf-8")
         for call in ("capture_hook", "collection_scope", "persist(", "snapshot("):
             self.assertNotIn(call, gate)
+            self.assertNotIn(call, dashboard)
         self.assertIs(td.CAPTURE_WIRED, False)
         self.assertIn("CAPTURE_WIRED is False", td.NOT_WIRED_LABEL)
 
@@ -834,11 +840,15 @@ class SnapshotTests(unittest.TestCase):
         leaned on when it rejected reusing `evals`/`prefs` and then did not leave one behind for
         its own store. "One local store, written by its own engine ONLY": `bin/runtime_data.py`
         declares it and `bin/training_data.py` is the only module that resolves it, so a second
-        writer has to name itself here."""
+        writer has to name itself here. `bin/dashboard.py` (the observability-dashboard kit, T7)
+        is the one sanctioned exception: it names the store only through its pinned panel id
+        `TRAINING_PANEL = "training"` and reads each checkout's training status through this
+        owner's own `status()` function. It writes no training store, not even as a fixture:
+        its `synthetic_world` builds none."""
         naming = sorted(path.name for path in BIN_DIR.glob("*.py")
                         if '"training"' in path.read_text("utf-8")
                         or "'training'" in path.read_text("utf-8"))
-        self.assertEqual(naming, ["runtime_data.py", "training_data.py"])
+        self.assertEqual(naming, ["dashboard.py", "runtime_data.py", "training_data.py"])
         self.assertIn(td.STORE, _load("runtime_data").STORES)
         self.assertEqual(td.STORE, "training")
 

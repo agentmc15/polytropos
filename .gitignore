@@ -33,6 +33,11 @@ __pycache__/
 # is False and nothing calls the hook, so a fresh checkout never creates this directory)
 /training/
 
+# observability dashboard output (one offline HTML page over the personal stores: dollar
+# figures, task titles, repo paths, namespace digests — never committed; its default home
+# is the per-user data root, this entry covers a legacy in-tree store only)
+/dashboard/
+
 # conversation summaries (transcript-derived: home-dir paths, session ids — never committed)
 /conv-summaries/
 

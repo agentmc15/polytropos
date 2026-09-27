@@ -13,8 +13,16 @@ class PortableSkillTests(unittest.TestCase):
         claude = {path.parent.name for path in (REPO_ROOT / "skills").glob("*/SKILL.md")}
         codex = {path.parent.name for path in SKILLS_ROOT.glob("*/SKILL.md")}
         native_names = {"cost-report": "usage", "fable-check": "frontier-check"}
-        self.assertEqual(len(claude), 15)
-        self.assertTrue({native_names.get(name, name) for name in claude}.issubset(codex))
+        # PLAN D11 of the observability-dashboard kit keeps `dashboard` Claude-only:
+        # `bin/dashboard.py` is a harness-neutral CLI a Codex user can already run directly, so
+        # a Codex port would add a bundle roster entry for no new capability. Each further
+        # entry here must be its own deliberate decision, recorded the same way.
+        claude_only = {"dashboard"}
+        self.assertEqual(len(claude), 16)
+        self.assertTrue(
+            {native_names.get(name, name) for name in claude if name not in claude_only}
+            .issubset(codex)
+        )
 
     def test_each_port_has_required_files_and_codex_root(self):
         for name in ("assess-improvement", "graphify"):

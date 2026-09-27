@@ -12,6 +12,11 @@
 > `.claude-plugin/plugin.json` says (0.6.3 when this note was written); `python3
 > bin/harness_update.py check` reports what is installed against this checkout. Every figure in the body below is dated to when
 > it was written and should be re-derived, never quoted forward.
+>
+> **Observability dashboard (note added 2026-09-27).** The kit on branch
+> `kit/observability-dashboard` was merged into `main` on 2026-09-27. T11 stays gated. The
+> last section of this file is the summary to resume from. The full record, with every adjudication, ledger line and user
+> decision, is `.claude/kits/observability-dashboard/NOTES.md`.
 
 **As of 2026-09-07.** Steps 01–15 are committed as a single change set on top of `fb40925`:
 66 files modified, 17 added, +5,485 / −1,860 lines. Full suite green: **3,727 tests, OK
@@ -876,3 +881,171 @@ python3 bin/workflow_eval.py policy            # the routing policy in force (no
 Then read step 26 in the roadmap and continue. The pattern that has worked: verify the step's
 claims against HEAD first, implement, run the affected suites, then the full suite, then update
 `SECURITY.md` / `CLAUDE.md` / the doc mirrors together.
+
+---
+
+## Observability dashboard: `kit/observability-dashboard`, as of 2026-09-27
+
+**What it is.** `bin/dashboard.py` builds one offline HTML page over the stores the other
+engines already write:
+- the attempt ledger and its history join;
+- the routing scorecard and the kits in flight;
+- telemetry snapshots and journal digests;
+- evaluation runs, policy and training readiness;
+- RSI status.
+
+The page carries an exact CSP, no script and no network reference. It renders each owner's
+figures and labels verbatim and computes nothing an owner already computes. `demo` builds from
+synthetic data in a temp dir. `build` writes `index.html` and a `build.json` receipt to the
+`dashboard` store (`python3 bin/runtime_data.py where`), with the directory `0700` and the
+files `0600`. `/polytropos:dashboard` (`skills/dashboard/SKILL.md`, Claude-only) runs the plain
+build and relays only the page path and the summary's counts. It never runs `--json` and never
+reads the page into a session.
+
+**Where it stands.** The kit is `.claude/kits/observability-dashboard`, run 2026-09-25-7e3a.
+T1–T10 are done. T11 is blocked by its own gate, because `bin/recursive_improvement.py` is not
+on this branch. The test-leak fix the kit depends on went in separately as PR #25 (main
+4a7761b). This branch merged that fix branch, and was itself merged into `main` on 2026-09-27
+(under "Merged", below). Commits, oldest first:
+```
+f6cb4c7 docs(kits): plan an offline observability dashboard, its RSI panel gated on R02
+0d47a47 Merge fix/tests-isolate-data-home: run the kit with the data-home canary in place
+3a9b96d feat(runtime-data): add a dashboard store, gitignored and in every store list
+4c2971c feat(dashboard): add the engine core, from namespace census to a private page
+46d3da2 feat(dashboard): add the rendering toolkit, with typed cells so a value escapes once
+8660c79 fix(dashboard): unseen counts render unknown, basis-less amounts lose their $
+1a05f5e feat(dashboard): add the attempts panel — the ledger's own figures, never summed
+c81c4a2 feat(dashboard): add the scorecard and kits panels, every rate the owner's own
+ab76a16 feat(dashboard): add the telemetry and journal panels, free text never rendered
+9bdaada feat(dashboard): add the evals and training panels, every verdict the owner's
+117a210 fix(dashboard): read eval cards only from vetted dirs, never a declared run_id
+eb67033 feat(skills): add /polytropos:dashboard — relays counts, never the page or notes
+32e9ff3 docs(dashboard): wire the engine into the guardrail sentinels, docs and census
+7de4639 docs(kits): record the dashboard's real build and the Phase 3 verdicts
+cbf0456 fix(dashboard): map the plugin's own store so its captures reach the page
+5c74947 feat(dashboard): add the RSI status panel — the engine is parsed, never run
+16a4be6 docs(kits): block T11 on its gate — the RSI engine is not on this branch yet
+4abd7d6 fix(dashboard): the RSI panel states only what the file shows, never R02's state
+```
+
+The commit that adds this note follows 4abd7d6.
+
+**Decisions you made during the run** (each recorded in NOTES.md):
+- Transcript pricing is on by default, and `--no-transcripts` opts out (D15). The journal's
+  `usd_priced` renders as the journal's own total.
+- `dashboard` is exempt by name from the Codex parity test (`claude_only` in
+  `tests/test_codex_portable_skills.py`).
+- The one sanctioned real build ran with `--no-git`, so Codex's RSI worktree was never opened.
+- The plugin install's own store is mapped. That is where plugin-run telemetry, journal and
+  eval captures land. It is never treated as a checkout: no git runs in it and no kits are read
+  from it.
+- The RSI panel parses `bin/recursive_improvement.py` with `ast` and never imports it, so no
+  checkout's code ever runs inside the dashboard.
+- 2026-09-27: one Phase 4 fix round was approved past the hand-counted dispatch cap, plus a
+  second real build at HEAD, again with `--no-git`.
+
+**Where the run ended (2026-09-27).**
+- All four phases have been reviewed, and the Phase 4 fix round is 4abd7d6. The RSI panel's
+  sentences now state only what the engine file shows, and its binding walk sees module-scope
+  walrus bindings.
+- A second real build at HEAD, with `--no-git`, exited 0 in 3.40 s:
+  - "1 mapped · 3 unmapped · 1700 residue", with 0 of 17 caps hit;
+  - the directory is `0700` and the files are `0600`;
+  - the exact CSP holds, with no network reference and no unscrubbed home path;
+  - all ten panels are present;
+  - `git status` is clean.
+- Every PLAN Done-means item is met, with the amendments recorded in NOTES.md.
+- Budget: the contract counts 19 of 22 dispatches. Counted by hand, with the four fix rounds,
+  it is 23; the last was approved past the cap. The contract's counter shows 9 "escalations"
+  against a cap of 4, but all nine were same-model retries. No model was ever escalated.
+- Residue grew by 18 `tmp*` namespaces between the two real builds. They came in three bursts
+  of exactly 6, at 22:39, 22:45 and 22:54 on 2026-09-26.
+  - Six is what one unisolated full-suite run leaves in a checkout without the PR #25 fix, as
+    recorded on 2026-09-25. Codex's worktrees keep leaking until they take main.
+  - This checkout carries the fix. Its suite runs were isolated and green against the
+    data-home canary. T10's flake loop ran only `test_kit_scheduler`, which is not one of the
+    leaky suites.
+  - So a concurrent suite run in an unfixed checkout is the likelier source, though that is
+    not proven from here.
+  - The new namespaces fall under the residue criterion below.
+
+**Seeing the page.** Open `index.html` from the `dashboard` row of `runtime_data.py where` in a
+browser. For this checkout that is
+`~/Library/Application Support/polytropos/polytropos-decision-improvement-plan-9f697583/dashboard/index.html`.
+Rebuild it with `python3 bin/dashboard.py build --no-git` from the checkout.
+- A build run from a development checkout treats that checkout as its own plugin root.
+- The plugin install's store (`polytropos-install`) appears when the engine runs from the
+  installed plugin, after an install refresh, or once that folder is added to the
+  `checkouts` list in `<dashboard store>/config.json`.
+- Without `--no-git`, the build walks every worktree of the repository, Codex's RSI worktree
+  included.
+
+**Waiting on you.**
+- **Merged 2026-09-27, on your "merge".** `git log --merges -1 --grep
+  'kit/observability-dashboard' main` finds the merge commit. Its second parent is the commit
+  that carries this note.
+  - Checked 2026-09-27 at f69dd16. `origin/main` was at 73499e0 (Codex's goliath R10 roster
+    merge, two commits past this branch's base). The branch was not on the remote. In a
+    throwaway detached worktree, since removed, `git merge --no-commit origin/main` was
+    clean:
+    - the one file both sides touched, the generated `docs-site/skills/index.md`,
+      auto-merged;
+    - all four generator `check`s exited 0;
+    - the full suite passed (5977 tests, 2 skipped).
+    The real merge re-ran those checks on its own tree before it was pushed.
+- **Install refresh (your step; a session never refreshes the plugin).** Pull `main` into
+  `reposV2/polytropos-install` and run your usual pull, preflight, update and restart, and
+  `/polytropos:dashboard` appears. If the update does not pick up the new skill, that is
+  because `plugin update` re-copies only when the version differs. A release bump
+  (`release/0.6.x`) is the documented fix.
+- **T11 needs the architect before any dispatch.**
+  - Its gate runs `exec_module` on the engine and requires a `STORE` string. R02's engine has
+    none by design, and its readers are `outcome_eligibility_inventory` and `derived_lineage`.
+  - Reading records means calling into checkout code, which the parse-never-import decision
+    rules out.
+  - T11 must also add "unknown version, not rendered" as a constant.
+- **Stale architect-owned text** (execute may not edit these files):
+  - PLAN D11 and GUARDRAILS.md line 12 still say the skill relays the `--json` summary. It
+    never runs `--json`.
+  - D4 and D6 assume the plugin never owns a store.
+  - D12 and D3 row 7 prescribe `importlib`, and a sentence claiming R02 has not landed.
+- **Residue.** About 1,680 `tmp*` namespaces left by the old test leak sit in the data home. The
+  page counts them as residue and never opens them. Deleting them happens only on your
+  go-ahead, and only for directories named `tmp[a-z0-9_]{8}-[0-9a-f]{8}` whose only content is
+  `attempts/kit`.
+
+**Owner defects found (the kit may not edit these files):**
+- `telemetry_snapshot.build_list_summary` and `--list` raise `TypeError` on a non-list
+  `labels`.
+- `workflow_eval.list_runs` raises `AttributeError` on a non-object `results.json`, and
+  `_variant_summary` raises on a non-dict `oracles`.
+- `workflow_eval.read_envelope` does not confine `run_id`, and `list_runs` reports the
+  declared id rather than the directory name.
+- `safe_paths.confined_replace` makes a transient `mkstemp` file in the cwd.
+- `kit_contract.count_plan_budget_usage` counts every same-model retry toward
+  `max-escalations`, while `OPERATION_CAPS` never charges a retry to that cap. This run shows
+  9 against a cap of 4 with no model ever escalated.
+- `routing_scorecard` follows a symlinked kit dir. The page notes it.
+- `tests/test_kit_scheduler.py` has an intermittent `FileNotFoundError` race: 3 in 128
+  isolated runs, predating this kit.
+
+**Known limits the kit leaves** (all in NOTES.md):
+- `caps_report` can over-claim a cap hit when text read from a checkout contains "cap NAME (".
+  It never hides one.
+- A symlinked engine or kit dir counts as present in the RSI summary, with a note.
+- The RSI tables have no row cap. They stay linear up to the byte caps.
+- An `--out-dir` that already exists keeps its own mode.
+- A legacy in-tree store under the plugin root is not noted.
+- There is a race at intermediate path components in `_read_bounded`.
+- `docs/HOW-IT-WORKS.md`'s Codex row omits `codex_repo_bench`.
+- No standing test re-derives REFERENCE.md's engine census.
+
+**Resuming.**
+
+```bash
+cd ~/Developer/reposV2/polytropos-decision-improvement-plan     # the kit's worktree
+git status --short && git log --oneline -5 kit/observability-dashboard
+POLYTROPOS_DATA_HOME="$(mktemp -d)" python3 -m unittest discover -s tests   # isolated data home, always
+python3 bin/dashboard.py demo                                    # synthetic page in a temp dir, removed after
+python3 bin/kit_contract.py graph --kit .claude/kits/observability-dashboard   # T1–T10 done, T11 blocked
+```

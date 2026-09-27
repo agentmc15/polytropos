@@ -10,6 +10,7 @@
 | budget | — | [budget](copilot/budget.md) | — |
 | context-weight | [context-weight](claude/context-weight.md) | [context-weight](copilot/context-weight.md) | [context-weight](codex/context-weight.md) |
 | cost-report | [cost-report](claude/cost-report.md) | — | — |
+| dashboard | [dashboard](claude/dashboard.md) | — | — |
 | doctor | — | — | [doctor](codex/doctor.md) |
 | effort | — | [effort](copilot/effort.md) | [effort](codex/effort.md) |
 | escalate | [escalate](claude/escalate.md) | [escalate](copilot/escalate.md) | [escalate](codex/escalate.md) |

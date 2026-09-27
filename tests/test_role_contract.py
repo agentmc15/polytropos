@@ -207,6 +207,8 @@ class GrammarTests(unittest.TestCase):
                          "extended")
 
     def test_every_legacy_kit_parses_and_the_two_with_roles_resolve_as_extended(self):
+        # The name predates the third kit that declares roles. It stays, because
+        # bin/release_gate.py's contract map pins this exact test id; renaming it breaks the gate.
         seen = {}
         for plan in sorted(KITS_DIR.glob("*/PLAN.md")):
             roster = kc.resolve_roster(plan.read_text())
@@ -214,7 +216,9 @@ class GrammarTests(unittest.TestCase):
         self.assertGreater(len(seen), 20)
         with_roles = {slug: r["declared"] for slug, r in seen.items() if r["declared"]}
         self.assertEqual(with_roles, {"aesop-fold": ["test-author"],
-                                      "docs-site": ["test-author", "docs-editor"]})
+                                      "docs-site": ["test-author", "docs-editor"],
+                                      "observability-dashboard": ["red-team",
+                                                                  "security-auditor"]})
         for slug, roster in seen.items():
             self.assertEqual(roster["workflow"], "extended" if slug in with_roles
                              else "reviewed", slug)
