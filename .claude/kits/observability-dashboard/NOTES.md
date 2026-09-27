@@ -2594,3 +2594,48 @@ defect: T11 kind=stale-plan-decision
   - T10's Verify block, verbatim, exits 0 (307 dashboard tests, the probe, and a full suite of 5977 tests, 2 skipped).
   - The snapshot shows exactly the round's four files beside NOTES.md.
 agent: P4fix id=a51fc341301af5b24 role=implementer model=opus
+
+- **Second real build at HEAD (4abd7d6), approved by the user 2026-09-27, run with
+  `--no-git`.** The orchestrator ran `python3 bin/dashboard.py build --no-git` from the repo
+  root. Checked by property, without loading the page or its notes into the session:
+  - exit 0 in 3.40 s, with nothing on stderr;
+  - summary: "1 mapped · 3 unmapped · 1700 residue", "0 of 17 caps hit", 6 notes;
+  - the page and receipt are in the `dashboard` row of `runtime_data.py where`, with the
+    directory `0700`, and `index.html` (89,519 bytes) and `build.json` (7,316 bytes) `0600`;
+  - `git status --porcelain` is empty before and after, and the data home held 1,704
+    namespaces before and after;
+  - the exact CSP appears once, before `<body`, and there are zero network tripwires and zero
+    unscrubbed home paths in the page or the receipt;
+  - all ten panel ids are present, `rsi` included, with no traceback and no "could not be
+    built". The receipt's listing is complete and its `caps_hit` is empty.
+
+  Run from a development checkout, the engine treats that checkout as its own plugin root.
+  The installed plugin's store (`polytropos-install`) is therefore one of the three unmapped
+  namespaces here. It is mapped when the engine runs from the installed plugin.
+- **Residue grew between the two real builds, from 1,682 to 1,700.** 18 new `tmp*`
+  namespaces, each holding only `attempts/kit` (`events.jsonl`, `claims`), were created in
+  three bursts of 6, at 22:39, 22:45 and 22:54 on 2026-09-26.
+  - That window falls inside T10's implementer run, which began after cbf0456 (22:13).
+  - The implementer reported looping `test_kit_scheduler` 128 times in a `git archive`
+    extraction to chase that test's flake. That is a plausible source, but no loop script
+    survives, so it is not established. A concurrent session in another checkout is also
+    possible.
+  - If it was this run, it breaks PLAN's constraint that kit execution never adds residue to
+    the real home.
+  - The dirs match the residue cleanup criterion. Nothing was deleted; that waits on the
+    user's go-ahead.
+- **Done-means (PLAN), checked 2026-09-27, T11 excluded:**
+  - (1) Met. `demo` exits 0, its temp page is gone afterwards, and the real namespace count is
+    unchanged.
+  - (2) Met in substance. On an empty-data-home temp build the page is `0600`, with the exact
+    CSP once and no tripwires. "no ledger found" and "never captured" render, and no `$0.00`
+    does. The evals panel's absent state reads "no mapped namespace to read evaluation runs",
+    not PLAN's example phrase, but it is still text and never a zero (Phase 4 review N7).
+  - (3) and (4) Met by the second real build, with `--no-git` per the user. The git-enabled
+    path is covered at discovery level by `GitEnabledDiscoveryTests`.
+  - (5) Met as amended. The skill relays the plain summary, not `--json`; that decision is
+    ledgered as stale. The four generator checks exit 0.
+  - (6) Met. The full suite is green (5977 tests, 2 skipped), the graph is valid with T11
+    blocked, and `CLAUDE.md` has no diff since the kit branched.
+reviewer: P4 model=opus findings=4 confirmed=4 result=accepted
+session: 2f6e4acb-ed7e-4113-84aa-b3c76076d710
