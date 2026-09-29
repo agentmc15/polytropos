@@ -2001,7 +2001,8 @@ def build_report(ex):
                    "aic": round(sum(d["aic_charged"] for j in judges
                                     for d in j.get("dispatches") or []), 3)},
         "per_arm": per_arm, "decision": decision, "pareto": pareto(per_arm),
-        "quality_leader": max(measured, key=lambda a: a["qs_mean"])["arm"] if measured else None,
+        "quality_leader": max(measured, key=lambda a: (a["qs_mean"], -a["aic_mean"]))["arm"]
+        if measured else None,
         "value_leader": max((a for a in measured if a["value"]), key=lambda a: a["value"],
                             default={"arm": None})["arm"],
         "reference": {t: (r or {}).get("metrics", {}).get("aggregate") for t, r in ref.items()},
