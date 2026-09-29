@@ -1,0 +1,157 @@
+# The route experiment — which Copilot route is best?
+
+`bin/route_experiment.py` · definition: `experiments/route-arms/` · store: `routeruns/`
+
+## The question
+
+Is it better to split a task across models, with a planner, a cheap max-effort worker and a
+frontier reviewer, or to hand the whole task to one frontier model? This experiment answers that
+for **whole routes, not single models**. It measures cost in AIC, correctness, code quality, test
+strength, complexity and discipline, and then applies a decision rule that was fixed before any
+live trial ran.
+
+## Arms
+
+The arms are defined in `experiments/route-arms/experiment.json` (models, efforts). Model ids
+are validated against `data/pricing.copilot.json`.
+
+| Arm | Shape | Planner | Test-author / implementer / verifier | Reviewer |
+|---|---|---|---|---|
+| A1 | pipeline | Opus 5.5 (high) | Luna 6 (max) | Opus 5.5 (high) |
+| A2 | pipeline | Sol 6 (high) | Luna 6 (max) | Opus 5.5 (high) |
+| A3 | one-shot | Sol 6 (high), one dispatch | — | — |
+| A4 | one-shot | Opus 5.5 (high), one dispatch | — | — |
+
+**Pipeline flow:**
+
+```
+planner (read-only) → test-author → implementer → verifier (read-only)
+  └ verifier FAIL  → 1 rework + re-verify
+→ reviewer (read-only)
+  └ reviewer REJECT → 1 rework + re-verify (no second review)
+```
+
+A pipeline trial makes at most 9 dispatches; a one-shot trial makes exactly 1. Each stage sees
+the previous stages' output, and verdicts are parsed from a fixed `VERDICT=` line.
+
+## Tasks
+
+There are three small, rollback-safe tasks in this repo. Each has a hidden oracle and a
+reference patch.
+
+| Task | Kind | Oracle on base → reference | Regression modules |
+|---|---|---|---|
+| T1-statusline-rollover | bug fix (`fmt_tokens` K→M rollover) | 6/10 → 10/10 | test_statusline |
+| T2-est-multi-model | small feature (`est` takes a model list) | 7/13 → 13/13 | test_copilot_pricing, _usage, _statusline, test_journal_advisor |
+| T3-redact-single-walk | behaviour-preserving refactor | 7/9 → 9/9 | test_privacy_primitives, test_journal_collect, test_context_weight, test_training_data |
+
+`python3 bin/route_experiment.py validate` re-proves the table on demand. It checks that the
+oracle is red on base and green on the reference patch, and that regression is green on both.
+
+**Rollback.** Every trial runs in a history-free extraction of the pinned `base_commit`,
+created by `repo_bench.make_sandbox`. The trial never touches the working tree; to roll back,
+discard the sandbox.
+
+**Hidden oracle.** The oracle is never placed in the candidate's tree. It is copied into a
+separate grading sandbox afterwards.
+
+## What is measured, per trial
+
+| Family | Metric | Source |
+|---|---|---|
+| Cost | AIC per dispatch/role/trial, tokens by kind (input, cache read/write, output, reasoning), premium requests, wall time, dispatch count, reworks | each session's own `session.shutdown` `modelMetrics`, priced from the pricing file; Copilot's reported AIU is shown beside it as a cross-check and never summed with it |
+| Correctness | oracle pass share; solved = oracle 100% **and** regression green | hidden oracle + regression modules |
+| Test strength | mutation score: share of oracle-killable AST mutants (in the touched functions) that the candidate's own tests kill | `mutants()`, run with `python -B` so stale bytecode can't mask a mutant |
+| Complexity | ΔSLOC, ΔMcCabe CC, Δcognitive (approx.), max nesting, Halstead volume, maintainability index, max touched-function CC/length, diff and test lines, compared against the reference patch | stdlib `ast` |
+| Discipline | out-of-scope files, task guardrails (`subprocess`, hardcoded ids…), read-only stage wrote, new unused imports, TODOs, parse errors, patch doesn't apply | diff + fence records |
+| Quality | two blind judges from different vendors (GPT-6 Astra, Claude Fable 5.1). Each scores all four arms' diffs for one task×repeat side by side, under shuffled labels, 1–10 on correctness/readability/design/tests/scope/overall | `judge` stage, shell denied |
+| Gate accuracy (pipelines) | whether each verifier/reviewer verdict was correct, judged on the patch that gate actually saw; incorrect acceptances/rejections | oracle re-run per verdict |
+
+## The composite and the decision rule
+
+Everything below is data under `scoring` in `experiment.json`. `run` pins that file's digest
+and refuses to resume under a changed definition.
+
+**Quality Score (QS, 0–100) per trial:**
+
+```
+QS = 100 × gate × Σ wᵢ·cᵢ / Σ wᵢ          (over the components that exist)
+     correctness .40 · judge quality .25 · test strength .15 · simplicity .10 · discipline .10
+gate        = 1, or 0.5 if regression is red
+simplicity  = 1 − ½·excess LOC/max(10, ref LOC) − ½·excess ΔCC/max(3, |ref ΔCC|)   (clamped 0..1)
+discipline  = 1 − 0.25 × violations
+```
+
+**Decision:**
+
+1. **Eligible** arms have a solve rate of at least 2/3.
+2. The **leader** is the eligible arm with the highest mean QS.
+3. Another arm is **tied** with the leader if the paired (task, repeat) QS gap is 5 points or
+   less, or if its 95% paired bootstrap CI contains 0.
+4. The **winner** is the cheapest tied arm by mean AIC per trial.
+
+The report also shows:
+
+- A cost/quality Pareto front.
+- QS per AIC.
+- AIC per solve.
+- Wilson CIs on solve rates.
+- A task-stratified bootstrap CI on each arm's mean QS.
+- Judge agreement: Spearman correlation and mean absolute gap.
+
+## Design controls
+
+- **Paired and counterbalanced.** There are 3 tasks × 4 arms × 3 repeats = 36 trials. Arm
+  order rotates per task and repeat, and every arm solves every task from the same base.
+- **Hermetic dispatch.** Each dispatch sets its own `--session-id`, so cost attribution is
+  exact. The following are excluded:
+  - subagent and skill delegation (the arm's model mix is exactly what it claims);
+  - `session_store_sql` (this repo's own sessions wrote the oracles);
+  - memory writes;
+  - web tools.
+
+  Read-only stages deny the write tool, and judges also deny the shell. After each dispatch,
+  the session log is scanned read-only for experiment paths and nested CLI launches. A hit marks
+  the trial `contaminated` and excludes it.
+- **Money.** `run` and `judge` spend only behind both `--live` and an explicit `--max-aic`. The
+  ceiling is re-checked before every dispatch against measured spend plus an estimate of the
+  next dispatch. If a session log can't be read, that dispatch is charged its estimate and
+  labelled unmeasured, never charged as zero. The ceiling stops the next dispatch; it is not a
+  provider-side guarantee.
+- **Crash safety.** Every dispatch goes through `attempt_ledger`. Re-running `run --run-id ID`
+  resumes: it skips completed, timed-out and contaminated trials and never replays a dispatch.
+
+## Threats to validity
+
+- **Small n.** There are 9 trials per arm. Expect wide CIs; a "tie" is the honest outcome
+  when the data can't separate arms, and the rule then prefers the cheaper route.
+- **Three small Python tasks** don't represent large or multi-file work. The result is
+  scoped to tasks of this size.
+- **Judge bias.** Judges are cross-vendor and blind, but they can still infer style. Judge
+  quality is 25% of QS, and the report shows the other components separately.
+- **Cognitive complexity is an approximation** of SonarSource's definition, implemented with
+  stdlib `ast`. It is comparable across arms, but not with external tools.
+- **Regression scope.** macOS `sandbox-exec` cannot nest, so modules that drive the kit
+  drivers can't run inside the enforced verify boundary. Each task therefore runs a curated,
+  task-relevant regression list. `grade --full-regression` (trusted-host only) re-grades
+  offline against the full suite.
+- **Pre-dispatch estimates** use `task_profiles` token counts and exclude cache writes. Only
+  measured AIC goes into the result. The CLI flags for tool exclusion/denial are verified at
+  the first live dispatch.
+
+## How to run
+
+```bash
+python3 bin/route_experiment.py validate            # oracles red→green; offline
+python3 bin/route_experiment.py plan                # matrix + AIC estimate; spends nothing
+python3 bin/route_experiment.py run --dry-run       # every first-dispatch argv; spawns nothing
+python3 bin/route_experiment.py demo                # whole pipeline on a stub CLI; offline
+
+python3 bin/route_experiment.py run --live --max-aic 4000          # SPENDS: 36 trials
+python3 bin/route_experiment.py judge --run ID --live --max-aic N  # SPENDS: 18 judge dispatches
+python3 bin/route_experiment.py report --run ID [--json]           # scorecard + decision
+```
+
+The cost estimate comes from `plan`, which is computed from `data/pricing.copilot.json`. A
+snapshot at `cached_date` 2026-09-24: about 1,020–1,070 AIC for trials plus about 540 AIC for
+judges, against the preregistered 4,000 ceiling. Rerun `plan` for current figures.

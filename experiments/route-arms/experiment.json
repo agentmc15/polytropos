@@ -1,0 +1,153 @@
+{
+  "version": "polytropos.route-experiment/1",
+  "title": "Which Copilot route is best: planned pipelines vs one-shot frontier models",
+  "base_commit": "c6775f2326f158561cb50fdd90a4cc92b987b167",
+  "repeats": 3,
+  "seed": 20260928,
+  "max_aic": 4000,
+  "stage_timeout_seconds": 1800,
+  "dispatch_flags": {
+    "note": "Every dispatch: headless, all tools allowed, no ask_user, no built-in MCP servers, no auto-update mid-run. Excluded tools keep each arm hermetic: no subagent or skill delegation (the arm's model mix is exactly what it claims), no cross-session history (this repo's own sessions wrote the oracles), no memory writes into the user's account, no web. Read-only stages additionally deny the write tool; judges also deny the shell.",
+    "common": [
+      "--allow-all-tools",
+      "--no-ask-user",
+      "--disable-builtin-mcps",
+      "--no-auto-update",
+      "--silent",
+      "--excluded-tools=task",
+      "--excluded-tools=skill",
+      "--excluded-tools=session_store_sql",
+      "--excluded-tools=store_memory",
+      "--excluded-tools=vote_memory",
+      "--excluded-tools=web_search",
+      "--excluded-tools=web_fetch"
+    ],
+    "read_only": [
+      "--deny-tool=write"
+    ],
+    "judge": [
+      "--deny-tool=shell"
+    ]
+  },
+  "role_profiles": {
+    "note": "task_profiles keys in data/pricing.copilot.json, used ONLY for the pre-dispatch ceiling estimate; measured AIC replaces the estimate once a dispatch finishes.",
+    "planner": "S",
+    "test_author": "S",
+    "implementer": "M",
+    "verifier": "S",
+    "reviewer": "S",
+    "solo": "M",
+    "judge": "S"
+  },
+  "arms": {
+    "A1": {
+      "label": "Opus 5.5 plans -> Luna 6 (max) tests/builds/verifies -> Opus 5.5 reviews",
+      "shape": "pipeline",
+      "stages": {
+        "planner": {
+          "model": "claude-opus-5.5",
+          "effort": "high"
+        },
+        "test_author": {
+          "model": "gpt-6-luna",
+          "effort": "max"
+        },
+        "implementer": {
+          "model": "gpt-6-luna",
+          "effort": "max"
+        },
+        "verifier": {
+          "model": "gpt-6-luna",
+          "effort": "max"
+        },
+        "reviewer": {
+          "model": "claude-opus-5.5",
+          "effort": "high"
+        }
+      }
+    },
+    "A2": {
+      "label": "Sol 6 plans -> Luna 6 (max) tests/builds/verifies -> Opus 5.5 reviews",
+      "shape": "pipeline",
+      "stages": {
+        "planner": {
+          "model": "gpt-6-sol",
+          "effort": "high"
+        },
+        "test_author": {
+          "model": "gpt-6-luna",
+          "effort": "max"
+        },
+        "implementer": {
+          "model": "gpt-6-luna",
+          "effort": "max"
+        },
+        "verifier": {
+          "model": "gpt-6-luna",
+          "effort": "max"
+        },
+        "reviewer": {
+          "model": "claude-opus-5.5",
+          "effort": "high"
+        }
+      }
+    },
+    "A3": {
+      "label": "Sol 6 one-shot",
+      "shape": "one-shot",
+      "stages": {
+        "solo": {
+          "model": "gpt-6-sol",
+          "effort": "high"
+        }
+      }
+    },
+    "A4": {
+      "label": "Opus 5.5 one-shot",
+      "shape": "one-shot",
+      "stages": {
+        "solo": {
+          "model": "claude-opus-5.5",
+          "effort": "high"
+        }
+      }
+    }
+  },
+  "rework": {
+    "after_verifier_fail": 1,
+    "after_reviewer_reject": 1,
+    "note": "A verifier FAIL buys one implementer rework and one re-verify. A reviewer REJECT buys one implementer rework and one re-verify (no second review). Nothing else loops."
+  },
+  "judges": [
+    {
+      "model": "gpt-6-astra",
+      "effort": "high"
+    },
+    {
+      "model": "claude-fable-5.1",
+      "effort": "high"
+    }
+  ],
+  "tasks": [
+    "T1-statusline-rollover",
+    "T2-est-multi-model",
+    "T3-redact-single-walk"
+  ],
+  "scoring": {
+    "note": "Preregistered before any live trial. See docs/ROUTE-EXPERIMENT.md for the rationale of every weight.",
+    "weights": {
+      "correctness": 0.4,
+      "quality": 0.25,
+      "test_strength": 0.15,
+      "simplicity": 0.1,
+      "discipline": 0.1
+    },
+    "regression_gate": 0.5,
+    "discipline_penalty": 0.25,
+    "mutants_per_trial": 20,
+    "equivalence_margin": 5.0,
+    "min_solve_rate": 0.6667,
+    "bootstrap_iterations": 2000,
+    "confidence": 0.95
+  }
+}

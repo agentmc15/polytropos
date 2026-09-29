@@ -1059,7 +1059,7 @@ CHECKLIST = (
 MIGRATION_NOTES = (
     {
         "surface": "Runtime stores (memory, telemetry, journal, benchruns, prefs, trends, "
-                   "attempts, evals, training)",
+                   "attempts, evals, training, routeruns)",
         "forward": "`python3 bin/runtime_data.py where`; an in-tree store keeps being used; "
                    "`python3 bin/runtime_data.py migrate --store NAME --apply` copies it out and "
                    "never deletes the original",
@@ -1243,6 +1243,8 @@ TREE_ROLES = {
     "docs": "documentation source (docs/RELEASE.md carries this gate's generated block)",
     "docs-site": "generated mirror (bin/docs_build.py)",
     "docs-src": "documentation fragments and the hash-locked site toolchain",
+    "experiments": "preregistered experiment definitions (task specs, hidden oracles, reference "
+                   "patches) read by bin/route_experiment.py; never installed behaviour",
     "mkdocs.yml": "site configuration",
     "primitives": "capability registry, historical primitive matrix, primitive model",
     "skills": "plugin skills: runtime behaviour",

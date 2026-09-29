@@ -70,9 +70,9 @@ loaded into every session, so keep it a list of rules, not history or rationale.
   with the body stating exactly what is red and unrun.
 - **Every local store is personal data, written by its own engine ONLY, and lives outside the
   plugin tree.** `memory/` is gitignored user data; so are `telemetry/`, `benchruns/`,
-  `journal/`, `prefs/`, `trends/`, `attempts/`, `evals/`. Their default location comes from `bin/runtime_data.py` — a
+  `journal/`, `prefs/`, `trends/`, `attempts/`, `evals/`, `routeruns/`. Their default dir comes from `bin/runtime_data.py` — a
   per-user application-data dir, per checkout, `0700`/`0600` — never a hardcoded path under the
-  repo, because this tree is distributed, cached, and often cloud-synced. An in-tree store that
+  repo, because this tree is distributed, cached and often cloud-synced. An in-tree store that
   already exists keeps being used; nothing is ever relocated or deleted automatically. Runtime
   code reaches a store only through that engine's explicit `--memory-dir`/`--store-dir`-style
   seam; every test and verify uses a temp fixture dir (memory also pins an explicit `--now`, and

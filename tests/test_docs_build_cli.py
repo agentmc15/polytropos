@@ -304,7 +304,8 @@ class RealTreeIdempotenceTests(unittest.TestCase):
     (2026-09-21), then 84 when the Codex skill parity ports added five pages, and 85 once docs/REFERENCE.md took the long-form page out of README.md
     (2026-09-24), then 86 when J01 added docs/JEV-ACCESS-CONTRACT.md
     (2026-09-25), then 87 when docs/JEV-JUDGE-STUDY.md added its offline
-    preregistration (2026-09-25) -- this test derives the count dynamically for the
+    preregistration (2026-09-25), then 88 when docs/ROUTE-EXPERIMENT.md added the route
+    experiment's preregistration (2026-09-28) -- this test derives the count dynamically for the
     build assertions, and the literal below is only the tripwire that makes a change in
     the page set announce itself."""
 
@@ -312,7 +313,7 @@ class RealTreeIdempotenceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = _copy_real_dirs(tmp, ("skills", "copilot", "codex", "docs"))
             expected_count = len(db.expected_pages(root))
-            self.assertEqual(expected_count, 87, "the pinned page-set size (87 total)")
+            self.assertEqual(expected_count, 88, "the pinned page-set size (88 total)")
 
             code1, out1, err1 = _run_main(["build", "--repo-root", str(root)])
             self.assertEqual(code1, 0, f"stderr={err1!r}")

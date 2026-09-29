@@ -616,6 +616,7 @@ Every top-level tracked path and its role. `packaging` fails on a path with no r
 | `docs` | documentation source (docs/RELEASE.md carries this gate's generated block) |
 | `docs-site` | generated mirror (bin/docs_build.py) |
 | `docs-src` | documentation fragments and the hash-locked site toolchain |
+| `experiments` | preregistered experiment definitions (task specs, hidden oracles, reference patches) read by bin/route_experiment.py; never installed behaviour |
 | `mkdocs.yml` | site configuration |
 | `primitives` | capability registry, historical primitive matrix, primitive model |
 | `skills` | plugin skills: runtime behaviour |
@@ -630,6 +631,7 @@ Every top-level tracked path and its role. `packaging` fails on a path with no r
 | `journal/` | present |
 | `memory/` | present |
 | `prefs/` | present |
+| `routeruns/` | present |
 | `telemetry/` | present |
 | `training/` | present |
 | `trends/` | present |
@@ -658,7 +660,7 @@ Each guarantee names the evidence behind it and what stays unresolved. Every com
 
 | Surface | Forward | Back |
 |---|---|---|
-| Runtime stores (memory, telemetry, journal, benchruns, prefs, trends, attempts, evals, training) | `python3 bin/runtime_data.py where`; an in-tree store keeps being used; `python3 bin/runtime_data.py migrate --store NAME --apply` copies it out and never deletes the original | delete the copy; the original was never touched. `export` copies anywhere; `forget` lists before it deletes and deletes only with `--apply` |
+| Runtime stores (memory, telemetry, journal, benchruns, prefs, trends, attempts, evals, training, routeruns) | `python3 bin/runtime_data.py where`; an in-tree store keeps being used; `python3 bin/runtime_data.py migrate --store NAME --apply` copies it out and never deletes the original | delete the copy; the original was never touched. `export` copies anywhere; `forget` lists before it deletes and deletes only with `--apply` |
 | Copilot home (`~/.copilot`) | `python3 bin/harness_select.py install --harness copilot` (add `--adopt-existing` once for files installed before the ownership manifest) | each adopted file keeps a `.polytropos-bak` beside it; a run that fails midway rolls back only the bytes it wrote |
 | Codex home (`~/.codex`) | `python3 bin/harness_select.py install --harness codex`; `python3 bin/harness_select.py doctor --harness codex` diagnoses; `python3 bin/harness_update.py apply --only codex` refreshes managed copies | `python3 bin/harness_select.py restore-legacy --harness codex` restores proven legacy copies from the backup root `retire-legacy` wrote; `config.toml` is never written, so nothing there needs undoing |
 | Cursor project bundle (`.cursor/`) | `python3 bin/harness_select.py install --harness cursor --project DIR`; `python3 bin/harness_select.py doctor --harness cursor --project DIR` | the manifest at `.cursor/polytropos/install-manifest.json` names every file the installer owns; remove those and only those |

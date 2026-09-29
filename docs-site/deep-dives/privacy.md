@@ -28,12 +28,14 @@ therefore every kit task's verify command — if any of them ever becomes tracke
 | `attempts/` | attempt ledgers (a legacy in-tree location; the default home is outside the tree) |
 | `evals/` | workflow-evaluation runs: trial records, ledgers, sandboxes, dollar data |
 | `training/` | decision-time training snapshots: bounded redacted evidence, source ids, eligibility |
+| `routeruns/` | route-experiment runs: trial records, patches, redacted stage outputs, judge scores, measured AIC |
 | `value-report*.html` | generated value reports (dollars, session ids, machine paths) |
 
 Zero files under any of these have ever been committed, verified across the full git
 history (`git log --all --diff-filter=A`) on 2026-07-25 for the first five, on
 2026-09-13 for the next three, and on 2026-09-19 for `training/` — which returned nothing
-because that store has never existed here: collection is off
+because that store has never existed here (nor has `routeruns/`, added 2026-09-28 with its
+default outside the tree from the start): collection is off
 (`bin/training_data.py` ships `COLLECTION_ENABLED = False` and nothing calls its capture
 hook), so a checkout never creates the directory. The rule and the test are in place for the
 day somebody turns it on. `python3 bin/release_gate.py packaging` re-checks the ignore rules
@@ -152,7 +154,7 @@ Standing rules this creates:
 
 - **After every version bump / plugin refresh**: delete the personal store directories
   (every name in `runtime_data.STORES` — `journal/`, `prefs/`, `telemetry/`, `memory/`,
-  `trends/`, `benchruns/`, `attempts/`, `evals/`, `training/` — plus `value-report*.html`) from the fresh
+  `trends/`, `benchruns/`, `attempts/`, `evals/`, `training/`, `routeruns/` — plus `value-report*.html`) from the fresh
   cache copy, and remove stale version directories. Manual by design — repo code never
   touches `~/.claude`.
 - **Never sync, back up, or share `~/.claude`** without the same scrub; the cache holds
@@ -179,16 +181,16 @@ claude plugin update polytropos@polytropos-local
 
 # 3. LOOK at what the copy pulled in, before deleting (this is the exposure)
 C=~/.claude/plugins/cache/polytropos-local/polytropos
-for d in journal telemetry memory prefs trends benchruns attempts evals training; do
+for d in journal telemetry memory prefs trends benchruns attempts evals training routeruns; do
   test -e "$C/<new>/$d" && echo "!! $d ($(find "$C/<new>/$d" -type f | wc -l) files)"
 done
 
 # 4. prune the fresh copy AND the superseded version directory
-rm -rf "$C/<new>"/{journal,telemetry,memory,prefs,trends,benchruns,attempts,evals,training} "$C/<new>"/value-report*.html
+rm -rf "$C/<new>"/{journal,telemetry,memory,prefs,trends,benchruns,attempts,evals,training,routeruns} "$C/<new>"/value-report*.html
 rm -rf "$C/<old>"
 
 # 5. verify BOTH properties — clean, and actually current
-find "$C" \( -path '*/memory/*' -o -path '*/telemetry/*' -o -path '*/journal/*' -o -path '*/benchruns/*' -o -path '*/prefs/*' -o -path '*/trends/*' -o -path '*/attempts/*' -o -path '*/evals/*' -o -path '*/training/*' \) -type f
+find "$C" \( -path '*/memory/*' -o -path '*/telemetry/*' -o -path '*/journal/*' -o -path '*/benchruns/*' -o -path '*/prefs/*' -o -path '*/trends/*' -o -path '*/attempts/*' -o -path '*/evals/*' -o -path '*/training/*' -o -path '*/routeruns/*' \) -type f
 ls "$C"                                    # only the new version should remain
 ```
 

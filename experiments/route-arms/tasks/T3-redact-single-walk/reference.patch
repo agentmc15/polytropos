@@ -1,0 +1,51 @@
+diff --git a/bin/redact.py b/bin/redact.py
+index a7e11b7..9ef03de 100644
+--- a/bin/redact.py
++++ b/bin/redact.py
+@@ -66,16 +66,24 @@ DEFAULT_FIELD_LIMIT = 500
+ TRUNCATION_NOTE = "… [truncated {dropped} chars]"
+ 
+ 
+-def scan(text, patterns=PATTERNS):
+-    """Kinds of credential shape present in `text`, as `{kind: count}`. Never the values."""
++def _apply(text, patterns):
++    """Label every shape in `patterns`, in order -> `(labelled_text, {kind: count})`.
++
++    Order matters: each pattern sees the text the earlier ones already labelled, so a match
++    is counted once, under the most specific kind.
++    """
++    result = text or ""
+     found = {}
+-    remaining = text or ""
+     for kind, pattern in patterns:
+-        matches = pattern.findall(remaining)
+-        if matches:
+-            found[kind] = found.get(kind, 0) + len(matches)
+-            remaining = pattern.sub(PLACEHOLDER.format(kind=kind), remaining)
+-    return found
++        result, count = pattern.subn(PLACEHOLDER.format(kind=kind), result)
++        if count:
++            found[kind] = found.get(kind, 0) + count
++    return result, found
++
++
++def scan(text, patterns=PATTERNS):
++    """Kinds of credential shape present in `text`, as `{kind: count}`. Never the values."""
++    return _apply(text, patterns)[1]
+ 
+ 
+ def redact(text, limit=DEFAULT_FIELD_LIMIT, patterns=PATTERNS):
+@@ -89,12 +97,7 @@ def redact(text, limit=DEFAULT_FIELD_LIMIT, patterns=PATTERNS):
+     key in the retained half, where nothing would match it any more.
+     """
+     original = text or ""
+-    result = original
+-    redactions = {}
+-    for kind, pattern in patterns:
+-        result, count = pattern.subn(PLACEHOLDER.format(kind=kind), result)
+-        if count:
+-            redactions[kind] = redactions.get(kind, 0) + count
++    result, redactions = _apply(original, patterns)
+     truncated = False
+     if limit is not None and len(result) > limit:
+         dropped = len(result) - limit
