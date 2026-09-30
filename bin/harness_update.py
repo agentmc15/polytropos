@@ -318,8 +318,39 @@ _CODEX_NOT_INSTALLED = {
 # is pending or a file needs human attention; "unmanaged" alone is a warning, never drift.
 _CODEX_DRIFT_STATES = ("install", "managed-update", "conflict")
 
+# The state an absent PROJECT agent is re-stated as when `--repo-root` is the Claude plugin's
+# install source. Never in `_CODEX_DRIFT_STATES`: nothing is pending there, by design.
+CODEX_NOT_APPLICABLE = "not-applicable"
+_INSTALL_SOURCE_AGENT_REASON = (
+    "not applicable here (install source): project agents belong in the checkout where Codex "
+    "works, and the plugin install clone never carries them -- an untracked .codex/ there "
+    "would be copied into the Claude plugin cache"
+)
 
-def build_codex_section(repo_root, codex_home):
+
+def repo_is_install_source(repo_root, known_marketplaces):
+    """Is `repo_root` the directory the Claude marketplace installs this plugin from? -> bool.
+
+    The same signal `run_preflight`'s `matches-marketplace` gate uses: the repo's own
+    marketplace name, looked up in Claude Code's `known_marketplaces.json` record
+    (`resolve_install_source`), compared by real path. Read-only. Anything that cannot be
+    answered -- no record path, an unreadable record, no entry, a repo without plugin identity
+    files -- is False, which keeps today's behavior (project agents count as drift) rather
+    than excusing them on a guess."""
+    if not known_marketplaces:
+        return False
+    try:
+        plugin_staleness = _load_sibling("plugin_staleness")
+        _name, marketplace, _version = plugin_staleness.read_plugin_identity(repo_root)
+    except (OSError, ValueError, KeyError, TypeError):
+        return False
+    recorded = resolve_install_source(known_marketplaces, marketplace)
+    if not recorded:
+        return False
+    return os.path.realpath(str(repo_root)) == os.path.realpath(str(recorded))
+
+
+def build_codex_section(repo_root, codex_home, install_source=False):
     """The `codex` section of the check card: entirely delegated to
     `harness_select.doctor_codex(repo_root, codex_home)`, which is read-only by construction --
     it runs `plan_codex_setup` over every Codex component (`plugin`, `agents`, `skills`,
@@ -337,7 +368,14 @@ def build_codex_section(repo_root, codex_home):
     `unmanaged` (doctor's "managed copy is stale, no refresh requested" / "non-canonical file
     preserved for manual review" state) is reported plainly as a warning but never counted as
     drift -- nothing is broken, only worth a human's attention. When no drift exists, runtime
-    activation remains `unknown`; package metadata and file freshness cannot prove enablement."""
+    activation remains `unknown`; package metadata and file freshness cannot prove enablement.
+
+    `install_source=True` (see `repo_is_install_source`) means `repo_root` is the checkout the
+    Claude marketplace installs from. `doctor_codex` always plans the project agents into
+    `<repo_root>/.codex/agents/`, but that clone deliberately never carries them, so an ABSENT
+    project agent there is re-stated as `not-applicable` with the reason -- still listed and
+    counted, never dropped, and never drift. Only the `install` state is re-stated: a project
+    agent that exists in the install clone and differs is real, and keeps its own state."""
     if codex_home is None:
         return dict(_CODEX_NOT_INSTALLED)
 
@@ -347,6 +385,14 @@ def build_codex_section(repo_root, codex_home):
 
     harness_select_mod = _load_sibling("harness_select")
     report = harness_select_mod.doctor_codex(repo_root, codex_home)
+
+    project_agents = Path(repo_root).resolve() / ".codex" / "agents"
+    if install_source:
+        for action in report.get("actions", []):
+            if (action.get("component") == "agents" and action.get("state") == "install"
+                    and Path(action.get("destination", "")).parent == project_agents):
+                action["state"] = CODEX_NOT_APPLICABLE
+                action["reason"] = _INSTALL_SOURCE_AGENT_REASON
 
     counts = {}
     for action in report.get("actions", []):
@@ -366,6 +412,8 @@ def build_codex_section(repo_root, codex_home):
         "activation": report.get("activation"),
         "legacy_surfaces": report.get("legacy_surfaces", {}),
         "potential_duplicate_names": report.get("potential_duplicate_names", []),
+        "install_source": bool(install_source),
+        "project_agents": str(project_agents),
     }
 
 
@@ -516,15 +564,19 @@ def build_data_section(repo_root, today=None):
 
 
 def run_check(repo_root, installed_manifest, copilot_home=None, codex_home=None, today=None,
-              tracked_paths_fn=None):
+              tracked_paths_fn=None, known_marketplaces=None):
     """The pure aggregation engine behind the `check` subcommand. Builds all four real sections
     and derives the overall `status`/`exit`. `today` is passed straight through to
     `build_data_section` (see its docstring for why it's an explicit parameter, never mocked
-    global time); `tracked_paths_fn` straight through to `build_claude_section`."""
+    global time); `tracked_paths_fn` straight through to `build_claude_section`.
+    `known_marketplaces` is the Claude marketplace record read to decide whether `repo_root` is
+    the plugin's install source (`repo_is_install_source`); None never reads one and keeps the
+    project agents counted as they always were."""
+    install_source = repo_is_install_source(repo_root, known_marketplaces)
     sections = {
         "claude": build_claude_section(repo_root, installed_manifest, tracked_paths_fn),
         "copilot": build_copilot_section(repo_root, copilot_home),
-        "codex": build_codex_section(repo_root, codex_home),
+        "codex": build_codex_section(repo_root, codex_home, install_source=install_source),
         "data": build_data_section(repo_root, today=today),
     }
 
@@ -616,6 +668,12 @@ def _render_codex_section(section):
     counts = section.get("counts", {})
     order = ("install", "up-to-date", "absent", "managed-update", "unmanaged", "conflict")
     lines.append("  ".join(f"{state}: {counts.get(state, 0)}" for state in order))
+    if counts.get(CODEX_NOT_APPLICABLE):
+        lines.append(
+            f"project agents: {counts[CODEX_NOT_APPLICABLE]} not applicable here (install "
+            "source) -- <repo-root>/.codex/agents is never carried by the plugin install "
+            "clone; they belong in the checkout where Codex works (not drift)"
+        )
     if counts.get("unmanaged"):
         lines.append(
             f"warning: {counts['unmanaged']} unmanaged file(s) -- non-canonical or "
@@ -690,7 +748,8 @@ def render_card(result):
 
 def cmd_check(args):
     result = run_check(args.repo_root, args.installed_manifest, args.copilot_home, args.codex_home,
-                       tracked_paths_fn=git_tracked_paths)
+                       tracked_paths_fn=git_tracked_paths,
+                       known_marketplaces=args.known_marketplaces)
     if args.json:
         print(json.dumps(result, indent=2))
     else:
@@ -1535,6 +1594,12 @@ def build_parser():
     )
     check_parser.add_argument(
         "--codex-home", default=DEFAULT_CODEX_HOME, help="Codex home directory (default: ~/.codex)"
+    )
+    check_parser.add_argument(
+        "--known-marketplaces",
+        default=DEFAULT_KNOWN_MARKETPLACES,
+        help="path to known_marketplaces.json, read to tell whether --repo-root is the plugin's "
+             "install source (default: ~/.claude/plugins/known_marketplaces.json)",
     )
     check_parser.add_argument("--json", action="store_true", help="machine-readable output")
     check_parser.set_defaults(func=cmd_check)
