@@ -4768,6 +4768,26 @@ class RsiPanelTests(_WorldCase):
             self.assertNotIn("x" * 200, db.render_page(model, _FAKE_HOME.name))
             self.assertIn(long_value, self.status()["known_versions"])  # data, just not rendered
 
+    def test_a_planted_cap_marker_in_checkout_text_never_marks_a_cap_hit(self):
+        # A cap is hit only when `cap_note` fires, never because a note's text -- which may carry
+        # a string read out of a checkout -- looks like one. The engine's contract version value
+        # rides verbatim into the "read as text" note, so it is the plant.
+        planted = "cap MAX_LEDGER_BYTES (0) reached"
+        self.engine(f'PLANTED_VERSION = "{planted}"\nARMS = ("A", "B")\n')
+        model = self.model({"MAX_RSI_CONSTANTS_RENDERED": 1})
+        self.assertTrue(any(planted in note for note in model["notes"]), model["notes"])
+        hit = [row["name"] for row in model["caps"] if row["hit"]]
+        self.assertNotIn("MAX_LEDGER_BYTES", hit)
+        # The genuine hit in the same build still shows.
+        self.assertIn("MAX_RSI_CONSTANTS_RENDERED", hit)
+        bounds = next(p for p in model["panels"] if p["id"] == "bounds")
+        self.assertEqual(bounds["summary"], f"1 of {len(db.CAP_NAMES)} caps hit")
+        _section_html, page, receipt, _stdout = self.built()
+        self.assertIn(db.esc(planted), page)
+        self.assertEqual(json.loads(receipt)["caps_hit"], [])
+        self.assertIn("<tr><td>MAX_LEDGER_BYTES</td><td>8388608</td><td>not hit</td></tr>",
+                      _section(page, "bounds"))
+
     # -- the kit ---------------------------------------------------------------------------------
 
     def test_the_rsi_kit_tables_come_from_the_synthetic_kit(self):

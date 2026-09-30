@@ -449,8 +449,19 @@ def _leaf_kind(mode):
 
 
 # ---------------------------------------------------------------------------------------------
-# Bounds. Caps travel as a dict so a test can lower one; hitting one leaves a note, and the note
-# is the single record of the hit.
+# Bounds. Caps travel as a dict so a test can lower one; hitting one leaves a note, and
+# `cap_note` records the hit by NAME on the `CapSet` the build carries. The note is what a reader
+# sees; the recorded name is what the bounds section and build.json report -- never parsed back
+# out of note text, which can carry strings read out of a checkout.
+
+class CapSet(dict):
+    """The caps of one build (name -> value) plus `hits`, the names `cap_note` fired for. A plain
+    dict still works everywhere a cap is read; only a `CapSet` records hits."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.hits = set()
+
 
 def default_caps():
     """Every bound this engine applies, as the dict the builders take."""
@@ -482,21 +493,21 @@ def cap_value(caps, name):
 
 
 def cap_note(caps, name, detail):
-    """The sentence a truncating bound leaves behind. `caps_report` recognises a hit by it."""
+    """The sentence a truncating bound leaves behind, recording the hit on `caps` when it is a
+    `CapSet`. Only a call here marks a cap hit: `caps_report` reads the recorded names."""
+    hits = getattr(caps, "hits", None)
+    if isinstance(hits, set):
+        hits.add(name)
     return f"cap {name} ({cap_value(caps, name)}) reached — {detail}"
 
 
-def caps_report(caps, notes):
-    """Every cap with its value and whether this build hit it -> a list of dicts."""
-    rows = []
-    for name in CAP_NAMES:
-        marker = f"cap {name} ("
-        rows.append({
-            "name": name,
-            "value": cap_value(caps, name),
-            "hit": any(marker in str(note) for note in notes or ()),
-        })
-    return rows
+def caps_report(caps):
+    """Every cap with its value and whether this build hit it -> a list of dicts. A hit is a name
+    `cap_note` recorded on the `CapSet`; a plain dict records none, so it reports none."""
+    hits = getattr(caps, "hits", None)
+    hits = hits if isinstance(hits, set) else set()
+    return [{"name": name, "value": cap_value(caps, name), "hit": name in hits}
+            for name in CAP_NAMES]
 
 
 # ---------------------------------------------------------------------------------------------
@@ -1110,10 +1121,11 @@ def build_model(data_home, checkouts, opts, caps):
     `caps` overrides `default_caps()` key by key. The model's `notes` are the page-wide list:
     the global notes, then every panel's own (the classification's ride on the namespaces
     panel), each prefixed with its panel id -- what the bounds panel and build.json show, and
-    what `caps_report` reads a hit from.
+    where every note of a cap hit lands; the hit itself is recorded on the build's `CapSet` by
+    `cap_note`, which is what `caps_report` reads.
     """
     opts = dict(opts or {})
-    caps = {**default_caps(), **dict(caps or {})}
+    caps = CapSet({**default_caps(), **dict(caps or {})})
     now = opts.get("now") or datetime.now(timezone.utc)
     if now.tzinfo is None:
         now = now.replace(tzinfo=timezone.utc)
@@ -1167,7 +1179,7 @@ def build_model(data_home, checkouts, opts, caps):
         entry.setdefault("refresh_hint", None)  # T3: panel() renders this as a second meta line
         model["panels"].append(entry)
     model["notes"] = _collect_notes(notes, model["panels"])
-    model["caps"] = caps_report(caps, model["notes"])
+    model["caps"] = caps_report(caps)
     return model
 
 
@@ -3107,9 +3119,9 @@ def _evals_prescan(we_mod, store_dir, caps, notes, label):
                                    f"file — never opened"))
             continue
         if st.st_size > limit:
-            # T7 retry V1: through `cap_note` like every other bound, so `caps_report`
-            # recognises the hit (its own "cap NAME (" prefix match) and `caps_hit`/the bounds
-            # row/`build.json` all say so -- plain note text does not register as a hit.
+            # T7 retry V1: through `cap_note` like every other bound, so the hit is recorded on
+            # the build's `CapSet` and `caps_hit`/the bounds row/`build.json` all say so --
+            # plain note text does not register as a hit.
             notes.append(cap_note(
                 caps, "MAX_EVAL_RESULTS_BYTES",
                 f"{label}: evals run {name!r}'s results.json is {st.st_size} bytes — the "
@@ -4184,7 +4196,8 @@ def rsi_status(checkout, caps=None, data_home=None):
     RSI_READ_MARK). `not_rendered` lists `[name, reason]` for each contract version, `ARMS` or
     `STORE` bound in a way not read as data. Every string is the file's own, at full length: the
     panel bounds what it renders. `notes` carry exception type names only, never a message."""
-    caps = {**default_caps(), **dict(caps or {})}
+    if not isinstance(caps, CapSet):  # the build's own CapSet is kept, so its hits are recorded
+        caps = {**default_caps(), **dict(caps or {})}
     label = os.fspath(checkout)
     what = "/".join(RSI_ENGINE_PARTS)
     notes = []
@@ -4575,7 +4588,7 @@ def _bounds_blocks(notes, report):
 
 def build_bounds_panel(ctx):
     notes = _collect_notes(ctx["notes"], ctx["model"]["panels"])
-    report = caps_report(ctx["caps"], notes)
+    report = caps_report(ctx["caps"])
     hit = [row["name"] for row in report if row["hit"]]
     return {
         "source": "bin/dashboard.py — this build's own bounds and notes",
