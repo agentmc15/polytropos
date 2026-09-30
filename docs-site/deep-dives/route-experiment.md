@@ -125,6 +125,10 @@ The report also shows:
   provider-side guarantee.
 - **Crash safety.** Every dispatch goes through `attempt_ledger`. Re-running `run --run-id ID`
   resumes: it skips completed, timed-out and contaminated trials and never replays a dispatch.
+  A trial that failed to dispatch is re-run on resume. Its failed attempts stay in the record
+  as `prior_attempts` and still count against the ceiling. The report lists them separately,
+  outside every arm's per-trial AIC, because an outage is not a property of the route. Three
+  dispatch-failed trials in a row stop the run with exit code 5.
 
 ## Threats to validity
 

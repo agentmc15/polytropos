@@ -1031,6 +1031,11 @@ def _unittest_cmd(pattern=None):
     return f"{line} -p {shlex.quote(pattern)}" if pattern else line
 
 
+# Consecutive dispatch-failed trials that stop a run: an outage fails every dispatch in
+# seconds, and each unlogged failure is charged its estimate against the ceiling.
+FAILURE_STREAK_LIMIT = 3
+
+
 class Experiment:
     """One run: dispatch trials, record everything, grade, judge. The run store's only writer."""
 
@@ -1132,6 +1137,8 @@ class Experiment:
         for record in self.records("trials") + self.records("judges"):
             for dispatch in record.get("dispatches") or []:
                 total += dispatch.get("aic_charged") or 0.0
+            for prior in record.get("prior_attempts") or []:
+                total += sum(d.get("aic_charged") or 0.0 for d in prior.get("dispatches") or [])
         return total + sum(d.get("aic_charged") or 0.0 for d in getattr(self, "_open", []))
 
     def check_ceiling(self, estimate):
@@ -1238,10 +1245,20 @@ class Experiment:
         work = self.run_dir / "work" / tid
         box = self.sandbox(work)["path"]
         self._open = []
+        # A re-run of a failed trial keeps what the failed attempts cost: their dispatches
+        # stay in the record (and in `spent`), never overwritten out of the books.
+        previous = self.read_json(f"trials/{tid}.json")
+        prior = list((previous or {}).get("prior_attempts") or [])
+        if previous and previous.get("dispatches"):
+            prior.append({k: previous.get(k) for k in (
+                "attempt", "status", "started", "ended", "dispatches")})
+        attempt_no = len(prior) + 1
         record = {"trial_id": tid, "task": trial["task"], "arm": trial["arm"],
                   "repeat": trial["repeat"], "position": trial["position"],
                   "shape": arm["shape"], "started": utc_now(), "dispatches": self._open,
-                  "fence": [], "verdicts": [], "reworks": 0, "status": "running"}
+                  "fence": [], "verdicts": [], "reworks": 0, "status": "running",
+                  "attempt": attempt_no, "prior_attempts": prior}
+        out_prefix = f"a{attempt_no}-" if attempt_no > 1 else ""
         stage_no = [0]
 
         def step(role, prompt, round_no=0, op=None):
@@ -1252,7 +1269,7 @@ class Experiment:
             after = self.snapshot(box)
             d["touched"] = self.touched(before, after)
             stage_no[0] += 1
-            d["output_file"] = f"outputs/{tid}/{stage_no[0]:02d}-{role}.txt"
+            d["output_file"] = f"outputs/{tid}/{out_prefix}{stage_no[0]:02d}-{role}.txt"
             self.write(d["output_file"], d.pop("_kept"))
             text = d.pop("_text")
             self._open.append(d)
@@ -1374,6 +1391,7 @@ class Experiment:
         done = {r["trial_id"]: r for r in self.records("trials")}
         plan = [t for t in trial_plan(self.exp, repeats)
                 if not only or t["trial_id"] in only]
+        streak = 0
         for trial in plan:
             previous = done.get(trial["trial_id"])
             if previous and previous["status"] in ("complete", "timeout", "contaminated"):
@@ -1386,6 +1404,12 @@ class Experiment:
                 self.say("ceiling reached; resume later with --run-id "
                          f"{self.run_id} and a higher --max-aic")
                 return 4
+            streak = streak + 1 if record["status"] == "dispatch-failed" else 0
+            if streak >= FAILURE_STREAK_LIMIT:
+                self.say(f"{streak} trials in a row failed to dispatch (network or auth?); "
+                         f"stopping. Resume with --run-id {self.run_id}: failed trials re-run "
+                         "and keep what their failed attempts cost")
+                return 5
         return 0
 
     # -- grading (offline; spends nothing) --------------------------------------------------
@@ -1991,11 +2015,23 @@ def build_report(ex):
     agreement = spearman([p[0] for p in pairs], [p[1] for p in pairs])
     decision = decide(arm_rows, per_arm, scoring)
     measured = [a for a in per_arm.values() if a["n"]]
+    scored_ids = {r["trial_id"] for r in rows}
+    lost = []
+    for trial in trials:
+        lost += [d for p in trial.get("prior_attempts") or [] for d in p.get("dispatches") or []]
+        if trial["trial_id"] not in scored_ids:
+            lost += trial.get("dispatches") or []
+    failed_spend = {
+        "dispatches": len(lost),
+        "measured_aic": round(sum(d["aic_charged"] for d in lost if d.get("usage")), 3),
+        "estimate_charged_aic": round(sum(d["aic_charged"] for d in lost
+                                          if not d.get("usage")), 3)}
     return {
         "version": RESULT_VERSION, "run_id": ex.run_id, "preregistration": ex.digest,
         "manifest_preregistration": manifest.get("preregistration"),
         "pricing_cached_date": ex.pricing.get("cached_date"),
         "trials": len(trials), "scored": len(rows), "excluded": excluded,
+        "failed_spend": failed_spend,
         "judges": {"records": len(judges), "parsed": sum(1 for j in judges if j.get("parsed")),
                    "spearman_overall": agreement, "pairs": len(pairs),
                    "aic": round(sum(d["aic_charged"] for j in judges
@@ -2025,6 +2061,12 @@ def render_report(report):
              f"{report['scored']} of {report['trials']} trials scored; "
              f"{len(report['excluded'])} excluded. AIC is token-priced from each session's "
              f"own log at the {report['pricing_cached_date']} rates (est.).", ""]
+    fs = report.get("failed_spend") or {}
+    if fs.get("dispatches"):
+        lines += [f"Failed or excluded attempts: {fs['dispatches']} dispatches, "
+                  f"{_f(fs['measured_aic'], 2)} AIC measured + "
+                  f"{_f(fs['estimate_charged_aic'], 2)} AIC charged at estimate (no session log). "
+                  "Counted against the ceiling; outside every arm's per-trial AIC.", ""]
     d = report["decision"]
     lines += ["## Decision (preregistered rule)", "",
               f"**Winner: {d['winner'] or 'none'}** -- {d['reason']}.",

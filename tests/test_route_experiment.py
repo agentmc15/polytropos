@@ -547,6 +547,48 @@ class DriverTests(unittest.TestCase):
         self.assertIn("unmeasured", d["aic_basis"])
         self.assertEqual(record["unmeasured_dispatches"], 1)
 
+    def test_a_rerun_failed_trial_keeps_the_failed_attempts_spend(self):
+        fake = FakeCopilot(self.home)
+
+        def flaky(argv, cwd, timeout):
+            result = fake(argv, cwd, timeout)
+            if len(fake.calls) == 1:
+                result.update({"rc": 1, "outcome": "failed", "stdout": "", "output": ""})
+            return result
+
+        ex = self.driver(flaky)
+        only = {self.trial("A4")["trial_id"]}
+        self.assertEqual(ex.run(1, only=only), 0)
+        first = ex.records("trials")[0]
+        self.assertEqual(first["status"], "dispatch-failed")
+        lost = first["dispatches"][0]["aic_charged"]
+        self.assertGreater(lost, 0)
+        self.assertEqual(ex.run(1, only=only), 0)
+        second = ex.records("trials")[0]
+        self.assertEqual(second["status"], "complete")
+        self.assertEqual(second["attempt"], 2)
+        self.assertEqual(len(second["prior_attempts"]), 1)
+        self.assertTrue(second["dispatches"][0]["output_file"].endswith("/a2-01-solo.txt"))
+        self.assertAlmostEqual(ex.spent(), lost + second["aic"])
+        report = rx.build_report(ex)
+        self.assertEqual(report["failed_spend"]["dispatches"], 1)
+        self.assertAlmostEqual(report["failed_spend"]["measured_aic"], round(lost, 3))
+        self.assertAlmostEqual(report["per_arm"]["A4"]["aic_total"], round(second["aic"], 3))
+
+    def test_an_outage_stops_the_run_after_a_streak_of_failed_dispatches(self):
+        calls = []
+
+        def down(argv, cwd, timeout):
+            calls.append(argv)
+            return {"rc": 1, "outcome": "failed", "stdout": "", "output": "",
+                    "duration_s": 0.01, "timed_out": False}
+
+        ex = self.driver(down)
+        self.assertEqual(ex.run(1), 5)
+        self.assertEqual(len(calls), rx.FAILURE_STREAK_LIMIT)
+        self.assertEqual([t["status"] for t in ex.records("trials")],
+                         ["dispatch-failed"] * rx.FAILURE_STREAK_LIMIT)
+
     def test_resuming_under_a_changed_definition_is_refused(self):
         ex = self.driver(FakeCopilot(self.home))
         ex.open_run(1)
