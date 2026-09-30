@@ -3599,10 +3599,10 @@ class EvalsPanelTests(_WorldCase):
         self.assertNotIn("variants (1 row)", section)
 
     def test_a_malformed_trial_field_is_a_note_not_a_crash_for_the_whole_namespace(self):
-        # T7 retry R1: a trial whose `oracles` is a truthy string makes the owner's
-        # `_variant_summary` do `(r.get("oracles") or {}).get(...)`, which calls `.get` ON
-        # THE STRING and raises `AttributeError` -- outside the brief's own pinned
-        # `(OSError, ValueError, KeyError, TypeError)` tuple.
+        # T7 retry R1: a trial whose `oracles` is a truthy string used to make the owner's
+        # `_variant_summary` raise `AttributeError`. The owner now counts it as an oracle that
+        # did not report, so the bad run's card renders; the dashboard's per-run catch is
+        # then exercised by making `build_card` raise for that run alone.
         we = db._mod("workflow_eval")
         bad_run = self.world["evals_dir"] / "run-2026-01-05-oraclesstr"
         bad_run.mkdir(parents=True)
@@ -3616,6 +3616,20 @@ class EvalsPanelTests(_WorldCase):
         }
         (bad_run / "results.json").write_text(json.dumps(envelope))
         rc, out, _stdout, stderr = self.build()
+        self.assertEqual(rc, 0, stderr)
+        section = _section(self.page(out), "evals")
+        self.assertIn("run run-2026-01-05-oraclesstr — repo", section)
+        self.assertNotIn("card unavailable", section)
+
+        real_build_card = we.build_card
+
+        def build_card_raising_for_the_bad_run(env):
+            if env.get("run_id") == "run-2026-01-05-oraclesstr":
+                raise AttributeError("simulated owner failure")
+            return real_build_card(env)
+
+        with mock.patch.object(we, "build_card", build_card_raising_for_the_bad_run):
+            rc, out, _stdout, stderr = self.build("out-raising")
         self.assertEqual(rc, 0, stderr)
         page = self.page(out)
         section = _section(page, "evals")
@@ -3635,8 +3649,8 @@ class EvalsPanelTests(_WorldCase):
 
     def test_list_runs_raising_falls_back_to_per_run_reads_for_the_good_runs(self):
         # T7 retry R2: a `results.json` that is valid JSON but not an object (`[1, 2, 3]`)
-        # makes the owner's `list_runs` raise `AttributeError` (`env.get("v")` on a list) --
-        # verified directly that `read_envelope` on the SAME run does not raise.
+        # used to make the owner's `list_runs` raise `AttributeError`. The owner now notes it
+        # instead, so the raise is forced here to keep the dashboard's fallback path covered.
         second_run = self.world["evals_dir"] / "run-2026-01-03-second"
         second_run.mkdir(parents=True)
         good2 = dict(json.loads((self.world["good_run_dir"] / "results.json").read_text()))
@@ -3645,7 +3659,9 @@ class EvalsPanelTests(_WorldCase):
         bad_run = self.world["evals_dir"] / "run-2026-01-04-notadict"
         bad_run.mkdir(parents=True)
         (bad_run / "results.json").write_text(json.dumps([1, 2, 3]))
-        rc, out, _stdout, stderr = self.build()
+        with mock.patch.object(db._mod("workflow_eval"), "list_runs",
+                               side_effect=AttributeError("simulated owner failure")):
+            rc, out, _stdout, stderr = self.build()
         self.assertEqual(rc, 0, stderr)
         page = self.page(out)
         section = _section(page, "evals")
@@ -3898,8 +3914,13 @@ class EvalsP2FixTests(_WorldCase):
         canary = self.plant_foreign_version_canary()
         not_an_object = self.world["evals_dir"] / "run-2026-01-04-notadict"
         not_an_object.mkdir()
-        (not_an_object / "results.json").write_text("[1, 2]")  # makes list_runs raise
-        rc, out, _stdout, stderr = self.build()
+        (not_an_object / "results.json").write_text("[1, 2]")
+        # The owner's `list_runs` now notes a non-object results.json instead of raising, so
+        # the fallback path is forced here: it stays the dashboard's defence against any
+        # other way the owner's listing can raise.
+        with mock.patch.object(self.we(), "list_runs",
+                               side_effect=AttributeError("simulated owner failure")):
+            rc, out, _stdout, stderr = self.build()
         self.assertEqual(rc, 0, stderr)
         section = self.assert_only_the_gate_note(self.page(out), canary)
         self.assertIn("workflow_eval.list_runs raised AttributeError", section)

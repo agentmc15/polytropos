@@ -840,6 +840,58 @@ class CardTests(_Case):
         self.assertEqual(len(notes), 2)
 
 
+    def _put_run(self, name, envelope):
+        run_dir = self.store / name
+        run_dir.mkdir(parents=True)
+        (run_dir / "results.json").write_text(json.dumps(envelope) + "\n")
+
+    def test_list_skips_a_results_json_that_is_not_an_object(self):
+        self._put_run("2026-09-13-abcd", synthetic_envelope())
+        self._put_run("2026-09-13-list", [1, 2, 3])
+        self._put_run("2026-09-13-strg", "a string")
+        rows, notes = we.list_runs(self.store)
+        self.assertEqual([r["run_id"] for r in rows], ["2026-09-13-abcd"])
+        for name in ("2026-09-13-list", "2026-09-13-strg"):
+            self.assertIn(f"{name}: not a {we.EVAL_VERSION} envelope", notes)
+
+    def test_list_names_a_run_by_its_directory_and_flags_a_different_declared_id(self):
+        self._put_run("2026-09-13-abcd", synthetic_envelope(run_id="2026-09-13-abcd"))
+        self._put_run("2026-09-13-beef", synthetic_envelope(run_id="../../etc"))
+        rows, notes = we.list_runs(self.store)
+        self.assertEqual([r["run_id"] for r in rows], ["2026-09-13-abcd", "2026-09-13-beef"])
+        self.assertEqual(len(notes), 1, notes)
+        self.assertIn("2026-09-13-beef", notes[0])
+        self.assertIn("'../../etc'", notes[0])
+        # Every listed id is one read_envelope can actually open.
+        for row in rows:
+            self.assertEqual(we.read_envelope(self.store, row["run_id"])["v"], we.EVAL_VERSION)
+
+    def test_read_envelope_refuses_an_id_that_leaves_the_store(self):
+        outside = self.root / "outside"
+        outside.mkdir()
+        (outside / "results.json").write_text(json.dumps(synthetic_envelope()))
+        self.store.mkdir()
+        for bad in ("../outside", str(outside), "a/../../outside", "", ".hidden"):
+            with self.assertRaises(ValueError, msg=bad):
+                we.read_envelope(self.store, bad)
+        (self.store / "2026-09-13-link").symlink_to(outside)
+        with self.assertRaises(ValueError):
+            we.read_envelope(self.store, "2026-09-13-link")
+        with self.assertRaises(FileNotFoundError):
+            we.read_envelope(self.store, "2026-09-13-none")
+        with self.assertRaises(FileNotFoundError):
+            we.read_envelope(self.root / "no-store", "2026-09-13-none")
+
+    def test_a_non_dict_oracles_field_never_crashes_the_card(self):
+        env = synthetic_envelope()
+        env["trials"][0]["oracles"] = ["not", "a", "dict"]
+        env["trials"][2]["oracles"] = {"tests": "not a dict"}
+        card = we.build_card(env)
+        kit = next(v for v in card["variants"] if v["variant"] == "stub/kit/pinned:m")
+        n = kit["n"]
+        self.assertEqual(kit["coverage"]["tests_oracle"], (n - 2) / n)
+
+
 # ---- policy: propose / review / apply / rollback -------------------------------------------------------------
 
 class PolicyProcessTests(_Case):

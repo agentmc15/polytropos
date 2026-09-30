@@ -459,7 +459,7 @@ every write, read, or delete into a caller-selected root goes through bin/safe_p
 | copilot | none mapped | polytropos's own |
 | cursor | `test_cursor_adapter.InstallTests.test_a_destination_escaping_the_project_is_refused_not_written` (1) | polytropos's own |
 | stub | `test_kit_scheduler.SnapshotTests.test_a_snapshot_copies_files_keeps_modes_skips_links_and_excluded_dirs` (1); `test_kit_scheduler.ConflictTests.test_a_file_the_user_changed_during_the_batch_is_never_overwritten` (1) | polytropos's own |
-| shared | `test_safe_paths.ContainmentTests` (10); `test_safe_paths.RelativePathTests` (2); `test_safe_paths.IdentifierTests` (3); `test_kit_verify_hook.TaskIdConfinementTests` (3); `test_repo_bench.SubstrateConfinementTests` (7); `test_repo_bench.RunLoopSafetyTests.test_the_run_never_writes_the_real_store` (1); `test_repo_bench.RunLoopSafetyTests.test_target_repo_is_byte_identical_after_a_full_run` (1); `test_repo_bench.OracleTestsTests.test_blob_lands_in_the_substrate_and_never_in_the_candidate_sandbox` (1) | n/a |
+| shared | `test_safe_paths.ContainmentTests` (12); `test_safe_paths.RelativePathTests` (2); `test_safe_paths.IdentifierTests` (3); `test_kit_verify_hook.TaskIdConfinementTests` (3); `test_repo_bench.SubstrateConfinementTests` (7); `test_repo_bench.RunLoopSafetyTests.test_the_run_never_writes_the_real_store` (1); `test_repo_bench.RunLoopSafetyTests.test_target_repo_is_byte_identical_after_a_full_run` (1); `test_repo_bench.OracleTestsTests.test_blob_lands_in_the_substrate_and_never_in_the_candidate_sandbox` (1) | n/a |
 
 #### Installation ownership (steps 11, 23)
 
