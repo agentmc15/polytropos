@@ -182,6 +182,46 @@ class LedgerFieldTests(unittest.TestCase):
                     self._write(**kwargs)
 
 
+class EscalationCountTests(unittest.TestCase):
+    """`max-escalations` from NOTES.md charges what `OPERATION_CAPS` charges: escalations only.
+
+    The observability-dashboard kit read 9 escalations against a cap of 4 with no model ever
+    escalated: every line was a same-model `retry-pass`, and the counter charged each retry.
+    """
+
+    def test_retry_pass_lines_charge_dispatches_but_no_escalations(self):
+        notes = "\n".join(
+            f"- outcome: T{i} model=sonnet attempts=2 result=retry-pass review=clean"
+            for i in range(9)
+        )
+        used = kc.count_plan_budget_usage(notes)
+        self.assertEqual(used["max-dispatches"], 18)
+        self.assertEqual(used["max-model-calls"], 18)
+        self.assertEqual(used["max-escalations"], 0)
+        # The same ledger now clears the cap it used to trip.
+        self.assertIsNone(kc.blocking_cap({"max-escalations": 4}, used, "escalation"))
+
+    def test_the_operation_caps_agree_a_retry_is_never_an_escalation(self):
+        self.assertNotIn("max-escalations", kc.OPERATION_CAPS["retry"])
+        self.assertIn("max-escalations", kc.OPERATION_CAPS["escalation"])
+
+    def test_results_that_cannot_tell_a_retry_from_a_rung_stay_an_upper_bound(self):
+        # A driver's `pass` may carry an escalation from an earlier run that died before it
+        # projected; `blocked` and `escalated-pass` may mix retries with rungs. Undercounting
+        # a cap is the unsafe direction, so these keep `attempts - 1`.
+        for result in ("pass", "blocked", "escalated-pass"):
+            with self.subTest(result=result):
+                used = kc.count_plan_budget_usage(
+                    f"- outcome: A1 model=sonnet attempts=3 result={result} review=none")
+                self.assertEqual(used["max-escalations"], 2)
+
+    def test_only_the_exact_result_word_is_exempt(self):
+        for line in ("outcome: A1 model=m attempts=3 result=retry-passed review=none",
+                     "outcome: A1 model=m attempts=3 result=blocked review=none note=retry-pass"):
+            with self.subTest(line=line):
+                self.assertEqual(kc.count_plan_budget_usage(line)["max-escalations"], 2)
+
+
 class TripleImplementationTests(unittest.TestCase):
     """The extraction has to stick, or it was a one-time tidy-up rather than a fix."""
 
