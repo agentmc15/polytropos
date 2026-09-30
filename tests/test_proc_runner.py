@@ -27,8 +27,12 @@ SPEC = importlib.util.spec_from_file_location("proc_runner_under_test", ROOT / "
 pr = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(pr)
 
-#: Short everywhere: these assert on behaviour at a boundary, not on patience.
-FAST = {"timeout": 2, "grace": 0.4}
+#: For runs expected to COMPLETE. The wall clock covers fork, exec and shell start-up, which
+#: a loaded full-suite run has pushed near two seconds for `echo`; a two-second budget then
+#: turns a correct run into a timeout with empty stdout. The ceiling only bounds a hang -- a
+#: run that finishes returns at once -- so it is generous. Timeout behaviour is tested with
+#: its own explicit budgets below, never through this.
+FAST = {"timeout": 30, "grace": 0.4}
 
 
 class _Scripts(unittest.TestCase):
@@ -240,6 +244,7 @@ class OutputBoundTests(_Scripts):
 
     def test_output_under_the_limit_is_untouched(self):
         result = pr.run([self.script("echo small\n")], cwd=self.dir, output_limit=4096, **FAST)
+        self.assertEqual(result["outcome"], pr.OUTCOME_OK, result["detail"])
         self.assertFalse(result["truncated"])
         self.assertEqual(result["stdout"], "small\n")
 
