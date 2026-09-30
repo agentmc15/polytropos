@@ -206,6 +206,13 @@ MAX_RSI_CONSTANTS_RENDERED = 50
 # payload. A longer one is replaced by a fixed label, never rendered and never cut.
 MAX_RSI_VALUE_CHARS = 120
 
+# How many rows each RSI kit table renders per checkout: the task table and the `outcome:` line
+# table. Below MAX_TASKS_MD_BYTES and MAX_KIT_NOTES_BYTES a hostile kit still held about 45k rows
+# and made an 8 MB page. The busiest real kit in this repo (`decision-improvement-v1`) holds a
+# few dozen tasks and outcome lines; 500 is over ten times that. It bounds rendering only: the
+# task status counts always cover every task parsed.
+MAX_RSI_TABLE_ROWS = 500
+
 # A local git read takes milliseconds; 20 s (attempt_ledger's git probe bound) stops a hung one.
 GIT_TIMEOUT_SECONDS = 20
 
@@ -232,6 +239,7 @@ CAP_NAMES = (
     "MAX_KIT_NOTES_BYTES",
     "MAX_RSI_CONSTANTS_RENDERED",
     "MAX_RSI_VALUE_CHARS",
+    "MAX_RSI_TABLE_ROWS",
 )
 
 PAGE_TITLE = "polytropos observability dashboard"
@@ -483,6 +491,7 @@ def default_caps():
         "MAX_KIT_NOTES_BYTES": MAX_KIT_NOTES_BYTES,
         "MAX_RSI_CONSTANTS_RENDERED": MAX_RSI_CONSTANTS_RENDERED,
         "MAX_RSI_VALUE_CHARS": MAX_RSI_VALUE_CHARS,
+        "MAX_RSI_TABLE_ROWS": MAX_RSI_TABLE_ROWS,
     }
 
 
@@ -4372,10 +4381,21 @@ def _prefix_line_count(text, prefix):
     return count
 
 
+def _rsi_rows_capped(rows, caps, label, what, noun, notes):
+    """`rows` cut to MAX_RSI_TABLE_ROWS, first by position in the file; a cut leaves a cap note
+    naming the file and how many rows it held."""
+    limit = cap_value(caps, "MAX_RSI_TABLE_ROWS")
+    if len(rows) > limit:
+        notes.append(cap_note(caps, "MAX_RSI_TABLE_ROWS",
+                              f"{label}: {what} holds {len(rows)} {noun}; only the first "
+                              f"{limit}, by position in the file, are rendered"))
+    return rows[:limit]
+
+
 def _rsi_tasks_blocks(checkout, label, caps, notes):
     """The RSI kit's TASKS.md, under MAX_TASKS_MD_BYTES, through `kit_contract.parse_tasks` -> a
-    table (id, title, status, model) and the status counts. Undecodable or unparseable is a note
-    naming the error type."""
+    table (id, title, status, model) of at most MAX_RSI_TABLE_ROWS rows and the status counts,
+    which count every task parsed. Undecodable or unparseable is a note naming the error type."""
     kc = _mod("kit_contract")
     parts = RSI_KIT_PARTS + ("TASKS.md",)
     what = "/".join(parts)
@@ -4401,6 +4421,7 @@ def _rsi_tasks_blocks(checkout, label, caps, notes):
         rows.append(row)
         if row[2] in counts:
             counts[row[2]] += 1
+    rows = _rsi_rows_capped(rows, caps, label, what, "tasks", notes)
     parts_line = ["task status counts — "]
     for index, status in enumerate(kc.STATUSES):
         parts_line += ([" · "] if index else []) + [f"{status}: ",
@@ -4415,9 +4436,9 @@ def _rsi_tasks_blocks(checkout, label, caps, notes):
 
 def _rsi_notes_blocks(checkout, label, caps, notes):
     """The RSI kit's NOTES.md, under MAX_KIT_NOTES_BYTES -> its `outcome:` lines through
-    `attempt_history.notes_records(kit, text, model_registry.registry())` as a table (task,
-    result, dispatched and observed model, run -- each the record's own value or `unknown`), and
-    the count of its `actual-use:` and `routing:` lines, by prefix only."""
+    `attempt_history.notes_records(kit, text, model_registry.registry())` as a table of at most
+    MAX_RSI_TABLE_ROWS rows (task, result, dispatched and observed model, run -- each the record's
+    own value or `unknown`), and the count of its `actual-use:` and `routing:` lines, by prefix only."""
     ah, mr = _mod("attempt_history"), _mod("model_registry")
     parts = RSI_KIT_PARTS + ("NOTES.md",)
     what = "/".join(parts)
@@ -4450,6 +4471,7 @@ def _rsi_notes_blocks(checkout, label, caps, notes):
             except Exception as exc:  # noqa: BLE001 -- this record's row only
                 notes.append(f"{label}: an outcome record from {what} could not be rendered "
                              f"({type(exc).__name__})")
+        rows = _rsi_rows_capped(rows, caps, label, what, "outcome: lines the owner reads", notes)
         blocks.append({"type": "table",
                        "headers": ["task", "result", "dispatched model", "observed model", "run"],
                        "rows": rows, "caption": "outcome: lines (attempt_history.notes_records)",
