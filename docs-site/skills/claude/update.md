@@ -178,6 +178,11 @@ the `data/pricing.copilot.json` refresh.
   `python3 bin/plugin_staleness.py` prints one `rm -rf` line for each; relay them, and run them
   only on the user's explicit go-ahead.
 - An `unmanaged` result on codex is a warning worth mentioning, not an alarm.
+- A codex `project agents: N not applicable here (install source)` line means `--repo-root` is
+  the checkout the Claude marketplace installs from (its `known_marketplaces.json` record, the
+  same one `preflight`'s `matches-marketplace` gate reads). That clone never carries
+  `.codex/agents/`, so those agents are listed but not drift. Report them as not applicable;
+  never install them there — an untracked `.codex/` would be copied into the plugin cache.
 - A codex `conflict` count means destinations differ from what the bundle would write (an
   edited managed file, or an unresolved placeholder) — real drift, worth naming; a
   `managed-update` means a managed copy is waiting on a refresh.

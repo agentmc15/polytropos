@@ -21,6 +21,8 @@ python3 "$POLYTROPOS_ROOT/bin/harness_update.py" check --repo-root "$POLYTROPOS_
 
 Exit 3 means drift was found, not that the checker crashed. “not installed” is absence, `unmanaged` is a warning, and Codex `conflict` or `managed-update` entries are actionable drift.
 
+Project agents reported `not applicable here (install source)` are not drift: the root is the checkout the Claude marketplace installs from, which never carries `.codex/agents/`. They belong in the checkout where Codex works; never install them into the install source.
+
 ### Write boundary
 
 Run `apply` only when the user explicitly requested a refresh in the current conversation. A freshness question is not authorization to write. If intent is unclear, show the dry-run instead:
