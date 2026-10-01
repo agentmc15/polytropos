@@ -35,7 +35,9 @@ repeat side by side under shuffled labels. PIPELINE-ONLY: verifier/reviewer verd
 against the oracle (an INCORRECT ACCEPTANCE is a verdict of pass/accept on a failing oracle).
 
 THE DECISION RULE is data (`scoring` in experiment.json) and is fixed before a live trial
-exists; `run` pins its digest and refuses to resume under a changed definition. See
+exists; `run` pins its digest and refuses to resume under a changed definition. An arm added
+afterwards lives in `extensions/`, joins a run only on `--extend-arms` (recorded in run.json),
+is never judged, and is ranked in a separate post-hoc view, never in the preregistered one. See
 docs/ROUTE-EXPERIMENT.md for every weight and threat to validity.
 
 MONEY. Nothing spends by default. `run` and `judge` dispatch only behind BOTH `--live` and an
@@ -77,6 +79,7 @@ EXPERIMENT_DIR = REPO_ROOT / "experiments" / "route-arms"
 PRICING_PATH = REPO_ROOT / "data" / "pricing.copilot.json"
 EXPERIMENT_VERSION = "polytropos.route-experiment/1"
 RESULT_VERSION = "polytropos.route-experiment.result/1"
+EXTENSION_VERSION = "polytropos.route-experiment.extension/1"
 STORE_NAME = "routeruns"
 
 PIPELINE_ROLES = ("planner", "test_author", "implementer", "verifier", "reviewer")
@@ -263,7 +266,42 @@ def load_experiment(exp_dir=EXPERIMENT_DIR, pricing=None):
     manifest = {"experiment": sha256_text(raw),
                 "tasks": {tid: t["digests"] for tid, t in sorted(exp["task_defs"].items())}}
     digest = sha256_text(json.dumps(manifest, sort_keys=True))
+    exp["extensions"] = load_extensions(exp_dir, exp, pricing if pricing is not None
+                                        else load_pricing())
     return exp, digest
+
+
+def load_extensions(exp_dir, exp, pricing):
+    """{arm id: {definition, digest, file, reason, added}} from `extensions/*.json` -- arms
+    added AFTER the preregistration. They live outside experiment.json so the preregistered
+    digest never moves; a run takes one only on an explicit `--extend-arms`, which records the
+    extension's own digest in run.json."""
+    found = {}
+    for path in sorted((Path(exp_dir) / "extensions").glob("*.json")):
+        raw = path.read_text(encoding="utf-8")
+        ext = json.loads(raw)
+        _require(ext.get("version") == EXTENSION_VERSION,
+                 f"{path.name}: version must be {EXTENSION_VERSION!r}")
+        arm_id = ext.get("arm")
+        _require(arm_id not in (exp.get("arms") or {}) and arm_id not in found,
+                 f"{path.name}: arm {arm_id!r} already exists")
+        _require(ext.get("reason"), f"{path.name}: an extension must state its reason")
+        definition = ext.get("definition") or {}
+        probe = {k: v for k, v in exp.items() if k not in ("task_defs", "dir")}
+        validate_definition({**probe, "arms": {arm_id: definition}}, pricing)
+        found[arm_id] = {"definition": definition, "digest": sha256_text(raw),
+                         "file": f"extensions/{path.name}", "reason": ext["reason"],
+                         "added": ext.get("added")}
+    return found
+
+
+def merge_extensions(exp, arm_ids):
+    """Merge the named extension arms into `exp["arms"]` (in memory only)."""
+    for arm_id in arm_ids:
+        _require(arm_id in (exp.get("extensions") or {}),
+                 f"no extension arm {arm_id!r} under {exp.get('dir', '?')}/extensions/")
+        exp["arms"][arm_id] = exp["extensions"][arm_id]["definition"]
+    return exp
 
 
 # ---------------------------------------------------------------------------------------------
@@ -1156,7 +1194,7 @@ class Experiment:
             self._ledger = _al().AttemptLedger(self.run_dir / "attempts", self.run_id)
         return self._ledger
 
-    def open_run(self, repeats):
+    def open_run(self, repeats, extend=()):
         manifest = self.read_json("run.json")
         if manifest is not None:
             if manifest.get("preregistration") != self.digest:
@@ -1164,15 +1202,49 @@ class Experiment:
                     f"run {self.run_id} was started under preregistration "
                     f"{manifest.get('preregistration', '?')[:12]}; the experiment definition "
                     f"now digests to {self.digest[:12]}. Start a new run instead of mixing them.")
-            return manifest
-        manifest = {"version": RESULT_VERSION, "run_id": self.run_id, "created": utc_now(),
-                    "preregistration": self.digest, "base_commit": self.exp["base_commit"],
-                    "repeats": repeats, "exec_mode": self.exec_mode,
-                    "pricing_cached_date": self.pricing.get("cached_date"),
-                    "cli_binary": Path(self.binary).name, "arms": self.exp["arms"],
-                    "judges": self.exp.get("judges"), "scoring": self.exp["scoring"]}
-        self.write("run.json", manifest)
+        else:
+            manifest = {"version": RESULT_VERSION, "run_id": self.run_id, "created": utc_now(),
+                        "preregistration": self.digest, "base_commit": self.exp["base_commit"],
+                        "repeats": repeats, "exec_mode": self.exec_mode,
+                        "pricing_cached_date": self.pricing.get("cached_date"),
+                        "cli_binary": Path(self.binary).name, "arms": dict(self.exp["arms"]),
+                        "judges": self.exp.get("judges"), "scoring": self.exp["scoring"]}
+            self.write("run.json", manifest)
+        self.activate(manifest)
+        recorded = {e["arm"] for e in manifest.get("extensions") or []}
+        added = [a for a in extend if a not in recorded]
+        if added:
+            merge_extensions(self.exp, added)
+            for arm_id in added:
+                ext = self.exp["extensions"][arm_id]
+                manifest.setdefault("extensions", []).append({
+                    "arm": arm_id, "digest": ext["digest"], "file": ext["file"],
+                    "reason": ext["reason"], "definition": ext["definition"],
+                    "added_to_run": utc_now(),
+                    "trials_before": len(self.records("trials"))})
+            self.write("run.json", manifest)
+            self.say(f"run {self.run_id}: extended with post-hoc arm(s) {', '.join(added)} "
+                     "(recorded in run.json; reported apart from the preregistered decision)")
         return manifest
+
+    def activate(self, manifest):
+        """Merge the extension arms this run already recorded, refusing a changed extension."""
+        for entry in manifest.get("extensions") or []:
+            ext = (self.exp.get("extensions") or {}).get(entry["arm"])
+            if ext is None or ext["digest"] != entry["digest"]:
+                raise ConfigError(
+                    f"run {self.run_id} recorded extension arm {entry['arm']} at digest "
+                    f"{entry['digest'][:12]}; {entry.get('file', 'its file')} is now "
+                    f"{'missing' if ext is None else ext['digest'][:12]}. Restore it or start "
+                    "a new run.")
+            merge_extensions(self.exp, [entry["arm"]])
+        return manifest
+
+    def preregistered_arms(self):
+        manifest = self.read_json("run.json") or {}
+        extensions = {e["arm"] for e in manifest.get("extensions") or []}
+        return sorted(a for a in (manifest.get("arms") or self.exp["arms"])
+                      if a not in extensions)
 
     # -- money ------------------------------------------------------------------------------
 
@@ -1433,8 +1505,8 @@ class Experiment:
 
     # -- the whole run ----------------------------------------------------------------------
 
-    def run(self, repeats, only=None, grade=True):
-        self.open_run(repeats)
+    def run(self, repeats, only=None, grade=True, extend=()):
+        self.open_run(repeats, extend=extend)
         done = {r["trial_id"]: r for r in self.records("trials")}
         plan = [t for t in trial_plan(self.exp, repeats)
                 if not only or t["trial_id"] in only]
@@ -1710,10 +1782,13 @@ class Experiment:
     # -- blind judges -----------------------------------------------------------------------
 
     def judge_groups(self):
-        """{(task, repeat): {arm: trial}} over graded, uncontaminated trials."""
+        """{(task, repeat): {arm: trial}} over graded, uncontaminated trials of the
+        PREREGISTERED arms. A post-hoc extension arm is never judged: re-judging a group with
+        an extra candidate would replace the preregistered judgments it was decided on."""
         groups = {}
+        arms = set(self.preregistered_arms())
         for record in self.records("trials"):
-            if record["status"] in ("complete", "timeout"):
+            if record["status"] in ("complete", "timeout") and record["arm"] in arms:
                 groups.setdefault((record["task"], record["repeat"]), {})[record["arm"]] = record
         return groups
 
@@ -1846,8 +1921,9 @@ def judge_quality(judge_records):
     return {key: sum(v) / len(v) for key, v in acc.items()}
 
 
-def score_trial(trial, grade, quality, scoring):
-    """-> the per-trial scorecard row, including the composite QS (0..100)."""
+def score_trial(trial, grade, quality, scoring, drop=()):
+    """-> the per-trial scorecard row, including the composite QS (0..100). A component in
+    `drop` is left out and the remaining weights renormalise, exactly as for a missing one."""
     weights = scoring["weights"]
     oracle = grade.get("oracle") or {}
     reg_green = bool((grade.get("regression") or {}).get("green"))
@@ -1859,6 +1935,8 @@ def score_trial(trial, grade, quality, scoring):
         "simplicity": simplicity(grade),
         "discipline": max(0.0, 1 - float(scoring.get("discipline_penalty", 0.25)) * n_viol),
     }
+    for key in drop:
+        components[key] = None
     present = {k: v for k, v in components.items() if v is not None}
     total_w = sum(weights[k] for k in present)
     weighted = sum(weights[k] * v for k, v in present.items()) / total_w if total_w else 0.0
@@ -2006,14 +2084,31 @@ def pareto(per_arm):
     return sorted(front)
 
 
-def build_report(ex):
-    """The scorecard for one run: per-arm metrics, statistics and the decision."""
+def build_report(ex, arms=None, drop=(), view="preregistered"):
+    """The scorecard for one run: per-arm metrics, statistics and the decision.
+
+    The default view scores the PREREGISTERED arms exactly as preregistered. When the run was
+    extended with post-hoc arms, `extended` carries a second view over every arm; if judge
+    quality covers some of those arms and not others it is dropped for ALL of them there, so
+    no arm is ranked on a component another arm was never scored on."""
     scoring = ex.exp["scoring"]
     manifest = ex.read_json("run.json") or {}
-    trials = ex.records("trials")
+    prereg = ex.preregistered_arms()
+    extensions = [e["arm"] for e in manifest.get("extensions") or []
+                  if e["arm"] in ex.exp["arms"]]
+    arms = sorted(arms if arms is not None else prereg)
+    trials = [t for t in ex.records("trials") if t["arm"] in arms]
     grades = {g["trial_id"]: g for g in ex.records("grades")}
     judges = ex.records("judges")
     quality = judge_quality(judges)
+    drop_reason = None
+    if view == "extended" and "quality" not in drop:
+        covered = {quality.get((t["task"], t["repeat"], t["arm"])) is not None
+                   for t in trials if t["status"] in ("complete", "timeout")}
+        if covered == {True, False}:
+            drop = tuple(drop) + ("quality",)
+            drop_reason = ("judge quality covers only some arms in this view (extension arms "
+                           "are never judged), so it is left out for every arm")
     rows, excluded = [], []
     for trial in trials:
         grade = grades.get(trial["trial_id"])
@@ -2024,11 +2119,11 @@ def build_report(ex):
                              "contamination": trial.get("contamination") or []})
             continue
         q = quality.get((trial["task"], trial["repeat"], trial["arm"]))
-        row = score_trial(trial, grade, q, scoring)
+        row = score_trial(trial, grade, q, scoring, drop=drop)
         row["_trial"], row["_grade"] = trial, grade
         rows.append(row)
 
-    arm_rows = {arm: [r for r in rows if r["arm"] == arm] for arm in sorted(ex.exp["arms"])}
+    arm_rows = {arm: [r for r in rows if r["arm"] == arm] for arm in arms}
     it = int(scoring.get("bootstrap_iterations", 2000))
     conf = float(scoring.get("confidence", 0.95))
     per_arm = {}
@@ -2115,9 +2210,11 @@ def build_report(ex):
         "measured_aic": round(sum(d["aic_charged"] for d in lost if d.get("usage")), 3),
         "estimate_charged_aic": round(sum(d["aic_charged"] for d in lost
                                           if not d.get("usage")), 3)}
-    return {
+    report = {
         "version": RESULT_VERSION, "run_id": ex.run_id, "preregistration": ex.digest,
         "manifest_preregistration": manifest.get("preregistration"),
+        "view": view, "arms": arms, "extension_arms": [a for a in extensions if a in arms],
+        "dropped_components": sorted(set(drop)), "drop_reason": drop_reason,
         "pricing_cached_date": ex.pricing.get("cached_date"),
         "trials": len(trials), "scored": len(rows), "excluded": excluded,
         "failed_spend": failed_spend,
@@ -2134,6 +2231,13 @@ def build_report(ex):
         "rows": [{k: v for k, v in r.items() if not k.startswith("_")} for r in rows],
         "small_sample": any(a["n"] < 20 for a in measured),
     }
+    if view == "preregistered" and extensions:
+        report["extended"] = build_report(ex, arms=prereg + extensions, view="extended")
+        report["extended"]["extensions"] = [
+            {k: e.get(k) for k in ("arm", "file", "digest", "reason", "added_to_run",
+                                   "trials_before")}
+            for e in manifest.get("extensions") or []]
+    return report
 
 
 def _f(value, digits=1, suffix=""):
@@ -2144,9 +2248,28 @@ def _f(value, digits=1, suffix=""):
     return f"{value}{suffix}"
 
 
-def render_report(report):
+def render_report(report, nested=False):
     arms = [a for a in report["per_arm"].values()]
-    lines = [f"# Route experiment -- run {report['run_id']}", "",
+    if nested:
+        lines = ["## Post-hoc extension view -- all arms", "",
+                 "NOT part of the preregistered decision. Extension arm(s) "
+                 f"{', '.join(report['extension_arms'])} were added after the preregistered "
+                 "trials ran, so they also differ in dispatch time (model and service drift "
+                 "are uncontrolled)."]
+        for e in report.get("extensions") or []:
+            lines.append(f"- {e['arm']} ({e['file']}, {e['digest'][:12]}), added "
+                         f"{e['added_to_run']} after {e['trials_before']} trials: {e['reason']}")
+        if report["dropped_components"]:
+            lines += ["", f"Left out for every arm: {', '.join(report['dropped_components'])} "
+                      f"-- {report['drop_reason'] or 'requested'}; the remaining weights "
+                      "renormalise."]
+        lines.append("")
+    else:
+        lines = [f"# Route experiment -- run {report['run_id']}", ""]
+        if report.get("extended"):
+            lines += [f"Preregistered arms only ({', '.join(report['arms'])}); post-hoc "
+                      "extension arms are scored separately at the end.", ""]
+    lines += [
              f"{report['scored']} of {report['trials']} trials scored; "
              f"{len(report['excluded'])} excluded. AIC is token-priced from each session's "
              f"own log at the {report['pricing_cached_date']} rates (est.).", ""]
@@ -2157,7 +2280,7 @@ def render_report(report):
                   f"{_f(fs['estimate_charged_aic'], 2)} AIC charged at estimate (no session log). "
                   "Counted against the ceiling; outside every arm's per-trial AIC.", ""]
     d = report["decision"]
-    lines += ["## Decision (preregistered rule)", "",
+    lines += ["## Decision (preregistered rule)" + (", applied post hoc" if nested else ""), "",
               f"**Winner: {d['winner'] or 'none'}** -- {d['reason']}.",
               f"Quality leader {report['quality_leader']}; value leader (QS per AIC) "
               f"{report['value_leader']}; Pareto set (QS vs AIC): "
@@ -2233,6 +2356,11 @@ def render_report(report):
         lines += ["", "Excluded: " + ", ".join(
             f"{e['trial_id']} ({e['reason']}{': ' + ','.join(e['contamination']) if e['contamination'] else ''})"
             for e in report["excluded"])]
+    if nested:
+        lines = [("#" + line) if line.startswith("## ") and i else line
+                 for i, line in enumerate(lines)]
+    elif report.get("extended"):
+        lines += ["", render_report(report["extended"], nested=True).rstrip("\n")]
     return "\n".join(lines) + "\n"
 
 
@@ -2470,13 +2598,17 @@ def _session(args, pricing, live=False):
     store = Path(args.store_dir) if args.store_dir else default_store_dir()
     run_id = getattr(args, "run", None) or getattr(args, "run_id", None) or \
         _kc().generate_run_id()
-    return Experiment(exp, digest, pricing, store, run_id,
-                      binary=getattr(args, "bin", None) or "copilot",
-                      copilot_home=getattr(args, "copilot_home", None),
-                      exec_mode=args.exec_mode, live=live,
-                      max_aic=getattr(args, "max_aic", None),
-                      keep_work=getattr(args, "keep_work", False),
-                      full_regression=getattr(args, "full_regression", False))
+    ex = Experiment(exp, digest, pricing, store, run_id,
+                    binary=getattr(args, "bin", None) or "copilot",
+                    copilot_home=getattr(args, "copilot_home", None),
+                    exec_mode=args.exec_mode, live=live,
+                    max_aic=getattr(args, "max_aic", None),
+                    keep_work=getattr(args, "keep_work", False),
+                    full_regression=getattr(args, "full_regression", False))
+    manifest = ex.read_json("run.json")
+    if manifest is not None:
+        ex.activate(manifest)
+    return ex
 
 
 def _only(raw):
@@ -2500,9 +2632,15 @@ def cmd_run(args, parser, pricing):
                      "drive the kit drivers re-enter the verify boundary, which refuses nesting")
     ex = _session(args, pricing, live=args.live)
     repeats = args.repeats or int(ex.exp["repeats"])
-    plan = build_plan(ex.exp, ex.digest, pricing, repeats)
+    extend = sorted(_only(args.extend_arms) or ())
+    for arm_id in extend:
+        if arm_id not in (ex.exp.get("extensions") or {}):
+            raise ConfigError(f"no extension arm {arm_id!r} under "
+                              f"{ex.exp['dir']}/extensions/")
     only = _only(args.only)
     if args.dry_run:
+        merge_extensions(ex.exp, [a for a in extend if a not in ex.exp["arms"]])
+        plan = build_plan(ex.exp, ex.digest, pricing, repeats)
         print(render_plan(plan, ex.exp).split("\nDispatch order")[0])
         print("\nDRY RUN -- nothing spawned, nothing written. First dispatch of each arm:")
         seen = set()
@@ -2524,7 +2662,7 @@ def cmd_run(args, parser, pricing):
         print(f"note: --max-aic {args.max_aic:g} is above the preregistered "
               f"{ex.exp['max_aic']} AIC", file=sys.stderr)
     print(f"run {ex.run_id} -> {ex.run_dir}")
-    rc = ex.run(repeats, only=only, grade=not args.no_grade)
+    rc = ex.run(repeats, only=only, grade=not args.no_grade, extend=extend)
     print(f"spent so far: {ex.spent():.2f} AIC (token-priced, est. rates)")
     return rc
 
@@ -2623,6 +2761,7 @@ def build_parser():
     p = sub.add_parser("plan", help="trial matrix and AIC estimate; spends nothing")
     p.add_argument("--repeats", type=int)
     p.add_argument("--json", action="store_true")
+    p.add_argument("--extend-arms", help="include these post-hoc extension arms")
     for name in ("run", "judge"):
         p = sub.add_parser(name)
         p.add_argument("--live", action="store_true")
@@ -2635,6 +2774,9 @@ def build_parser():
             p.add_argument("--run-id", help="resume this run")
             p.add_argument("--repeats", type=int)
             p.add_argument("--keep-work", action="store_true")
+            p.add_argument("--extend-arms", help="comma-separated POST-HOC arms from "
+                           "extensions/ to add to this run (recorded in run.json, reported "
+                           "apart from the preregistered decision)")
             p.add_argument("--no-grade", action="store_true")
             p.add_argument("--full-regression", action="store_true")
         else:
@@ -2664,6 +2806,7 @@ def main(argv=None):
     try:
         if args.cmd == "plan":
             exp, digest = load_experiment(Path(args.experiment_dir), pricing)
+            merge_extensions(exp, sorted(_only(args.extend_arms) or ()))
             plan = build_plan(exp, digest, pricing, args.repeats or int(exp["repeats"]))
             print(json.dumps(plan, indent=2) if args.json else render_plan(plan, exp))
             return 0

@@ -1,0 +1,13 @@
+{
+  "version": "polytropos.route-experiment.extension/1",
+  "arm": "A5",
+  "added": "2026-09-29",
+  "reason": "Requested after the preregistered A1-A4 run: does the pipelines' Luna 6 (max) stage model, alone and one-shot, match the routes at a fraction of the cost? Post hoc; never judged (adding a candidate would replace the preregistered judgments).",
+  "definition": {
+    "label": "Luna 6 (max) one-shot",
+    "shape": "one-shot",
+    "stages": {
+      "solo": {"model": "gpt-6-luna", "effort": "max"}
+    }
+  }
+}

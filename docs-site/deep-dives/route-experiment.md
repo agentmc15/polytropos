@@ -36,6 +36,24 @@ planner (read-only) → test-author → implementer → verifier (read-only)
   └ reviewer REJECT → 1 rework + re-verify (no second review)
 ```
 
+**Post-hoc extension arms** sit in `experiments/route-arms/extensions/`, one file per arm with a
+stated reason. They stay outside `experiment.json`, so the preregistered digest never moves.
+
+| Arm | Shape | Model | Added |
+|---|---|---|---|
+| A5 | one-shot | Luna 6 (max), one dispatch | after the A1–A4 run, on request |
+
+A run takes an extension arm only on `run --extend-arms A5`. That records the arm, its file
+digest, when it was added and how many trials preceded it in `run.json`. Resuming under a
+changed or missing extension file is refused.
+
+An extension arm is **never judged**. Re-judging a group with an extra candidate would
+overwrite the judgments the preregistered decision rests on. The report therefore keeps the
+preregistered view (A1–A4, with judge quality) as the decision. It then adds a **post-hoc
+view** over every arm. In that view, judge quality is left out for every arm whenever it covers
+only some of them, and the remaining weights renormalise. That way no arm is ranked on a
+component another arm was never scored on.
+
 A pipeline trial makes at most 9 dispatches; a one-shot trial makes exactly 1. Each stage sees
 the previous stages' output, and verdicts are parsed from a fixed `VERDICT=` line.
 
@@ -149,6 +167,9 @@ The report also shows:
   drivers can't run inside the enforced verify boundary. Each task therefore runs a curated,
   task-relevant regression list. `grade --full-regression` (trusted-host only) re-grades
   offline against the full suite.
+- **Extension arms are post hoc.** They run after the preregistered trials, on a different
+  day, so model or service drift between the two sessions is uncontrolled. They also lack judge
+  quality. Treat their post-hoc ranking as directional evidence, not a preregistered result.
 - **Pre-dispatch estimates** use `task_profiles` token counts and exclude cache writes. Only
   measured AIC goes into the result. The CLI flags for tool exclusion/denial are verified at
   the first live dispatch.
@@ -164,6 +185,7 @@ python3 bin/route_experiment.py demo                # whole pipeline on a stub C
 python3 bin/route_experiment.py run --live --max-aic 4000          # SPENDS: 36 trials
 python3 bin/route_experiment.py judge --run ID --live --max-aic N  # SPENDS: 18 judge dispatches
 python3 bin/route_experiment.py rescan --run ID                    # re-classify contamination; offline
+python3 bin/route_experiment.py run --run-id ID --extend-arms A5 --live --max-aic N  # SPENDS: post-hoc arm
 python3 bin/route_experiment.py report --run ID [--json]           # scorecard + decision
 ```
 

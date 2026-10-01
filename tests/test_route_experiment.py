@@ -490,6 +490,7 @@ class DriverTests(unittest.TestCase):
         self._tmp = tempfile.TemporaryDirectory(prefix="route-exp-test-")
         self.root = Path(self._tmp.name)
         exp_dir, self.repo, self.stub, self.home = rx.build_demo(self.root, PRICING)
+        self.exp_dir = exp_dir
         self.exp, self.digest = rx.load_experiment(exp_dir, PRICING)
         self.store = self.root / "store"
 
@@ -634,6 +635,101 @@ class DriverTests(unittest.TestCase):
                               copilot_home=self.home, repo=self.repo, out=io.StringIO())
         with self.assertRaisesRegex(rx.ConfigError, "preregistration"):
             other.open_run(1)
+
+    def write_extension(self, model=None):
+        model = model or self.exp["arms"]["A3"]["stages"]["solo"]["model"]
+        ext_dir = Path(self.exp_dir) / "extensions"
+        ext_dir.mkdir(exist_ok=True)
+        (ext_dir / "A5.json").write_text(json.dumps({
+            "version": rx.EXTENSION_VERSION, "arm": "A5", "reason": "post-hoc probe",
+            "definition": {"label": "probe one-shot", "shape": "one-shot",
+                           "stages": {"solo": {"model": model,
+                                               "effort": self.exp["arms"]["A3"]["stages"][
+                                                   "solo"]["effort"]}}}}), encoding="utf-8")
+        exp, digest = rx.load_experiment(self.exp_dir, PRICING)
+        return exp, digest
+
+    def test_an_extension_arm_keeps_the_preregistered_digest_and_needs_an_opt_in(self):
+        exp, digest = self.write_extension()
+        self.assertEqual(digest, self.digest)
+        self.assertNotIn("A5", exp["arms"])
+        self.assertIn("A5", exp["extensions"])
+        self.exp = exp
+        fake = FakeCopilot(self.home)
+        ex = self.driver(fake)
+        self.assertEqual(ex.run(1, grade=False), 0)
+        self.assertNotIn("A5", {t["arm"] for t in ex.records("trials")})
+        self.assertNotIn("extensions", ex.read_json("run.json"))
+
+    def test_extending_a_run_adds_only_the_new_arm_and_reports_it_apart(self):
+        exp, _ = self.write_extension()
+        self.exp = exp
+        fake = FakeCopilot(self.home)
+        ex = self.driver(fake)
+        self.assertEqual(ex.run(1), 0)
+        task = self.exp["tasks"][0]
+        arms = sorted(self.exp["arms"])
+        for j in (0, 1):
+            ex.write(f"judges/D1-r1-j{j}.json", {
+                "key": f"D1-r1-j{j}", "task": task, "repeat": 1, "judge_index": j,
+                "arms": arms, "parsed": True, "dispatches": [],
+                "scores": {a: {"overall": 5 + i} for i, a in enumerate(arms)}})
+        before = rx.build_report(ex)
+        self.assertIsNone(before.get("extended"))
+        calls = len(fake.calls)
+        self.assertEqual(ex.run(1, extend=["A5"]), 0)
+        self.assertEqual(len(fake.calls), calls + 1)
+        self.assertEqual(fake.calls[-1], "SOLO")
+        manifest = ex.read_json("run.json")
+        self.assertEqual(sorted(manifest["arms"]), arms)
+        entry = manifest["extensions"][0]
+        self.assertEqual((entry["arm"], entry["trials_before"]), ("A5", 4))
+        self.assertEqual(entry["digest"], exp["extensions"]["A5"]["digest"])
+        self.assertEqual(ex.preregistered_arms(), arms)
+        self.assertNotIn("A5", next(iter(ex.judge_groups().values())))
+        after = rx.build_report(ex)
+        self.assertEqual(after["arms"], arms)
+        self.assertEqual({a: p["qs_mean"] for a, p in after["per_arm"].items()},
+                         {a: p["qs_mean"] for a, p in before["per_arm"].items()})
+        self.assertEqual(after["decision"]["winner"], before["decision"]["winner"])
+        extended = after["extended"]
+        self.assertEqual(extended["arms"], arms + ["A5"])
+        self.assertEqual(extended["dropped_components"], ["quality"])
+        self.assertTrue(all(r["components"]["quality"] is None for r in extended["rows"]))
+        text = rx.render_report(after)
+        self.assertIn("## Post-hoc extension view -- all arms", text)
+        self.assertIn("### Decision (preregistered rule), applied post hoc", text)
+        self.assertLess(text.index("Post-hoc extension view"), len(text))
+        self.assertEqual(ex.run(1, extend=["A5"]), 0)
+        self.assertEqual(len(fake.calls), calls + 1)
+        self.assertEqual(len(ex.read_json("run.json")["extensions"]), 1)
+
+    def test_a_changed_or_missing_extension_is_refused_on_resume(self):
+        exp, _ = self.write_extension()
+        self.exp = exp
+        ex = self.driver(FakeCopilot(self.home))
+        ex.open_run(1, extend=["A5"])
+        changed, digest = self.write_extension(model=self.exp["arms"]["A4"]["stages"]["solo"][
+            "model"])
+        other = rx.Experiment(changed, digest, PRICING, self.store, "t-run",
+                              copilot_home=self.home, repo=self.repo, out=io.StringIO())
+        with self.assertRaisesRegex(rx.ConfigError, "extension arm A5"):
+            other.open_run(1)
+        with self.assertRaisesRegex(rx.ConfigError, "no extension arm 'A6'"):
+            ex.open_run(1, extend=["A6"])
+
+    def test_an_extension_may_not_reuse_an_arm_id_or_skip_its_reason(self):
+        ext_dir = Path(self.exp_dir) / "extensions"
+        ext_dir.mkdir()
+        body = {"version": rx.EXTENSION_VERSION, "arm": "A1", "reason": "x",
+                "definition": self.exp["arms"]["A3"]}
+        (ext_dir / "x.json").write_text(json.dumps(body), encoding="utf-8")
+        with self.assertRaisesRegex(rx.ConfigError, "already exists"):
+            rx.load_experiment(self.exp_dir, PRICING)
+        body.update(arm="A7", reason="")
+        (ext_dir / "x.json").write_text(json.dumps(body), encoding="utf-8")
+        with self.assertRaisesRegex(rx.ConfigError, "reason"):
+            rx.load_experiment(self.exp_dir, PRICING)
 
     def test_contaminated_trials_are_excluded_from_the_score(self):
         fake = FakeCopilot(self.home)
