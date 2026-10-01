@@ -251,6 +251,28 @@ class ContaminationTests(unittest.TestCase):
                          ["route-arms", "nested-cli", "delegation"])
 
 
+    def test_naming_a_dispatcher_is_not_launching_one(self):
+        # The live false positive: a planner grepping bin/copilot_execute.py for a symbol.
+        for command in (
+                'grep -n "copilot_pricing" bin/copilot_docs.py bin/copilot_execute.py | head',
+                "sed -n 1,40p bin/copilot_ralph.py",
+                "wc -l bin/copilot_execute.py && cat tests/test_copilot_execute.py",
+                "rg 'copilot -p' docs/"):
+            self.assertFalse(rx.nested_cli_launch(command), command)
+        text = events({"type": "tool.execution_start",
+                       "data": {"toolName": "view",
+                                "arguments": {"path": "/w/bin/copilot_execute.py"}}})
+        self.assertEqual(rx.contamination(text, []), [])
+
+    def test_running_a_dispatcher_or_copilot_prompt_is_a_launch(self):
+        for command in (
+                "copilot -p 'do it'", "cd /w && copilot --model x --prompt=hi",
+                "python3 bin/copilot_execute.py --kit k", "ls; python3 -u ./bin/copilot_ralph.py",
+                "FOO=1 timeout 60 python3.12 bin/copilot_execute.py", "./bin/copilot_execute.py",
+                "echo $(copilot -p x)"):
+            self.assertTrue(rx.nested_cli_launch(command), command)
+
+
 SAMPLE = '''"""Module doc."""
 import os
 import json
@@ -588,6 +610,22 @@ class DriverTests(unittest.TestCase):
         self.assertEqual(len(calls), rx.FAILURE_STREAK_LIMIT)
         self.assertEqual([t["status"] for t in ex.records("trials")],
                          ["dispatch-failed"] * rx.FAILURE_STREAK_LIMIT)
+
+    def test_rescan_reclassifies_from_the_session_logs_with_an_audit_trail(self):
+        fake = FakeCopilot(self.home)
+        ex = self.driver(fake)
+        tid = self.trial("A4")["trial_id"]
+        ex.run(1, only={tid}, grade=False)
+        record = ex.records("trials")[0]
+        # Simulate a verdict from an older, over-eager classifier.
+        record["dispatches"][0]["contamination"] = ["nested-cli"]
+        record.update({"status": "contaminated", "contamination": ["nested-cli"]})
+        ex.write(f"trials/{tid}.json", record)
+        self.assertEqual(ex.rescan(), [(tid, ["nested-cli"], [], "complete")])
+        after = ex.records("trials")[0]
+        self.assertEqual(after["status"], "complete")
+        self.assertEqual(after["rescans"][0]["status_before"], "contaminated")
+        self.assertEqual(ex.rescan(), [])
 
     def test_resuming_under_a_changed_definition_is_refused(self):
         ex = self.driver(FakeCopilot(self.home))

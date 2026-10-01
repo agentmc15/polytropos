@@ -7,6 +7,7 @@
     route_experiment.py run      --live --max-aic N [--run-id ID] [--only T1-A1-r1,..] [--bin PATH]
     route_experiment.py grade    --run ID [--only ..] [--full-regression]      offline re-grade
     route_experiment.py judge    --run ID (--dry-run | --live --max-aic N)     blind cross-vendor judges
+    route_experiment.py rescan   --run ID [--only ..]             re-classify contamination from session logs
     route_experiment.py report   --run ID [--json]                scorecard + the preregistered decision
     route_experiment.py list
     route_experiment.py demo                                      stub CLI, fixture repo, whole pipeline
@@ -89,7 +90,9 @@ WEIGHT_KEYS = ("correctness", "quality", "test_strength", "simplicity", "discipl
 ORACLE_TEST_NAME = "test_route_oracle.py"
 VERIFY_RE = re.compile(r"VERIFY\s+VERDICT\s*=\s*(pass|fail)", re.IGNORECASE)
 REVIEW_RE = re.compile(r"REVIEW\s+VERDICT\s*=\s*(accept|reject)", re.IGNORECASE)
-NESTED_CLI_RE = re.compile(r"\bcopilot\s+(?:-p|--prompt)\b|copilot_execute\.py|copilot_ralph\.py")
+NESTED_DISPATCHERS = ("copilot_execute.py", "copilot_ralph.py")
+SHELL_WRAPPERS = ("env", "exec", "nohup", "time", "command", "sudo", "timeout", "gtimeout")
+SHELL_SPLIT_RE = re.compile(r"&&|\|\||[;|&\n]|\$\(|`")
 RAN_RE = re.compile(r"^Ran (\d+) tests? in", re.MULTILINE)
 FAILED_RE = re.compile(r"^FAILED \(([^)]*)\)", re.MULTILINE)
 
@@ -981,11 +984,53 @@ def session_usage(events_text, pricing):
     }
 
 
+def nested_cli_launch(command):
+    """True when a shell command LAUNCHES a nested model CLI: `copilot -p/--prompt ...`, or a
+    polytropos dispatcher run as a program (`python3 bin/copilot_execute.py`, `./bin/...`).
+    Naming one as data -- `grep x bin/copilot_execute.py`, `sed -n 1,9p ...` -- is not."""
+    for segment in SHELL_SPLIT_RE.split(command or ""):
+        try:
+            words = shlex.split(segment)
+        except ValueError:
+            words = segment.split()
+        while words and ("=" in words[0] and not words[0].startswith("-")
+                         or os.path.basename(words[0]) in SHELL_WRAPPERS
+                         or re.fullmatch(r"-\S*|\d+[smh]?", words[0])):
+            words = words[1:]
+        if not words:
+            continue
+        head = os.path.basename(words[0])
+        if head == "copilot" and any(w in ("-p", "--prompt") or w.startswith("--prompt=")
+                                     for w in words[1:]):
+            return True
+        if head in NESTED_DISPATCHERS:
+            return True
+        if re.fullmatch(r"python(?:3(?:\.\d+)?)?", head):
+            script = next((w for w in words[1:] if not w.startswith("-")), "")
+            if os.path.basename(script) in NESTED_DISPATCHERS:
+                return True
+    return False
+
+
+def _commands(arguments):
+    """Every string under a `command` key of a tool call's arguments."""
+    if isinstance(arguments, dict):
+        for key, value in arguments.items():
+            if key == "command" and isinstance(value, str):
+                yield value
+            else:
+                yield from _commands(value)
+    elif isinstance(arguments, list):
+        for value in arguments:
+            yield from _commands(value)
+
+
 def contamination(events_text, markers):
     """Markers found in the session's TOOL-CALL ARGUMENTS (what the agent asked to do).
 
     Tool RESULTS are not scanned: a `grep` that happens to list `copilot_execute.py` is the
-    repository answering, not the agent launching a nested CLI.
+    repository answering, not the agent launching a nested CLI. Nor is a dispatcher named as
+    an argument (a file to grep or view): nested-cli means a shell command that RUNS one.
     """
     hits = []
     for obj in _event_lines(events_text):
@@ -996,7 +1041,8 @@ def contamination(events_text, markers):
         for marker in markers:
             if marker and marker in args and marker not in hits:
                 hits.append(marker)
-        if NESTED_CLI_RE.search(args) and "nested-cli" not in hits:
+        if "nested-cli" not in hits and any(
+                nested_cli_launch(c) for c in _commands(data.get("arguments"))):
             hits.append("nested-cli")
         if data.get("toolName") in ("task", "skill") and "delegation" not in hits:
             hits.append("delegation")
@@ -1316,6 +1362,7 @@ class Experiment:
         self.write(f"patches/{tid}.diff", patch)
         contaminated = sorted({m for d in self._open for m in d["contamination"]})
         if contaminated and status in ("complete", "timeout"):
+            record["pre_contamination_status"] = status
             status = "contaminated"
         record.update({"status": status, "finished": utc_now(), "patch_file": f"patches/{tid}.diff",
                        "patch_sha": sha256_text(patch), "contamination": contaminated,
@@ -1411,6 +1458,48 @@ class Experiment:
                          "and keep what their failed attempts cost")
                 return 5
         return 0
+
+    def rescan(self, only=None):
+        """Re-classify contamination from each dispatch's own session log (read-only) under
+        the CURRENT classifier. A changed verdict is written back with an audit entry; a log
+        that is gone leaves that dispatch's recorded verdict untouched. Spends nothing.
+        -> [(trial_id, before, after, status)] for every trial whose verdict changed."""
+        changed = []
+        for record in self.records("trials"):
+            tid = record["trial_id"]
+            if only and tid not in only:
+                continue
+            missing = 0
+            for d in record.get("dispatches") or []:
+                events = _sp().confined_read_bytes(
+                    self.copilot_home, f"session-state/{d['session_id']}/events.jsonl",
+                    what="copilot session log", missing_ok=True)
+                if events is None:
+                    missing += 1
+                    continue
+                d["contamination"] = contamination(events.decode("utf-8", "replace"),
+                                                   self.markers)
+            before = record.get("contamination") or []
+            after = sorted({m for d in record.get("dispatches") or []
+                            for m in d.get("contamination") or []})
+            if after == before:
+                continue
+            status = record["status"]
+            if status == "contaminated" and not after:
+                timed_out = any(d.get("timed_out") for d in record.get("dispatches") or [])
+                status = record.get("pre_contamination_status") or (
+                    "timeout" if timed_out else "complete")
+            elif after and status in ("complete", "timeout"):
+                record["pre_contamination_status"] = status
+                status = "contaminated"
+            record.setdefault("rescans", []).append(
+                {"at": utc_now(), "before": before, "after": after,
+                 "status_before": record["status"], "status_after": status,
+                 "logs_missing": missing})
+            record.update({"contamination": after, "status": status})
+            self.write(f"trials/{tid}.json", record)
+            changed.append((tid, before, after, status))
+        return changed
 
     # -- grading (offline; spends nothing) --------------------------------------------------
 
@@ -2467,6 +2556,21 @@ def cmd_grade(args, parser, pricing):
     return 0
 
 
+def cmd_rescan(args, parser, pricing):
+    ex = _session(args, pricing)
+    if ex.read_json("run.json") is None:
+        parser.error(f"no run {args.run} under {ex.store_dir}")
+    changed = ex.rescan(only=_only(args.only))
+    for tid, before, after, status in changed:
+        print(f"{tid}: contamination {before or '[]'} -> {after or '[]'}; status {status}")
+    regrade = [tid for tid, _, _, status in changed if status in ("complete", "timeout")]
+    if regrade:
+        print(f"grade the trials now in scope: grade --run {ex.run_id} --only {','.join(regrade)}")
+    if not changed:
+        print("no contamination verdict changed")
+    return 0
+
+
 def cmd_report(args, parser, pricing):
     ex = _session(args, pricing)
     if ex.read_json("run.json") is None:
@@ -2539,6 +2643,9 @@ def build_parser():
     p.add_argument("--run", required=True)
     p.add_argument("--only")
     p.add_argument("--full-regression", action="store_true")
+    p = sub.add_parser("rescan", help="re-classify contamination from the session logs")
+    p.add_argument("--run", required=True)
+    p.add_argument("--only")
     p = sub.add_parser("report")
     p.add_argument("--run", required=True)
     p.add_argument("--json", action="store_true")
@@ -2561,7 +2668,8 @@ def main(argv=None):
             print(json.dumps(plan, indent=2) if args.json else render_plan(plan, exp))
             return 0
         handler = {"run": cmd_run, "judge": cmd_judge, "grade": cmd_grade, "report": cmd_report,
-                   "list": cmd_list, "validate": cmd_validate}[args.cmd]
+                   "list": cmd_list, "validate": cmd_validate,
+                   "rescan": cmd_rescan}[args.cmd]
         return handler(args, parser, pricing)
     except ConfigError as exc:
         print(f"route_experiment: {exc}", file=sys.stderr)

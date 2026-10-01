@@ -118,6 +118,11 @@ The report also shows:
   Read-only stages deny the write tool, and judges also deny the shell. After each dispatch,
   the session log is scanned read-only for experiment paths and nested CLI launches. A hit marks
   the trial `contaminated` and excludes it.
+
+  A nested launch means a shell command that RUNS `copilot -p` or a polytropos dispatcher.
+  Naming one as data, such as a file passed to `grep`, does not count. `rescan --run ID`
+  re-applies the current classifier to the saved logs offline and records an audit entry for
+  each verdict it changes.
 - **Money.** `run` and `judge` spend only behind both `--live` and an explicit `--max-aic`. The
   ceiling is re-checked before every dispatch against measured spend plus an estimate of the
   next dispatch. If a session log can't be read, that dispatch is charged its estimate and
@@ -158,6 +163,7 @@ python3 bin/route_experiment.py demo                # whole pipeline on a stub C
 
 python3 bin/route_experiment.py run --live --max-aic 4000          # SPENDS: 36 trials
 python3 bin/route_experiment.py judge --run ID --live --max-aic N  # SPENDS: 18 judge dispatches
+python3 bin/route_experiment.py rescan --run ID                    # re-classify contamination; offline
 python3 bin/route_experiment.py report --run ID [--json]           # scorecard + decision
 ```
 
