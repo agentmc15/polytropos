@@ -2969,9 +2969,10 @@ class SourceTests(unittest.TestCase):
              db.MAX_JOURNAL_DAYS, db.MAX_TELEMETRY_ENVELOPES_PER_SOURCE, db.MAX_DIGEST_BYTES,
              db.MAX_ENVELOPE_BYTES, db.MAX_EVAL_RESULTS_BYTES, db.MAX_PREFS_FILE_BYTES,
              db.MAX_PREFS_ENTRIES_SCANNED, db.GIT_TIMEOUT_SECONDS, db.MAX_RSI_ENGINE_BYTES,
-             db.MAX_KIT_NOTES_BYTES, db.MAX_RSI_CONSTANTS_RENDERED, db.MAX_RSI_VALUE_CHARS),
+             db.MAX_KIT_NOTES_BYTES, db.MAX_RSI_CONSTANTS_RENDERED, db.MAX_RSI_VALUE_CHARS,
+             db.MAX_RSI_TABLE_ROWS),
             (5000, 32, 8 * 1024 * 1024, 100, 1024 * 1024, 10, 60, 120, 256 * 1024, 512 * 1024,
-             4 * 1024 * 1024, 512 * 1024, 500, 20, 1024 * 1024, 2 * 1024 * 1024, 50, 120))
+             4 * 1024 * 1024, 512 * 1024, 500, 20, 1024 * 1024, 2 * 1024 * 1024, 50, 120, 500))
         self.assertEqual(db.PLUGIN_ROOT, BIN_DIR.parent)
         self.assertEqual(db.default_caps(), {name: getattr(db, name) for name in db.CAP_NAMES})
         self.assertEqual(db.STORE_NAME, "dashboard")
@@ -4789,6 +4790,26 @@ class RsiPanelTests(_WorldCase):
             self.assertNotIn("x" * 200, db.render_page(model, _FAKE_HOME.name))
             self.assertIn(long_value, self.status()["known_versions"])  # data, just not rendered
 
+    def test_a_planted_cap_marker_in_checkout_text_never_marks_a_cap_hit(self):
+        # A cap is hit only when `cap_note` fires, never because a note's text -- which may carry
+        # a string read out of a checkout -- looks like one. The engine's contract version value
+        # rides verbatim into the "read as text" note, so it is the plant.
+        planted = "cap MAX_LEDGER_BYTES (0) reached"
+        self.engine(f'PLANTED_VERSION = "{planted}"\nARMS = ("A", "B")\n')
+        model = self.model({"MAX_RSI_CONSTANTS_RENDERED": 1})
+        self.assertTrue(any(planted in note for note in model["notes"]), model["notes"])
+        hit = [row["name"] for row in model["caps"] if row["hit"]]
+        self.assertNotIn("MAX_LEDGER_BYTES", hit)
+        # The genuine hit in the same build still shows.
+        self.assertIn("MAX_RSI_CONSTANTS_RENDERED", hit)
+        bounds = next(p for p in model["panels"] if p["id"] == "bounds")
+        self.assertEqual(bounds["summary"], f"1 of {len(db.CAP_NAMES)} caps hit")
+        _section_html, page, receipt, _stdout = self.built()
+        self.assertIn(db.esc(planted), page)
+        self.assertEqual(json.loads(receipt)["caps_hit"], [])
+        self.assertIn("<tr><td>MAX_LEDGER_BYTES</td><td>8388608</td><td>not hit</td></tr>",
+                      _section(page, "bounds"))
+
     # -- the kit ---------------------------------------------------------------------------------
 
     def test_the_rsi_kit_tables_come_from_the_synthetic_kit(self):
@@ -4817,6 +4838,35 @@ class RsiPanelTests(_WorldCase):
                        and kits_namespace in (b.get("parts") or ()))
         self.assertIn("mapped in this build; its ledger facts are in the Attempts panel",
                       pointer["parts"])
+
+    def test_the_rsi_tables_are_row_capped_and_the_status_counts_still_cover_every_task(self):
+        kit = self.world["rsi_kit_dir"]
+        with (kit / "NOTES.md").open("a", encoding="utf-8") as handle:
+            for task in ("R2", "R3"):
+                handle.write(f"- outcome: {task} model={db.SYNTHETIC_MODEL} attempts=1 "
+                             f"result=pass review=none run={db.DEMO_RUN}\n")
+        headers = ["task", "result", "dispatched model", "observed model", "run"]
+        full = self.rsi(self.model())
+        self.assertEqual(len(self.block(full, headers)["rows"]), 3)
+        self.assertFalse(any("MAX_RSI_TABLE_ROWS" in note for note in full["notes"]))
+        model = self.model({"MAX_RSI_TABLE_ROWS": 1})
+        rsi = self.rsi(model)
+        self.assertEqual(self.block(rsi, ["id", "title", "status", "model"])["rows"],
+                         [["R1", "a synthetic finished RSI task", "done", db.SYNTHETIC_MODEL]])
+        self.assertEqual(self.counts_in(rsi, "task status counts — "), [2, 0, 1, 0])  # all three
+        self.assertEqual([row[0] for row in self.block(rsi, headers)["rows"]], ["R1"])
+        for noun in ("tasks/kits/recursive-improvement/TASKS.md holds 3 tasks; only the first 1",
+                     "tasks/kits/recursive-improvement/NOTES.md holds 3 outcome: lines the "
+                     "owner reads; only the first 1"):
+            self.assertTrue(any(note.startswith("cap MAX_RSI_TABLE_ROWS (1) reached — ")
+                                and noun in note for note in rsi["notes"]), (noun, rsi["notes"]))
+        self.assertIn("MAX_RSI_TABLE_ROWS", [row["name"] for row in model["caps"] if row["hit"]])
+        with mock.patch.object(db, "MAX_RSI_TABLE_ROWS", 1):
+            section, page, receipt, _stdout = self.built()
+        self.assertEqual(json.loads(receipt)["caps_hit"], ["MAX_RSI_TABLE_ROWS"])
+        self.assertIn("<tr><td>MAX_RSI_TABLE_ROWS</td><td>1</td><td>hit</td></tr>",
+                      _section(page, "bounds"))
+        self.assertNotIn("a synthetic pending RSI task", section)
 
     def test_oversize_rsi_tasks_md_and_notes_md_get_cap_notes_and_are_never_read(self):
         kit = self.world["rsi_kit_dir"]

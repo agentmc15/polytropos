@@ -1067,10 +1067,7 @@ Rebuild it with `python3 bin/dashboard.py build --no-git` from the checkout.
   though the clone never carries them. It could skip project agents for the install clone.
 
 **Known limits the kit leaves** (all in NOTES.md):
-- `caps_report` can over-claim a cap hit when text read from a checkout contains "cap NAME (".
-  It never hides one.
 - A symlinked engine or kit dir counts as present in the RSI summary, with a note.
-- The RSI tables have no row cap. They stay linear up to the byte caps.
 - An `--out-dir` that already exists keeps its own mode.
 - A legacy in-tree store under the plugin root is not noted.
 - There is a race at intermediate path components in `_read_bounded`.
