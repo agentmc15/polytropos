@@ -652,6 +652,10 @@ def build_list_summary(store_dir):
 
     A missing store dir → ``(None, [f"no telemetry store at {store_dir} — run a capture
     first"])``; the caller renders that friendly line and exits 0.
+
+    A latest envelope whose ``labels`` is present but not a list of strings gets
+    ``latest_labels: None`` (malformed, distinct from ``[]`` = no labels) and a
+    ``"malformed labels ..."`` note naming the file — a degradation, never a crash.
     """
     store_dir = Path(store_dir)
     if not store_dir.is_dir():
@@ -666,9 +670,21 @@ def build_list_summary(store_dir):
         notes.extend(source_notes)
         dates = [d for d, _ in dated_envelopes]
         if dated_envelopes:
-            _, latest_envelope = dated_envelopes[-1]
+            latest_date, latest_envelope = dated_envelopes[-1]
             latest_status = latest_envelope.get("status")
-            latest_labels = list(latest_envelope.get("labels") or [])
+            raw_labels = latest_envelope.get("labels")
+            if raw_labels is None:
+                latest_labels = []
+            elif (isinstance(raw_labels, (list, tuple))
+                  and all(isinstance(label, str) for label in raw_labels)):
+                latest_labels = list(raw_labels)
+            else:
+                # Malformed, not absent: ``None`` is the row's malformed state (``[]`` would
+                # claim "no labels"), and the note names the envelope. One bad envelope
+                # never raises out of the summary and erases every other source's row.
+                latest_labels = None
+                notes.append(f"malformed labels (not a list of strings), not rendered: "
+                             f"{name}/{latest_date}.json")
         else:
             latest_status = None
             latest_labels = []
@@ -693,7 +709,10 @@ def render_list_markdown(summary, notes):
         if row["count"] == 0:
             lines.append(f"- {row['source']}{tag}: no snapshots")
             continue
-        labels = ", ".join(row["latest_labels"]) if row["latest_labels"] else "none"
+        if row["latest_labels"] is None:
+            labels = "malformed (see notes)"
+        else:
+            labels = ", ".join(row["latest_labels"]) if row["latest_labels"] else "none"
         lines.append(
             f"- {row['source']}{tag}: {row['count']} snapshot(s), "
             f"{row['first_date']}..{row['last_date']}, "

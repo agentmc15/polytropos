@@ -24,7 +24,6 @@ NAMES is the property here.
 import os
 import re
 import stat
-import tempfile
 from pathlib import Path, PurePosixPath
 
 
@@ -343,13 +342,22 @@ def confined_replace(root, rel_path, data, what="confined replace", mode=0o600):
     dir_fd = _descend(root, parts, what, create=True)
     tmp_name = None
     try:
-        fd, tmp_path = tempfile.mkstemp(prefix=f".{parts[-1]}.", dir=os.getcwd())
-        os.close(fd)
-        os.unlink(tmp_path)
-        tmp_name = os.path.basename(tmp_path)
-        fd = os.open(
-            tmp_name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, mode, dir_fd=dir_fd
-        )
+        # The temp name is chosen and created in the confined destination directory itself,
+        # relative to `dir_fd`, with O_EXCL|O_NOFOLLOW: never in the caller's cwd, which may be
+        # unwritable or on another filesystem. A name collision just draws another name.
+        for _ in range(100):
+            candidate = f".{parts[-1]}.{os.urandom(6).hex()}"
+            try:
+                fd = os.open(
+                    candidate, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, mode,
+                    dir_fd=dir_fd,
+                )
+            except FileExistsError:
+                continue
+            tmp_name = candidate
+            break
+        else:
+            raise SafePathError(f"{what}: no free temporary name beside {rel_path!r}")
         with os.fdopen(fd, "wb") as fh:
             fh.write(data)
         os.rename(tmp_name, parts[-1], src_dir_fd=dir_fd, dst_dir_fd=dir_fd)
