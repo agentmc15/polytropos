@@ -280,6 +280,12 @@ def load_task(exp_dir, task_id):
         task["digests"]["naive"] = sha256_text(task["naive_text"])
     for key in ("allowed_generated", "rubric"):
         _require(isinstance(task.get(key, []), list), f"task {task_id}: {key} must be a list")
+    keep = task.get("regression_classes", {})
+    _require(isinstance(keep, dict) and all(
+        m in task["regression"] and isinstance(names, list) and names
+        and all(isinstance(n, str) and n.isidentifier() for n in names)
+        for m, names in keep.items()),
+        f"task {task_id}: regression_classes maps a regression module to test class names")
     task["task_json_digest"] = sha256_text((root / "task.json").read_text(encoding="utf-8"))
     task["short"] = task_id.split("-")[0]
     return task
@@ -433,6 +439,8 @@ def build_plan(exp, digest, pricing, repeats):
     trials = trial_plan(exp, repeats)
     per_arm = {arm: arm_estimate(exp, pricing, arm) for arm in sorted(exp["arms"])}
     n_groups = len(exp["tasks"]) * repeats
+    fraction = float((exp.get("judging") or {}).get("consistency_fraction") or 0)
+    n_groups += round(fraction * n_groups)
     per_group_judge = judge_estimate(exp, pricing)
     lo = sum(per_arm[t["arm"]]["min"] for t in trials)
     hi = sum(per_arm[t["arm"]]["max"] for t in trials)
@@ -1292,14 +1300,23 @@ def default_dispatch_runner(argv, cwd, timeout):
                   output_limit=4 * 1024 * 1024, name="copilot")
 
 
-def _unittest_cmd(pattern=None):
+def _unittest_cmd(pattern=None, keep=None):
     """A test line for the verify boundary. Runtime stores point at the run-scoped scratch
     `$TMPDIR` (the boundary refuses writes to the real data home, correctly). `-B` keeps
     bytecode out of the grade box: a same-size mutant written within the same second as
-    its source would otherwise run from the source's stale .pyc and "survive"."""
+    its source would otherwise run from the source's stale .pyc and "survive". `keep`
+    narrows the run to the named test classes (unittest `-k`)."""
     line = (f'POLYTROPOS_DATA_HOME="$TMPDIR/polytropos-data" {shlex.quote(sys.executable)} '
             f"-B -m unittest discover -s tests")
-    return f"{line} -p {shlex.quote(pattern)}" if pattern else line
+    if pattern:
+        line = f"{line} -p {shlex.quote(pattern)}"
+    return line + "".join(f" -k {shlex.quote(name)}" for name in keep or ())
+
+
+def _regression_cmd(task, module):
+    """A task's regression line; `regression_classes` keeps only the named classes, for a
+    module whose other classes launch a driver that refuses to nest in the boundary."""
+    return _unittest_cmd(module, (task.get("regression_classes") or {}).get(module))
 
 
 # Consecutive dispatch-failed trials that stop a run: an outage fails every dispatch in
@@ -1971,7 +1988,7 @@ class Experiment:
                     rc, out = run_tests(_unittest_cmd())
                     reg = {"full": parse_unittest(out)}
                 else:
-                    reg = {m: parse_unittest(run_tests(_unittest_cmd(m))[1])
+                    reg = {m: parse_unittest(run_tests(_regression_cmd(task, m))[1])
                            for m in task["regression"]}
                 grade["regression"] = {"modules": reg,
                                        "green": all(p["ok"] for p in reg.values())}
@@ -2933,7 +2950,7 @@ def validate_tasks(ex, only=None):
                     continue
                 run_tests = ex.tester(box)
                 row[f"{label}_regression"] = all(
-                    parse_unittest(run_tests(_unittest_cmd(m))[1])["ok"] for m in task["regression"])
+                    parse_unittest(run_tests(_regression_cmd(task, m))[1])["ok"] for m in task["regression"])
                 oracle = ex.run_oracle(task, box, run_tests)
                 row[f"{label}_oracle"] = f"{oracle['passed']}/{oracle['expected']}"
                 row[f"{label}_oracle_green"] = oracle["score"] == 1.0

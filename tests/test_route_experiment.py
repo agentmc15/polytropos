@@ -10,6 +10,7 @@ import importlib.util
 import io
 import json
 import os
+import shutil
 import sys
 import tempfile
 import unittest
@@ -366,6 +367,25 @@ class MetricTests(unittest.TestCase):
         self.assertEqual([m["id"] for m in v2],
                          [m["id"] for m in rx.mutants(source, ["f"], 100, seed=1,
                                                       operators="v2")])
+
+    def test_regression_classes_narrow_the_line_and_are_validated(self):
+        exp, _ = real_experiment()
+        task = dict(exp["task_defs"]["T1-statusline-rollover"])
+        module = task["regression"][0]
+        self.assertNotIn(" -k ", rx._regression_cmd(task, module))
+        task["regression_classes"] = {module: ["FooTests", "BarTests"]}
+        line = rx._regression_cmd(task, module)
+        self.assertTrue(line.endswith(f"-p {module} -k FooTests -k BarTests"))
+        with tempfile.TemporaryDirectory() as tmp:
+            src = rx.EXPERIMENT_DIR / "tasks" / "T1-statusline-rollover"
+            dst = Path(tmp) / "tasks" / "T1-statusline-rollover"
+            shutil.copytree(src, dst)
+            data = json.loads((dst / "task.json").read_text())
+            for bad in ({"other.py": ["X"]}, {module: []}, {module: ["a b"]}):
+                data["regression_classes"] = bad
+                (dst / "task.json").write_text(json.dumps(data))
+                with self.assertRaisesRegex(rx.ConfigError, "regression_classes"):
+                    rx.load_task(tmp, "T1-statusline-rollover")
 
     def test_allowed_generated_paths_are_in_scope_and_outside_size(self):
         exp, _ = real_experiment()
