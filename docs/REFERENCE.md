@@ -179,9 +179,9 @@ Orchestration policy (same file, `orchestration_policy`): orchestrator tier `fro
 
 ### Copilot — `data/pricing.copilot.json`
 
-Derived from `data/pricing.copilot.json`, `cached_date` **2026-09-24** — 29 rows across 6 vendors. Rates are USD per million tokens; Copilot settles them in `billing_unit.name` = **AIC** at `usd_per_credit` 0.01, so credits = USD ÷ that field — the unit itself is data, never a literal in a skill.
+Derived from `data/pricing.copilot.json`, `cached_date` **2026-09-24** — 30 rows across 6 vendors. Rates are USD per million tokens; Copilot settles them in `billing_unit.name` = **AIC** at `usd_per_credit` 0.01, so credits = USD ÷ that field — the unit itself is data, never a literal in a skill.
 
-6 retired models live apart from the roster, in `retired_models`, each with its `retired_on` date and `replacement`: they keep historical sessions costable, and no routing, preference, forecast or dispatch path reads them (`claude-opus-4.5`, `claude-opus-4.6`, `claude-sonnet-4.5`, `claude-sonnet-4.6`, `gemini-3.1-pro`, `mai-code-1-flash`). 10 rows carry a `long_context` step-up block and 2 carry a `promo` window; both are broken out under the main table.
+6 retired models live apart from the roster, in `retired_models`, each with its `retired_on` date and `replacement`: they keep historical sessions costable, and no routing, preference, forecast or dispatch path reads them (`claude-opus-4.5`, `claude-opus-4.6`, `claude-sonnet-4.5`, `claude-sonnet-4.6`, `gemini-3.1-pro`, `mai-code-1-flash`). 11 rows carry a `long_context` step-up block and 2 carry a `promo` window; both are broken out under the main table.
 
 | Model id | Display | Vendor | Tier | Input | Cached in | Cache write | Output | Flags |
 |---|---|---|---|---:|---:|---:|---:|---|
@@ -197,6 +197,7 @@ Derived from `data/pricing.copilot.json`, `cached_date` **2026-09-24** — 29 ro
 | `gpt-5.6-sol` | GPT-5.6 Sol | openai | strong | $4 | $0.4 | $5 | $20 | long-context ≥272,000 |
 | `kimi-k3` | Kimi K3 | moonshot | strong | $3 | $0.3 | — | $15 | — |
 | `gpt-6-sol` | GPT-6 Sol | openai | strong | $2 | $0.2 | $2.5 | $10 | long-context ≥272,000 |
+| `gpt-6.1-sol` | GPT-6.1 Sol | openai | strong | $2 | $0.1 | $2.5 | $10 | long-context ≥272,000 |
 | `grok-4.6` | Grok 4.6 | xai | strong | $2 | $0.5 | — | $6 | long-context ≥200,000 |
 | `gpt-5.3-codex` | GPT-5.3-Codex | openai | strong | $1.75 | $0.175 | — | $14 | — |
 | `gpt-5.4` | GPT-5.4 | openai | mid | $2.5 | $0.25 | — | $15 | long-context ≥272,000 |
@@ -225,6 +226,7 @@ A `—` in the cache-write column means the file records no cache-write rate for
 | `gpt-5.5` | 272,000 | $10 | $1 | — | $45 |
 | `gpt-5.6-sol` | 272,000 | $8 | $0.8 | $10 | $30 |
 | `gpt-6-sol` | 272,000 | $4 | $0.4 | $5 | $15 |
+| `gpt-6.1-sol` | 272,000 | $4 | $0.2 | $5 | $15 |
 | `grok-4.6` | 200,000 | $4 | $1 | — | $12 |
 | `gpt-5.4` | 272,000 | $5 | $0.5 | — | $22.5 |
 | `gpt-5.6-terra` | 272,000 | $4 | $0.4 | $5 | $18 |
