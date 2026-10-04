@@ -199,8 +199,27 @@ outage spend. The v1 definition, its digest and its report are unchanged.
 - **Sensitivity.** The report states the smallest QS gap the run could detect, and how many
   paired attempts a 2-, 3- or 5-point gap would need.
 
-The new report sections render only when `scoring.extended_report` is true, so v1 reports
-stay byte-identical.
+- **Rubric-and-rank judges.** With `scoring.quality_mode` `rubric_rank`, each judge fills the
+  task's rubric checklist for every blinded candidate and ranks them all. Judge quality is half
+  the checklist share and half the normalised rank. Agreement is measured with Kendall's W
+  across judges. If the mean W falls below `judge_min_agreement`, judge quality is dropped for
+  every arm and the report says so.
+- **Judge consistency.** `judging.consistency_fraction` re-judges a deterministic sample of
+  groups under a fresh label shuffle. The report gives the retest rank correlation and how
+  often the top pick held. Retests never enter QS.
+- **Stronger mutants.** `scoring.mutation_operators` `v2` adds boolean flips, string
+  blanking, min/max and any/all swaps, augmented-assignment operator swaps, negated
+  `if`/`while` tests and dropped unary minus to v1's operators.
+- **Fairer simplicity.** `scoring.simplicity_basis` `median` measures size against the median
+  of the reference and every solved candidate, not the reference alone. A task's
+  `allowed_generated` paths count as in scope but never as size.
+- **Gate probe.** `probe` shows every distinct verifier and reviewer stage a known-bad
+  (`naive.patch`) and a known-good (reference) patch in a fresh sandbox, never the oracle. It
+  reports each gate's sensitivity and specificity. The probe is a separate spend and never
+  enters QS. `plan` prints its estimate when the definition has a `probe` block.
+
+The new report sections render only when `scoring.extended_report` is true or the run holds
+ranked judges or probes, so v1 reports stay byte-identical.
 
 ## How to run
 
@@ -212,6 +231,8 @@ python3 bin/route_experiment.py demo                # whole pipeline on a stub C
 
 python3 bin/route_experiment.py run --live --max-aic 4000          # SPENDS: 36 trials
 python3 bin/route_experiment.py judge --run ID --live --max-aic N  # SPENDS: 18 judge dispatches
+python3 bin/route_experiment.py probe --run ID --dry-run           # gate-probe matrix + estimate; spawns nothing
+python3 bin/route_experiment.py probe --run ID --live --max-aic N  # SPENDS: gate sensitivity/specificity
 python3 bin/route_experiment.py rescan --run ID                    # re-classify contamination; offline
 python3 bin/route_experiment.py run --run-id ID --extend-arms A5 --live --max-aic N  # SPENDS: post-hoc arm
 python3 bin/route_experiment.py report --run ID [--json]           # scorecard + decision

@@ -350,6 +350,40 @@ class MetricTests(unittest.TestCase):
         self.assertEqual((stats["src_added"], stats["src_removed"], stats["test_added"]), (3, 2, 1))
         self.assertEqual(stats["todos_added"], 1)
 
+    def test_v2_mutation_operators_add_kinds_and_spare_docstrings(self):
+        source = ('def f(xs, flag=True):\n    """Doc."""\n    total = 0\n'
+                  '    for x in xs:\n        if x:\n            total += -x\n'
+                  '    return max(total, 0) if flag else "none"\n')
+        v1 = {m["kind"] for m in rx.mutants(source, ["f"], 100, seed=1)}
+        v2 = rx.mutants(source, ["f"], 100, seed=1, operators="v2")
+        kinds = {m["kind"] for m in v2}
+        self.assertFalse(kinds & {"bool", "str", "call-swap", "augassign", "negate-test", "neg"}
+                         & v1)
+        self.assertTrue({"bool", "str", "call-swap", "augassign", "negate-test", "neg"} <= kinds)
+        for m in v2:
+            compile(m["source"], "<mutant>", "exec")
+            self.assertIn('"""Doc."""', m["source"].replace("'Doc.'", '"""Doc."""'))
+        self.assertEqual([m["id"] for m in v2],
+                         [m["id"] for m in rx.mutants(source, ["f"], 100, seed=1,
+                                                      operators="v2")])
+
+    def test_allowed_generated_paths_are_in_scope_and_outside_size(self):
+        exp, _ = real_experiment()
+        task = dict(exp["task_defs"]["T1-statusline-rollover"],
+                    allowed_generated=["copilot-docs/"])
+        patch = ("diff --git a/bin/statusline.py b/bin/statusline.py\n--- a/bin/statusline.py\n"
+                 "+++ b/bin/statusline.py\n@@ -1 +1 @@\n-x = 1\n+x = 2\n"
+                 "diff --git a/copilot-docs/aic-report.json b/copilot-docs/aic-report.json\n"
+                 "--- a/copilot-docs/aic-report.json\n+++ b/copilot-docs/aic-report.json\n"
+                 "@@ -1 +1 @@\n-a\n+b\n")
+        stats = rx.diff_stats(patch, task)
+        self.assertEqual(stats["out_of_scope"], [])
+        self.assertEqual(stats["generated_files"], ["copilot-docs/aic-report.json"])
+        self.assertEqual((stats["src_added"], stats["files_changed"]), (1, 1))
+        plain = rx.diff_stats(patch, exp["task_defs"]["T1-statusline-rollover"])
+        self.assertEqual(plain["out_of_scope"], ["copilot-docs/aic-report.json"])
+        self.assertNotIn("generated_files", plain)
+
     def test_unittest_transcripts(self):
         ok = rx.parse_unittest("....\n------\nRan 4 tests in 0.1s\n\nOK\n")
         self.assertEqual((ok["ran"], ok["ok"]), (4, True))
@@ -475,6 +509,62 @@ class ScoringTests(unittest.TestCase):
         self.assertIsNone(rx.parse_judge(json.dumps(
             {"candidates": {"W": row, "X": dict(row, overall=11)}}), labels))
         self.assertIsNone(rx.parse_judge("no json at all", labels))
+
+
+class JudgeV2Tests(unittest.TestCase):
+    LABELS = {"W": "A2", "X": "A5", "Y": "A3"}
+
+    def response(self, ranking=("X", "W", "Y"), checklist=(True, False), overall=7, **extra):
+        cands = {label: {"checklist": list(checklist), "overall": overall, "rationale": "r"}
+                 for label in self.LABELS}
+        cands.update(extra)
+        return "chatter " + json.dumps({"candidates": cands, "ranking": list(ranking)})
+
+    def test_rubric_rank_parsing_is_strict(self):
+        parsed = rx.parse_judge_rubric_rank(self.response(), self.LABELS, 2)
+        self.assertEqual(parsed["ranking"], ["A5", "A2", "A3"])
+        self.assertEqual(parsed["scores"]["A2"]["rubric_share"], 0.5)
+        for bad in (self.response(ranking=("X", "W")),
+                    self.response(ranking=("X", "W", "W")),
+                    self.response(checklist=(True,)),
+                    self.response(checklist=(1, 0)),
+                    self.response(overall=11),
+                    self.response(overall=True),
+                    "no json"):
+            self.assertIsNone(rx.parse_judge_rubric_rank(bad, self.LABELS, 2))
+
+    def test_the_prompt_carries_the_rubric_and_names_no_arm(self):
+        task = {"prompt_text": "Do it.", "rubric": ["First thing.", "Second thing."]}
+        text = rx.judge_prompt_rubric_rank(task, [("W", "+a"), ("X", "+b")])
+        self.assertIn("1. First thing.", text)
+        self.assertIn("2 booleans", text)
+        self.assertNotRegex(text.lower(), r"\b(a2|a5|luna|opus|sol|gpt|claude)\b")
+
+    def record(self, judge, ranking, share=1.0, retest=False, key=None):
+        return {"key": key or f"T4-r1-j{judge}" + ("-c" if retest else ""), "task": "T4",
+                "repeat": 1, "judge_index": judge, "parsed": True, "ranking": ranking,
+                "consistency": retest or None,
+                "scores": {a: {"rubric_share": share, "overall": 5.0} for a in ranking}}
+
+    def test_quality_is_half_checklist_half_rank_and_retests_never_count(self):
+        records = [self.record(0, ["A5", "A2", "A3"], share=0.5),
+                   self.record(0, ["A3", "A2", "A5"], share=0.0, retest=True)]
+        q = rx.judge_quality(records)
+        self.assertAlmostEqual(q[("T4", 1, "A5")], 0.75)
+        self.assertAlmostEqual(q[("T4", 1, "A2")], 0.5)
+        self.assertAlmostEqual(q[("T4", 1, "A3")], 0.25)
+
+    def test_kendall_w_and_test_retest(self):
+        self.assertAlmostEqual(rx.kendall_w([["a", "b", "c"]] * 3), 1.0)
+        self.assertAlmostEqual(rx.kendall_w([["a", "b"], ["b", "a"]]), 0.0)
+        self.assertIsNone(rx.kendall_w([["a", "b"]]))
+        records = [self.record(0, ["A5", "A2", "A3"]), self.record(1, ["A5", "A2", "A3"]),
+                   self.record(0, ["A5", "A3", "A2"], retest=True)]
+        agreement = rx.judge_agreement(records)
+        self.assertAlmostEqual(agreement["kendall_w_mean"], 1.0)
+        self.assertEqual(agreement["groups"], 1)
+        self.assertAlmostEqual(agreement["retest_spearman_mean"], 0.5)
+        self.assertEqual(agreement["retest_top_pick_agreement"], 1.0)
 
 
 class FakeCopilot:
@@ -735,6 +825,66 @@ class DriverTests(unittest.TestCase):
         del self.exp["scoring"]["extended_report"]
         self.assertNotIn("## Cost and time spread", rx.render_report(rx.build_report(ex)))
 
+    def write_judges(self, ex, rankings):
+        for j, ranking in enumerate(rankings):
+            ex.write(f"judges/T1-r1-j{j}.json", {
+                "key": f"T1-r1-j{j}", "task": self.trial("A4")["task"], "repeat": 1,
+                "judge_index": j, "parsed": True, "mode": "rubric_rank", "ranking": ranking,
+                "arms": sorted(ranking), "dispatches": [],
+                "scores": {a: {"rubric_share": 1.0, "overall": 8.0} for a in ranking}})
+
+    def test_low_judge_agreement_drops_quality_for_every_arm(self):
+        self.exp["scoring"].update({"quality_mode": "rubric_rank", "judge_min_agreement": 0.5})
+        ex = self.driver(FakeCopilot(self.home))
+        self.assertEqual(ex.run(1), 0)
+        arms = sorted(self.exp["arms"])
+        self.write_judges(ex, [arms, arms[::-1]])
+        report = rx.build_report(ex)
+        self.assertEqual(report["dropped_components"], ["quality"])
+        self.assertIn("Kendall", report["drop_reason"])
+        self.assertIn("Left out for every arm: quality", rx.render_report(report))
+        self.write_judges(ex, [arms, arms])
+        report = rx.build_report(ex)
+        self.assertEqual(report["dropped_components"], [])
+        self.assertIn("Rank agreement: mean Kendall's W 1.00", rx.render_report(report))
+
+    def test_the_median_basis_scores_simplicity_against_solved_candidates(self):
+        ex = self.driver(FakeCopilot(self.home))
+        self.assertEqual(ex.run(1), 0)
+        basis = rx.simplicity_basis(ex, {g["trial_id"]: g for g in ex.records("grades")})
+        task = self.trial("A4")["task"]
+        self.assertEqual(basis[task]["basis"], "median")
+        self.assertEqual(basis[task]["candidates"], 1 + len(self.exp["arms"]))
+        self.exp["scoring"]["simplicity_basis"] = "median"
+        self.assertTrue(rx.build_report(ex)["rows"])
+
+    def test_the_probe_scores_each_gate_on_naive_and_reference_patches(self):
+        for task in self.exp["task_defs"].values():
+            task["naive_text"] = task["reference_text"]
+        fake = FakeCopilot(self.home, verdicts=["REVIEW VERDICT=reject", "REVIEW VERDICT=accept",
+                                                "VERIFY VERDICT=fail", "VERIFY VERDICT=fail"])
+        ex = self.driver(fake)
+        ex.open_run(1)
+        plan = ex.probe_plan()
+        self.assertEqual(len(plan), 2 * len(ex.gate_stages()) * len(self.exp["tasks"]))
+        self.assertEqual(ex.probe(), 0)
+        self.assertEqual(fake.calls, ["REVIEWER", "REVIEWER", "VERIFIER", "VERIFIER"])
+        for prompt in fake.prompts:
+            self.assertNotIn(rx.ORACLE_TEST_NAME, prompt)
+        summary = {g["role"]: g for g in rx.probe_summary(ex.records("probes"))}
+        self.assertEqual((summary["verifier"]["sensitivity"], summary["verifier"]["specificity"]),
+                         (1.0, 0.0))
+        self.assertEqual((summary["reviewer"]["sensitivity"], summary["reviewer"]["specificity"]),
+                         (1.0, 1.0))
+        self.assertGreater(ex.spent(), 0)
+        self.assertEqual(ex.probe(), 0)
+        self.assertEqual(len(fake.calls), 4)
+        self.exp["probe"] = {"repeats": 1}
+        plan = rx.build_plan(self.exp, "0" * 64, PRICING, 1)
+        self.assertEqual(plan["probe"]["dispatches"], 4)
+        self.assertGreater(plan["probe"]["aic"], 0)
+        self.assertIn("Gate probe (separate command)", rx.render_plan(plan, self.exp))
+
     def test_rescan_reclassifies_from_the_session_logs_with_an_audit_trail(self):
         fake = FakeCopilot(self.home)
         ex = self.driver(fake)
@@ -918,6 +1068,19 @@ class CliTests(unittest.TestCase):
             self.assertIn("DRY RUN", out)
             self.assertIn("gpt-6-luna/max", out)
             self.assertFalse(store.exists())
+
+    def test_probe_dry_run_spawns_nothing_and_writes_nothing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = Path(tmp) / "store"
+            with mock.patch.object(rx._pr(), "run", side_effect=AssertionError("spawned")):
+                rc, out, _ = self.run_cli("--store-dir", str(store), "probe", "--dry-run",
+                                          "--run", "dry")
+            self.assertEqual(rc, 0)
+            self.assertIn("gate probes over", out)
+            self.assertFalse(store.exists())
+        rc, _, err = self.run_cli("probe", "--live", "--run", "dry")
+        self.assertEqual(rc, 2)
+        self.assertIn("--max-aic", err)
 
     def test_plan_json_is_machine_readable(self):
         rc, out, _ = self.run_cli("plan", "--json", "--repeats", "1")

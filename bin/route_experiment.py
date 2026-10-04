@@ -112,6 +112,8 @@ PLAN_CHARS = 12000
 OUTPUT_KEEP_CHARS = 16000
 TEST_TIMEOUT_SECONDS = 300
 LABELS = "WXYZVUTS"
+SIMPLICITY_BASES = ("reference", "median")
+QUALITY_MODES = ("overall", "rubric_rank")
 
 _SIBLINGS = {}
 
@@ -239,6 +241,20 @@ def validate_definition(exp, pricing):
     weights = (exp.get("scoring") or {}).get("weights") or {}
     _require(set(weights) == set(WEIGHT_KEYS), f"scoring.weights must name exactly {WEIGHT_KEYS}")
     _require(abs(sum(weights.values()) - 1.0) < 1e-9, "scoring.weights must sum to 1")
+    scoring = exp["scoring"]
+    for key, allowed in (("mutation_operators", MUTATION_OPERATORS),
+                         ("simplicity_basis", SIMPLICITY_BASES),
+                         ("quality_mode", QUALITY_MODES)):
+        _require(scoring.get(key, allowed[0]) in allowed,
+                 f"scoring.{key} must be one of {list(allowed)}")
+    for key, hi in (("judge_min_agreement", 1.0), ("max_estimate_share", 1.0),
+                    ("cost_tie_pct", 1000.0)):
+        value = scoring.get(key)
+        _require(value is None or (isinstance(value, (int, float)) and 0 <= value <= hi),
+                 f"scoring.{key} must be a number in 0..{hi:g}")
+    fraction = (exp.get("judging") or {}).get("consistency_fraction", 0)
+    _require(isinstance(fraction, (int, float)) and 0 <= fraction <= 1,
+             "judging.consistency_fraction must be in 0..1")
     rework = exp.get("rework") or {}
     for key in ("after_verifier_fail", "after_reviewer_reject"):
         _require(isinstance(rework.get(key), int) and rework[key] >= 0,
@@ -378,6 +394,41 @@ def judge_estimate(exp, pricing):
     return sum(stage_estimate(exp, pricing, "judge", j["model"]) for j in exp.get("judges") or [])
 
 
+def gate_stages(exp):
+    """{(role, model, effort): [arms]} for every distinct verifier/reviewer stage."""
+    gates = {}
+    for arm_id, arm in sorted(exp["arms"].items()):
+        for role in ("verifier", "reviewer"):
+            st = arm["stages"].get(role)
+            if st:
+                gates.setdefault((role, st["model"], st["effort"]), []).append(arm_id)
+    return gates
+
+
+def probe_plan(exp):
+    """-> [(key, gate, task_id, kind, n)] over every gate x task with a naive patch x
+    {naive, reference} x probe.repeats."""
+    repeats = int((exp.get("probe") or {}).get("repeats") or 1)
+    out = []
+    for g_index, gate in enumerate(sorted(gate_stages(exp))):
+        for task_id in exp["tasks"]:
+            task = exp["task_defs"][task_id]
+            if not task.get("naive_text"):
+                continue
+            for kind in ("naive", "reference"):
+                for n in range(1, repeats + 1):
+                    out.append((f"probe-g{g_index}-{task['short']}-{kind}-r{n}", gate,
+                                task_id, kind, n))
+    return out
+
+
+def probe_estimate(exp, pricing):
+    plan = probe_plan(exp)
+    return {"dispatches": len(plan),
+            "aic": sum(stage_estimate(exp, pricing, role, model)
+                       for _, (role, model, _e), _, _, _ in plan)}
+
+
 def build_plan(exp, digest, pricing, repeats):
     trials = trial_plan(exp, repeats)
     per_arm = {arm: arm_estimate(exp, pricing, arm) for arm in sorted(exp["arms"])}
@@ -385,7 +436,7 @@ def build_plan(exp, digest, pricing, repeats):
     per_group_judge = judge_estimate(exp, pricing)
     lo = sum(per_arm[t["arm"]]["min"] for t in trials)
     hi = sum(per_arm[t["arm"]]["max"] for t in trials)
-    return {
+    plan = {
         "version": EXPERIMENT_VERSION, "preregistration": digest, "base_commit": exp["base_commit"],
         "repeats": repeats, "trials": trials, "per_arm": per_arm,
         "dispatches": {"min": sum(per_arm[t["arm"]]["dispatches_min"] for t in trials),
@@ -398,6 +449,9 @@ def build_plan(exp, digest, pricing, repeats):
         "basis": "est. -- task_profiles token counts x per-MTok rates; cache writes excluded, "
                  "so real spend runs higher; measured AIC replaces each estimate as it lands",
     }
+    if exp.get("probe"):
+        plan["probe"] = probe_estimate(exp, pricing)
+    return plan
 
 
 # ---------------------------------------------------------------------------------------------
@@ -496,6 +550,65 @@ def judge_prompt(task, candidates):
     return "\n\n".join(parts)
 
 
+def judge_prompt_rubric_rank(task, candidates):
+    """v2 judge prompt: a per-task checklist answered for every candidate, then one full
+    ranking. Checklist items are the task's own `rubric`; nothing names an arm or a model."""
+    rubric = task.get("rubric") or ["The change meets every requirement in the task."]
+    parts = ["You are grading anonymous candidate solutions to ONE programming task. Judge only "
+             "from the text below; do not run tools. Candidates are in no particular order.\n\n"
+             "# TASK\n\n" + task["prompt_text"].strip()]
+    for label, patch in candidates:
+        body = _bounded(patch, JUDGE_PATCH_CHARS) if patch.strip() else "(empty diff: no change)"
+        parts.append(f"# CANDIDATE {label}\n\n```diff\n{body}\n```")
+    items = "\n".join(f"{i + 1}. {item}" for i, item in enumerate(rubric))
+    keys = ", ".join(f'"{label}": {{...}}' for label, _ in candidates)
+    labels = ", ".join(f'"{label}"' for label, _ in candidates)
+    parts.append(
+        "# CHECKLIST\n\n" + items + "\n\n# SCORING\n\nFor EVERY candidate answer each "
+        "checklist item true (the diff clearly satisfies it) or false, in order, and give an "
+        "overall score from 1 (worst) to 10 (best) weighing correctness, design, readability, "
+        "test quality and scope. Then rank ALL candidates from best to worst; ties are not "
+        "allowed. Respond with ONE JSON object and nothing else, shaped: {\"candidates\": {"
+        + keys + "}, \"ranking\": [" + labels + " in your order]} where each candidate value "
+        f"is {{\"checklist\": [{len(rubric)} booleans], \"overall\": n, "
+        "\"rationale\": \"<= 40 words\"}.")
+    return "\n\n".join(parts)
+
+
+def parse_judge_rubric_rank(text, labels, items):
+    """-> {"scores": {arm: {checklist, rubric_share, overall, rationale}}, "ranking": [arms]}
+    from a rubric_rank response, or None if it is not usable (any malformed candidate, a
+    checklist of the wrong length, or a ranking that is not a permutation of the labels)."""
+    decoder = json.JSONDecoder()
+    for start in [m.start() for m in re.finditer(r"\{", text or "")]:
+        try:
+            obj, _ = decoder.raw_decode(text[start:])
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(obj, dict) or not isinstance(obj.get("candidates"), dict):
+            continue
+        ranking = obj.get("ranking")
+        if not isinstance(ranking, list) or sorted(map(str, ranking)) != sorted(labels):
+            return None
+        scores = {}
+        for label, arm in labels.items():
+            entry = obj["candidates"].get(label)
+            if not isinstance(entry, dict):
+                return None
+            checks, overall = entry.get("checklist"), entry.get("overall")
+            if (not isinstance(checks, list) or len(checks) != items
+                    or not all(isinstance(c, bool) for c in checks)):
+                return None
+            if not isinstance(overall, (int, float)) or isinstance(overall, bool) \
+                    or not 1 <= overall <= 10:
+                return None
+            scores[arm] = {"checklist": checks, "rubric_share": sum(checks) / items,
+                           "overall": float(overall),
+                           "rationale": str(entry.get("rationale") or "")[:400]}
+        return {"scores": scores, "ranking": [labels[str(x)] for x in ranking]}
+    return None
+
+
 # ---------------------------------------------------------------------------------------------
 # Diffs: which files changed, how much, and whether the change stayed in scope
 
@@ -552,7 +665,11 @@ def guardrail_hits(files, guardrails):
 
 
 def diff_stats(patch, task):
-    files = diff_files(patch)
+    """Size and scope of a diff. Paths in the task's `allowed_generated` (regenerated mirrors
+    the task legitimately rebuilds) are in scope and outside every size measure."""
+    every = diff_files(patch)
+    generated = task.get("allowed_generated") or []
+    files = [f for f in every if not in_scope(f["path"], generated)]
     src = [f for f in files if not is_test_path(f["path"])]
     tests = [f for f in files if is_test_path(f["path"])]
     todo_re = re.compile(r"\b(TODO|FIXME|XXX)\b")
@@ -567,7 +684,10 @@ def diff_stats(patch, task):
                                if not in_scope(f["path"], task["allowed_paths"])),
         "guardrails": guardrail_hits(files, task["guardrails"]),
         "todos_added": sum(1 for f in files for line in f["added_lines"] if todo_re.search(line)),
-        "empty": not files,
+        "empty": not every,
+        **({"generated_files": sorted(f["path"] for f in every
+                                      if in_scope(f["path"], generated))}
+           if generated else {}),
     }
 
 
@@ -855,9 +975,18 @@ _CMP_SWAP = {ast.Lt: ast.GtE, ast.GtE: ast.Lt, ast.Gt: ast.LtE, ast.LtE: ast.Gt,
              ast.In: ast.NotIn, ast.NotIn: ast.In}
 _BIN_SWAP = {ast.Add: ast.Sub, ast.Sub: ast.Add, ast.Mult: ast.Div, ast.Div: ast.Mult,
              ast.FloorDiv: ast.Mult}
+_CALL_SWAP = {"min": "max", "max": "min", "any": "all", "all": "any"}
+MUTATION_OPERATORS = ("v1", "v2")
 
 
-def _mutation_points(tree, ranges):
+def _mutation_points(tree, ranges, operators="v1"):
+    """v1: compare/bool-op/arith/int/not/return. v2 adds bool and non-docstring str constants,
+    min/max and any/all swaps, augmented-assignment arithmetic, negated `if`/`while` tests and
+    a dropped unary minus -- the operators that reach branchy, string-handling code."""
+    v2 = operators == "v2"
+    docstrings = {id(n.value) for n in ast.walk(tree)
+                  if isinstance(n, ast.Expr) and isinstance(n.value, ast.Constant)}
+
     def inside(node):
         line = getattr(node, "lineno", None)
         return line is not None and any(lo <= line <= hi for lo, hi in ranges)
@@ -878,6 +1007,20 @@ def _mutation_points(tree, ranges):
             points.append(("int", node, None))
         elif isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.Not):
             points.append(("not", node, None))
+        elif v2 and isinstance(node, ast.Constant) and type(node.value) is bool:
+            points.append(("bool", node, None))
+        elif (v2 and isinstance(node, ast.Constant) and isinstance(node.value, str)
+              and node.value and id(node) not in docstrings):
+            points.append(("str", node, None))
+        elif (v2 and isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+              and node.func.id in _CALL_SWAP):
+            points.append(("call-swap", node, None))
+        elif v2 and isinstance(node, ast.AugAssign) and type(node.op) in _BIN_SWAP:
+            points.append(("augassign", node, None))
+        elif v2 and isinstance(node, (ast.If, ast.While)):
+            points.append(("negate-test", node, None))
+        elif v2 and isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.USub):
+            points.append(("neg", node, None))
         elif isinstance(node, ast.Return) and node.value is not None and not (
                 isinstance(node.value, ast.Constant) and node.value.value is None):
             points.append(("return", node, None))
@@ -889,8 +1032,16 @@ def _apply_point(kind, node, index):
         node.ops[index] = _CMP_SWAP[type(node.ops[index])]()
     elif kind == "boolop":
         node.op = ast.Or() if isinstance(node.op, ast.And) else ast.And()
-    elif kind == "binop":
+    elif kind in ("binop", "augassign"):
         node.op = _BIN_SWAP[type(node.op)]()
+    elif kind == "bool":
+        node.value = not node.value
+    elif kind == "str":
+        node.value = ""
+    elif kind == "call-swap":
+        node.func.id = _CALL_SWAP[node.func.id]
+    elif kind == "negate-test":
+        node.test = ast.UnaryOp(op=ast.Not(), operand=node.test)
     elif kind == "int":
         node.value = node.value + 1
     elif kind == "return":
@@ -906,7 +1057,7 @@ class _DropNot(ast.NodeTransformer):
         return node.operand if node is self.target else node
 
 
-def mutants(source, function_names, limit, seed):
+def mutants(source, function_names, limit, seed, operators="v1"):
     """Deterministic sample of at most `limit` single-point mutants of the named functions.
 
     -> [{"id", "kind", "line", "source"}]. Each mutant re-parses the original so mutations
@@ -921,15 +1072,15 @@ def mutants(source, function_names, limit, seed):
               for n in function_names if n in funcs]
     if not ranges:
         return []
-    count = len(_mutation_points(tree, ranges))
+    count = len(_mutation_points(tree, ranges, operators))
     order = list(range(count))
     random.Random(seed).shuffle(order)
     out = []
     for point_index in sorted(order[:limit]):
         fresh = ast.parse(source)
-        kind, node, index = _mutation_points(fresh, ranges)[point_index]
+        kind, node, index = _mutation_points(fresh, ranges, operators)[point_index]
         line = node.lineno
-        if kind == "not":
+        if kind in ("not", "neg"):
             fresh = _DropNot(node).visit(fresh)
         else:
             _apply_point(kind, node, index)
@@ -1288,7 +1439,7 @@ class Experiment:
         """Every dispatch recorded so far in this run: measured AIC, or the estimate when the
         session log could not be read (never zero)."""
         total = 0.0
-        for record in self.records("trials") + self.records("judges"):
+        for record in self.records("trials") + self.records("judges") + self.records("probes"):
             for dispatch in record.get("dispatches") or []:
                 total += dispatch.get("aic_charged") or 0.0
             for prior in record.get("prior_attempts") or []:
@@ -1759,12 +1910,13 @@ class Experiment:
         catches it (so it provably changes specified behaviour); the score is the share of
         those the candidate's own tests also catch."""
         limit = int(self.exp["scoring"].get("mutants_per_trial") or 20)
+        operators = self.exp["scoring"].get("mutation_operators", "v1")
         pool = []
         for rel, m in sorted(metrics["files"].items()):
             if m.get("parse_error") or m.get("deleted") or not m["touched_functions"]:
                 continue
             source = self.file_text(box, rel)
-            for mutant in mutants(source, m["touched_functions"], limit, seed):
+            for mutant in mutants(source, m["touched_functions"], limit, seed, operators):
                 pool.append((rel, source, mutant))
         random.Random(seed).shuffle(pool)
         pool = pool[:limit]
@@ -1861,6 +2013,55 @@ class Experiment:
                                                     and not said_ok and truth)})
         return out
 
+    # -- gate probe -------------------------------------------------------------------------
+
+    def gate_stages(self):
+        return gate_stages(self.exp)
+
+    def probe_plan(self):
+        return probe_plan(self.exp)
+
+    def probe(self, only=None):
+        """Show each gate stage a known-bad (naive) and known-good (reference) patch in a
+        fresh base sandbox -- the oracle is never present -- and record its verdict. The
+        result measures each gate's sensitivity and specificity; it never enters QS."""
+        if self.read_json("run.json") is None:
+            raise ConfigError(f"no run {self.run_id} under {self.store_dir}")
+        gates = self.gate_stages()
+        for key, (role, model, effort), task_id, kind, n in self.probe_plan():
+            if only and key not in only:
+                continue
+            existing = self.read_json(f"probes/{key}.json")
+            if existing and existing.get("verdict") is not None:
+                continue
+            task = self.exp["task_defs"][task_id]
+            patch = task[f"{kind}_text"]
+            with tempfile.TemporaryDirectory(prefix="route-exp-probe-") as tmp:
+                box, applied, detail = self.grade_box(patch, Path(tmp) / "g")
+                if not applied:
+                    raise ConfigError(f"{task_id}: {kind} patch does not apply: {detail}")
+                before = self.snapshot(box)
+                try:
+                    d = self.dispatch(key, role, {"model": model, "effort": effort},
+                                      prompt_for(role, task, patch=patch), box)
+                except CeilingReached as exc:
+                    self.say(f"  probe {key} STOPPED: {exc}")
+                    return 4
+                wrote = self.touched(before, self.snapshot(box))
+            d.pop("_text")
+            d.pop("_kept")
+            verdict = d.get("verdict")
+            record = {"key": key, "role": role, "model": model, "effort": effort,
+                      "arms": gates[(role, model, effort)], "task": task_id, "kind": kind,
+                      "repeat": n, "verdict": verdict,
+                      "correct": None if verdict is None else
+                      (verdict in ("pass", "accept")) == (kind == "reference"),
+                      "wrote": wrote, "dispatches": [d]}
+            self.write(f"probes/{key}.json", record)
+            self.say(f"  probe {key} {role} {model}: {kind} -> {verdict or 'UNPARSED'} "
+                     f"{d['aic_charged']:.2f} AIC")
+        return 0
+
     # -- blind judges -----------------------------------------------------------------------
 
     def judge_groups(self):
@@ -1874,48 +2075,73 @@ class Experiment:
                 groups.setdefault((record["task"], record["repeat"]), {})[record["arm"]] = record
         return groups
 
+    def consistency_groups(self, groups):
+        """The deterministic share of (task, repeat) groups every judge sees a second time."""
+        fraction = float((self.exp.get("judging") or {}).get("consistency_fraction") or 0)
+        keys = sorted(groups)
+        count = round(fraction * len(keys))
+        return set(random.Random(f"{self.exp.get('seed')}:consistency").sample(keys, count))
+
     def judge(self, only=None):
         manifest = self.read_json("run.json")
         if manifest is None:
             raise ConfigError(f"no run {self.run_id} under {self.store_dir}")
-        for (task_id, rep), trials in sorted(self.judge_groups().items()):
+        groups = {k: v for k, v in self.judge_groups().items() if len(v) >= 2}
+        retest = self.consistency_groups(groups)
+        passes = [(k, "") for k in sorted(groups)] + [(k, "-c") for k in sorted(retest)]
+        for (task_id, rep), suffix in passes:
+            trials = groups[(task_id, rep)]
             task = self.exp["task_defs"][task_id]
-            if len(trials) < 2:
-                continue
             for j_index, judge in enumerate(self.exp.get("judges") or []):
-                key = f"{task['short']}-r{rep}-j{j_index}"
+                key = f"{task['short']}-r{rep}-j{j_index}{suffix}"
                 if only and key not in only:
                     continue
-                existing = self.read_json(f"judges/{key}.json")
-                arms = sorted(trials)
-                if existing and existing.get("parsed") and sorted(existing["arms"]) == arms:
-                    continue
-                rng = random.Random(f"{self.exp.get('seed')}:{key}")
-                shuffled = arms[:]
-                rng.shuffle(shuffled)
-                labels = {LABELS[i]: arm for i, arm in enumerate(shuffled)}
-                candidates = [(label, self.read_text(trials[arm]["patch_file"]) or "")
-                              for label, arm in labels.items()]
-                prompt = judge_prompt(task, candidates)
-                try:
-                    with tempfile.TemporaryDirectory(prefix="route-exp-judge-") as cwd:
-                        d = self.dispatch(key, "judge", judge, prompt, cwd)
-                except CeilingReached as exc:
-                    self.say(f"  judge {key} STOPPED: {exc}")
+                if self._judge_one(task, rep, trials, j_index, judge, key, bool(suffix)) == 4:
                     return 4
-                text = d.pop("_text")
-                d.pop("_kept")
-                scores = parse_judge(text, labels)
-                record = {"key": key, "task": task_id, "repeat": rep, "judge_index": j_index,
-                          "model": judge["model"], "labels": labels, "arms": arms,
-                          "parsed": scores is not None, "scores": scores or {},
-                          "dispatches": [d]}
-                self.write(f"judges/{key}.json", record)
-                self.write(f"outputs/judges/{key}.txt",
-                           _redact().redact(text, limit=OUTPUT_KEEP_CHARS)["text"])
-                self.say(f"  judge {key} {judge['model']}: "
-                         f"{'parsed' if scores else 'UNPARSED -- excluded'} "
-                         f"{d['aic_charged']:.2f} AIC")
+        return 0
+
+    def _judge_one(self, task, rep, trials, j_index, judge, key, retest):
+        existing = self.read_json(f"judges/{key}.json")
+        arms = sorted(trials)
+        if existing and existing.get("parsed") and sorted(existing["arms"]) == arms:
+            return 0
+        rng = random.Random(f"{self.exp.get('seed')}:{key}")
+        shuffled = arms[:]
+        rng.shuffle(shuffled)
+        labels = {LABELS[i]: arm for i, arm in enumerate(shuffled)}
+        candidates = [(label, self.read_text(trials[arm]["patch_file"]) or "")
+                      for label, arm in labels.items()]
+        mode = self.exp["scoring"].get("quality_mode", "overall")
+        prompt = (judge_prompt_rubric_rank(task, candidates) if mode == "rubric_rank"
+                  else judge_prompt(task, candidates))
+        try:
+            with tempfile.TemporaryDirectory(prefix="route-exp-judge-") as cwd:
+                d = self.dispatch(key, "judge", judge, prompt, cwd)
+        except CeilingReached as exc:
+            self.say(f"  judge {key} STOPPED: {exc}")
+            return 4
+        text = d.pop("_text")
+        d.pop("_kept")
+        ranking = None
+        if mode == "rubric_rank":
+            parsed = parse_judge_rubric_rank(text, labels, len(task.get("rubric") or [1]))
+            scores, ranking = (parsed["scores"], parsed["ranking"]) if parsed else (None, None)
+        else:
+            scores = parse_judge(text, labels)
+        record = {"key": key, "task": task["id"], "repeat": rep, "judge_index": j_index,
+                  "model": judge["model"], "labels": labels, "arms": arms,
+                  "parsed": scores is not None, "scores": scores or {},
+                  "dispatches": [d]}
+        if mode == "rubric_rank":
+            record.update({"mode": mode, "ranking": ranking})
+        if retest:
+            record["consistency"] = True
+        self.write(f"judges/{key}.json", record)
+        self.write(f"outputs/judges/{key}.txt",
+                   _redact().redact(text, limit=OUTPUT_KEEP_CHARS)["text"])
+        self.say(f"  judge {key} {judge['model']}: "
+                 f"{'parsed' if scores else 'UNPARSED -- excluded'} "
+                 f"{d['aic_charged']:.2f} AIC")
         return 0
 
 
@@ -1991,16 +2217,118 @@ def simplicity(grade):
                  - 0.5 * excess_cc / max(3, abs(rm.get("delta_cc", 0))))
 
 
+def probe_summary(records):
+    """Per gate stage: sensitivity (share of naive patches rejected) and specificity (share of
+    reference patches accepted) over parsed verdicts."""
+    out = {}
+    for r in records:
+        g = out.setdefault((r["role"], r["model"], r["effort"]), {
+            "role": r["role"], "model": r["model"], "effort": r["effort"], "arms": r["arms"],
+            "naive": 0, "rejected_naive": 0, "reference": 0, "accepted_reference": 0,
+            "unparsed": 0, "wrote": 0, "aic": 0.0})
+        g["aic"] = round(g["aic"] + sum(d["aic_charged"] for d in r["dispatches"]), 4)
+        g["wrote"] += 1 if r.get("wrote") else 0
+        if r["verdict"] is None:
+            g["unparsed"] += 1
+            continue
+        ok = r["verdict"] in ("pass", "accept")
+        if r["kind"] == "naive":
+            g["naive"] += 1
+            g["rejected_naive"] += 0 if ok else 1
+        else:
+            g["reference"] += 1
+            g["accepted_reference"] += 1 if ok else 0
+    for g in out.values():
+        g["sensitivity"] = g["rejected_naive"] / g["naive"] if g["naive"] else None
+        g["specificity"] = (g["accepted_reference"] / g["reference"]
+                            if g["reference"] else None)
+    return [out[k] for k in sorted(out)]
+
+
+def simplicity_basis(ex, grades):
+    """{task: pseudo-reference} for the `median` simplicity basis: the median source-line
+    change and median ΔCC over every SOLVED candidate of that task (all arms) plus the
+    reference itself, so one unusually lean or verbose reference does not set the bar."""
+    out = {}
+    for task_id in ex.exp["tasks"]:
+        ref = ex.reference(task_id) or {}
+        sizes = [((ref.get("diff") or {}).get("src_added", 0)
+                  + (ref.get("diff") or {}).get("src_removed", 0),
+                  (((ref.get("metrics") or {}).get("aggregate")) or {}).get("delta_cc", 0))]
+        for g in grades.values():
+            agg = ((g.get("metrics") or {}).get("aggregate")) or {}
+            if g.get("task") == task_id and (g.get("oracle") or {}).get("score") == 1.0 and agg:
+                sizes.append((g["diff"]["src_added"] + g["diff"]["src_removed"],
+                              agg.get("delta_cc", 0)))
+        out[task_id] = {"diff": {"src_added": statistics.median(s for s, _ in sizes),
+                                 "src_removed": 0},
+                        "metrics": {"aggregate": {"delta_cc": statistics.median(
+                            c for _, c in sizes)}},
+                        "basis": "median", "candidates": len(sizes)}
+    return out
+
+
 def judge_quality(judge_records):
-    """{(task, repeat, arm): mean normalized overall 0..1 across parsed judges}."""
+    """{(task, repeat, arm): mean 0..1 across parsed judges}. An `overall` judgment counts as
+    its normalised overall score; a rubric_rank judgment as half its checklist pass share and
+    half its normalised rank (best = 1, worst = 0). Consistency re-judgments never count."""
     acc = {}
     for record in judge_records:
-        if not record.get("parsed"):
+        if not record.get("parsed") or record.get("consistency"):
             continue
+        ranking = record.get("ranking")
         for arm, row in record["scores"].items():
-            acc.setdefault((record["task"], record["repeat"], arm), []).append(
-                (row["overall"] - 1) / 9)
+            if ranking:
+                k = len(ranking)
+                rank = (k - 1 - ranking.index(arm)) / (k - 1) if k > 1 else 1.0
+                value = 0.5 * row["rubric_share"] + 0.5 * rank
+            else:
+                value = (row["overall"] - 1) / 9
+            acc.setdefault((record["task"], record["repeat"], arm), []).append(value)
     return {key: sum(v) / len(v) for key, v in acc.items()}
+
+
+def kendall_w(rankings):
+    """Kendall's coefficient of concordance for m complete rankings of the same n items
+    (0 = no agreement, 1 = identical), or None when m < 2 or n < 2."""
+    m = len(rankings)
+    n = len(rankings[0]) if rankings else 0
+    if m < 2 or n < 2:
+        return None
+    totals = {item: 0 for item in rankings[0]}
+    for ranking in rankings:
+        for position, item in enumerate(ranking):
+            totals[item] += position + 1
+    mean = m * (n + 1) / 2
+    spread = sum((t - mean) ** 2 for t in totals.values())
+    return 12 * spread / (m * m * (n ** 3 - n))
+
+
+def judge_agreement(judge_records):
+    """Rank agreement among rubric_rank judges, and test-retest reliability of each judge
+    against its own consistency re-judgment. -> dict, all None when nothing is ranked."""
+    ranked = [r for r in judge_records if r.get("parsed") and r.get("ranking")]
+    first = {r["key"]: r for r in ranked if not r.get("consistency")}
+    groups = {}
+    for r in first.values():
+        groups.setdefault((r["task"], r["repeat"]), []).append(r["ranking"])
+    ws = [w for w in (kendall_w(v) for v in groups.values()
+                      if len({tuple(sorted(x)) for x in v}) == 1) if w is not None]
+    retest, top = [], []
+    for r in ranked:
+        if not r.get("consistency"):
+            continue
+        orig = first.get(r["key"][:-2])
+        if not orig or sorted(orig["ranking"]) != sorted(r["ranking"]):
+            continue
+        items = orig["ranking"]
+        rho = spearman([items.index(a) for a in items], [r["ranking"].index(a) for a in items])
+        if rho is not None:
+            retest.append(rho)
+        top.append(1.0 if orig["ranking"][0] == r["ranking"][0] else 0.0)
+    return {"kendall_w_mean": _mean(ws), "groups": len(ws),
+            "retest_pairs": len(retest) or len(top), "retest_spearman_mean": _mean(retest),
+            "retest_top_pick_agreement": _mean(top)}
 
 
 def score_trial(trial, grade, quality, scoring, drop=()):
@@ -2209,9 +2537,19 @@ def build_report(ex, arms=None, drop=(), view="preregistered"):
     arms = sorted(arms if arms is not None else prereg)
     trials = [t for t in ex.records("trials") if t["arm"] in arms]
     grades = {g["trial_id"]: g for g in ex.records("grades")}
-    judges = ex.records("judges")
+    all_judges = ex.records("judges")
+    judges = [j for j in all_judges if not j.get("consistency")]
     quality = judge_quality(judges)
     drop_reason = None
+    agreement_gate = scoring.get("judge_min_agreement")
+    ranked = judge_agreement(all_judges)
+    if (scoring.get("quality_mode") == "rubric_rank" and agreement_gate is not None
+            and "quality" not in drop and ranked["kendall_w_mean"] is not None
+            and ranked["kendall_w_mean"] < agreement_gate):
+        drop = tuple(drop) + ("quality",)
+        drop_reason = (f"judges agree too little to score on (mean Kendall's W "
+                       f"{ranked['kendall_w_mean']:.2f} < the preregistered "
+                       f"{agreement_gate:g}), so judge quality is left out for every arm")
     if view == "extended" and "quality" not in drop:
         covered = {quality.get((t["task"], t["repeat"], t["arm"])) is not None
                    for t in trials if t["status"] in ("complete", "timeout")}
@@ -2219,6 +2557,7 @@ def build_report(ex, arms=None, drop=(), view="preregistered"):
             drop = tuple(drop) + ("quality",)
             drop_reason = ("judge quality covers only some arms in this view (extension arms "
                            "are never judged), so it is left out for every arm")
+    basis = simplicity_basis(ex, grades) if scoring.get("simplicity_basis") == "median" else {}
     rows, excluded = [], []
     for trial in trials:
         grade = grades.get(trial["trial_id"])
@@ -2229,7 +2568,8 @@ def build_report(ex, arms=None, drop=(), view="preregistered"):
                              "contamination": trial.get("contamination") or []})
             continue
         q = quality.get((trial["task"], trial["repeat"], trial["arm"]))
-        row = score_trial(trial, grade, q, scoring, drop=drop)
+        scored = dict(grade, reference=basis[trial["task"]]) if trial["task"] in basis else grade
+        row = score_trial(trial, scored, q, scoring, drop=drop)
         row["_trial"], row["_grade"] = trial, grade
         rows.append(row)
 
@@ -2343,6 +2683,9 @@ def build_report(ex, arms=None, drop=(), view="preregistered"):
         "failed_spend": failed_spend,
         "judges": {"records": len(judges), "parsed": sum(1 for j in judges if j.get("parsed")),
                    "spearman_overall": agreement, "pairs": len(pairs),
+                   **({"ranked": ranked, "min_agreement": agreement_gate,
+                       "consistency_records": len(all_judges) - len(judges)}
+                      if ranked["groups"] or ranked["retest_pairs"] else {}),
                    "aic": round(sum(d["aic_charged"] for j in judges
                                     for d in j.get("dispatches") or []), 3)},
         "per_arm": per_arm, "decision": decision, "pareto": pareto(per_arm),
@@ -2356,6 +2699,9 @@ def build_report(ex, arms=None, drop=(), view="preregistered"):
         "max_estimate_share": float(scoring.get("max_estimate_share", 0.10)),
         "extended_sections": bool(scoring.get("extended_report")),
     }
+    probes = ex.records("probes")
+    if probes and view == "preregistered":
+        report["probe"] = probe_summary(probes)
     if view == "preregistered" and extensions:
         report["extended"] = build_report(ex, arms=prereg + extensions, view="extended")
         report["extended"]["extensions"] = [
@@ -2445,6 +2791,10 @@ def render_report(report, nested=False):
               f"Quality leader {report['quality_leader']}; value leader (QS per AIC) "
               f"{report['value_leader']}; Pareto set (QS vs AIC): "
               f"{', '.join(report['pareto']) or '—'}.", ""]
+    if not nested and report["dropped_components"]:
+        lines += [f"Left out for every arm: {', '.join(report['dropped_components'])} -- "
+                  f"{report['drop_reason'] or 'requested'}; the remaining weights renormalise.",
+                  ""]
     if report["small_sample"]:
         lines += ["> Small sample: fewer than 20 scored trials per arm. Intervals are wide; "
                   "treat the ranking as directional.", ""]
@@ -2511,6 +2861,27 @@ def render_report(report, nested=False):
     lines += ["", f"Judges: {j['parsed']}/{j['records']} parsed, {_f(j['aic'], 2)} AIC; "
               f"inter-judge Spearman on overall = {_f(j['spearman_overall'], 2)} "
               f"over {j['pairs']} items."]
+    rk = j.get("ranked")
+    if rk:
+        gate = j.get("min_agreement")
+        lines += ["", f"Rank agreement: mean Kendall's W {_f(rk['kendall_w_mean'], 2)} over "
+                  f"{rk['groups']} groups" + (f" (preregistered floor {gate:g}: "
+                  f"{'met' if (rk['kendall_w_mean'] or 0) >= gate else 'NOT met -- judge quality left out'})"
+                  if gate is not None and rk["kendall_w_mean"] is not None else "") +
+                  f". Test-retest on {j.get('consistency_records', 0)} re-judgments: rank "
+                  f"Spearman {_f(rk['retest_spearman_mean'], 2)}, same top pick "
+                  f"{_f(100 * rk['retest_top_pick_agreement'] if rk['retest_top_pick_agreement'] is not None else None, 0, '%')}."]
+    probe = report.get("probe")
+    if probe:
+        lines += ["", "## Gate probe (known-bad naive vs known-good reference patches)", "",
+                  "| Gate | Model/effort | Arms | Sensitivity (rejects naive) | "
+                  "Specificity (accepts reference) | Unparsed | AIC |",
+                  "|---|---|---|---|---|---|---|"]
+        for g in probe:
+            lines.append(f"| {g['role']} | {g['model']}/{g['effort']} | {', '.join(g['arms'])} | "
+                         f"{g['rejected_naive']}/{g['naive']} ({_f(g['sensitivity'], 2)}) | "
+                         f"{g['accepted_reference']}/{g['reference']} "
+                         f"({_f(g['specificity'], 2)}) | {g['unparsed']} | {_f(g['aic'], 2)} |")
     if d["gaps"]:
         lines += ["", "Paired QS gaps vs the leader: " + "; ".join(
             f"{arm}: {_f(g['mean'])} (CI {_f(g['ci'][0])}–{_f(g['ci'][1])}, {g['pairs']} pairs)"
@@ -2774,8 +3145,13 @@ def render_plan(plan, exp):
     lines += ["", f"Trials: est. {a['trials_min']:.0f}-{a['trials_max']:.0f} AIC; judges est. "
               f"{a['judges']:.0f} AIC ({plan['dispatches']['judge']} dispatches); total est. "
               f"{a['total_min']:.0f}-{a['total_max']:.0f} AIC against the preregistered "
-              f"ceiling {plan['ceiling']}.", f"Basis: {plan['basis']}.", "",
-              "Dispatch order (counterbalanced):"]
+              f"ceiling {plan['ceiling']}."]
+    if plan.get("probe"):
+        p = plan["probe"]
+        lines.append(f"Gate probe (separate command): est. {p['aic']:.0f} AIC "
+                     f"({p['dispatches']} dispatches); with it, est. "
+                     f"{a['total_min'] + p['aic']:.0f}-{a['total_max'] + p['aic']:.0f} AIC.")
+    lines += [f"Basis: {plan['basis']}.", "", "Dispatch order (counterbalanced):"]
     for t in plan["trials"]:
         lines.append(f"  {t['trial_id']}")
     return "\n".join(lines)
@@ -2870,6 +3246,22 @@ def cmd_judge(args, parser, pricing):
     return rc
 
 
+def cmd_probe(args, parser, pricing):
+    _require_spend_gate(args, parser)
+    ex = _session(args, pricing, live=args.live)
+    plan = ex.probe_plan()
+    if args.dry_run:
+        est = probe_estimate(ex.exp, ex.pricing)["aic"]
+        print(f"DRY RUN -- {len(plan)} gate probes over {len(ex.gate_stages())} gate stages, "
+              f"est. {est:.1f} AIC; nothing spawned.")
+        for key, (role, model, effort), *_ in plan:
+            print(f"  {key}: {role} {model}/{effort}")
+        return 0
+    rc = ex.probe(only=_only(args.only))
+    print(f"spent so far: {ex.spent():.2f} AIC")
+    return rc
+
+
 def cmd_grade(args, parser, pricing):
     if args.full_regression and args.exec_mode == "enforced":
         parser.error("--full-regression needs --exec-mode trusted-host (the boundary refuses "
@@ -2955,7 +3347,7 @@ def build_parser():
     p.add_argument("--repeats", type=int)
     p.add_argument("--json", action="store_true")
     p.add_argument("--extend-arms", help="include these post-hoc extension arms")
-    for name in ("run", "judge"):
+    for name in ("run", "judge", "probe"):
         p = sub.add_parser(name)
         p.add_argument("--live", action="store_true")
         p.add_argument("--dry-run", action="store_true")
@@ -3003,7 +3395,8 @@ def main(argv=None):
             plan = build_plan(exp, digest, pricing, args.repeats or int(exp["repeats"]))
             print(json.dumps(plan, indent=2) if args.json else render_plan(plan, exp))
             return 0
-        handler = {"run": cmd_run, "judge": cmd_judge, "grade": cmd_grade, "report": cmd_report,
+        handler = {"run": cmd_run, "judge": cmd_judge, "probe": cmd_probe,
+                   "grade": cmd_grade, "report": cmd_report,
                    "list": cmd_list, "validate": cmd_validate,
                    "rescan": cmd_rescan}[args.cmd]
         return handler(args, parser, pricing)
