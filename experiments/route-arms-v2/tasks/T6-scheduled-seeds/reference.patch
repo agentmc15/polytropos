@@ -1,0 +1,179 @@
+diff --git a/bin/journal_plan.py b/bin/journal_plan.py
+index 0f90b05..39be22b 100644
+--- a/bin/journal_plan.py
++++ b/bin/journal_plan.py
+@@ -77,6 +77,13 @@ PLAN_DIRNAME = "plan"
+ SEED_FILENAME = "seed.md"
+ PLAN_STEM_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+ SEED_MARKERS = ("- ", "* ", "[ ] ")   # read_inbox parity (journal_collect.py)
++ON_SEED_RE = re.compile(r"^on\s+(\d{4}-\d{2}-\d{2})\s*:\s*(.*)$", re.IGNORECASE)
++INTERVAL_SEED_RE = re.compile(
++    r"^from\s+(\d{4}-\d{2}-\d{2})\s+every\s+(\d+)d\s*:\s*(.*)$",
++    re.IGNORECASE,
++)
++WEEKDAY_SEED_RE = re.compile(r"^every\s+([^:]+?)\s*:\s*(.*)$", re.IGNORECASE)
++WEEKDAY_TOKENS = {"mon": 0, "tue": 1, "wed": 2, "thu": 3, "fri": 4, "sat": 5, "sun": 6}
+ MAX_PLAN_CARDS = 100
+ EST_PROFILE = "M"
+ TIER_TO_SLOT = {"haiku": "cheap", "sonnet": "mid", "opus": "mid"}
+@@ -296,6 +303,102 @@ def parse_seeds(text):
+     return items
+ 
+ 
++def _seed_note(line_no, reason):
++    return f"invalid seed directive in {SEED_FILENAME} line {line_no}: {reason}"
++
++
++def _parse_seed_date(value, line_no, notes):
++    try:
++        return date.fromisoformat(value)
++    except ValueError:
++        notes.append(_seed_note(line_no, f"invalid date {value!r}"))
++        return None
++
++
++def _scheduled_seed_title(title, line_no, notes):
++    title = title.strip()
++    if not title:
++        notes.append(_seed_note(line_no, "missing title"))
++        return None
++    return title
++
++
++def parse_scheduled_seeds(text, for_date):
++    """Parse ``seed.md`` lines, returning ``(due_seed_titles, notes)``.
++
++    Ordinary lines retain ``parse_seeds`` behaviour.  Lines beginning with a scheduling
++    keyword use the date-aware grammar and either return their stripped title when due or a
++    non-fatal note when malformed.
++    """
++    target = date.fromisoformat(for_date)
++    items = []
++    notes = []
++    for line_no, raw in enumerate(text.split("\n"), 1):
++        line = raw.strip()
++        if not line or line.startswith("#"):
++            continue
++        for marker in SEED_MARKERS:
++            if line.startswith(marker):
++                line = line[len(marker):].strip()
++                break
++        low = line.lower()
++
++        if low.startswith("on "):
++            m = ON_SEED_RE.match(line)
++            if not m:
++                notes.append(_seed_note(line_no, "expected 'on YYYY-MM-DD: title'"))
++                continue
++            when = _parse_seed_date(m.group(1), line_no, notes)
++            title = _scheduled_seed_title(m.group(2), line_no, notes)
++            if when == target and title is not None:
++                items.append(title)
++            continue
++
++        if low.startswith("from "):
++            m = INTERVAL_SEED_RE.match(line)
++            if not m:
++                notes.append(_seed_note(line_no, "expected 'from YYYY-MM-DD every Nd: title'"))
++                continue
++            start = _parse_seed_date(m.group(1), line_no, notes)
++            title = _scheduled_seed_title(m.group(3), line_no, notes)
++            try:
++                interval = int(m.group(2))
++            except ValueError:
++                interval = 0
++            if not 1 <= interval <= 366:
++                notes.append(_seed_note(line_no, "interval must be 1..366 days"))
++                continue
++            if start is not None and title is not None:
++                delta = (target - start).days
++                if delta >= 0 and delta % interval == 0:
++                    items.append(title)
++            continue
++
++        if low.startswith("every "):
++            m = WEEKDAY_SEED_RE.match(line)
++            if not m:
++                notes.append(_seed_note(line_no, "expected 'every mon[,tue...]: title'"))
++                continue
++            title = _scheduled_seed_title(m.group(2), line_no, notes)
++            wanted = set()
++            bad = None
++            for token in m.group(1).split(","):
++                token = token.strip().lower()
++                if token not in WEEKDAY_TOKENS:
++                    bad = token
++                    break
++                wanted.add(WEEKDAY_TOKENS[token])
++            if bad is not None:
++                notes.append(_seed_note(line_no, f"unknown weekday {bad!r}"))
++                continue
++            if title is not None and target.weekday() in wanted:
++                items.append(title)
++            continue
++
++        items.append(line)
++    return items, notes
++
++
+ # ---- card building ---------------------------------------------------------------------------
+ 
+ def cards_from_digest(digest, for_date):
+@@ -914,7 +1017,9 @@ def _cmd_build(args):
+     seeds = []
+     if seed_path.is_file():
+         try:
+-            seeds = parse_seeds(seed_path.read_text(errors="replace"))
++            seeds, seed_notes = parse_scheduled_seeds(seed_path.read_text(errors="replace"),
++                                                      for_date)
++            notes.extend(seed_notes)
+         except OSError:
+             seeds = []
+ 
+diff --git a/tests/test_journal_plan.py b/tests/test_journal_plan.py
+index 31e7e96..c3453ce 100644
+--- a/tests/test_journal_plan.py
++++ b/tests/test_journal_plan.py
+@@ -646,6 +646,42 @@ class SeedsTests(unittest.TestCase):
+             self.assertEqual(len(reparsed["cards"]), 3)
+             self.assertEqual((plan_dir / "seed.md").read_bytes(), original_bytes)
+ 
++    def _build_seed_plan(self, seed_text, for_date="2026-04-06"):
++        with tempfile.TemporaryDirectory() as td:
++            journal_dir = Path(td)
++            plan_dir = journal_dir / "plan"
++            plan_dir.mkdir(parents=True)
++            (plan_dir / "seed.md").write_text(seed_text)
++            rc, _ = _call_main(["build", "--date", "2026-04-01", "--utc",
++                                "--for", for_date, "--journal-dir", str(journal_dir)])
++            self.assertEqual(rc, 0)
++            return mod.parse_plan((plan_dir / f"{for_date}.md").read_text())
++
++    def test_scheduled_seed_on_date_is_only_due_on_exact_runbook_date(self):
++        due = self._build_seed_plan("on 2026-04-06: File report\n", "2026-04-06")
++        not_due = self._build_seed_plan("on 2026-04-07: File report\n", "2026-04-06")
++        self.assertEqual([c["title"] for c in due["cards"]], ["File report"])
++        self.assertEqual(not_due["cards"], [])
++
++    def test_scheduled_seed_interval_uses_real_day_difference(self):
++        due = self._build_seed_plan("from 2026-03-31 every 2d: Alternating\n",
++                                    "2026-04-02")
++        not_due = self._build_seed_plan("from 2026-03-31 every 2d: Alternating\n",
++                                        "2026-04-03")
++        self.assertEqual([c["title"] for c in due["cards"]], ["Alternating"])
++        self.assertEqual(not_due["cards"], [])
++
++    def test_scheduled_seed_weekday_list_is_case_insensitive(self):
++        parsed = self._build_seed_plan("EVERY mon, WED: Standup prep\n", "2026-04-06")
++        self.assertEqual([c["title"] for c in parsed["cards"]], ["Standup prep"])
++
++    def test_invalid_scheduled_seed_adds_note_and_skips_card(self):
++        parsed = self._build_seed_plan("# heading\n\n- on 2026-02-30: Broken\n",
++                                       "2026-04-06")
++        self.assertEqual(parsed["cards"], [])
++        self.assertIn("invalid seed directive in seed.md line 3: invalid date '2026-02-30'",
++                      parsed["notes"])
++
+ 
+ # ---- 10. check classification (D5) ---------------------------------------------------------------
+ 

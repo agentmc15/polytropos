@@ -1,0 +1,31 @@
+{
+  "id": "T5-exclude-terms",
+  "title": "Exclude matching terms from memory recall",
+  "kind": "feature",
+  "source_files": ["bin/memory_recall.py"],
+  "allowed_paths": ["bin/memory_recall.py", "tests/"],
+  "allowed_generated": [],
+  "regression": ["test_memory_recall.py"],
+  "guardrails": [
+    {"kind": "subprocess", "regex": "\\bimport subprocess\\b|\\bsubprocess\\.(run|Popen|call|check_output)\\b"},
+    {"kind": "shell-true", "regex": "shell\\s*=\\s*True"},
+    {"kind": "os-system", "regex": "\\bos\\.system\\("},
+    {"kind": "home-dir", "regex": "Path\\.home\\(|expanduser\\("},
+    {"kind": "debug-print", "regex": "^\\s*(breakpoint\\(\\)|import pdb|pdb\\.set_trace)"},
+    {"kind": "hardcoded-model-id", "regex": "[\\\"'](claude|gpt|gemini|grok|kimi|mai)-[A-Za-z0-9.\\-]+[\\\"']"}
+  ],
+  "rubric": [
+    "The CLI exposes a repeatable --exclude TERM option and recall(...) accepts an exclude_terms keyword with identical validation and normalization.",
+    "Exclude terms are tokenized case-insensitively with the same [a-z0-9]+, lowercase, drop one-character tokens and STOPWORDS rules used for query terms, then de-duplicated in first-seen order.",
+    "Empty, stopword-only, or one-character-only exclude arguments fail through argparse with exit status 2, while the function API raises ValueError with the same diagnostic text.",
+    "A fact is excluded only when a normalized exclude token equals a token from name, tags, description, or body; substring matches and provenance/scope fields do not count.",
+    "Exclusion happens after project/provider/expiration eligibility but before corpus statistics, relevance scoring, the relevance gate, sorting, and budget capping.",
+    "Active JSON output reports exclude_terms and withheld_excluded, while inactive markdown and JSON output remain byte-for-byte unchanged.",
+    "Markdown reports the exact excluded-count note only when active exclusion withholds at least one fact, including the no-survivor case.",
+    "Remaining recalled facts preserve their existing scope, provenance, trust warning, state, body, ordering, and budget/drop semantics."
+  ],
+  "prompt": "prompt.md",
+  "oracle": "oracle.py",
+  "reference": "reference.patch",
+  "naive": "naive.patch"
+}

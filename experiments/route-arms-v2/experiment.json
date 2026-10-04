@@ -1,0 +1,211 @@
+{
+  "version": "polytropos.route-experiment/1",
+  "title": "Route experiment v2: harder tasks, rubric-and-rank judges, gate probe",
+  "base_commit": "937435fa5aec608ad77046bf6c87655ed6305916",
+  "repeats": 3,
+  "seed": 20261004,
+  "max_aic": 12000,
+  "stage_timeout_seconds": 2400,
+  "digest_task_json": true,
+  "dispatch_flags": {
+    "note": "Every dispatch: headless, all tools allowed, no ask_user, no built-in MCP servers, no auto-update mid-run. Excluded tools keep each arm hermetic: no subagent or skill delegation (the arm's model mix is exactly what it claims), no cross-session history (this repo's own sessions wrote the oracles), no memory writes into the user's account, no web. Read-only stages additionally deny the write tool; judges also deny the shell.",
+    "common": [
+      "--allow-all-tools",
+      "--no-ask-user",
+      "--disable-builtin-mcps",
+      "--no-auto-update",
+      "--silent",
+      "--excluded-tools=task",
+      "--excluded-tools=skill",
+      "--excluded-tools=session_store_sql",
+      "--excluded-tools=store_memory",
+      "--excluded-tools=vote_memory",
+      "--excluded-tools=web_search",
+      "--excluded-tools=web_fetch"
+    ],
+    "read_only": [
+      "--deny-tool=write"
+    ],
+    "judge": [
+      "--deny-tool=shell"
+    ]
+  },
+  "role_profiles": {
+    "note": "task_profiles keys in data/pricing.copilot.json, used ONLY for the pre-dispatch ceiling estimate; measured AIC replaces the estimate once a dispatch finishes.",
+    "planner": "S",
+    "test_author": "S",
+    "implementer": "L",
+    "verifier": "S",
+    "reviewer": "S",
+    "solo": "L",
+    "judge": "S"
+  },
+  "arms": {
+    "A2": {
+      "label": "Sol 6 plans -> Luna 6 (max) tests/builds/verifies -> Opus 5.5 reviews",
+      "shape": "pipeline",
+      "stages": {
+        "planner": {
+          "model": "gpt-6-sol",
+          "effort": "high"
+        },
+        "test_author": {
+          "model": "gpt-6-luna",
+          "effort": "max"
+        },
+        "implementer": {
+          "model": "gpt-6-luna",
+          "effort": "max"
+        },
+        "verifier": {
+          "model": "gpt-6-luna",
+          "effort": "max"
+        },
+        "reviewer": {
+          "model": "claude-opus-5.5",
+          "effort": "high"
+        }
+      }
+    },
+    "A3": {
+      "label": "Sol 6 one-shot (high)",
+      "shape": "one-shot",
+      "stages": {
+        "solo": {
+          "model": "gpt-6-sol",
+          "effort": "high"
+        }
+      }
+    },
+    "A5": {
+      "label": "Luna 6 (max) one-shot",
+      "shape": "one-shot",
+      "stages": {
+        "solo": {
+          "model": "gpt-6-luna",
+          "effort": "max"
+        }
+      }
+    },
+    "A6": {
+      "label": "Luna 6 (max) one-shot -> Opus 5.5 reviews",
+      "shape": "reviewed",
+      "stages": {
+        "solo": {
+          "model": "gpt-6-luna",
+          "effort": "max"
+        },
+        "reviewer": {
+          "model": "claude-opus-5.5",
+          "effort": "high"
+        }
+      }
+    },
+    "A7": {
+      "label": "Sol 6 plans -> Luna 6 (max) tests/builds/verifies, no reviewer",
+      "shape": "pipeline",
+      "stages": {
+        "planner": {
+          "model": "gpt-6-sol",
+          "effort": "high"
+        },
+        "test_author": {
+          "model": "gpt-6-luna",
+          "effort": "max"
+        },
+        "implementer": {
+          "model": "gpt-6-luna",
+          "effort": "max"
+        },
+        "verifier": {
+          "model": "gpt-6-luna",
+          "effort": "max"
+        }
+      }
+    },
+    "A8": {
+      "label": "Sol 6 one-shot (max) -- effort-matched to Luna",
+      "shape": "one-shot",
+      "stages": {
+        "solo": {
+          "model": "gpt-6-sol",
+          "effort": "max"
+        }
+      }
+    },
+    "A9": {
+      "label": "Opus 5.5 one-shot (max) -- effort-matched to Luna",
+      "shape": "one-shot",
+      "stages": {
+        "solo": {
+          "model": "claude-opus-5.5",
+          "effort": "max"
+        }
+      }
+    }
+  },
+  "rework": {
+    "after_verifier_fail": 1,
+    "after_reviewer_reject": 1,
+    "note": "A verifier FAIL buys one implementer rework and one re-verify. A reviewer REJECT buys one implementer rework and one re-verify (no second review). In the reviewed shape (A6) a REJECT buys one solo rework and one re-review. Nothing else loops."
+  },
+  "judges": [
+    {
+      "model": "gpt-6-astra",
+      "effort": "high"
+    },
+    {
+      "model": "claude-fable-5.1",
+      "effort": "high"
+    },
+    {
+      "model": "grok-4.6",
+      "effort": "high"
+    }
+  ],
+  "judging": {
+    "note": "v2 judges answer a per-task checklist rubric AND rank every candidate in one dispatch. A consistency_fraction share of (task, repeat) groups is judged a second time by every judge under a fresh shuffle; those re-judgments measure test-retest reliability and never enter the score.",
+    "prompt": "rubric_rank",
+    "consistency_fraction": 0.34
+  },
+  "probe": {
+    "note": "Spend-gated gate probe: each distinct pipeline verifier/reviewer stage sees each task's known-bad naive.patch and known-good reference.patch; sensitivity = rejects bad, specificity = accepts good.",
+    "repeats": 1
+  },
+  "task_requirements": {
+    "min_oracle_tests": 25,
+    "naive_patch": true
+  },
+  "tasks": [
+    "T4-project-filters",
+    "T5-exclude-terms",
+    "T6-scheduled-seeds",
+    "T7-routing-policy-refactor",
+    "T8-session-cost-bugfix",
+    "T9-graph-brief-paths"
+  ],
+  "scoring": {
+    "note": "Preregistered before any live v2 trial. Differences from v1: median-normalised simplicity, v2 mutation operators with a 50-mutant cap, rubric+rank judge quality, and a judge agreement gate (Kendall's W) below which judge quality leaves the score for every arm. Ties: gap <= equivalence_margin (3 QS, matched to the 18-pair design's ~2-3 point sensitivity) or a CI containing 0; among tied arms within cost_tie_pct % of the cheapest's mean AIC, the fastest median wall time wins. An arm with more than max_estimate_share of its AIC charged at estimate is flagged.",
+    "weights": {
+      "correctness": 0.4,
+      "quality": 0.25,
+      "test_strength": 0.15,
+      "simplicity": 0.1,
+      "discipline": 0.1
+    },
+    "regression_gate": 0.5,
+    "discipline_penalty": 0.25,
+    "mutants_per_trial": 50,
+    "mutation_operators": "v2",
+    "simplicity_basis": "median",
+    "quality_mode": "rubric_rank",
+    "judge_min_agreement": 0.3,
+    "equivalence_margin": 3.0,
+    "min_solve_rate": 0.6667,
+    "bootstrap_iterations": 2000,
+    "confidence": 0.95,
+    "cost_tie_pct": 10,
+    "max_estimate_share": 0.1,
+    "extended_report": true
+  }
+}

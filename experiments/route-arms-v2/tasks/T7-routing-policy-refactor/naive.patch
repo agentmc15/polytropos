@@ -1,0 +1,29 @@
+--- a/bin/routing_policy.py
++++ b/bin/routing_policy.py
+@@ -160,11 +160,16 @@
+     return tiers.index(tier) if tier in tiers else None
+ 
+ 
++def _catalog_by_id(catalog):
++    """Catalog rows keyed by model id, preserving the row objects."""
++    return {entry["id"]: entry for entry in catalog}
++
++
+ def _floor(request, catalog, tiers, policy):
+     """The lowest rank the task may run at, and the signals that put it there."""
+     basis = []
+     planned = request.get("planned")
+-    by_id = {e["id"]: e for e in catalog}
++    by_id = _catalog_by_id(catalog)
+     pinned = None
+     if planned is None:
+         default_tier = request.get("default_tier")
+@@ -438,7 +443,7 @@
+     """
+     if pick is None:
+         return None
+-    by_id = {e["id"]: e for e in catalog}
++    by_id = _catalog_by_id(catalog)
+     stages = []
+ 
+     def stage(name, model_id):

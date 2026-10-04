@@ -1,0 +1,156 @@
+--- a/bin/graph_brief.py
++++ b/bin/graph_brief.py
+@@ -17,7 +17,7 @@
+ import json
+ import shutil
+ import tempfile
+-from collections import Counter
++from collections import Counter, deque
+ from pathlib import Path
+ 
+ DEFAULT_GRAPH_PATH = "graphify-out/graph.json"
+@@ -317,10 +317,90 @@
+     if brief["low_cross_file_warning"]:
+         lines.append("")
+         lines.append(brief["low_cross_file_warning_text"])
++
++    return "\n".join(lines)
++
++
++# --------------------------------------------------------------------------- path search
++
++def _bounded_int(label, minimum):
++    def parse(value):
++        try:
++            parsed = int(value)
++        except ValueError as exc:
++            raise argparse.ArgumentTypeError(f"must be a {label} integer") from exc
++        if parsed < minimum:
++            raise argparse.ArgumentTypeError(f"must be a {label} integer")
++        return parsed
++    return parse
++
++
++def _pid(node):
++    node_id = node.get("id")
++    return None if node_id is None else str(node_id)
++
++
++def _lookup_node(nodes, query):
++    for node in nodes:
++        if _pid(node) == query:
++            return node, None
++    for node in nodes:
++        if _pid(node) is not None and node.get("label") == query:
++            return node, None
++    message = f"node not found for query {query!r} (lookup checks exact id first, then exact label)"
++    return None, {"error": "node-not-found", "message": message, "query": query}
++
++
++def _one_path(nodes, links, start_id, end_id):
++    if start_id == end_id:
++        return [start_id]
++    known = {_pid(node) for node in nodes if _pid(node) is not None}
++    adjacency = {node_id: [] for node_id in known}
++    for link in links:
++        source, target = link.get("source"), link.get("target")
++        if source is None or target is None:
++            continue
++        source_id, target_id = str(source), str(target)
++        if source_id in known and target_id in known:
++            adjacency[source_id].append(target_id)
++            adjacency[target_id].append(source_id)
++    queue = deque([(start_id, [start_id])])
++    seen = {start_id}
++    while queue:
++        node_id, path = queue.popleft()
++        for neighbor in adjacency.get(node_id, []):
++            if neighbor in seen:
++                continue
++            new_path = path + [neighbor]
++            if neighbor == end_id:
++                return new_path
++            seen.add(neighbor)
++            queue.append((neighbor, new_path))
++    return None
+ 
++
++def _paths_payload(nodes, links, start_node, end_node, direction, max_hops, max_paths):
++    start_id, end_id = _pid(start_node), _pid(end_node)
++    path = _one_path(nodes, links, start_id, end_id)
++    if path is None:
++        message = f"no path from {start_id} to {end_id} within {max_hops} hops (direction={direction})"
++        return None, {"direction": direction, "end": end_id, "error": "no-path",
++                      "max_hops": max_hops, "message": message, "start": start_id}
++    return {"direction": direction, "end": {"id": end_id, "label": end_node.get("label") or end_id},
++            "hops": len(path) - 1, "max_hops": max_hops, "path_count": 1,
++            "paths": [path], "shown_path_count": 1,
++            "start": {"id": start_id, "label": start_node.get("label") or start_id},
++            "truncated": False}, None
++
++
++def _render_paths(payload):
++    lines = [f"shortest paths from {payload['start']['id']} to {payload['end']['id']} "
++             f"(hops={payload['hops']}, count={payload['path_count']}, direction={payload['direction']}):"]
++    lines.extend(f"  {i}. {' -> '.join(path)}" for i, path in enumerate(payload["paths"], 1))
+     return "\n".join(lines)
+ 
+ 
++
+ # --------------------------------------------------------------------------- subcommands
+ 
+ def cmd_brief(args):
+@@ -344,6 +424,36 @@
+     return 0
+ 
+ 
++def cmd_paths(args):
++    data, error = load_graph(args.graph)
++    if error == "missing":
++        print(
++            f"no graph at {args.graph} -- run `graphify update <repo>` first "
++            "(graphify is an external, user-installed tool; this repo never installs "
++            "or invokes it)"
++        )
++        return 0
++    if error is not None:
++        print(error)
++        return 2
++    nodes, links = _nodes_of(data), _links_of(data)
++    start_node, start_error = _lookup_node(nodes, args.start)
++    if start_error is not None:
++        print(json.dumps(start_error, indent=2, sort_keys=True) if args.json else start_error["message"])
++        return 2
++    end_node, end_error = _lookup_node(nodes, args.end)
++    if end_error is not None:
++        print(json.dumps(end_error, indent=2, sort_keys=True) if args.json else end_error["message"])
++        return 2
++    payload, no_path = _paths_payload(nodes, links, start_node, end_node,
++                                      args.direction, args.max_hops, args.max_paths)
++    if no_path is not None:
++        print(json.dumps(no_path, indent=2, sort_keys=True) if args.json else no_path["message"])
++        return 1
++    print(json.dumps(payload, indent=2, sort_keys=True) if args.json else _render_paths(payload))
++    return 0
++
++
+ # --------------------------------------------------------------------------- demo data
+ 
+ def _demo_normal_graph():
+@@ -454,6 +564,16 @@
+     p_brief.add_argument("--json", action="store_true", help="machine-readable output")
+     p_brief.set_defaults(func=cmd_brief)
+ 
++    p_paths = sub.add_parser("paths", help="render shortest dependency paths from a graph.json")
++    p_paths.add_argument("start")
++    p_paths.add_argument("end")
++    p_paths.add_argument("--graph", default=DEFAULT_GRAPH_PATH)
++    p_paths.add_argument("--direction", choices=("forward", "reverse", "both"), default="forward")
++    p_paths.add_argument("--max-hops", type=_bounded_int("non-negative", 0), default=8)
++    p_paths.add_argument("--max-paths", type=_bounded_int("positive", 1), default=20)
++    p_paths.add_argument("--json", action="store_true")
++    p_paths.set_defaults(func=cmd_paths)
++
+     p_demo = sub.add_parser(
+         "demo",
+         help=(

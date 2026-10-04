@@ -1,0 +1,73 @@
+diff --git a/bin/journal_plan.py b/bin/journal_plan.py
+index 0f90b05..a63f23d 100644
+--- a/bin/journal_plan.py
++++ b/bin/journal_plan.py
+@@ -77,6 +77,7 @@ PLAN_DIRNAME = "plan"
+ SEED_FILENAME = "seed.md"
+ PLAN_STEM_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+ SEED_MARKERS = ("- ", "* ", "[ ] ")   # read_inbox parity (journal_collect.py)
++WEEKDAYS = {"mon": 0, "tue": 1, "wed": 2, "thu": 3, "fri": 4, "sat": 5, "sun": 6}
+ MAX_PLAN_CARDS = 100
+ EST_PROFILE = "M"
+ TIER_TO_SLOT = {"haiku": "cheap", "sonnet": "mid", "opus": "mid"}
+@@ -296,6 +297,51 @@ def parse_seeds(text):
+     return items
+ 
+ 
++def parse_due_seeds(text, for_date):
++    target = date.fromisoformat(for_date)
++    items = []
++    for raw in text.split("\n"):
++        line = raw.strip()
++        if not line or line.startswith("#"):
++            continue
++        for marker in SEED_MARKERS:
++            if line.startswith(marker):
++                line = line[len(marker):].strip()
++                break
++        low = line.lower()
++        if low.startswith("on "):
++            try:
++                when, title = line[3:].split(":", 1)
++                if date.fromisoformat(when.strip()).isoformat() == for_date and title.strip():
++                    items.append(title.strip())
++            except ValueError:
++                pass
++            continue
++        if low.startswith("from "):
++            m = re.match(r"from\s+(\d{4}-\d{2}-\d{2})\s+every\s+(\d+)d\s*:\s*(.*)",
++                         line, re.I)
++            if m:
++                try:
++                    start = date.fromisoformat(m.group(1))
++                    n = int(m.group(2))
++                    if n and (target - start).days >= 0 and (target - start).days % n == 0:
++                        items.append(m.group(3).strip())
++                except ValueError:
++                    pass
++            continue
++        if low.startswith("every "):
++            try:
++                days, title = line[6:].split(":", 1)
++                wanted = {WEEKDAYS[d.strip().lower()] for d in days.split(",")}
++                if target.weekday() in wanted and title.strip():
++                    items.append(title.strip())
++            except (KeyError, ValueError):
++                pass
++            continue
++        items.append(line)
++    return items
++
++
+ # ---- card building ---------------------------------------------------------------------------
+ 
+ def cards_from_digest(digest, for_date):
+@@ -914,7 +960,7 @@ def _cmd_build(args):
+     seeds = []
+     if seed_path.is_file():
+         try:
+-            seeds = parse_seeds(seed_path.read_text(errors="replace"))
++            seeds = parse_due_seeds(seed_path.read_text(errors="replace"), for_date)
+         except OSError:
+             seeds = []
+ 

@@ -1,0 +1,31 @@
+--- a/bin/session_cost.py
++++ b/bin/session_cost.py
+@@ -135,6 +135,18 @@
+             "cost": 0.0, "msgs": 0}
+ 
+ 
++def _normal_usage(raw):
++    clean = {}
++    for fld in ("input", "output", "cache_read", "cache_write"):
++        value = raw.get(fld, 0)
++        if value is None:
++            value = 0
++        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
++            return None
++        clean[fld] = value
++    return clean if any(clean.values()) else None
++
++
+ def collect(files, pricing):
+     """Stream every transcript file, dedupe records by message id GLOBALLY (so a
+     message recorded in both the main transcript and a subagent file counts
+@@ -165,6 +177,9 @@
+                 if rec is None:
+                     continue
+                 model, u, msg_id, _tool_uses = rec
++                u = _normal_usage(u)
++                if u is None:
++                    continue
+                 if msg_id:
+                     if msg_id in seen_ids:
+                         continue

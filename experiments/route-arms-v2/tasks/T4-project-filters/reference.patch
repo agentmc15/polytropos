@@ -1,0 +1,132 @@
+--- a/bin/cost_report.py
++++ b/bin/cost_report.py
+@@ -9,6 +9,7 @@
+ """
+ 
+ import argparse
++import fnmatch
+ import json
+ import os
+ import sys
+@@ -41,6 +42,32 @@
+         return json.load(f)
+ 
+ 
++def normalize_project_patterns(raw):
++    """Normalize project filter arguments into a validated, ordered list."""
++    if raw is None:
++        return []
++    values = [raw] if isinstance(raw, str) else list(raw)
++    patterns = []
++    for value in values:
++        for piece in str(value).split(","):
++            pattern = piece.strip()
++            if not pattern:
++                raise ValueError("project filter patterns must not be empty")
++            if "/" in pattern or "\\" in pattern:
++                raise ValueError("project filters match project names only, not paths")
++            patterns.append(pattern)
++    return patterns
++
++
++def project_allowed(project, include, exclude):
++    """Return whether a transcript project name passes include/exclude filters."""
++    if include and not any(fnmatch.fnmatchcase(project, pat) for pat in include):
++        return False
++    if any(fnmatch.fnmatchcase(project, pat) for pat in exclude):
++        return False
++    return True
++
++
+ def match_model(model_id, pricing):
+     """Map a raw model string (may carry [1m] or date suffixes) to a pricing key."""
+     if not model_id or model_id.startswith("<"):
+@@ -134,7 +161,8 @@
+     }
+ 
+ 
+-def build_report_payload(projects_dir, days=30, top=10, mode=None):
++def build_report_payload(projects_dir, days=30, top=10, mode=None, project=None,
++                         exclude_project=None):
+     """Scan/aggregate transcripts into a pure, JSON-serializable payload.
+ 
+     Never exits, never prints — the sole scan/price/aggregate pass that both
+@@ -157,6 +185,13 @@
+     pricing = load_pricing()
+     mode = mode or pricing.get("billing_mode", "api")
+     labels = [f"billing mode: {mode}", "API-list estimates, not bills (est.)"]
++    project_include = normalize_project_patterns(project)
++    project_exclude = normalize_project_patterns(exclude_project)
++    project_filters = {"include": project_include, "exclude": project_exclude}
++    if project_include:
++        labels.append(f"project include: {', '.join(project_include)}")
++    if project_exclude:
++        labels.append(f"project exclude: {', '.join(project_exclude)}")
+ 
+     if not projects_dir.is_dir():
+         labels.insert(0, f"transcript directory absent: {projects_dir}")
+@@ -178,6 +213,7 @@
+             "parse_errors": 0,
+             "parse_error_details": [],
+             "labels": labels,
++            "project_filters": project_filters,
+         }
+ 
+     cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+@@ -193,6 +229,8 @@
+ 
+     for path in sorted(projects_dir.rglob("*.jsonl")):
+         project = path.relative_to(projects_dir).parts[0]
++        if not project_allowed(project, project_include, project_exclude):
++            continue
+         try:
+             lines = path.read_text(errors="replace").splitlines()
+         except OSError as e:
+@@ -328,6 +366,7 @@
+         "parse_errors": len(parse_errors),
+         "parse_error_details": parse_errors,
+         "labels": labels,
++        "project_filters": project_filters,
+     }
+ 
+ 
+@@ -339,6 +378,14 @@
+     display_by_key = {b["model"]: b["display"] for b in payload["by_model"]}
+ 
+     print(f"# Claude Code usage — last {payload['days']} days ({mode} mode)\n")
++    filters = payload.get("project_filters") or {"include": [], "exclude": []}
++    clauses = []
++    if filters["include"]:
++        clauses.append("include " + ", ".join(f"`{p}`" for p in filters["include"]))
++    if filters["exclude"]:
++        clauses.append("exclude " + ", ".join(f"`{p}`" for p in filters["exclude"]))
++    if clauses:
++        print(f"Project filters: {'; '.join(clauses)}\n")
+     print(f"**Total {cost_word}: ${payload['totals']['usd']:,.2f}** across "
+           f"{payload['totals']['sessions']} sessions.\n")
+ 
+@@ -396,11 +443,23 @@
+     ap.add_argument("--top", type=int, default=10)
+     ap.add_argument("--json", action="store_true")
+     ap.add_argument("--projects-dir", default=None)
++    ap.add_argument("--project", action="append", default=None)
++    ap.add_argument("--exclude-project", action="append", default=None)
+     args = ap.parse_args(argv)
+ 
+     projects_dir = Path(args.projects_dir) if args.projects_dir else PROJECTS_DIR
+ 
+-    payload = build_report_payload(projects_dir, days=args.days, top=args.top, mode=args.mode)
++    try:
++        payload = build_report_payload(
++            projects_dir,
++            days=args.days,
++            top=args.top,
++            mode=args.mode,
++            project=args.project,
++            exclude_project=args.exclude_project,
++        )
++    except ValueError as e:
++        ap.error(str(e))
+ 
+     if args.json:
+         print(json.dumps(payload, indent=2))
