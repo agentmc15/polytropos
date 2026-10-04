@@ -1,0 +1,28 @@
+{
+  "version": "polytropos.route-experiment.extension/1",
+  "arm": "A12",
+  "added": "2026-10-04",
+  "reason": "Requested during the v2 run: test GPT-6.1 Sol and GPT-6 Sol as separate strong models. Twin of A7 with every gpt-6-sol stage swapped to gpt-6.1-sol, all else identical. Post hoc; never judged (adding a candidate would replace the preregistered judgments).",
+  "definition": {
+    "label": "Sol 6.1 plans -> Luna 6 (max) tests/builds/verifies, no reviewer",
+    "shape": "pipeline",
+    "stages": {
+      "planner": {
+        "model": "gpt-6.1-sol",
+        "effort": "high"
+      },
+      "test_author": {
+        "model": "gpt-6-luna",
+        "effort": "max"
+      },
+      "implementer": {
+        "model": "gpt-6-luna",
+        "effort": "max"
+      },
+      "verifier": {
+        "model": "gpt-6-luna",
+        "effort": "max"
+      }
+    }
+  }
+}
