@@ -66,6 +66,7 @@ import random
 import re
 import shlex
 import shutil
+import statistics
 import sys
 import tempfile
 import time
@@ -84,6 +85,11 @@ STORE_NAME = "routeruns"
 
 PIPELINE_ROLES = ("planner", "test_author", "implementer", "verifier", "reviewer")
 ONE_SHOT_ROLES = ("solo",)
+# A pipeline may omit its reviewer gate; a `reviewed` arm is a one-shot followed by a reviewer
+# gate whose findings get the solo model's rework rounds.
+SHAPE_ROLES = {"pipeline": (PIPELINE_ROLES, ("reviewer",)),
+               "one-shot": (ONE_SHOT_ROLES, ()),
+               "reviewed": (("solo", "reviewer"), ())}
 READ_ONLY_ROLES = frozenset({"planner", "verifier", "reviewer", "judge"})
 LEDGER_OPS = {"planner": "consult", "test_author": "initial", "implementer": "initial",
               "rework": "retry", "verifier": "review", "reviewer": "review", "solo": "initial",
@@ -105,7 +111,7 @@ FINDINGS_CHARS = 6000
 PLAN_CHARS = 12000
 OUTPUT_KEEP_CHARS = 16000
 TEST_TIMEOUT_SECONDS = 300
-LABELS = "WXYZVU"
+LABELS = "WXYZVUTS"
 
 _SIBLINGS = {}
 
@@ -215,12 +221,16 @@ def validate_definition(exp, pricing):
         _sp().validate_id(arm_id, "arm id")
         shape = arm.get("shape")
         stages = arm.get("stages") or {}
-        expected = PIPELINE_ROLES if shape == "pipeline" else ONE_SHOT_ROLES if shape == "one-shot" else None
-        _require(expected is not None, f"arm {arm_id}: shape must be 'pipeline' or 'one-shot'")
-        _require(set(stages) == set(expected),
-                 f"arm {arm_id}: a {shape} arm needs exactly the stages {list(expected)}")
-        for role in expected:
-            check_stage(f"arm {arm_id} {role}", stages[role])
+        _require(shape in SHAPE_ROLES,
+                 f"arm {arm_id}: shape must be one of {sorted(SHAPE_ROLES)}")
+        roles, optional = SHAPE_ROLES[shape]
+        required = [r for r in roles if r not in optional]
+        _require(set(required) <= set(stages) <= set(roles),
+                 f"arm {arm_id}: a {shape} arm needs the stages {required}"
+                 + (f" (optional: {list(optional)})" if optional else ""))
+        for role in roles:
+            if role in stages:
+                check_stage(f"arm {arm_id} {role}", stages[role])
     for index, judge in enumerate(exp.get("judges") or []):
         check_stage(f"judge {index}", judge)
     for role, profile in (exp.get("role_profiles") or {}).items():
@@ -249,6 +259,12 @@ def load_task(exp_dir, task_id):
     task["reference_text"] = (root / task["reference"]).read_text(encoding="utf-8")
     task["digests"] = {key: sha256_text(task[f"{key}_text"])
                        for key in ("prompt", "oracle", "reference")}
+    if task.get("naive"):
+        task["naive_text"] = (root / task["naive"]).read_text(encoding="utf-8")
+        task["digests"]["naive"] = sha256_text(task["naive_text"])
+    for key in ("allowed_generated", "rubric"):
+        _require(isinstance(task.get(key, []), list), f"task {task_id}: {key} must be a list")
+    task["task_json_digest"] = sha256_text((root / "task.json").read_text(encoding="utf-8"))
     task["short"] = task_id.split("-")[0]
     return task
 
@@ -265,6 +281,9 @@ def load_experiment(exp_dir=EXPERIMENT_DIR, pricing=None):
     exp["dir"] = str(exp_dir)
     manifest = {"experiment": sha256_text(raw),
                 "tasks": {tid: t["digests"] for tid, t in sorted(exp["task_defs"].items())}}
+    if exp.get("digest_task_json"):
+        manifest["task_json"] = {tid: t["task_json_digest"]
+                                 for tid, t in sorted(exp["task_defs"].items())}
     digest = sha256_text(json.dumps(manifest, sort_keys=True))
     exp["extensions"] = load_extensions(exp_dir, exp, pricing if pricing is not None
                                         else load_pricing())
@@ -336,13 +355,23 @@ def arm_estimate(exp, pricing, arm_id):
     if arm["shape"] == "one-shot":
         aic = stage_estimate(exp, pricing, "solo", st["solo"]["model"])
         return {"min": aic, "max": aic, "dispatches_min": 1, "dispatches_max": 1}
-    base = sum(stage_estimate(exp, pricing, role, st[role]["model"]) for role in PIPELINE_ROLES)
-    rework_rounds = exp["rework"]["after_verifier_fail"] + exp["rework"]["after_reviewer_reject"]
+    if arm["shape"] == "reviewed":
+        base = sum(stage_estimate(exp, pricing, role, st[role]["model"])
+                   for role in ("solo", "reviewer"))
+        rounds = exp["rework"]["after_reviewer_reject"]
+        per_round = (stage_estimate(exp, pricing, "solo", st["solo"]["model"])
+                     + stage_estimate(exp, pricing, "reviewer", st["reviewer"]["model"]))
+        return {"min": base, "max": base + rounds * per_round,
+                "dispatches_min": 2, "dispatches_max": 2 + 2 * rounds}
+    roles = [r for r in PIPELINE_ROLES if r in st]
+    base = sum(stage_estimate(exp, pricing, role, st[role]["model"]) for role in roles)
+    rework_rounds = exp["rework"]["after_verifier_fail"] + (
+        exp["rework"]["after_reviewer_reject"] if "reviewer" in st else 0)
     one_round = (stage_estimate(exp, pricing, "implementer", st["implementer"]["model"])
                  + stage_estimate(exp, pricing, "verifier", st["verifier"]["model"]))
     return {"min": base, "max": base + rework_rounds * one_round,
-            "dispatches_min": len(PIPELINE_ROLES),
-            "dispatches_max": len(PIPELINE_ROLES) + 2 * rework_rounds}
+            "dispatches_min": len(roles),
+            "dispatches_max": len(roles) + 2 * rework_rounds}
 
 
 def judge_estimate(exp, pricing):
@@ -413,6 +442,13 @@ def prompt_for(role, task, plan=None, test_files=None, patch=None, findings=None
                 "under tests/ that encode the task's acceptance criteria, following the plan. "
                 "Modify nothing outside tests/. The implementation does not exist yet, so new "
                 "tests are expected to fail now. Final response: the test files and test names.")
+    if role == "implementer" and not plan:
+        # rework inside a `reviewed` arm: no plan, no test author -- only the findings
+        return (head + "\n\n# YOUR JOB\n\nYou already worked on this task; your change so far is "
+                "in the working tree. A reviewer found problems. Address every finding that is "
+                "correct, keep the unit tests up to date, and run the tests named in the task "
+                f"until they pass.\n\n# FINDINGS TO ADDRESS (from the {source or 'reviewer'})"
+                f"\n\n{_bounded(findings, FINDINGS_CHARS)}")
     if role == "implementer":
         tests = ", ".join(test_files) if test_files else "(none were written)"
         body = (head + plan_block + f"\n\n# TESTS WRITTEN FROM THE PLAN\n\n{tests}\n\n# YOUR JOB: "
@@ -1381,7 +1417,9 @@ class Experiment:
 
         def step(role, prompt, round_no=0, op=None):
             before = self.snapshot(box)
-            model_role = "implementer" if role == "rework" else role
+            model_role = role
+            if role == "rework":
+                model_role = "implementer" if "implementer" in arm["stages"] else "solo"
             d = self.dispatch(tid, model_role, arm["stages"][model_role], prompt, box,
                               round_no=round_no, ledger_op=op)
             after = self.snapshot(box)
@@ -1424,6 +1462,8 @@ class Experiment:
                 d, _ = step("solo", prompt_for("solo", task))
                 if failed(d):
                     status = "timeout" if d["timed_out"] else "dispatch-failed"
+            elif arm["shape"] == "reviewed":
+                status = self._reviewed(task, box, step, failed, verdict_point, record)
             else:
                 status = self._pipeline(task, box, step, failed, verdict_point, record)
         except CeilingReached as exc:
@@ -1488,6 +1528,8 @@ class Experiment:
             v, findings = verify(n + 1)
             if failed(v):
                 return "timeout" if v["timed_out"] else "dispatch-failed"
+        if "reviewer" not in self.exp["arms"][record["arm"]]["stages"]:
+            return "complete"
         rv, review = step("reviewer", prompt_for("reviewer", task, patch=self.patch(box)))
         verdict_point(rv, "reviewer")
         if failed(rv):
@@ -1501,6 +1543,26 @@ class Experiment:
             v, _ = verify(10 + n)
             if failed(v):
                 return "timeout" if v["timed_out"] else "dispatch-failed"
+        return "complete"
+
+    def _reviewed(self, task, box, step, failed, verdict_point, record):
+        """One-shot, then a reviewer gate; each reject buys one solo rework and a re-review."""
+        d, _ = step("solo", prompt_for("solo", task))
+        if failed(d):
+            return "timeout" if d["timed_out"] else "dispatch-failed"
+        for n in range(self.exp["rework"]["after_reviewer_reject"] + 1):
+            rv, review = step("reviewer", prompt_for("reviewer", task, patch=self.patch(box)),
+                              round_no=n)
+            verdict_point(rv, "reviewer")
+            if failed(rv):
+                return "timeout" if rv["timed_out"] else "dispatch-failed"
+            if rv.get("verdict") == "accept" or n == self.exp["rework"]["after_reviewer_reject"]:
+                break
+            record["reworks"] += 1
+            r, _ = step("rework", prompt_for("implementer", task, findings=review,
+                                             source="reviewer"), round_no=10 + n, op="retry")
+            if failed(r):
+                return "timeout" if r["timed_out"] else "dispatch-failed"
         return "complete"
 
     # -- the whole run ----------------------------------------------------------------------
@@ -1533,15 +1595,18 @@ class Experiment:
 
     def rescan(self, only=None):
         """Re-classify contamination from each dispatch's own session log (read-only) under
-        the CURRENT classifier. A changed verdict is written back with an audit entry; a log
+        the CURRENT classifier, and re-measure any dispatch that was charged at estimate when
+        its log now carries usage (a still-existing source captured late, audited under
+        `remeasures`). A changed verdict is written back with an audit entry; a log
         that is gone leaves that dispatch's recorded verdict untouched. Spends nothing.
-        -> [(trial_id, before, after, status)] for every trial whose verdict changed."""
+        -> [(trial_id, before, after, status)] for every trial that changed."""
         changed = []
         for record in self.records("trials"):
             tid = record["trial_id"]
             if only and tid not in only:
                 continue
             missing = 0
+            remeasured = []
             for d in record.get("dispatches") or []:
                 events = _sp().confined_read_bytes(
                     self.copilot_home, f"session-state/{d['session_id']}/events.jsonl",
@@ -1549,12 +1614,29 @@ class Experiment:
                 if events is None:
                     missing += 1
                     continue
-                d["contamination"] = contamination(events.decode("utf-8", "replace"),
-                                                   self.markers)
+                text = events.decode("utf-8", "replace")
+                d["contamination"] = contamination(text, self.markers)
+                if d.get("usage") is None:
+                    usage = session_usage(text, self.pricing)
+                    if usage is not None:
+                        remeasured.append({"session_id": d["session_id"],
+                                           "estimate_aic": d["aic_charged"],
+                                           "measured_aic": round(usage["aic"], 4)})
+                        d.update({"usage": usage, "aic_charged": round(usage["aic"], 4),
+                                  "aic_basis": "measured late (rescan; est. rates)"})
+            if remeasured:
+                record["aic"] = round(sum(d["aic_charged"] for d in record["dispatches"]), 4)
+                record["unmeasured_dispatches"] = sum(1 for d in record["dispatches"]
+                                                      if d.get("usage") is None)
+                record.setdefault("remeasures", []).append({"at": utc_now(),
+                                                            "dispatches": remeasured})
             before = record.get("contamination") or []
             after = sorted({m for d in record.get("dispatches") or []
                             for m in d.get("contamination") or []})
             if after == before:
+                if remeasured:
+                    self.write(f"trials/{tid}.json", record)
+                    changed.append((tid, before, after, record["status"]))
                 continue
             status = record["status"]
             if status == "contaminated" and not after:
@@ -2001,7 +2083,10 @@ def paired_gap(rows_a, rows_b, iterations, confidence, seed):
     means = sorted(sum(rng.choice(diffs) for _ in diffs) / len(diffs)
                    for _ in range(iterations))
     alpha = (1 - confidence) / 2
-    return {"pairs": len(diffs), "mean": sum(diffs) / len(diffs),
+    mean = sum(diffs) / len(diffs)
+    sd = (math.sqrt(sum((x - mean) ** 2 for x in diffs) / (len(diffs) - 1))
+          if len(diffs) > 1 else None)
+    return {"pairs": len(diffs), "mean": mean, "sd": sd,
             "ci": (_percentile(means, alpha), _percentile(means, 1 - alpha))}
 
 
@@ -2029,9 +2114,20 @@ def spearman(xs, ys):
     return round(cov / (sx * sy), 3) if sx and sy else None
 
 
+POWER_Z = 1.959964 + 0.841621  # two-sided 95% + 80% power
+
+
 def _mean(values):
     values = [v for v in values if v is not None]
     return sum(values) / len(values) if values else None
+
+
+def _pct(values, q):
+    """Nearest-rank percentile (q in 0..1) of the non-null values, or None."""
+    values = sorted(v for v in values if v is not None)
+    if not values:
+        return None
+    return values[max(0, min(len(values) - 1, math.ceil(q * len(values)) - 1))]
 
 
 def decide(arm_rows, per_arm, scoring):
@@ -2058,10 +2154,24 @@ def decide(arm_rows, per_arm, scoring):
                 lo is not None and lo <= 0 <= hi):
             tied.append(arm)
     winner = min(tied, key=lambda a: (per_arm[a]["aic_mean"], -per_arm[a]["qs_mean"]))
+    cheapest = winner
+    band = scoring.get("cost_tie_pct")
+    if band is not None:
+        # preregistered time tie-break: among tied arms whose mean AIC is within `band` % of
+        # the cheapest, the fastest by median wall time wins
+        near = [a for a in tied
+                if per_arm[a]["aic_mean"] <= per_arm[cheapest]["aic_mean"] * (1 + band / 100)]
+        winner = min(near, key=lambda a: (per_arm[a].get("wall_s_median") or math.inf,
+                                          per_arm[a]["aic_mean"]))
     reason = (f"{leader} leads on quality score; " +
               (f"{', '.join(a for a in tied if a != leader)} statistically tied with it; "
                if len(tied) > 1 else "no arm is tied with it; ") +
-              f"{winner} is the cheapest of the tied set")
+              f"{cheapest} is the cheapest of the tied set")
+    if winner != cheapest:
+        reason += (f"; {winner} costs within {band:g}% of it and is faster (median wall time), "
+                   "so it wins the time tie-break")
+    elif band is not None:
+        reason += f" (no tied arm within {band:g}% of its cost is faster)"
     return {"winner": winner, "leader": leader, "eligible": sorted(eligible),
             "tied": sorted(tied), "gaps": gaps, "reason": reason}
 
@@ -2165,6 +2275,19 @@ def build_report(ex, arms=None, drop=(), view="preregistered"):
                                     for d in dispatches),
             "dispatches_mean": _mean([r["dispatches"] for r in rs]),
             "wall_s_mean": _mean([r["wall_s"] for r in rs]),
+            "wall_s_median": _pct([r["wall_s"] for r in rs], 0.5),
+            "wall_s_p90": _pct([r["wall_s"] for r in rs], 0.9),
+            "aic_median": _pct([r["aic"] for r in rs], 0.5),
+            "aic_p90": _pct([r["aic"] for r in rs], 0.9),
+            "estimate_charged": {
+                "dispatches": sum(1 for d in dispatches if d.get("usage") is None),
+                "aic": round(sum(d["aic_charged"] for d in dispatches
+                                 if d.get("usage") is None), 3),
+                "share": round(sum(d["aic_charged"] for d in dispatches
+                                   if d.get("usage") is None) / aic_total, 3)
+                         if aic_total else 0.0},
+            "efforts": {role: f"{s['model']}/{s['effort']}"
+                        for role, s in ex.exp["arms"][arm]["stages"].items()},
             "reworks_mean": _mean([r["reworks"] for r in rs]),
             "regression_green_rate": _mean([1.0 if r["regression_green"] else 0.0 for r in rs]),
             "violations_mean": _mean([len(r["violations"]) for r in rs]),
@@ -2230,6 +2353,8 @@ def build_report(ex, arms=None, drop=(), view="preregistered"):
         "reference": {t: (r or {}).get("metrics", {}).get("aggregate") for t, r in ref.items()},
         "rows": [{k: v for k, v in r.items() if not k.startswith("_")} for r in rows],
         "small_sample": any(a["n"] < 20 for a in measured),
+        "max_estimate_share": float(scoring.get("max_estimate_share", 0.10)),
+        "extended_sections": bool(scoring.get("extended_report")),
     }
     if view == "preregistered" and extensions:
         report["extended"] = build_report(ex, arms=prereg + extensions, view="extended")
@@ -2246,6 +2371,41 @@ def _f(value, digits=1, suffix=""):
     if isinstance(value, float):
         return f"{value:.{digits}f}{suffix}"
     return f"{value}{suffix}"
+
+
+def _spread_lines(report, arms):
+    """Cost/time spread, estimate-charged share and detection sensitivity (v2 reports)."""
+    lines = ["## Cost and time spread (per trial)", "",
+              "| Arm | Models/effort | AIC median | AIC p90 | Wall s median | Wall s p90 | "
+              "Charged at estimate |", "|---|---|---|---|---|---|---|"]
+    for a in arms:
+        est = a.get("estimate_charged") or {}
+        flag = (f"{est.get('dispatches', 0)} dispatches, {_f(est.get('aic'), 2)} AIC "
+                f"({_f(100 * (est.get('share') or 0), 0)}%)") if est.get("dispatches") else "none"
+        if (est.get("share") or 0) > report.get("max_estimate_share", 0.10):
+            flag += " **⚠ cost partly estimated**"
+        efforts = ", ".join(f"{k} {v}" for k, v in (a.get("efforts") or {}).items())
+        lines.append(f"| {a['arm']} | {efforts} | {_f(a.get('aic_median'), 2)} | "
+                     f"{_f(a.get('aic_p90'), 2)} | {_f(a.get('wall_s_median'), 0)} | "
+                     f"{_f(a.get('wall_s_p90'), 0)} | {flag} |")
+    lines.append("")
+    gaps = (report.get("decision") or {}).get("gaps") or {}
+    sds = [g["sd"] for g in gaps.values() if g.get("sd") is not None and g.get("pairs")]
+    if sds:
+        pairs = min(g["pairs"] for g in gaps.values() if g.get("pairs"))
+        sd = statistics.median(sds)
+        mde = POWER_Z * sd / math.sqrt(pairs)
+        lines += ["## Sensitivity", "",
+                  f"Median paired QS-gap SD {_f(sd, 2)} over {pairs} paired attempts: the "
+                  f"smallest QS gap this run detects with 80% power at 95% confidence is "
+                  f"about **{_f(mde, 1)} points**. Gaps smaller than that are ties by "
+                  "construction, not evidence of equality.",
+                  "", "| Gap to detect | Paired attempts needed |", "|---|---|"]
+        for target in (2, 3, 5):
+            lines.append(f"| {target} QS | {math.ceil((POWER_Z * sd / target) ** 2)} |")
+        lines.append("")
+    return lines
+
 
 
 def render_report(report, nested=False):
@@ -2323,6 +2483,9 @@ def render_report(report, nested=False):
     lines += ["", "Reference solutions: " + "; ".join(
         f"{t}: ΔSLOC {_f((m or {}).get('delta_sloc'))}, ΔCC {_f((m or {}).get('delta_cc'))}"
         for t, m in report["reference"].items()), ""]
+    if report.get("extended_sections"):
+        lines += _spread_lines(report, arms)
+
     lines += ["## Spend detail", "",
               "| Arm | AIC total | Reported AIU | Unmeasured | Input tok | Cache-read tok | "
               "Output tok | Reasoning tok | Premium req | AIC by stage (per trial) |",
@@ -2334,7 +2497,7 @@ def render_report(report, nested=False):
                      f"{a['unmeasured_dispatches']} | {t['input']:,} | {t['cache_read']:,} | "
                      f"{t['output']:,} | {a['reasoning_tokens']:,} | {a['premium_requests']} | "
                      f"{stages} |")
-    pipes = [a for a in arms if a["shape"] == "pipeline" and a["verdicts"]["count"]]
+    pipes = [a for a in arms if a["shape"] != "one-shot" and a["verdicts"]["count"]]
     if pipes:
         lines += ["", "## Pipeline gates vs the hidden oracle", "",
                   "| Arm | Verdicts | Accuracy | Incorrect accepts | Incorrect rejects | "
@@ -2368,13 +2531,30 @@ def render_report(report, nested=False):
 # validate: every task's oracle is red on base and green on its reference (spends nothing)
 
 
-def validate_tasks(ex):
-    """-> [{task, base_oracle, ref_oracle, base_regression, ref_regression, valid}]."""
+def validate_tasks(ex, only=None):
+    """-> [{task, base_oracle, ref_oracle, base_regression, ref_regression, valid}].
+
+    `task_requirements` in the definition can also demand a minimum oracle size and a
+    `naive.patch` -- a plausible wrong solution that must apply and score strictly between 0
+    and 1 on the oracle, which proves the oracle discriminates partial work."""
+    req = ex.exp.get("task_requirements") or {}
     rows = []
     for task_id in ex.exp["tasks"]:
+        if only and task_id not in only:
+            continue
         task = ex.exp["task_defs"][task_id]
-        row = {"task": task_id}
-        for label, patch in (("base", ""), ("ref", task["reference_text"])):
+        row = {"task": task_id, "problems": []}
+        expected = oracle_test_count(task["oracle_text"])
+        row["oracle_tests"] = expected
+        if expected < int(req.get("min_oracle_tests") or 0):
+            row["problems"].append(f"oracle has {expected} tests, needs "
+                                   f"{req['min_oracle_tests']}")
+        if req.get("naive_patch") and not task.get("naive_text"):
+            row["problems"].append("no naive.patch")
+        cases = [("base", ""), ("ref", task["reference_text"])]
+        if task.get("naive_text"):
+            cases.append(("naive", task["naive_text"]))
+        for label, patch in cases:
             with tempfile.TemporaryDirectory(prefix="route-exp-validate-") as tmp:
                 box, applied, detail = ex.grade_box(patch, Path(tmp) / "g")
                 if not applied:
@@ -2386,7 +2566,15 @@ def validate_tasks(ex):
                 oracle = ex.run_oracle(task, box, run_tests)
                 row[f"{label}_oracle"] = f"{oracle['passed']}/{oracle['expected']}"
                 row[f"{label}_oracle_green"] = oracle["score"] == 1.0
-        row["valid"] = (not row.get("base_error") and not row.get("ref_error")
+                row[f"{label}_score"] = oracle["score"]
+        if "naive" in dict(cases):
+            if row.get("naive_error"):
+                row["problems"].append("naive.patch does not apply")
+            elif not 0 < row.get("naive_score", 0) < 1:
+                row["problems"].append(f"naive.patch scores {row.get('naive_oracle')} on the "
+                                       "oracle; it must pass some tests and fail others")
+        row["valid"] = (not row["problems"]
+                        and not row.get("base_error") and not row.get("ref_error")
                         and row.get("base_oracle_green") is False
                         and row.get("ref_oracle_green") is True
                         and row.get("base_regression") is True
@@ -2649,7 +2837,7 @@ def cmd_run(args, parser, pricing):
                 continue
             seen.add(t["arm"])
             arm = ex.exp["arms"][t["arm"]]
-            role = "solo" if arm["shape"] == "one-shot" else "planner"
+            role = "planner" if arm["shape"] == "pipeline" else "solo"
             task = ex.exp["task_defs"][t["task"]]
             argv = build_argv(ex.exp, args.bin or "copilot", arm["stages"][role]["model"],
                               arm["stages"][role]["effort"], "<PROMPT>", "<uuid>", role)
@@ -2736,15 +2924,19 @@ def cmd_validate(args, parser, pricing):
     ex = _session(args, pricing)
     ex.run_dir = Path(tempfile.mkdtemp(prefix="route-exp-validate-"))
     try:
-        rows = validate_tasks(ex)
+        rows = validate_tasks(ex, only=_only(args.only))
     finally:
         shutil.rmtree(ex.run_dir, ignore_errors=True)
     for row in rows:
         print(f"{row['task']}: base oracle {row.get('base_oracle', row.get('base_error'))} "
               f"(regression {'green' if row.get('base_regression') else 'RED'}) -> reference "
               f"{row.get('ref_oracle', row.get('ref_error'))} (regression "
-              f"{'green' if row.get('ref_regression') else 'RED'})  "
-              f"{'VALID' if row['valid'] else 'INVALID'}")
+              f"{'green' if row.get('ref_regression') else 'RED'})"
+              + (f"; naive {row.get('naive_oracle', row.get('naive_error'))}"
+                 if "naive_oracle" in row or "naive_error" in row else "")
+              + f"; {row['oracle_tests']} oracle tests  "
+              f"{'VALID' if row['valid'] else 'INVALID'}"
+              + "".join(f"\n  - {p}" for p in row["problems"]))
     return 0 if all(r["valid"] for r in rows) else 3
 
 
@@ -2757,7 +2949,8 @@ def build_parser():
     parser.add_argument("--exec-mode", choices=("enforced", "trusted-host"), default="enforced",
                         help="test runs inside the OS boundary (default) or, explicitly, not")
     sub = parser.add_subparsers(dest="cmd", required=True)
-    sub.add_parser("validate", help="oracles red on base, green on reference")
+    p = sub.add_parser("validate", help="oracles red on base, green on reference")
+    p.add_argument("--only", help="comma-separated task ids")
     p = sub.add_parser("plan", help="trial matrix and AIC estimate; spends nothing")
     p.add_argument("--repeats", type=int)
     p.add_argument("--json", action="store_true")

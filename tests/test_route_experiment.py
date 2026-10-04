@@ -99,7 +99,7 @@ class DefinitionTests(unittest.TestCase):
     def test_a_pipeline_needs_every_stage(self):
         raw = self._raw()
         del raw["arms"]["A2"]["stages"]["verifier"]
-        with self.assertRaisesRegex(rx.ConfigError, "exactly the stages"):
+        with self.assertRaisesRegex(rx.ConfigError, "needs the stages"):
             rx.validate_definition(raw, PRICING)
 
     def test_weights_must_sum_to_one(self):
@@ -420,6 +420,33 @@ class ScoringTests(unittest.TestCase):
         self.assertEqual(d["tied"], ["A1", "A2"])
         self.assertEqual(d["winner"], "A2")
 
+    def test_the_time_tie_break_picks_the_faster_of_near_cost_tied_arms(self):
+        arm_rows = {"A1": self.rows("A1", [90, 92, 91, 93, 90, 92], 30),
+                    "A2": self.rows("A2", [89, 90, 90, 91, 89, 90], 10),
+                    "A3": self.rows("A3", [90, 91, 90, 92, 90, 91], 10.5)}
+        per_arm = self.summarise(arm_rows)
+        for arm, wall in (("A1", 100), ("A2", 900), ("A3", 300)):
+            per_arm[arm]["wall_s_median"] = wall
+        d = rx.decide(arm_rows, per_arm, self.SCORING)
+        self.assertEqual(d["winner"], "A2")
+        d = rx.decide(arm_rows, per_arm, dict(self.SCORING, cost_tie_pct=10))
+        self.assertEqual(d["winner"], "A3")
+        self.assertIn("time tie-break", d["reason"])
+        # A1 is faster still but costs 3x the cheapest: outside the band, never picked.
+        d = rx.decide(arm_rows, per_arm, dict(self.SCORING, cost_tie_pct=1))
+        self.assertEqual(d["winner"], "A2")
+
+    def test_paired_gap_reports_its_spread_and_percentiles_are_nearest_rank(self):
+        a = self.rows("A1", [90, 92, 94], 1)
+        b = self.rows("A2", [90, 90, 90], 1)
+        gap = rx.paired_gap(a, b, 200, 0.95, seed=1)
+        self.assertEqual(gap["pairs"], 3)
+        self.assertAlmostEqual(gap["mean"], 2.0)
+        self.assertAlmostEqual(gap["sd"], 2.0)
+        self.assertEqual(rx._pct([5, 1, 3, None, 4, 2], 0.5), 3)
+        self.assertEqual(rx._pct([5, 1, 3, 4, 2], 0.9), 5)
+        self.assertIsNone(rx._pct([None], 0.5))
+
     def test_an_arm_below_the_solve_floor_cannot_win(self):
         arm_rows = {"A1": self.rows("A1", [80] * 6, 30),
                     "A3": self.rows("A3", [99] * 6, 1, solved=False)}
@@ -456,6 +483,7 @@ class FakeCopilot:
     def __init__(self, home, verdicts=None, write_in_verifier=False):
         self.home = Path(home)
         self.calls = []
+        self.prompts = []
         self.verdicts = list(verdicts or [])
         self.write_in_verifier = write_in_verifier
 
@@ -467,6 +495,7 @@ class FakeCopilot:
         role = next((r for r in ("PLANNER", "TEST AUTHOR", "IMPLEMENTER", "VERIFIER",
                                  "REVIEWER") if f"YOUR JOB: {r}" in prompt), "SOLO")
         self.calls.append(role)
+        self.prompts.append(prompt)
         reply = "ok"
         if role in ("IMPLEMENTER", "SOLO"):
             (cwd / "bin" / "calc.py").write_text(rx.DEMO_FIXED)
@@ -611,6 +640,100 @@ class DriverTests(unittest.TestCase):
         self.assertEqual(len(calls), rx.FAILURE_STREAK_LIMIT)
         self.assertEqual([t["status"] for t in ex.records("trials")],
                          ["dispatch-failed"] * rx.FAILURE_STREAK_LIMIT)
+
+    def add_arm(self, arm, shape, stages):
+        self.exp["arms"][arm] = {"label": arm, "shape": shape, "stages": {
+            role: {"model": self.exp["arms"]["A4"]["stages"]["solo"]["model"],
+                   "effort": "high"} for role in stages}}
+        return dict(self.trial("A4"), arm=arm,
+                    trial_id=self.trial("A4")["trial_id"].replace("A4", arm))
+
+    def test_a_reviewed_one_shot_reworks_once_per_reject_then_re_reviews(self):
+        trial = self.add_arm("A6", "reviewed", ("solo", "reviewer"))
+        fake = FakeCopilot(self.home, verdicts=["REVIEW VERDICT=reject",
+                                                "REVIEW VERDICT=accept"])
+        ex = self.driver(fake)
+        ex.open_run(1)
+        record = ex.run_trial(trial)
+        self.assertEqual(fake.calls, ["SOLO", "REVIEWER", "SOLO", "REVIEWER"])
+        self.assertIn("FINDINGS TO ADDRESS (from the reviewer)", fake.prompts[2])
+        self.assertIn("REVIEW VERDICT=reject", fake.prompts[2])
+        self.assertEqual(record["status"], "complete")
+        self.assertEqual(record["reworks"], 1)
+        self.assertEqual([v["verdict"] for v in record["verdicts"]], ["reject", "accept"])
+        grade = ex.grade_trial(record)
+        self.assertEqual(grade["oracle"]["score"], 1.0)
+
+    def test_a_reviewed_one_shot_stops_after_its_rework_budget(self):
+        trial = self.add_arm("A6", "reviewed", ("solo", "reviewer"))
+        fake = FakeCopilot(self.home, verdicts=["REVIEW VERDICT=reject"] * 5)
+        ex = self.driver(fake)
+        ex.open_run(1)
+        record = ex.run_trial(trial)
+        budget = self.exp["rework"]["after_reviewer_reject"]
+        self.assertEqual(record["reworks"], budget)
+        self.assertEqual(fake.calls.count("REVIEWER"), budget + 1)
+
+    def test_a_pipeline_without_a_reviewer_ends_at_the_verifier(self):
+        trial = self.add_arm("A7", "pipeline",
+                             ("planner", "test_author", "implementer", "verifier"))
+        ex = self.driver(FakeCopilot(self.home))
+        ex.open_run(1)
+        record = ex.run_trial(trial)
+        self.assertEqual(ex.dispatch_runner.calls,
+                         ["PLANNER", "TEST AUTHOR", "IMPLEMENTER", "VERIFIER"])
+        self.assertEqual(record["status"], "complete")
+
+    def test_the_new_shapes_validate_and_estimate_only_their_own_stages(self):
+        raw = json.loads((rx.EXPERIMENT_DIR / "experiment.json").read_text())
+        luna = raw["arms"]["A1"]["stages"]["implementer"]
+        raw["arms"]["A6"] = {"label": "x", "shape": "reviewed",
+                             "stages": {"solo": luna, "reviewer": luna}}
+        raw["arms"]["A7"] = {"label": "y", "shape": "pipeline", "stages": {
+            k: v for k, v in raw["arms"]["A1"]["stages"].items() if k != "reviewer"}}
+        rx.validate_definition(raw, PRICING)
+        full = rx.arm_estimate(raw, PRICING, "A1")
+        lean = rx.arm_estimate(raw, PRICING, "A7")
+        self.assertLess(lean["max"], full["max"])
+        self.assertEqual(rx.arm_estimate(raw, PRICING, "A6")["dispatches_min"], 2)
+        raw["arms"]["A6"]["stages"]["planner"] = luna
+        with self.assertRaisesRegex(rx.ConfigError, "reviewed"):
+            rx.validate_definition(raw, PRICING)
+
+    def test_rescan_remeasures_an_estimate_charged_dispatch_whose_log_now_exists(self):
+        fake = FakeCopilot(self.home)
+        ex = self.driver(fake)
+        tid = self.trial("A4")["trial_id"]
+        ex.run(1, only={tid}, grade=False)
+        record = ex.records("trials")[0]
+        measured = record["dispatches"][0]["aic_charged"]
+        # Simulate the outage: the log was unreadable at dispatch time, estimate charged.
+        record["dispatches"][0].update({"usage": None, "aic_charged": 99.0,
+                                        "aic_basis": "unmeasured -- estimate charged"})
+        record.update({"aic": 99.0, "unmeasured_dispatches": 1})
+        ex.write(f"trials/{tid}.json", record)
+        self.assertEqual(len(ex.rescan()), 1)
+        after = ex.records("trials")[0]
+        self.assertAlmostEqual(after["aic"], measured)
+        self.assertEqual(after["unmeasured_dispatches"], 0)
+        self.assertEqual(after["remeasures"][0]["dispatches"][0]["estimate_aic"], 99.0)
+        self.assertIn("late", after["dispatches"][0]["aic_basis"])
+        self.assertEqual(ex.rescan(), [])
+
+    def test_the_v2_report_sections_render_spread_outage_and_sensitivity(self):
+        self.exp["scoring"]["extended_report"] = True
+        fake = FakeCopilot(self.home)
+        ex = self.driver(fake)
+        self.assertEqual(ex.run(1), 0)
+        report = rx.build_report(ex)
+        a4 = report["per_arm"]["A4"]
+        self.assertIn("solo", a4["efforts"])
+        self.assertEqual(a4["estimate_charged"]["dispatches"], 0)
+        self.assertIsNotNone(a4["wall_s_median"])
+        text = rx.render_report(report)
+        self.assertIn("## Cost and time spread", text)
+        del self.exp["scoring"]["extended_report"]
+        self.assertNotIn("## Cost and time spread", rx.render_report(rx.build_report(ex)))
 
     def test_rescan_reclassifies_from_the_session_logs_with_an_audit_trail(self):
         fake = FakeCopilot(self.home)

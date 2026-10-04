@@ -174,6 +174,34 @@ The report also shows:
   measured AIC goes into the result. The CLI flags for tool exclusion/denial are verified at
   the first live dispatch.
 
+## Version 2 (`experiments/route-arms-v2/`)
+
+Version 2 fixes v1's weaknesses: small n, easy tasks, effort confounds and estimate-charged
+outage spend. The v1 definition, its digest and its report are unchanged.
+
+- **Harder tasks, sized for power.** Six new tasks (T4–T9) cover features, a refactor, a
+  multi-defect bugfix and an algorithmic change. Each has 25 or more oracle tests and a
+  `naive.patch`, a plausible but incomplete fix that `validate` requires to score strictly
+  between 0 and 1. Three repeats give 18 paired attempts per arm. From v1's paired-gap spread,
+  that is enough to detect a gap of about 2–3 QS at 80% power. `equivalence_margin` is 3 to
+  match.
+- **Two more route shapes.** `reviewed` is a one-shot followed by a reviewer gate; each reject
+  buys one solo rework and a re-review. A `pipeline` may leave out its reviewer. These shapes
+  test whether a cheap implementer plus an expensive gate beats either alone.
+- **Effort-matched arms.** v1 ran Luna at `max` and Sol and Opus at `high`. A8 and A9 are Sol
+  and Opus one-shots at `max`.
+- **Time tie-break.** Among tied arms whose mean AIC is within `cost_tie_pct` % of the
+  cheapest, the arm with the lowest median wall time wins.
+- **Outage honesty.** The report shows each arm's AIC median and p90, wall-time median and
+  p90, models/effort, and the share of its AIC charged at estimate. An arm above
+  `max_estimate_share` is flagged. `rescan` re-measures an estimate-charged dispatch when its
+  session log now carries usage, and records an audit entry under `remeasures`.
+- **Sensitivity.** The report states the smallest QS gap the run could detect, and how many
+  paired attempts a 2-, 3- or 5-point gap would need.
+
+The new report sections render only when `scoring.extended_report` is true, so v1 reports
+stay byte-identical.
+
 ## How to run
 
 ```bash
