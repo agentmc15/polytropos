@@ -623,29 +623,64 @@ def parse_judge_rubric_rank(text, labels, items):
 _DIFF_HEADER_RE = re.compile(r"^diff --git a/(.+?) b/(.+)$")
 
 
+_HUNK_RE = re.compile(r"^@@ -\d+(?:,(\d+))? \+\d+(?:,(\d+))? @@")
+
+
+def _diff_path(raw, prefix):
+    path = raw.split("\t")[0].strip()
+    return path[len(prefix):] if path.startswith(prefix) else path
+
+
 def diff_files(patch):
-    """Unified diff -> [{path, added, removed, added_lines, new, deleted}] in diff order."""
-    files, current = [], None
+    """Unified diff -> [{path, added, removed, added_lines, new, deleted}] in diff order.
+    Accepts git diffs and plain `---`/`+++` diffs; hunk line counts decide what is content,
+    so a removed line that starts with `-- ` is never mistaken for a file header."""
+    files, current, from_git, minus = [], None, False, None
+    old_left = new_left = 0
+
+    def start(path):
+        entry = {"path": path, "added": 0, "removed": 0, "added_lines": [],
+                 "new": False, "deleted": False}
+        files.append(entry)
+        return entry
+
     for line in (patch or "").splitlines():
+        if current is not None and (old_left > 0 or new_left > 0):
+            if line.startswith("+"):
+                current["added"] += 1
+                current["added_lines"].append(line[1:])
+                new_left -= 1
+            elif line.startswith("-"):
+                current["removed"] += 1
+                old_left -= 1
+            elif not line.startswith("\\"):
+                old_left -= 1
+                new_left -= 1
+            continue
         match = _DIFF_HEADER_RE.match(line)
         if match:
-            current = {"path": match.group(2), "added": 0, "removed": 0, "added_lines": [],
-                       "new": False, "deleted": False}
-            files.append(current)
+            current, from_git, minus = start(match.group(2)), True, None
             continue
-        if current is None:
+        if line.startswith("--- "):
+            minus = _diff_path(line[4:], "a/")
+        elif line.startswith("+++ "):
+            plus = _diff_path(line[4:], "b/")
+            if not from_git:
+                current = start(minus if plus == "/dev/null" and minus else plus)
+                current["new"] = minus == "/dev/null"
+                current["deleted"] = plus == "/dev/null"
+            from_git = False
+        elif current is None:
             continue
-        if line.startswith("new file mode"):
+        elif line.startswith("new file mode"):
             current["new"] = True
         elif line.startswith("deleted file mode"):
             current["deleted"] = True
-        elif line.startswith("+++ ") or line.startswith("--- "):
-            continue
-        elif line.startswith("+"):
-            current["added"] += 1
-            current["added_lines"].append(line[1:])
-        elif line.startswith("-"):
-            current["removed"] += 1
+        else:
+            hunk = _HUNK_RE.match(line)
+            if hunk:
+                old_left = int(hunk.group(1) if hunk.group(1) is not None else 1)
+                new_left = int(hunk.group(2) if hunk.group(2) is not None else 1)
     return files
 
 

@@ -387,6 +387,17 @@ class MetricTests(unittest.TestCase):
                 with self.assertRaisesRegex(rx.ConfigError, "regression_classes"):
                     rx.load_task(tmp, "T1-statusline-rollover")
 
+    def test_plain_unified_diffs_count_like_git_diffs(self):
+        body = ("@@ -1,3 +1,3 @@\n x = 1\n--- y = 2\n+y = 3\n z = 4\n"
+                "\\ No newline at end of file\n")
+        plain = "--- a/bin/mod.py\n+++ b/bin/mod.py\n" + body
+        git = "diff --git a/bin/mod.py b/bin/mod.py\nindex 1..2 100644\n" + plain
+        new = "--- /dev/null\n+++ b/tests/test_new.py\n@@ -0,0 +1 @@\n+x = 1\n"
+        for patch in (plain, git):
+            files = rx.diff_files(patch + new)
+            self.assertEqual([(f["path"], f["added"], f["removed"], f["new"]) for f in files],
+                             [("bin/mod.py", 1, 1, False), ("tests/test_new.py", 1, 0, True)])
+
     def test_allowed_generated_paths_are_in_scope_and_outside_size(self):
         exp, _ = real_experiment()
         task = dict(exp["task_defs"]["T1-statusline-rollover"],
