@@ -1,0 +1,32 @@
+{
+  "version": "polytropos.route-experiment.extension/1",
+  "arm": "A35",
+  "added": "2026-10-04",
+  "reason": "Requested during the v2 run: a cheaper-reviewer sweep. Twin of A2 with only the reviewer changed from claude-opus-5.5/high to claude-sonnet-5.5/medium, isolating the reviewer's cost and gate-accuracy effect. Post hoc; never judged (adding a candidate would replace the preregistered judgments).",
+  "definition": {
+    "label": "Sol 6 plans -> Luna 6 (max) tests/builds/verifies -> Sonnet 5.5 (medium) reviews",
+    "shape": "pipeline",
+    "stages": {
+      "planner": {
+        "model": "gpt-6-sol",
+        "effort": "high"
+      },
+      "test_author": {
+        "model": "gpt-6-luna",
+        "effort": "max"
+      },
+      "implementer": {
+        "model": "gpt-6-luna",
+        "effort": "max"
+      },
+      "verifier": {
+        "model": "gpt-6-luna",
+        "effort": "max"
+      },
+      "reviewer": {
+        "model": "claude-sonnet-5.5",
+        "effort": "medium"
+      }
+    }
+  }
+}

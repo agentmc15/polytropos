@@ -1,0 +1,28 @@
+{
+  "version": "polytropos.route-experiment.extension/1",
+  "arm": "A32",
+  "added": "2026-10-04",
+  "reason": "Requested during the v2 run: a cheaper-planner sweep. Twin of A7 with only the planner changed to gemini-3.8-flash/high, isolating the planner's cost and quality effect. Post hoc; never judged (adding a candidate would replace the preregistered judgments).",
+  "definition": {
+    "label": "Gemini 3.8 Flash (high) plans -> Luna 6 (max) tests/builds/verifies, no reviewer",
+    "shape": "pipeline",
+    "stages": {
+      "planner": {
+        "model": "gemini-3.8-flash",
+        "effort": "high"
+      },
+      "test_author": {
+        "model": "gpt-6-luna",
+        "effort": "max"
+      },
+      "implementer": {
+        "model": "gpt-6-luna",
+        "effort": "max"
+      },
+      "verifier": {
+        "model": "gpt-6-luna",
+        "effort": "max"
+      }
+    }
+  }
+}

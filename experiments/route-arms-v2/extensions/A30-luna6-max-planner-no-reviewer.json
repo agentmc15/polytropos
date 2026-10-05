@@ -1,0 +1,28 @@
+{
+  "version": "polytropos.route-experiment.extension/1",
+  "arm": "A30",
+  "added": "2026-10-04",
+  "reason": "Requested during the v2 run: a cheaper-planner sweep. Twin of A7 with only the planner changed to gpt-6-luna/max, isolating the planner's cost and quality effect. Post hoc; never judged (adding a candidate would replace the preregistered judgments).",
+  "definition": {
+    "label": "Luna 6 (max) plans -> Luna 6 (max) tests/builds/verifies, no reviewer",
+    "shape": "pipeline",
+    "stages": {
+      "planner": {
+        "model": "gpt-6-luna",
+        "effort": "max"
+      },
+      "test_author": {
+        "model": "gpt-6-luna",
+        "effort": "max"
+      },
+      "implementer": {
+        "model": "gpt-6-luna",
+        "effort": "max"
+      },
+      "verifier": {
+        "model": "gpt-6-luna",
+        "effort": "max"
+      }
+    }
+  }
+}
