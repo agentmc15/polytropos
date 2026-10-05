@@ -5,7 +5,7 @@
 !!! note
     Mirrored from `docs/JEV-ACCESS-CONTRACT.md` — edit the source, then run `python3 bin/docs_build.py build`.
 
-Status on 2026-09-25: **offline adapter contract only**. The user reports TypeSafe access configured locally, but this work did not inspect a credential or account, call TypeSafe, transmit a payload, or incur provider usage. All provider behavior below is **documented**, not observed against this account. Synthetic fixture results establish only local adapter behavior. Jev has no approved routing or activation scope; Release 1 remains the authority for admission, decisions, policy and rollback.
+Status on 2026-09-25: **offline adapter contract only**. (2026-10-04: a gated router-study sender now exists; see [Router study](#router-study-the-one-live-sender-2026-10-04). Everything else on this page still describes J01.) The user reports TypeSafe access configured locally, but this work did not inspect a credential or account, call TypeSafe, transmit a payload, or incur provider usage. All provider behavior below is **documented**, not observed against this account. Synthetic fixture results establish only local adapter behavior. Jev has no approved routing or activation scope; Release 1 remains the authority for admission, decisions, policy and rollback.
 
 ## Published interface and local mapping
 
@@ -42,6 +42,38 @@ Only the exact reviewed JSON bytes, HTTPS destination, `Content-Type: applicatio
 Before any later request containing real failure text, a human must inspect the **exact transformed field values and complete serialized payload**, the intended endpoint and destination, provider/account retention terms, credential source, call count, timeout/retry bounds, and a dollar ceiling that can be enforced before dispatch. The producer must select an explicitly vendor-eligible V1 request and allowed question sensitivities, allowlist only required fields, redact every free-text leaf with `bin/redact.py` **before** bounding it, count redactions by kind rather than value, reject unresolved restricted/project-local content, and show the transformed payload for review. The matcher catches known credential shapes; it cannot prove that names, novel secrets, proprietary details or indirect identifiers are gone. If the exact reviewed payload changes, review again. A secret found or a size limit exceeded is a refusal, not permission to silently trim semantic evidence.
 
 Any live probe also requires a verified account/model entitlement, an explicit provider-owned admission decision covering worst-case requests and retries, no automatic credit refill exposure beyond the approved ceiling, and a recorded owner for cost evidence. An unknown price, quota, token count, credit conversion, duplicate-charge policy or billing basis blocks paid dispatch; `usage.input_tokens` alone is not a bill. Request failures must report only bounded status and safe error categories locally; raw response bodies, request bodies and credentials must not enter failure logs. A probe remains advisory and cannot alter routing, calibration, capability rows or the D23 approval state.
+
+## Router study — the one live sender (2026-10-04)
+
+`bin/jev_router.py` is the only code that can send to TypeSafe. `bin/jev_decision_provider.py`
+stays offline, and the router reuses its serializer and strict mapper. On 2026-10-04 the user
+authorized building the sender and a router study for the route experiment. Sending stays
+gated on approval of the exact bytes:
+
+- **Payload.** Each experiment task gets one V1 request with four public questions: two
+  choices over a fixed route menu of at most 16 arms, one 5-level score and one noul. The
+  state holds the task's committed prompt (public in this repo) and title. Both are redacted
+  with `bin/redact.py` before the prompt is split into chunks within the V1 state bound. Each
+  route is described only by its a-priori shape, models, tiers and pricing-profile estimate,
+  never by a measured result. `prepare` writes the canonical bytes, their sizes and digests,
+  redaction counts by kind, and a manifest sha. `show` prints the exact bytes.
+- **Gate.** `send` refuses unless `--approve` equals the manifest sha and every payload still
+  matches its digest. It also refuses unless the pending calls fit `--max-calls`, which is
+  checked before anything is sent. Each task gets one HTTPS POST with a timeout, no redirect
+  and no retry. An O_EXCL marker is written before the call, and a call with any record is
+  never re-sent.
+- **Credential.** The key is read at send time from `$TYPESAFE_API_KEY`, or else
+  `TYPESAFE_API_KEY` in `~/.config/polytropos/.env` (`--env-file` overrides). It is never
+  printed, logged, stored or placed in a URL. An error message names only the variable and
+  the file.
+- **Records.** The private run store (`routeruns/jev-router/<study>/`) keeps the observed
+  model, token usage, the documented answer fields, and the names (never values) of any
+  undocumented fields. A failure records only its HTTP status and an error kind. The strict
+  V1 mapper decides conformance. If it refuses, Jev's own `choice` field is used and
+  labelled non-conformant, never repaired.
+- **Cost and authority.** Usage is reported as Jev's token counts. No pricing file covers
+  Jev, so no dollar or credit figure is derived. Picks are experiment arms only; they never
+  change routing policy, calibration or capability rows.
 
 ## J01 acceptance boundary
 

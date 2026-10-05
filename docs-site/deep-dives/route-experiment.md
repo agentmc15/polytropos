@@ -241,3 +241,37 @@ python3 bin/route_experiment.py report --run ID [--json]           # scorecard +
 The cost estimate comes from `plan`, which is computed from `data/pricing.copilot.json`. A
 snapshot at `cached_date` 2026-09-24: about 1,020–1,070 AIC for trials plus about 540 AIC for
 judges, against the preregistered 4,000 ceiling. Rerun `plan` for current figures.
+
+## A Jev router study (`bin/jev_router.py`)
+
+TypeSafe's Jev is a decision API, not a code writer, so it enters the experiment as a
+**router**: for each task it picks one route from a fixed menu of at most 16 arms. It answers
+two objectives — `route_quality` (most likely to solve it well, whatever the cost) and
+`route_economy` (cheapest likely to solve it) — plus a difficulty score and a needs-review
+probability, all recorded.
+
+The menu describes each arm only by shape, models, pricing tiers and its `plan`
+estimate. A measured result never enters a payload, so a pick cannot be fitted to the data.
+The picks are then scored two ways:
+
+- **Replay.** `score --run RUN` scores each pick against that run's recorded trials for the
+  picked arm on that task. Judge quality is left out for every arm, because extension arms
+  are never judged. Next to it, the score shows every static menu route, a uniform-random
+  router, and the hindsight-quality and hindsight-economy oracles.
+- **Live.** `picks` prints the `--only` trial ids and `--extend-arms` list. Run them in a
+  separate run id, so the picked trials are fresh draws and the main run's arms stay
+  untouched. Then `score --run LIVE --baseline-run MAIN` scores the live picks against the
+  main run's baselines. When both objectives pick the same arm, they share one trial.
+
+```bash
+python3 bin/jev_router.py demo                                            # offline, stub transport
+python3 bin/jev_router.py prepare --study S --jev-model M --menu A2,A5,…  # exact payloads + approval sha; sends nothing
+python3 bin/jev_router.py show --study S [--task T4]                      # the exact bytes for review
+python3 bin/jev_router.py send --study S --approve SHA --max-calls 6       # SENDS: one POST per task
+python3 bin/jev_router.py picks --study S                                 # picks + live-run arguments
+python3 bin/jev_router.py score --study S --run ID [--baseline-run ID]    # replay / live scoring
+```
+
+`send` is the only outbound path, governed by `docs/JEV-ACCESS-CONTRACT.md`. Jev usage is
+reported as Jev's own token counts. No pricing file covers Jev, so it is never shown as dollars
+or credits.
