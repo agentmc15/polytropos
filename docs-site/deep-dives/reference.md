@@ -184,7 +184,7 @@ Orchestration policy (same file, `orchestration_policy`): orchestrator tier `fro
 
 ### Copilot — `data/pricing.copilot.json`
 
-Derived from `data/pricing.copilot.json`, `cached_date` **2026-09-24** — 30 rows across 6 vendors. Rates are USD per million tokens; Copilot settles them in `billing_unit.name` = **AIC** at `usd_per_credit` 0.01, so credits = USD ÷ that field — the unit itself is data, never a literal in a skill.
+Derived from `data/pricing.copilot.json`, `cached_date` **2026-09-24** — 31 rows across 6 vendors. Rates are USD per million tokens; Copilot settles them in `billing_unit.name` = **AIC** at `usd_per_credit` 0.01, so credits = USD ÷ that field — the unit itself is data, never a literal in a skill.
 
 6 retired models live apart from the roster, in `retired_models`, each with its `retired_on` date and `replacement`: they keep historical sessions costable, and no routing, preference, forecast or dispatch path reads them (`claude-opus-4.5`, `claude-opus-4.6`, `claude-sonnet-4.5`, `claude-sonnet-4.6`, `gemini-3.1-pro`, `mai-code-1-flash`). 11 rows carry a `long_context` step-up block and 2 carry a `promo` window; both are broken out under the main table.
 
@@ -207,6 +207,7 @@ Derived from `data/pricing.copilot.json`, `cached_date` **2026-09-24** — 30 ro
 | `gpt-5.3-codex` | GPT-5.3-Codex | openai | strong | $1.75 | $0.175 | — | $14 | — |
 | `gpt-5.4` | GPT-5.4 | openai | mid | $2.5 | $0.25 | — | $15 | long-context ≥272,000 |
 | `claude-sonnet-5` | Claude Sonnet 5 | anthropic | mid | $2 | $0.2 | $2.5 | $10 | — |
+| `claude-sonnet-5.5` | Claude Sonnet 5.5 | anthropic | mid | $2 | $0.2 | $2.5 | $10 | — |
 | `gpt-5.6-terra` | GPT-5.6 Terra | openai | mid | $2 | $0.2 | $2.5 | $12 | long-context ≥272,000 |
 | `grok-4.7` | Grok 4.7 | xai | mid | $2 | $0.5 | — | $6 | long-context ≥200,000 |
 | `gemini-3.5-flash` | Gemini 3.5 Flash | google | mid | $1.5 | $0.15 | — | $9 | — |

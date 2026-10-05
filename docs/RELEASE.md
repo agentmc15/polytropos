@@ -192,7 +192,7 @@ Contract versions are read from the module that owns each one; package versions 
 |---|---|---|---|
 | claude-code | `data/pricing.json` | 2026-09-24 | 9 |
 | codex | `data/pricing.codex.json` | 2026-09-24 | 9 |
-| copilot | `data/pricing.copilot.json` | 2026-09-24 | 30 |
+| copilot | `data/pricing.copilot.json` | 2026-09-24 | 31 |
 | cursor | `data/pricing.cursor.json` | 2026-09-13 | 0 |
 
 ### Operational support by harness
@@ -260,7 +260,7 @@ Three answers per capability, never collapsed: does the product support it, has 
 - Install: `python3 bin/harness_select.py install --harness copilot`
 - Bundle: `copilot/.github/`
 - Review form: the reviewer agent without `--allow-all-tools` (no narrower pin exists)
-- Pricing: `data/pricing.copilot.json` (`cached_date` 2026-09-24, 30 models)
+- Pricing: `data/pricing.copilot.json` (`cached_date` 2026-09-24, 31 models)
 - Evaluation adapter: `workflow_eval.copilot_adapter`
 
 | Capability | Product | Implemented | Verified | On | Client | Effective |

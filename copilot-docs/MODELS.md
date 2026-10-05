@@ -14,7 +14,7 @@ a preference file was read from, which tiers carry a pin, which model ids are ex
 each symbolic tier (`cheap`, `mid`, `strong`, `frontier`) currently resolves to and why.
 
 <!-- BEGIN GENERATED: model-preferences -->
-Snapshot: `data/pricing.copilot.json` (cached_date 2026-09-24) — pricing sha256 `cfcdecfa6c6afa4c71b3af2e3f920143cf3256a0b6a1b76ed750c8d33736b10b`, roster sha256 `7716363cb557c792a5bf191160a96b64de907fb320c6b53485e582eb09ce6d2b`.
+Snapshot: `data/pricing.copilot.json` (cached_date 2026-09-24) — pricing sha256 `80df97c4c954bf1fc9be1f92f78c006eb25a4eb0d6357ba033d2117df9bbc612`, roster sha256 `a99041c2aacc42d4b0224c7e5915221b0e27bc2027ec7e0c002517d06faff91b`.
 
 - Prefs source: `(none — defaults)`
 
@@ -53,7 +53,7 @@ per-million-token rates, any notes the pricing data itself carries, and whether 
 eligible or excluded under active preferences.
 
 <!-- BEGIN GENERATED: model-roster -->
-Snapshot: `data/pricing.copilot.json` (cached_date 2026-09-24) — pricing sha256 `cfcdecfa6c6afa4c71b3af2e3f920143cf3256a0b6a1b76ed750c8d33736b10b`, roster sha256 `7716363cb557c792a5bf191160a96b64de907fb320c6b53485e582eb09ce6d2b`.
+Snapshot: `data/pricing.copilot.json` (cached_date 2026-09-24) — pricing sha256 `80df97c4c954bf1fc9be1f92f78c006eb25a4eb0d6357ba033d2117df9bbc612`, roster sha256 `a99041c2aacc42d4b0224c7e5915221b0e27bc2027ec7e0c002517d06faff91b`.
 
 | Model | Display | Vendor | Tier | Input $/MTok | Cached input $/MTok | Output $/MTok | Notes | Preference |
 |---|---|---|---|---|---|---|---|---|
@@ -70,6 +70,7 @@ Snapshot: `data/pricing.copilot.json` (cached_date 2026-09-24) — pricing sha25
 | `claude-opus-4.8-fast` | Claude Opus 4.8 (fast mode) | anthropic | strong | 10.0 | 1.0 | 50.0 | Preview fast mode with GitHub-listed $10/$1/$12.50/$50 per-MTok rates. Select it only when its latency tradeoff is appropriate for the task. | eligible |
 | `gemini-3.8-flash` | Gemini 3.8 Flash | google | mid | 0.75 | 0.075 | 3.75 | Current default mid lane. Account /model picker and a zero-prompt CLI check confirmed this slug on 2026-09-24. | eligible |
 | `claude-sonnet-5` | Claude Sonnet 5 | anthropic | mid | 2.0 | 0.2 | 10.0 | Current Anthropic versatile alternative for day-to-day coding, tests, docs, and refactors. | eligible |
+| `claude-sonnet-5.5` | Claude Sonnet 5.5 | anthropic | mid | 2.0 | 0.2 | 10.0 | Added 2026-10-04 from GitHub's models-and-pricing page (GA, same rates as Claude Sonnet 5) and seen in this account's Copilot CLI 1.0.91 model list. Sits after Claude Sonnet 5, which keeps its place in the mid lane; no zero-prompt check was run. | eligible |
 | `gpt-5.4` | GPT-5.4 | openai | mid | 2.5 | 0.25 | 15.0 | OpenAI workhorse; step-up rates above 272K input tokens. | eligible |
 | `gemini-3.5-flash` | Gemini 3.5 Flash | google | mid | 1.5 | 0.15 | 9.0 | Scheduled to retire 2026-10-02; GitHub recommends Gemini 3.8 Flash. Retained only while the provider still lists it. | eligible |
 | `kimi-k2.7-code` | Kimi K2.7 Code | moonshot | mid | 0.95 | 0.19 | 4.0 | Scheduled to retire 2026-10-02; GitHub recommends Kimi K3. Retained only while the provider still lists it. | eligible |
@@ -107,7 +108,7 @@ Some models expose a configurable reasoning-effort control; others do not. The t
 read directly from the pricing data's own knob facts.
 
 <!-- BEGIN GENERATED: reasoning-knobs -->
-Snapshot: `data/pricing.copilot.json` (cached_date 2026-09-24) — pricing sha256 `cfcdecfa6c6afa4c71b3af2e3f920143cf3256a0b6a1b76ed750c8d33736b10b`, roster sha256 `7716363cb557c792a5bf191160a96b64de907fb320c6b53485e582eb09ce6d2b`.
+Snapshot: `data/pricing.copilot.json` (cached_date 2026-09-24) — pricing sha256 `80df97c4c954bf1fc9be1f92f78c006eb25a4eb0d6357ba033d2117df9bbc612`, roster sha256 `a99041c2aacc42d4b0224c7e5915221b0e27bc2027ec7e0c002517d06faff91b`.
 
 | Reasoning effort |
 |---|
@@ -137,7 +138,7 @@ output-token count. These are convenience buckets for estimation, not measured t
 particular task.
 
 <!-- BEGIN GENERATED: task-profiles -->
-Snapshot: `data/pricing.copilot.json` (cached_date 2026-09-24) — pricing sha256 `cfcdecfa6c6afa4c71b3af2e3f920143cf3256a0b6a1b76ed750c8d33736b10b`, roster sha256 `7716363cb557c792a5bf191160a96b64de907fb320c6b53485e582eb09ce6d2b`.
+Snapshot: `data/pricing.copilot.json` (cached_date 2026-09-24) — pricing sha256 `80df97c4c954bf1fc9be1f92f78c006eb25a4eb0d6357ba033d2117df9bbc612`, roster sha256 `a99041c2aacc42d4b0224c7e5915221b0e27bc2027ec7e0c002517d06faff91b`.
 
 | Profile | Label | Input tokens | Output tokens |
 |---|---|---|---|

@@ -2,7 +2,7 @@
   "cached_date": "2026-09-24",
   "update_from": "https://docs.github.com/en/copilot/reference/copilot-billing/models-and-pricing",
   "pricing_refresh_note": "Refreshed 2026-09-24 against GitHub's models-and-pricing page. The model names in this roster's 2026-09 refresh were also observed in this account's Copilot CLI /model picker without sending a model prompt. Direct zero-prompt CLI checks confirmed every newly introduced --model slug in this file, with 0 AIC used.",
-  "model_ids_note": "Roster membership is based on GitHub's public Copilot CLI model matrix plus a 2026-09-24 account /model picker check and zero-prompt CLI checks. `gpt-6-astra`, `gpt-6-sol`, `gpt-6-luna`, `claude-fable-5.1`, `claude-opus-5.5`, `gemini-3.8-flash`, `mai-code-1.1-flash`, `grok-4.7`, and `kimi-k3` each opened with its expected display name and used 0 AIC. File order controls the no-preference default for each tier: GPT-6 Astra, GPT-6 Sol, Gemini 3.8 Flash, and GPT-6 Luna lead their respective lanes. `gpt-6.1-sol` was added on 2026-10-04 from GitHub's page and this account's CLI model list, with no zero-prompt check; it follows GPT-6 Sol in the strong lane, so it never becomes the default by file order. Fable models are available but deliberately do not lead frontier because GitHub documents Anthropic's default retention caveat. Retired models live only in `retired_models`: `bin/copilot_usage.py` may price historical logs from that map, while every routing, preference, forecast, and dispatch path scans active `models` only.",
+  "model_ids_note": "Roster membership is based on GitHub's public Copilot CLI model matrix plus a 2026-09-24 account /model picker check and zero-prompt CLI checks. `gpt-6-astra`, `gpt-6-sol`, `gpt-6-luna`, `claude-fable-5.1`, `claude-opus-5.5`, `gemini-3.8-flash`, `mai-code-1.1-flash`, `grok-4.7`, and `kimi-k3` each opened with its expected display name and used 0 AIC. File order controls the no-preference default for each tier: GPT-6 Astra, GPT-6 Sol, Gemini 3.8 Flash, and GPT-6 Luna lead their respective lanes. `gpt-6.1-sol` and `claude-sonnet-5.5` were added on 2026-10-04 from GitHub's page and this account's CLI model list, with no zero-prompt check; each follows its predecessor (GPT-6 Sol, Claude Sonnet 5) in its lane, so neither becomes a default by file order. Fable models are available but deliberately do not lead frontier because GitHub documents Anthropic's default retention caveat. Retired models live only in `retired_models`: `bin/copilot_usage.py` may price historical logs from that map, while every routing, preference, forecast, and dispatch path scans active `models` only.",
   "billing_unit": {
     "name": "AIC",
     "usd_per_credit": 0.01,
@@ -207,6 +207,16 @@
       "cache_write_per_mtok": 2.5,
       "output_per_mtok": 10.0,
       "notes": "Current Anthropic versatile alternative for day-to-day coding, tests, docs, and refactors."
+    },
+    "claude-sonnet-5.5": {
+      "display": "Claude Sonnet 5.5",
+      "vendor": "anthropic",
+      "tier": "mid",
+      "input_per_mtok": 2.0,
+      "cached_input_per_mtok": 0.2,
+      "cache_write_per_mtok": 2.5,
+      "output_per_mtok": 10.0,
+      "notes": "Added 2026-10-04 from GitHub's models-and-pricing page (GA, same rates as Claude Sonnet 5) and seen in this account's Copilot CLI 1.0.91 model list. Sits after Claude Sonnet 5, which keeps its place in the mid lane; no zero-prompt check was run."
     },
     "gpt-5.4": {
       "display": "GPT-5.4",
