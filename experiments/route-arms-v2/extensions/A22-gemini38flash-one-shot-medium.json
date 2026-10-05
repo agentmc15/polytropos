@@ -1,0 +1,16 @@
+{
+  "version": "polytropos.route-experiment.extension/1",
+  "arm": "A22",
+  "added": "2026-10-04",
+  "reason": "Requested during the v2 run: add Gemini 3.8 Flash to the one-shot effort sweep at medium and high, the only efforts this model offers in the Copilot picker (max is not available for it). The trial record's observed_efforts shows what the CLI actually applied. Post hoc; never judged (adding a candidate would replace the preregistered judgments).",
+  "definition": {
+    "label": "Gemini 3.8 Flash one-shot (medium)",
+    "shape": "one-shot",
+    "stages": {
+      "solo": {
+        "model": "gemini-3.8-flash",
+        "effort": "medium"
+      }
+    }
+  }
+}
