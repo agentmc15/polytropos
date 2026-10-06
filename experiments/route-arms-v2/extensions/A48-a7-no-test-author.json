@@ -1,0 +1,24 @@
+{
+  "version": "polytropos.route-experiment.extension/1",
+  "arm": "A48",
+  "added": "2026-10-06",
+  "reason": "Requested after the main run: does a separate test author hurt? Twin of A7 with the test author removed; the implementer writes its own tests, as a one-shot does. Post hoc; never judged (adding a candidate would replace the preregistered judgments).",
+  "definition": {
+    "label": "Sol 6 plans -> Luna 6 (max) builds with its own tests/verifies, no test author, no reviewer",
+    "shape": "pipeline",
+    "stages": {
+      "planner": {
+        "model": "gpt-6-sol",
+        "effort": "high"
+      },
+      "implementer": {
+        "model": "gpt-6-luna",
+        "effort": "max"
+      },
+      "verifier": {
+        "model": "gpt-6-luna",
+        "effort": "max"
+      }
+    }
+  }
+}

@@ -121,8 +121,10 @@ def route_text(exp, pricing, arm_id):
                 "the working tree once.")
     else:
         parts = [f"planner {who(st['planner'])} writes a plan",
-                 f"test author {who(st['test_author'])} writes tests first",
-                 f"implementer {who(st['implementer'])} implements",
+                 (f"test author {who(st['test_author'])} writes tests first"
+                  if "test_author" in st else "no separate test author"),
+                 f"implementer {who(st['implementer'])} implements"
+                 + ("" if "test_author" in st else " and writes its own tests"),
                  f"verifier {who(st['verifier'])} runs and judges the tests"]
         if "reviewer" in st:
             parts.append(f"reviewer {who(st['reviewer'])} gates the final diff")

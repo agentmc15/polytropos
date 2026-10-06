@@ -240,6 +240,9 @@ An arm may carry an optional `variant` object, validated per key and per shape:
 When `planner` or `test_author_input` is set, the implementer is told the task outranks the
 plan and the tests.
 
+A `pipeline` may also leave out its `test_author`. Its implementer then writes and runs its own
+tests, as a one-shot does. This isolates whether a separate test author helps or hurts.
+
 Two more shapes:
 - **`escalate`** (stages `solo`, optional `verifier`, `escalation`). A one-shot, then a
   deterministic check: the task's regression line plus the candidate's own changed test

@@ -170,6 +170,20 @@ class DefinitionTests(unittest.TestCase):
         self.assertEqual((bare["min"], bare["dispatches_min"]), (solo, 1))
         self.assertAlmostEqual(bare["max"], 2 * solo)
 
+    def test_a_pipeline_may_drop_its_test_author_but_not_its_implementer(self):
+        raw = self._raw()
+        arm = copy.deepcopy(raw["arms"]["A2"])
+        del arm["stages"]["test_author"]
+        rx.validate_definition(self._with_arm(arm), PRICING)
+        est = rx.arm_estimate(self._with_arm(arm), PRICING, "A9")
+        self.assertEqual(est["dispatches_min"], 4)
+        with self.assertRaisesRegex(rx.ConfigError, "needs a test_author stage"):
+            rx.validate_definition(self._with_arm(
+                dict(arm, variant={"test_author_input": "spec"})), PRICING)
+        del arm["stages"]["implementer"]
+        with self.assertRaisesRegex(rx.ConfigError, "needs the stages"):
+            rx.validate_definition(self._with_arm(arm), PRICING)
+
     def test_the_probe_skips_arms_whose_gates_are_traceable(self):
         raw = self._raw()
         before = rx.gate_stages(raw)
@@ -290,6 +304,16 @@ class ArgvAndPromptTests(unittest.TestCase):
                              variant={"test_author_input": "spec"})
         self.assertIn("TESTS WRITTEN FROM THE TASK", impl)
         self.assertIn("The TASK is authoritative", impl)
+
+    def test_an_implementer_without_a_test_author_writes_its_own_tests(self):
+        p = rx.prompt_for("implementer", self.task, plan="THE-PLAN", own_tests=True)
+        self.assertIn("THE-PLAN", p)
+        self.assertIn("Add or update stdlib `unittest` tests", p)
+        self.assertNotIn("TESTS WRITTEN FROM", p)
+        self.assertIn("YOUR JOB: IMPLEMENTER", p)
+        redo = rx.prompt_for("implementer", self.task, plan="P", findings="bad",
+                             source="verifier", own_tests=True)
+        self.assertIn("FINDINGS TO ADDRESS (from the verifier)", redo)
 
     def test_a_spec_hardener_writes_a_contract_not_steps(self):
         v = {"planner": "spec-hardener"}
@@ -1001,6 +1025,19 @@ class DriverTests(unittest.TestCase):
         ex.open_run(1)
         record = ex.run_trial(trial)
         self.assertEqual(record["selection"]["picked"], 2)
+
+    def test_a_pipeline_without_a_test_author_skips_straight_to_the_implementer(self):
+        trial = self.add_arm("A48", "pipeline", ("planner", "implementer", "verifier"))
+        fake = FakeCopilot(self.home, verdicts=["VERIFY VERDICT=fail", "VERIFY VERDICT=pass"])
+        ex = self.driver(fake)
+        ex.open_run(1)
+        record = ex.run_trial(trial)
+        self.assertEqual(fake.calls, ["PLANNER", "IMPLEMENTER", "VERIFIER", "IMPLEMENTER",
+                                      "VERIFIER"])
+        self.assertIn("Add or update stdlib `unittest` tests", fake.prompts[1])
+        self.assertIn("FINDINGS TO ADDRESS (from the verifier)", fake.prompts[3])
+        self.assertNotIn("implementer_edited_tests", record)
+        self.assertEqual(record["status"], "complete")
 
     def test_a_reviewed_one_shot_stops_after_its_rework_budget(self):
         trial = self.add_arm("A6", "reviewed", ("solo", "reviewer"))

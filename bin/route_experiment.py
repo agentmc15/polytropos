@@ -88,7 +88,8 @@ PIPELINE_ROLES = ("planner", "test_author", "implementer", "verifier", "reviewer
 ONE_SHOT_ROLES = ("solo",)
 # A pipeline may omit its reviewer gate; a `reviewed` arm is a one-shot followed by a reviewer
 # gate whose findings get the solo model's rework rounds.
-SHAPE_ROLES = {"pipeline": (PIPELINE_ROLES, ("reviewer",)),
+# a pipeline without a test author has its implementer write the tests itself
+SHAPE_ROLES = {"pipeline": (PIPELINE_ROLES, ("test_author", "reviewer")),
                "one-shot": (ONE_SHOT_ROLES, ()),
                "reviewed": (("solo", "reviewer"), ()),
                # one-shot, then a deterministic check (+ an optional verifier); a stronger
@@ -260,6 +261,8 @@ def validate_definition(exp, pricing):
                      f"{list(shapes)} arms")
             _require(value in allowed and not isinstance(value, bool),
                      f"arm {arm_id}: variant {key} must be one of {list(allowed)}")
+            _require(key != "test_author_input" or "test_author" in stages,
+                     f"arm {arm_id}: variant test_author_input needs a test_author stage")
     for index, judge in enumerate(exp.get("judges") or []):
         check_stage(f"judge {index}", judge)
     for role, profile in (exp.get("role_profiles") or {}).items():
@@ -542,9 +545,10 @@ TRACEABLE_GATE = (
 
 
 def prompt_for(role, task, plan=None, test_files=None, patch=None, findings=None, source=None,
-               variant=None):
+               variant=None, own_tests=False):
     """One role's prompt. `variant` (an arm's optional `variant` object) changes only the
-    roles it names; without one, every prompt is byte-identical to the preregistered text."""
+    roles it names; without one, every prompt is byte-identical to the preregistered text.
+    `own_tests`: a pipeline with no test author -- the implementer writes the tests."""
     variant = variant or {}
     hardener = variant.get("planner") == "spec-hardener"
     from_spec = variant.get("test_author_input") == "spec"
@@ -600,6 +604,19 @@ def prompt_for(role, task, plan=None, test_files=None, patch=None, findings=None
                 "correct, keep the unit tests up to date, and run the tests named in the task "
                 f"until they pass.\n\n# FINDINGS TO ADDRESS (from the {source or 'reviewer'})"
                 f"\n\n{_bounded(findings, FINDINGS_CHARS)}")
+    if role == "implementer" and own_tests:
+        body = (head + plan_block + "\n\n# YOUR JOB: IMPLEMENTER\n\nImplement the change the "
+                + ("contract" if hardener else "plan") + " describes. Add or update stdlib "
+                "`unittest` tests under tests/ for every requirement in the task, and run them "
+                "and the existing tests named in the task until they pass.")
+        if variant.get("planner"):
+            body += (" The TASK is authoritative: where the contract disagrees with it, "
+                     "follow the TASK.")
+        if findings:
+            body += (f"\n\n# FINDINGS TO ADDRESS (from the {source})\n\n"
+                     f"{_bounded(findings, FINDINGS_CHARS)}\n\nAddress every finding that is "
+                     "correct; the change so far is already in the working tree.")
+        return body
     if role == "implementer":
         tests = ", ".join(test_files) if test_files else "(none were written)"
         origin = "THE TASK" if from_spec else ("THE CONTRACT" if hardener else "THE PLAN")
@@ -1750,7 +1767,7 @@ class Experiment:
                                             "paths": src})
             if model_role == "implementer":
                 tests = [p for p in d["touched"] if is_test_path(p)]
-                if tests and arm["shape"] == "pipeline":
+                if tests and arm["shape"] == "pipeline" and "test_author" in arm["stages"]:
                     record.setdefault("implementer_edited_tests", []).extend(tests)
             self.say(f"  {tid} {role:<11} {d['model']}/{d['effort']} "
                      f"{d['aic_charged']:.2f} AIC {d.get('duration_s') or 0:.0f}s "
@@ -1814,12 +1831,17 @@ class Experiment:
         d, plan = step("planner", prompt_for("planner", task, variant=variant))
         if failed(d) or not plan.strip():
             return "timeout" if d["timed_out"] else "dispatch-failed"
-        d, _ = step("test_author", prompt_for("test_author", task, plan=plan, variant=variant))
-        if failed(d):
-            return "timeout" if d["timed_out"] else "dispatch-failed"
-        test_files = [p for p in d["touched"] if is_test_path(p)]
+        own = "test_author" not in self.exp["arms"][record["arm"]]["stages"]
+        test_files = None
+        if not own:
+            d, _ = step("test_author", prompt_for("test_author", task, plan=plan,
+                                                  variant=variant))
+            if failed(d):
+                return "timeout" if d["timed_out"] else "dispatch-failed"
+            test_files = [p for p in d["touched"] if is_test_path(p)]
         d, _ = step("implementer", prompt_for("implementer", task, plan=plan,
-                                              test_files=test_files, variant=variant))
+                                              test_files=test_files, variant=variant,
+                                              own_tests=own))
         if failed(d):
             return "timeout" if d["timed_out"] else "dispatch-failed"
 
@@ -1833,7 +1855,8 @@ class Experiment:
             record["reworks"] += 1
             r, _ = step("rework", prompt_for("implementer", task, plan=plan,
                                              test_files=test_files, findings=findings,
-                                             source=source, variant=variant),
+                                             source=source, variant=variant,
+                                             own_tests=own),
                         round_no=round_no, op="retry")
             return r
 
