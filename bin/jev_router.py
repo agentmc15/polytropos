@@ -109,6 +109,16 @@ def route_text(exp, pricing, arm_id):
         body = (f"reviewed one-shot: {who(st['solo'])} writes the change, then {who(st['reviewer'])}"
                 f" reviews it; a rejection sends findings back for up to "
                 f"{rework.get('after_reviewer_reject', 0)} rework round(s).")
+    elif arm["shape"] == "best-of":
+        n = (arm.get("variant") or {}).get("n", rx.BEST_OF_DEFAULT_N)
+        body = (f"best-of-{n}: {who(st['solo'])} writes the change {n} times independently; "
+                "the project's own tests and each attempt's tests run against the others pick "
+                "the one kept.")
+    elif arm["shape"] == "escalate":
+        gate = (f"; if they pass, {who(st['verifier'])} verifies it" if "verifier" in st else "")
+        body = (f"escalate-on-fail: {who(st['solo'])} writes the change, the project's tests "
+                f"run on it{gate}; only on a failure does {who(st['escalation'])} take over "
+                "the working tree once.")
     else:
         parts = [f"planner {who(st['planner'])} writes a plan",
                  f"test author {who(st['test_author'])} writes tests first",
@@ -120,6 +130,14 @@ def route_text(exp, pricing, arm_id):
         if "reviewer" in st:
             rounds += f" and {rework.get('after_reviewer_reject', 0)} after a rejected review"
         body = "pipeline: " + "; ".join(parts) + f"; {rounds}."
+    variant = arm.get("variant") or {}
+    notes = {"spec-hardener": "the planner writes a numbered requirements contract, not steps",
+             "spec": "the test author works from the task text alone, never the plan",
+             "traceable": "gates must tie every negative verdict to a failing test or an "
+                          "unmet requirement"}
+    extra = [notes[v] for v in variant.values() if v in notes]
+    if extra:
+        body += " Variant: " + "; ".join(extra) + "."
     est = rx.arm_estimate(exp, pricing, arm_id)
     span = (f"{est['min']:.1f}" if abs(est["max"] - est["min"]) < 0.05
             else f"{est['min']:.1f}-{est['max']:.1f}")

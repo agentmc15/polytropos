@@ -103,6 +103,80 @@ class DefinitionTests(unittest.TestCase):
         with self.assertRaisesRegex(rx.ConfigError, "needs the stages"):
             rx.validate_definition(raw, PRICING)
 
+    def _with_arm(self, arm):
+        raw = self._raw()
+        raw["arms"]["A9"] = arm
+        return raw
+
+    def _stage(self, raw):
+        return dict(raw["arms"]["A3"]["stages"]["solo"])
+
+    def test_a_variant_is_validated_by_key_value_and_shape(self):
+        raw = self._raw()
+        st = self._stage(raw)
+        pipe = copy.deepcopy(raw["arms"]["A2"])
+        cases = [
+            (dict(pipe, variant={"planner": "spec-hardener", "gates": "traceable"}), None),
+            (dict(pipe, variant={"nope": 1}), "unknown variant"),
+            (dict(pipe, variant={"planner": "vibes"}), "must be one of"),
+            (dict(pipe, variant={"n": 2}), "applies only to"),
+            (dict(pipe, variant=["planner"]), "must be an object"),
+            ({"shape": "one-shot", "stages": {"solo": st}, "variant": {"gates": "traceable"}},
+             "applies only to"),
+            ({"shape": "best-of", "stages": {"solo": st}, "variant": {"n": 3}}, None),
+            ({"shape": "best-of", "stages": {"solo": st}, "variant": {"n": 9}}, "must be one of"),
+            ({"shape": "best-of", "stages": {"solo": st}, "variant": {"n": True}},
+             "must be one of"),
+        ]
+        for arm, error in cases:
+            raw = self._with_arm(arm)
+            if error is None:
+                rx.validate_definition(raw, PRICING)
+            else:
+                with self.assertRaisesRegex(rx.ConfigError, error):
+                    rx.validate_definition(raw, PRICING)
+
+    def test_an_escalate_arm_needs_its_escalation_and_may_skip_the_verifier(self):
+        raw = self._raw()
+        st = self._stage(raw)
+        rx.validate_definition(self._with_arm(
+            {"shape": "escalate", "stages": {"solo": st, "escalation": st}}), PRICING)
+        rx.validate_definition(self._with_arm(
+            {"shape": "escalate", "stages": {"solo": st, "verifier": st, "escalation": st},
+             "variant": {"gates": "traceable"}}), PRICING)
+        with self.assertRaisesRegex(rx.ConfigError, "needs the stages"):
+            rx.validate_definition(self._with_arm(
+                {"shape": "escalate", "stages": {"solo": st, "verifier": st}}), PRICING)
+
+    def test_new_shapes_are_estimated_from_their_dispatch_counts(self):
+        raw = self._raw()
+        st = self._stage(raw)
+        raw["arms"]["A8"] = {"shape": "best-of", "stages": {"solo": st}, "variant": {"n": 3}}
+        raw["arms"]["A9"] = {"shape": "escalate",
+                             "stages": {"solo": st, "verifier": st, "escalation": st}}
+        raw["arms"]["A10"] = {"shape": "escalate", "stages": {"solo": st, "escalation": st}}
+        rx.validate_definition(raw, PRICING)
+        solo = rx.stage_estimate(raw, PRICING, "solo", st["model"])
+        best = rx.arm_estimate(raw, PRICING, "A8")
+        self.assertAlmostEqual(best["min"], 3 * solo)
+        self.assertEqual((best["dispatches_min"], best["dispatches_max"]), (3, 3))
+        esc = rx.arm_estimate(raw, PRICING, "A9")
+        gate = rx.stage_estimate(raw, PRICING, "verifier", st["model"])
+        up = rx.stage_estimate(raw, PRICING, "escalation", st["model"])
+        self.assertAlmostEqual(up, solo)   # an escalation is estimated as a solo's job
+        self.assertAlmostEqual(esc["min"], solo + min(gate, up))
+        self.assertAlmostEqual(esc["max"], solo + gate + up)
+        bare = rx.arm_estimate(raw, PRICING, "A10")
+        self.assertEqual((bare["min"], bare["dispatches_min"]), (solo, 1))
+        self.assertAlmostEqual(bare["max"], 2 * solo)
+
+    def test_the_probe_skips_arms_whose_gates_are_traceable(self):
+        raw = self._raw()
+        before = rx.gate_stages(raw)
+        raw["arms"]["A9"] = dict(copy.deepcopy(raw["arms"]["A2"]),
+                                 variant={"gates": "traceable"})
+        self.assertEqual(rx.gate_stages(raw), before)
+
     def test_weights_must_sum_to_one(self):
         raw = self._raw()
         raw["scoring"]["weights"]["quality"] = 0.5
@@ -176,11 +250,15 @@ class ArgvAndPromptTests(unittest.TestCase):
             self.assertIn(f"--excluded-tools={tool}", argv)
 
     def test_no_prompt_leaks_the_oracle_or_names_the_experiment(self):
+        variants = (None, {"planner": "spec-hardener", "test_author_input": "spec",
+                           "gates": "traceable"})
         for task in self.exp["task_defs"].values():
             prompts = [rx.prompt_for(role, task, plan="p", test_files=["tests/test_x.py"],
-                                     patch="diff", findings="f", source="verifier")
+                                     patch="diff", findings="f", source="verifier",
+                                     variant=variant)
                        for role in ("solo", "planner", "test_author", "implementer",
-                                    "verifier", "reviewer")]
+                                    "verifier", "reviewer", "escalation")
+                       for variant in variants]
             prompts.append(rx.judge_prompt(task, [("W", "a"), ("X", "b")]))
             oracle_body = task["oracle_text"].split("class", 1)[1][:200]
             for prompt in prompts:
@@ -188,6 +266,53 @@ class ArgvAndPromptTests(unittest.TestCase):
                 for marker in ("route-arms", "route_experiment", rx.ORACLE_TEST_NAME,
                                "reference.patch", "A1", "A2", "A3", "A4"):
                     self.assertNotIn(marker, prompt)
+
+    def test_an_empty_variant_changes_no_prompt(self):
+        kws = ({}, {"plan": "P", "test_files": ["tests/test_x.py"], "patch": "D"},
+               {"plan": "P", "test_files": [], "findings": "F", "source": "verifier"},
+               {"findings": "F", "source": "reviewer"})
+        for role in ("solo", "planner", "test_author", "implementer", "verifier", "reviewer"):
+            for kw in kws:
+                self.assertEqual(rx.prompt_for(role, self.task, variant={}, **kw),
+                                 rx.prompt_for(role, self.task, **kw))
+        # standard-valued variants are the preregistered prompts too
+        std = {"planner": "plan", "test_author_input": "plan", "gates": "standard"}
+        for role in ("planner", "test_author", "verifier", "reviewer"):
+            self.assertEqual(rx.prompt_for(role, self.task, plan="P", patch="D", variant=std),
+                             rx.prompt_for(role, self.task, plan="P", patch="D"))
+
+    def test_a_spec_test_author_never_sees_the_plan(self):
+        p = rx.prompt_for("test_author", self.task, plan="SECRET-PLAN-TEXT",
+                          variant={"test_author_input": "spec"})
+        self.assertNotIn("SECRET-PLAN-TEXT", p)
+        self.assertIn("every stated requirement", p)
+        impl = rx.prompt_for("implementer", self.task, plan="P", test_files=["tests/t.py"],
+                             variant={"test_author_input": "spec"})
+        self.assertIn("TESTS WRITTEN FROM THE TASK", impl)
+        self.assertIn("The TASK is authoritative", impl)
+
+    def test_a_spec_hardener_writes_a_contract_not_steps(self):
+        v = {"planner": "spec-hardener"}
+        plan = rx.prompt_for("planner", self.task, variant=v)
+        self.assertIn("R1, R2", plan)
+        self.assertIn("OPEN QUESTIONS", plan)
+        self.assertIn("Do not write step-by-step", plan)
+        impl = rx.prompt_for("implementer", self.task, plan="P", test_files=[], variant=v)
+        self.assertIn("# REQUIREMENTS CONTRACT", impl)
+        self.assertIn("TESTS WRITTEN FROM THE CONTRACT", impl)
+
+    def test_traceable_gates_tie_a_no_to_evidence_and_keep_the_verdict_line(self):
+        v = {"gates": "traceable"}
+        verifier = rx.prompt_for("verifier", self.task, patch="d", variant=v)
+        reviewer = rx.prompt_for("reviewer", self.task, patch="d", variant=v)
+        for p in (verifier, reviewer):
+            self.assertIn("met / unmet / untested", p)
+            self.assertIn("never grounds for a negative verdict", p)
+        self.assertIn("`fail` ONLY when", verifier)
+        self.assertIn("`reject` ONLY for", reviewer)
+        self.assertTrue(verifier.endswith("`VERIFY VERDICT=pass` or `VERIFY VERDICT=fail`."))
+        self.assertTrue(reviewer.endswith("`REVIEW VERDICT=accept` or "
+                                          "`REVIEW VERDICT=reject`."))
 
     def test_gates_ask_for_a_parseable_verdict(self):
         verifier = rx.prompt_for("verifier", self.task, patch="d")
@@ -601,8 +726,9 @@ class JudgeV2Tests(unittest.TestCase):
 class FakeCopilot:
     """An injected dispatch runner: acts by role in the sandbox, logs a fake session."""
 
-    def __init__(self, home, verdicts=None, write_in_verifier=False):
+    def __init__(self, home, verdicts=None, write_in_verifier=False, solo_sources=None):
         self.home = Path(home)
+        self.solo_sources = list(solo_sources or [])
         self.calls = []
         self.prompts = []
         self.verdicts = list(verdicts or [])
@@ -619,7 +745,10 @@ class FakeCopilot:
         self.prompts.append(prompt)
         reply = "ok"
         if role in ("IMPLEMENTER", "SOLO"):
-            (cwd / "bin" / "calc.py").write_text(rx.DEMO_FIXED)
+            source = rx.DEMO_FIXED
+            if role == "SOLO" and self.solo_sources:
+                source = self.solo_sources.pop(0)
+            (cwd / "bin" / "calc.py").write_text(source)
         if role in ("TEST AUTHOR", "SOLO"):
             (cwd / "tests" / "test_calc_zero.py").write_text(rx.DEMO_STRONG_TESTS)
         if role in ("VERIFIER", "REVIEWER"):
@@ -784,6 +913,94 @@ class DriverTests(unittest.TestCase):
         self.assertEqual([v["verdict"] for v in record["verdicts"]], ["reject", "accept"])
         grade = ex.grade_trial(record)
         self.assertEqual(grade["oracle"]["score"], 1.0)
+
+    def add_variant_arm(self, arm, shape, stages, variant=None):
+        trial = self.add_arm(arm, shape, stages)
+        if variant:
+            self.exp["arms"][arm]["variant"] = variant
+        return trial
+
+    def test_escalate_stops_at_the_cheap_attempt_when_checks_and_verifier_pass(self):
+        trial = self.add_variant_arm("A46", "escalate", ("solo", "verifier", "escalation"),
+                                     {"gates": "traceable"})
+        fake = FakeCopilot(self.home)
+        ex = self.driver(fake)
+        ex.open_run(1)
+        record = ex.run_trial(trial)
+        self.assertEqual(fake.calls, ["SOLO", "VERIFIER"])
+        self.assertIn("met / unmet / untested", fake.prompts[1])
+        self.assertFalse(record["escalated"])
+        self.assertEqual(record["reworks"], 0)
+        self.assertEqual([(c["after"], c["green"]) for c in record["checks"]], [("solo", True)])
+        self.assertEqual(record["status"], "complete")
+        self.assertGreaterEqual(record["wall_s"], record["checks"][0]["duration_s"])
+
+    def test_escalate_hands_a_red_check_straight_to_the_stronger_model(self):
+        trial = self.add_variant_arm("A46", "escalate", ("solo", "verifier", "escalation"))
+        fake = FakeCopilot(self.home, solo_sources=[rx.DEMO_BASE])   # the bug stays in
+        ex = self.driver(fake)
+        ex.open_run(1)
+        record = ex.run_trial(trial)
+        self.assertEqual(fake.calls, ["SOLO", "SOLO"])   # no verifier on a red check
+        self.assertEqual([d["role"] for d in record["dispatches"]], ["solo", "escalation"])
+        self.assertIn("did not pass its checks", fake.prompts[1])
+        self.assertIn("WHY IT WAS HANDED OVER (from the checks)", fake.prompts[1])
+        self.assertIn("test_calc_zero", fake.prompts[1])
+        self.assertTrue(record["escalated"])
+        self.assertEqual(record["escalation_reason"], "checks")
+        self.assertEqual([(c["after"], c["green"]) for c in record["checks"]],
+                         [("solo", False), ("escalation", True)])
+        self.assertEqual(ex.grade_trial(record)["oracle"]["score"], 1.0)
+
+    def test_escalate_on_a_verifier_fail_and_the_checks_never_see_the_oracle(self):
+        trial = self.add_variant_arm("A46", "escalate", ("solo", "verifier", "escalation"))
+        fake = FakeCopilot(self.home, verdicts=["defect\nVERIFY VERDICT=fail"])
+        ex = self.driver(fake)
+        ex.open_run(1)
+        seen = []
+        real = ex.grade_box
+
+        def spy(patch, dest):
+            box, applied, detail = real(patch, dest)
+            seen.append(box)
+            return box, applied, detail
+        ex.grade_box = spy
+        record = ex.run_trial(trial)
+        self.assertEqual(fake.calls, ["SOLO", "VERIFIER", "SOLO"])
+        self.assertEqual(record["escalation_reason"], "verifier")
+        self.assertIn("from the verifier", fake.prompts[2])
+        self.assertEqual(len(seen), 2)
+        self.assertEqual([v["verdict"] for v in record["verdicts"]], ["fail"])
+
+    def test_best_of_keeps_the_candidate_the_checks_prefer(self):
+        trial = self.add_variant_arm("A47", "best-of", ("solo",), {"n": 2})
+        fake = FakeCopilot(self.home, solo_sources=[rx.DEMO_BASE, rx.DEMO_FIXED])
+        ex = self.driver(fake)
+        ex.open_run(1)
+        record = ex.run_trial(trial)
+        self.assertEqual(fake.calls, ["SOLO", "SOLO"])
+        sel = record["selection"]
+        self.assertEqual(sel["picked"], 2)
+        self.assertEqual([(c["k"], c["green"]) for c in sel["candidates"]],
+                         [(1, False), (2, True)])
+        self.assertEqual(sel["candidates"][1]["cross_pass_rate"], 1.0)
+        self.assertLess(sel["candidates"][0]["cross_pass_rate"], 1.0)
+        final = ex.read_text(record["patch_file"])
+        self.assertIn("if not whole", final)
+        for c in sel["candidates"]:
+            self.assertTrue((ex.run_dir / c["patch_file"]).is_file())
+        self.assertEqual(record["status"], "complete")
+        self.assertFalse((ex.run_dir / "work" / f"{record['trial_id']}-c2").exists())
+        self.assertEqual(ex.grade_trial(record)["oracle"]["score"], 1.0)
+        self.assertEqual({d["round"] for d in record["dispatches"]}, {0, 1})
+
+    def test_best_of_breaks_a_tie_toward_the_smaller_change(self):
+        trial = self.add_variant_arm("A47", "best-of", ("solo",), {"n": 2})
+        fake = FakeCopilot(self.home, solo_sources=[rx.DEMO_VERBOSE, rx.DEMO_FIXED])
+        ex = self.driver(fake)
+        ex.open_run(1)
+        record = ex.run_trial(trial)
+        self.assertEqual(record["selection"]["picked"], 2)
 
     def test_a_reviewed_one_shot_stops_after_its_rework_budget(self):
         trial = self.add_arm("A6", "reviewed", ("solo", "reviewer"))

@@ -1,0 +1,27 @@
+{
+  "version": "polytropos.route-experiment.extension/1",
+  "arm": "A46",
+  "added": "2026-10-06",
+  "reason": "Pipeline-improvement variant (escalate-on-fail). A5's one-shot, then the project's own tests (never the hidden oracle) and a traceable Luna verifier; Sol 6 max (the main run's quality leader) takes over the working tree once, only on a failure. Post hoc; never judged (adding a candidate would replace the preregistered judgments).",
+  "definition": {
+    "label": "Luna 6 (max) one-shot -> own checks + traceable verify -> Sol 6 (max) only on failure",
+    "shape": "escalate",
+    "stages": {
+      "solo": {
+        "model": "gpt-6-luna",
+        "effort": "max"
+      },
+      "verifier": {
+        "model": "gpt-6-luna",
+        "effort": "max"
+      },
+      "escalation": {
+        "model": "gpt-6-sol",
+        "effort": "max"
+      }
+    },
+    "variant": {
+      "gates": "traceable"
+    }
+  }
+}

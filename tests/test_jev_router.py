@@ -103,6 +103,23 @@ class Prepare(Base):
         with self.assertRaises(jr.RouterError):
             jr.prepare("s2", jr.EXPERIMENT_DIR, self.store, ["A2", "Z99"], "m")
 
+    def test_new_shapes_and_variants_are_described_without_results(self):
+        rx = jr._rx()
+        pricing = rx._cp().load_pricing()
+        exp, _ = jr._load_exp(jr.EXPERIMENT_DIR, pricing)
+        st = dict(exp["arms"]["A5"]["stages"]["solo"])
+        exp["arms"]["Z1"] = {"shape": "best-of", "stages": {"solo": st}, "variant": {"n": 3}}
+        exp["arms"]["Z2"] = {"shape": "escalate", "variant": {"gates": "traceable"},
+                             "stages": {"solo": st, "verifier": st, "escalation": st}}
+        exp["arms"]["Z3"] = dict(exp["arms"]["A7"], variant={"test_author_input": "spec"})
+        best = jr.route_text(exp, pricing, "Z1")
+        esc = jr.route_text(exp, pricing, "Z2")
+        self.assertIn("best-of-3", best)
+        self.assertIn("escalate-on-fail", esc)
+        self.assertIn("verifies it", esc)
+        self.assertIn("unmet requirement", esc)
+        self.assertIn("task text alone", jr.route_text(exp, pricing, "Z3"))
+
     def test_prompt_is_redacted_before_chunking(self):
         task = {"id": "T4-x", "short": "T4", "title": "t", "kind": "feature",
                 "prompt_text": "token ghp_" + "a" * 36 + " end"}

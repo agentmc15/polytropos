@@ -72,6 +72,7 @@ import tempfile
 import time
 import tokenize
 import uuid
+from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -89,11 +90,26 @@ ONE_SHOT_ROLES = ("solo",)
 # gate whose findings get the solo model's rework rounds.
 SHAPE_ROLES = {"pipeline": (PIPELINE_ROLES, ("reviewer",)),
                "one-shot": (ONE_SHOT_ROLES, ()),
-               "reviewed": (("solo", "reviewer"), ())}
+               "reviewed": (("solo", "reviewer"), ()),
+               # one-shot, then a deterministic check (+ an optional verifier); a stronger
+               # model takes over the working tree only when one of them says no
+               "escalate": (("solo", "verifier", "escalation"), ("verifier",)),
+               # n independent one-shots; deterministic checks pick the one that is kept
+               "best-of": (ONE_SHOT_ROLES, ())}
 READ_ONLY_ROLES = frozenset({"planner", "verifier", "reviewer", "judge"})
 LEDGER_OPS = {"planner": "consult", "test_author": "initial", "implementer": "initial",
               "rework": "retry", "verifier": "review", "reviewer": "review", "solo": "initial",
-              "judge": "review"}
+              "judge": "review", "escalation": "retry"}
+# Optional per-arm prompt/flow variants. An arm without `variant` (every preregistered arm)
+# gets byte-identical prompts. key -> (allowed values, shapes it applies to).
+VARIANTS = {
+    "planner": (("plan", "spec-hardener"), ("pipeline",)),
+    "test_author_input": (("plan", "spec"), ("pipeline",)),
+    "gates": (("standard", "traceable"), ("pipeline", "reviewed", "escalate")),
+    "n": (tuple(range(2, 5)), ("best-of",)),
+}
+BEST_OF_DEFAULT_N = 2
+CHECK_SUMMARY_CHARS = 4000
 WEIGHT_KEYS = ("correctness", "quality", "test_strength", "simplicity", "discipline")
 
 ORACLE_TEST_NAME = "test_route_oracle.py"
@@ -233,6 +249,17 @@ def validate_definition(exp, pricing):
         for role in roles:
             if role in stages:
                 check_stage(f"arm {arm_id} {role}", stages[role])
+        variant = arm.get("variant")
+        _require(variant is None or isinstance(variant, dict),
+                 f"arm {arm_id}: variant must be an object")
+        for key, value in (variant or {}).items():
+            _require(key in VARIANTS, f"arm {arm_id}: unknown variant {key!r} "
+                     f"(known: {sorted(VARIANTS)})")
+            allowed, shapes = VARIANTS[key]
+            _require(shape in shapes, f"arm {arm_id}: variant {key!r} applies only to "
+                     f"{list(shapes)} arms")
+            _require(value in allowed and not isinstance(value, bool),
+                     f"arm {arm_id}: variant {key} must be one of {list(allowed)}")
     for index, judge in enumerate(exp.get("judges") or []):
         check_stage(f"judge {index}", judge)
     for role, profile in (exp.get("role_profiles") or {}).items():
@@ -366,7 +393,9 @@ def trial_plan(exp, repeats):
 
 def stage_estimate(exp, pricing, role, model):
     """Profile-based AIC estimate for one dispatch (est.; excludes cache writes)."""
-    profile = (exp.get("role_profiles") or {}).get(role, "M")
+    profiles = exp.get("role_profiles") or {}
+    # an escalation dispatch redoes a solo's job, so it is estimated like one
+    profile = profiles.get(role) or profiles.get("solo" if role == "escalation" else role, "M")
     return _cp().est_cost(pricing, profile, model)["aic"]
 
 
@@ -385,6 +414,21 @@ def arm_estimate(exp, pricing, arm_id):
                      + stage_estimate(exp, pricing, "reviewer", st["reviewer"]["model"]))
         return {"min": base, "max": base + rounds * per_round,
                 "dispatches_min": 2, "dispatches_max": 2 + 2 * rounds}
+    if arm["shape"] == "best-of":
+        n = (arm.get("variant") or {}).get("n", BEST_OF_DEFAULT_N)
+        aic = n * stage_estimate(exp, pricing, "solo", st["solo"]["model"])
+        return {"min": aic, "max": aic, "dispatches_min": n, "dispatches_max": n}
+    if arm["shape"] == "escalate":
+        # fewest: no verifier and a green check (solo alone), or with a verifier either the
+        # verifier passes or a red check skips it for the escalation; most: green check,
+        # verifier says fail, escalation
+        solo = stage_estimate(exp, pricing, "solo", st["solo"]["model"])
+        up = stage_estimate(exp, pricing, "escalation", st["escalation"]["model"])
+        if "verifier" not in st:
+            return {"min": solo, "max": solo + up, "dispatches_min": 1, "dispatches_max": 2}
+        gate = stage_estimate(exp, pricing, "verifier", st["verifier"]["model"])
+        return {"min": solo + min(gate, up), "max": solo + gate + up, "dispatches_min": 2,
+                "dispatches_max": 3}
     roles = [r for r in PIPELINE_ROLES if r in st]
     base = sum(stage_estimate(exp, pricing, role, st[role]["model"]) for role in roles)
     rework_rounds = exp["rework"]["after_verifier_fail"] + (
@@ -401,9 +445,13 @@ def judge_estimate(exp, pricing):
 
 
 def gate_stages(exp):
-    """{(role, model, effort): [arms]} for every distinct verifier/reviewer stage."""
+    """{(role, model, effort): [arms]} for every distinct verifier/reviewer stage. The probe
+    shows each gate the standard prompt, so an arm whose gates are `traceable` is not
+    attributed to it (its gate accuracy comes from its own trials' verdicts)."""
     gates = {}
     for arm_id, arm in sorted(exp["arms"].items()):
+        if (arm.get("variant") or {}).get("gates") == "traceable":
+            continue
         for role in ("verifier", "reviewer"):
             st = arm["stages"].get(role)
             if st:
@@ -485,23 +533,64 @@ def _bounded(text, limit):
     return text[:limit] + f"\n[... {len(text) - limit} more chars cut]"
 
 
-def prompt_for(role, task, plan=None, test_files=None, patch=None, findings=None, source=None):
+TRACEABLE_GATE = (
+    "First restate every requirement in the TASK as R1, R2, ... For each, give its status "
+    "(met / unmet / untested) and the evidence: the test that pins it, or the code location "
+    "and the command output that shows it. Run the tests named in the task and the changed "
+    "tests. Style, naming and design preferences are findings, never grounds for a negative "
+    "verdict.")
+
+
+def prompt_for(role, task, plan=None, test_files=None, patch=None, findings=None, source=None,
+               variant=None):
+    """One role's prompt. `variant` (an arm's optional `variant` object) changes only the
+    roles it names; without one, every prompt is byte-identical to the preregistered text."""
+    variant = variant or {}
+    hardener = variant.get("planner") == "spec-hardener"
+    from_spec = variant.get("test_author_input") == "spec"
+    traceable = variant.get("gates") == "traceable"
     spec = task["prompt_text"].strip()
     head = ("You are working in a git repository in the current directory. Work autonomously; "
             "do not ask questions. Do not push.\n\n# TASK\n\n" + spec)
     if role == "solo":
         return (head + "\n\n# YOUR JOB\n\nComplete the task end to end: implement the change, add "
                 "or update unit tests, and run the tests named in the task until they pass.")
+    if role == "escalation":
+        return (head + "\n\n# YOUR JOB\n\nAn earlier attempt at this task is already in the "
+                "working tree, but it did not pass its checks. Take it over: check every "
+                "requirement in the task against the code, fix what is wrong or missing, keep "
+                "the unit tests up to date, and run the tests named in the task until they "
+                f"pass.\n\n# WHY IT WAS HANDED OVER (from the {source or 'checks'})\n\n"
+                f"{_bounded(findings, FINDINGS_CHARS)}")
+    if role == "planner" and hardener:
+        return (head + "\n\n# YOUR JOB: PLANNER (requirements contract)\n\nDo NOT modify any "
+                "file. Read the relevant code and turn the task into a precise requirements "
+                "contract that an engineer and a test author will both work from. Number every "
+                "requirement R1, R2, ... Each must be testable and state the exact observable "
+                "behaviour: output text, keys, error codes and values, exit codes, ordering, and "
+                "edge cases. Where the task leaves something unspecified, list it under OPEN "
+                "QUESTIONS with the resolution you chose and why, following what the existing "
+                "code and its conventions already do. Do not write step-by-step implementation "
+                "instructions. Your final response must be the contract itself, in Markdown.")
     if role == "planner":
         return (head + "\n\n# YOUR JOB: PLANNER\n\nDo NOT modify any file. Read the relevant code "
                 "and write an implementation plan an engineer will follow literally: the files "
                 "and functions to change, the exact behaviour for each requirement, edge cases, "
                 "and the unit tests to write (names and what each asserts). Your final response "
                 "must be the plan itself, in Markdown.")
-    plan_block = f"\n\n# PLAN\n\n{_bounded(plan, PLAN_CHARS)}" if plan else ""
+    plan_title = "REQUIREMENTS CONTRACT" if hardener else "PLAN"
+    plan_block = f"\n\n# {plan_title}\n\n{_bounded(plan, PLAN_CHARS)}" if plan else ""
+    if role == "test_author" and from_spec:
+        return (head + "\n\n# YOUR JOB: TEST AUTHOR\n\nWrite stdlib `unittest` tests under "
+                "tests/ that encode the task's acceptance criteria, working from the TASK text "
+                "alone: at least one test for every stated requirement, including every edge "
+                "case and every exact string, code or ordering the task names. Modify nothing "
+                "outside tests/. The implementation does not exist yet, so new tests are "
+                "expected to fail now. Final response: the test files and test names.")
     if role == "test_author":
         return (head + plan_block + "\n\n# YOUR JOB: TEST AUTHOR\n\nWrite stdlib `unittest` tests "
-                "under tests/ that encode the task's acceptance criteria, following the plan. "
+                "under tests/ that encode the task's acceptance criteria, following the "
+                + ("contract" if hardener else "plan") + ". "
                 "Modify nothing outside tests/. The implementation does not exist yet, so new "
                 "tests are expected to fail now. Final response: the test files and test names.")
     if role == "implementer" and not plan:
@@ -513,10 +602,15 @@ def prompt_for(role, task, plan=None, test_files=None, patch=None, findings=None
                 f"\n\n{_bounded(findings, FINDINGS_CHARS)}")
     if role == "implementer":
         tests = ", ".join(test_files) if test_files else "(none were written)"
-        body = (head + plan_block + f"\n\n# TESTS WRITTEN FROM THE PLAN\n\n{tests}\n\n# YOUR JOB: "
+        origin = "THE TASK" if from_spec else ("THE CONTRACT" if hardener else "THE PLAN")
+        body = (head + plan_block + f"\n\n# TESTS WRITTEN FROM {origin}\n\n{tests}\n\n# YOUR JOB: "
                 "IMPLEMENTER\n\nImplement the change so these tests and the existing tests named "
                 "in the task pass. Do not weaken or delete the provided tests; if one is wrong, "
                 "fix it minimally and say why. Run the tests before finishing.")
+        if variant.get("planner") or variant.get("test_author_input"):
+            body += (" The TASK is authoritative: where the "
+                     + ("contract" if hardener else "plan") + " or the tests disagree with it, "
+                     "follow the TASK.")
         if findings:
             body += (f"\n\n# FINDINGS TO ADDRESS (from the {source})\n\n"
                      f"{_bounded(findings, FINDINGS_CHARS)}\n\nAddress every finding that is "
@@ -524,11 +618,23 @@ def prompt_for(role, task, plan=None, test_files=None, patch=None, findings=None
         return body
     diff = f"\n\n# CURRENT CHANGE (unified diff against the starting state)\n\n```diff\n" \
            f"{_bounded(patch, PROMPT_PATCH_CHARS)}\n```"
+    if role == "verifier" and traceable:
+        return (head + diff + "\n\n# YOUR JOB: VERIFIER\n\nDo NOT modify any file. "
+                + TRACEABLE_GATE + " Say `fail` ONLY when a test you ran fails or a requirement "
+                "is unmet, and cite which. End your response with exactly one line: "
+                "`VERIFY VERDICT=pass` or `VERIFY VERDICT=fail`.")
     if role == "verifier":
         return (head + diff + "\n\n# YOUR JOB: VERIFIER\n\nDo NOT modify any file. Run the "
                 "relevant tests, check every requirement in the task against the code, and list "
                 "concrete defects. End your response with exactly one line: "
                 "`VERIFY VERDICT=pass` or `VERIFY VERDICT=fail`.")
+    if role == "reviewer" and traceable:
+        return (head + diff + "\n\n# YOUR JOB: REVIEWER (final quality gate)\n\nDo NOT modify "
+                "any file. " + TRACEABLE_GATE + " Then list any other findings by severity. "
+                "Say `reject` ONLY for a failing test, an unmet requirement, a change outside "
+                "the task's scope, or a correctness defect you can demonstrate (cite file:line "
+                "and the input that breaks it). End your response with exactly one line: "
+                "`REVIEW VERDICT=accept` or `REVIEW VERDICT=reject`.")
     if role == "reviewer":
         return (head + diff + "\n\n# YOUR JOB: REVIEWER (final quality gate)\n\nDo NOT modify "
                 "any file. Review for correctness against every requirement, edge cases, "
@@ -1617,15 +1723,17 @@ class Experiment:
                   "attempt": attempt_no, "prior_attempts": prior}
         out_prefix = f"a{attempt_no}-" if attempt_no > 1 else ""
         stage_no = [0]
+        final = [box]   # the sandbox whose patch is the trial's result (best-of may switch it)
 
-        def step(role, prompt, round_no=0, op=None):
-            before = self.snapshot(box)
+        def step(role, prompt, round_no=0, op=None, cwd=None):
+            where = cwd or box
+            before = self.snapshot(where)
             model_role = role
             if role == "rework":
                 model_role = "implementer" if "implementer" in arm["stages"] else "solo"
-            d = self.dispatch(tid, model_role, arm["stages"][model_role], prompt, box,
+            d = self.dispatch(tid, model_role, arm["stages"][model_role], prompt, where,
                               round_no=round_no, ledger_op=op)
-            after = self.snapshot(box)
+            after = self.snapshot(where)
             d["touched"] = self.touched(before, after)
             stage_no[0] += 1
             d["output_file"] = f"outputs/{tid}/{out_prefix}{stage_no[0]:02d}-{role}.txt"
@@ -1667,13 +1775,17 @@ class Experiment:
                     status = "timeout" if d["timed_out"] else "dispatch-failed"
             elif arm["shape"] == "reviewed":
                 status = self._reviewed(task, box, step, failed, verdict_point, record)
+            elif arm["shape"] == "escalate":
+                status = self._escalate(task, box, step, failed, verdict_point, record)
+            elif arm["shape"] == "best-of":
+                status = self._best_of(task, box, step, failed, record, final, work)
             else:
                 status = self._pipeline(task, box, step, failed, verdict_point, record)
         except CeilingReached as exc:
             status = "stopped"
             record["stop_reason"] = str(exc)
             self.say(f"  {tid} STOPPED: {exc}")
-        patch = self.patch(box)
+        patch = self.patch(final[0])
         self.write(f"patches/{tid}.diff", patch)
         contaminated = sorted({m for d in self._open for m in d["contamination"]})
         if contaminated and status in ("complete", "timeout"):
@@ -1684,31 +1796,36 @@ class Experiment:
                        "aic": round(sum(d["aic_charged"] for d in self._open), 4),
                        "unmeasured_dispatches": sum(1 for d in self._open
                                                     if d["usage"] is None),
-                       "wall_s": round(sum(d.get("duration_s") or 0 for d in self._open), 1)})
+                       "wall_s": round(sum(d.get("duration_s") or 0 for d in self._open)
+                                       + sum(c.get("duration_s") or 0
+                                             for c in record.get("checks") or []), 1)})
         record["dispatches"] = list(self._open)
         self._open = []
         self.write(f"trials/{tid}.json", record)
         if not self.keep_work:
             shutil.rmtree(work, ignore_errors=True)
+            for extra in record.get("candidates") or []:
+                shutil.rmtree(self.run_dir / "work" / extra["work"], ignore_errors=True)
         return record
 
     def _pipeline(self, task, box, step, failed, verdict_point, record):
         rework = self.exp["rework"]
-        d, plan = step("planner", prompt_for("planner", task))
+        variant = self.exp["arms"][record["arm"]].get("variant")
+        d, plan = step("planner", prompt_for("planner", task, variant=variant))
         if failed(d) or not plan.strip():
             return "timeout" if d["timed_out"] else "dispatch-failed"
-        d, _ = step("test_author", prompt_for("test_author", task, plan=plan))
+        d, _ = step("test_author", prompt_for("test_author", task, plan=plan, variant=variant))
         if failed(d):
             return "timeout" if d["timed_out"] else "dispatch-failed"
         test_files = [p for p in d["touched"] if is_test_path(p)]
         d, _ = step("implementer", prompt_for("implementer", task, plan=plan,
-                                              test_files=test_files))
+                                              test_files=test_files, variant=variant))
         if failed(d):
             return "timeout" if d["timed_out"] else "dispatch-failed"
 
         def verify(round_no):
-            v, text = step("verifier", prompt_for("verifier", task, patch=self.patch(box)),
-                           round_no=round_no)
+            v, text = step("verifier", prompt_for("verifier", task, patch=self.patch(box),
+                                                  variant=variant), round_no=round_no)
             verdict_point(v, "verifier")
             return v, text
 
@@ -1716,7 +1833,8 @@ class Experiment:
             record["reworks"] += 1
             r, _ = step("rework", prompt_for("implementer", task, plan=plan,
                                              test_files=test_files, findings=findings,
-                                             source=source), round_no=round_no, op="retry")
+                                             source=source, variant=variant),
+                        round_no=round_no, op="retry")
             return r
 
         v, findings = verify(0)
@@ -1733,7 +1851,8 @@ class Experiment:
                 return "timeout" if v["timed_out"] else "dispatch-failed"
         if "reviewer" not in self.exp["arms"][record["arm"]]["stages"]:
             return "complete"
-        rv, review = step("reviewer", prompt_for("reviewer", task, patch=self.patch(box)))
+        rv, review = step("reviewer", prompt_for("reviewer", task, patch=self.patch(box),
+                                                 variant=variant))
         verdict_point(rv, "reviewer")
         if failed(rv):
             return "timeout" if rv["timed_out"] else "dispatch-failed"
@@ -1750,12 +1869,13 @@ class Experiment:
 
     def _reviewed(self, task, box, step, failed, verdict_point, record):
         """One-shot, then a reviewer gate; each reject buys one solo rework and a re-review."""
+        variant = self.exp["arms"][record["arm"]].get("variant")
         d, _ = step("solo", prompt_for("solo", task))
         if failed(d):
             return "timeout" if d["timed_out"] else "dispatch-failed"
         for n in range(self.exp["rework"]["after_reviewer_reject"] + 1):
-            rv, review = step("reviewer", prompt_for("reviewer", task, patch=self.patch(box)),
-                              round_no=n)
+            rv, review = step("reviewer", prompt_for("reviewer", task, patch=self.patch(box),
+                                                     variant=variant), round_no=n)
             verdict_point(rv, "reviewer")
             if failed(rv):
                 return "timeout" if rv["timed_out"] else "dispatch-failed"
@@ -1767,6 +1887,142 @@ class Experiment:
             if failed(r):
                 return "timeout" if r["timed_out"] else "dispatch-failed"
         return "complete"
+
+    # -- deterministic in-trial checks (spend nothing, never see the hidden oracle) ---------
+
+    def self_check(self, task, box, extra_tests=None):
+        """Run the task's regression line and the candidate's own changed test modules on the
+        sandbox's CURRENT patch, in a fresh box (the model's working tree is untouched).
+        `extra_tests` ({rel path: text}) lays another candidate's test files over this one's
+        code first (best-of cross-checks). -> {green, applied, modules, passed, ran,
+        summary, duration_s}. This is what a developer's own CI would see: no hidden test."""
+        started = time.monotonic()
+        patch = self.patch(box)
+        stats = diff_stats(patch, task)
+        modules, failing = {}, []
+        with tempfile.TemporaryDirectory(prefix="route-exp-check-") as tmp:
+            gbox, applied, detail = self.grade_box(patch, Path(tmp) / "g")
+            if applied:
+                for rel, text in sorted((extra_tests or {}).items()):
+                    _sp().confined_write_bytes(gbox, rel, text.encode("utf-8"),
+                                               what="cross-check test copy")
+                run_tests = self.tester(gbox)
+                if extra_tests is not None:
+                    lines = [(Path(rel).name, _unittest_cmd(Path(rel).name))
+                             for rel in sorted(extra_tests) if Path(rel).name.startswith("test")]
+                else:
+                    lines = [(m, _regression_cmd(task, m)) for m in task["regression"]]
+                    lines += [(n, _unittest_cmd(n)) for n in self.arm_tests(gbox, stats)
+                              if n not in task["regression"]]
+                for name, line in lines:
+                    _, out = run_tests(line)
+                    parsed = parse_unittest(out)
+                    modules[name] = parsed
+                    if not parsed["ok"]:
+                        failing.append(f"$ {name}\n{(out or '').strip()[-1500:]}")
+        ran = sum(p["ran"] for p in modules.values())
+        bad = sum(p["failures"] + p["errors"] for p in modules.values())
+        green = applied and bool(modules) and all(p["ok"] for p in modules.values())
+        summary = ("patch does not apply to a clean checkout: " + detail) if not applied else (
+            "all checks green" if green else "\n\n".join(failing) or "no tests ran")
+        return {"green": green, "applied": applied, "modules": modules, "ran": ran,
+                "passed": max(0, ran - bad - sum(p["skipped"] for p in modules.values())),
+                "summary": _bounded(summary, CHECK_SUMMARY_CHARS),
+                "duration_s": round(time.monotonic() - started, 1)}
+
+    @staticmethod
+    def _check_record(check, after, candidate=None):
+        kept = {k: check[k] for k in ("green", "applied", "ran", "passed", "duration_s")}
+        kept["after"] = after
+        if candidate is not None:
+            kept["candidate"] = candidate
+        return kept
+
+    def _escalate(self, task, box, step, failed, verdict_point, record):
+        """Cheap one-shot first. A red deterministic check, or (when the arm has one) a
+        verifier `fail` on a green check, hands the working tree to the escalation model
+        once. Nothing else runs on a pass."""
+        variant = self.exp["arms"][record["arm"]].get("variant")
+        record.setdefault("checks", [])
+        d, _ = step("solo", prompt_for("solo", task))
+        if failed(d):
+            return "timeout" if d["timed_out"] else "dispatch-failed"
+        check = self.self_check(task, box)
+        record["checks"].append(self._check_record(check, "solo"))
+        reason, findings = None, None
+        if not check["green"]:
+            reason, findings = "checks", check["summary"]
+        elif "verifier" in self.exp["arms"][record["arm"]]["stages"]:
+            v, text = step("verifier", prompt_for("verifier", task, patch=self.patch(box),
+                                                  variant=variant))
+            verdict_point(v, "verifier")
+            if failed(v):
+                return "timeout" if v["timed_out"] else "dispatch-failed"
+            if v.get("verdict") != "pass":
+                reason, findings = "verifier", text
+        record["escalated"] = reason is not None
+        if reason is None:
+            return "complete"
+        record["escalation_reason"] = reason
+        record["reworks"] += 1
+        e, _ = step("escalation", prompt_for("escalation", task, findings=findings,
+                                             source=reason), round_no=1)
+        if failed(e):
+            return "timeout" if e["timed_out"] else "dispatch-failed"
+        record["checks"].append(self._check_record(self.self_check(task, box), "escalation"))
+        return "complete"
+
+    def _best_of(self, task, box, step, failed, record, final, work):
+        """n independent one-shots, each in its own fresh sandbox, then a deterministic pick:
+        green own checks first, then the most of the OTHER candidates' tests passed on this
+        candidate's code, then the smaller source change. No model sees another's work."""
+        n = (self.exp["arms"][record["arm"]].get("variant") or {}).get("n", BEST_OF_DEFAULT_N)
+        boxes = [box]
+        record["candidates"] = []
+        for k in range(2, n + 1):
+            name = f"{work.name}-c{k}"
+            boxes.append(self.sandbox(self.run_dir / "work" / name)["path"])
+            record["candidates"].append({"work": name})
+        record.setdefault("checks", [])
+        cands = []
+        for k, where in enumerate(boxes, start=1):
+            d, _ = step("solo", prompt_for("solo", task), round_no=k - 1, cwd=where)
+            if failed(d):
+                continue
+            patch = self.patch(where)
+            stats = diff_stats(patch, task)
+            name = f"patches/{record['trial_id']}.cand{k}.diff"
+            self.write(name, patch)
+            tests = {p: (Path(where) / p).read_text(encoding="utf-8", errors="replace")
+                     for p in stats["test_files"] if (Path(where) / p).is_file()}
+            check = self.self_check(task, where)
+            record["checks"].append(self._check_record(check, "solo", k))
+            cands.append({"k": k, "box": where, "patch_file": name, "tests": tests,
+                          "green": check["green"],
+                          "src_lines": stats["src_added"] + stats["src_removed"]})
+        if not cands:
+            return "dispatch-failed"
+        for c in cands:
+            passed = ran = 0
+            for other in cands:
+                if other is c or not other["tests"]:
+                    continue
+                x = self.self_check(task, c["box"], extra_tests=other["tests"])
+                record["checks"].append(self._check_record(x, f"cross-c{other['k']}", c["k"]))
+                passed, ran = passed + x["passed"], ran + x["ran"]
+            c["cross"] = (passed / ran) if ran else None
+        best = max(cands, key=lambda c: (c["green"], c["cross"] or 0.0, -c["src_lines"],
+                                         -c["k"]))
+        final[0] = best["box"]
+        record["selection"] = {
+            "picked": best["k"], "rule": "green own checks > cross-test pass rate > "
+                                         "smaller source change > earlier candidate",
+            "candidates": [{"k": c["k"], "green": c["green"], "cross_pass_rate": c["cross"],
+                            "src_lines": c["src_lines"], "patch_file": c["patch_file"]}
+                           for c in cands],
+            "parallel_wall_s": round(max(
+                (d.get("duration_s") or 0) for d in self._open if d["role"] == "solo"), 1)}
+        return "complete" if len(cands) == n else "dispatch-failed"
 
     # -- the whole run ----------------------------------------------------------------------
 
@@ -2681,6 +2937,21 @@ def build_report(ex, arms=None, drop=(), view="preregistered"):
             "efforts": {role: f"{s['model']}/{s['effort']}"
                         for role, s in ex.exp["arms"][arm]["stages"].items()},
             "reworks_mean": _mean([r["reworks"] for r in rs]),
+            # escalate arms: how often the cheap first attempt was handed over, and why
+            "escalation": ({"rate": _mean([1.0 if r["_trial"].get("escalated") else 0.0
+                                           for r in rs]),
+                            "reasons": dict(sorted(Counter(
+                                r["_trial"]["escalation_reason"] for r in rs
+                                if r["_trial"].get("escalation_reason")).items()))}
+                           if ex.exp["arms"][arm]["shape"] == "escalate" else None),
+            # best-of arms: which candidate was kept, and the wall time had they run at once
+            "selection": ({"picked": dict(sorted(Counter(
+                               str((r["_trial"].get("selection") or {}).get("picked"))
+                               for r in rs).items())),
+                           "parallel_wall_s_mean": _mean([
+                               (r["_trial"].get("selection") or {}).get("parallel_wall_s")
+                               for r in rs])}
+                          if ex.exp["arms"][arm]["shape"] == "best-of" else None),
             "regression_green_rate": _mean([1.0 if r["regression_green"] else 0.0 for r in rs]),
             "violations_mean": _mean([len(r["violations"]) for r in rs]),
             "own_tests_mean": _mean([(r["_grade"].get("own_tests") or {}).get("count", 0)

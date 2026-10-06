@@ -216,6 +216,42 @@ outage spend. The v1 definition, its digest and its report are unchanged.
 The new report sections render only when `scoring.extended_report` is true or the run holds
 ranked judges or probes, so v1 reports stay byte-identical.
 
+## Pipeline variants and two cheap-first shapes
+
+v2's pipelines cost 6–16× a one-shot, took 2–3× longer, and were the only routes with
+genuine failures. The leading explanation is that tests written from the plan lock the
+implementer into the planner's reading of the task. These additions test fixes for that.
+They exist only on extension arms; an arm without them gets byte-identical prompts.
+
+An arm may carry an optional `variant` object, validated per key and per shape:
+
+| Key | Values | Shapes | Effect |
+|---|---|---|---|
+| `test_author_input` | `plan` \| `spec` | pipeline | `spec`: the test author works from the task text alone, never the plan |
+| `planner` | `plan` \| `spec-hardener` | pipeline | `spec-hardener`: the planner writes numbered, testable requirements and resolves open questions, with no step-by-step instructions |
+| `gates` | `standard` \| `traceable` | pipeline, reviewed, escalate | `traceable`: a gate traces every requirement to evidence and says no only for a failing test, an unmet requirement, scope, or (reviewer) a demonstrable defect |
+| `n` | 2–4 | best-of | candidates per trial (default 2) |
+
+When `planner` or `test_author_input` is set, the implementer is told the task outranks the
+plan and the tests.
+
+Two more shapes:
+- **`escalate`** (stages `solo`, optional `verifier`, `escalation`). A one-shot, then a
+  deterministic check: the task's regression line plus the candidate's own changed test
+  modules, run on its patch in a fresh sandbox. The check never sees the hidden oracle. If the
+  check is red, or green but the optional verifier fails it, the escalation model takes over
+  the working tree once, with the reason. Nothing else runs on a pass.
+- **`best-of`** (stage `solo`). `n` independent one-shots, each in its own sandbox. The kept
+  candidate has green own checks first, then the best pass rate on the *other* candidates'
+  tests run against its code, then the smaller source change. No model sees another attempt.
+
+Each check's result and duration is recorded in the trial's `checks` and counted in
+`wall_s`. Escalate trials record `escalated` and `escalation_reason`. Best-of trials record
+`selection`: each candidate's diff, the pick, and `parallel_wall_s`, the wall time had the
+candidates run at once. The report's per-arm JSON carries the escalation rate and reasons,
+and the best-of pick distribution. The gate probe shows gates the standard prompt, so it
+skips arms with `traceable` gates; their gate accuracy comes from their own trials.
+
 ## How to run
 
 ```bash

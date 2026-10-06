@@ -1,0 +1,19 @@
+{
+  "version": "polytropos.route-experiment.extension/1",
+  "arm": "A47",
+  "added": "2026-10-06",
+  "reason": "Pipeline-improvement variant (best-of-2). Two independent A5 one-shots; green own checks, then each attempt's tests run against the other, then the smaller change pick the one kept. No model sees the other attempt. Post hoc; never judged (adding a candidate would replace the preregistered judgments).",
+  "definition": {
+    "label": "Luna 6 (max) best-of-2, picked by tests",
+    "shape": "best-of",
+    "stages": {
+      "solo": {
+        "model": "gpt-6-luna",
+        "effort": "max"
+      }
+    },
+    "variant": {
+      "n": 2
+    }
+  }
+}
