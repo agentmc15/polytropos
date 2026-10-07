@@ -135,7 +135,7 @@ Four pricing files are the **single numeric source of truth — one file per har
 
 ### Claude — `data/pricing.json`
 
-Derived from `data/pricing.json`, `cached_date` **2026-09-24** — 9 models, USD per million tokens.
+Derived from `data/pricing.json`, `cached_date` **2026-10-07** — 11 models, USD per million tokens.
 
 | Model id | Display | Tier | Input | Output | Context window | Max output |
 |---|---|---|---:|---:|---:|---:|
@@ -147,11 +147,15 @@ Derived from `data/pricing.json`, `cached_date` **2026-09-24** — 9 models, USD
 | `claude-opus-5-5` | Opus 5.5 | opus | $4 | $20 | 1,000,000 | 128,000 |
 | `claude-sonnet-4-6` | Sonnet 4.6 | sonnet | $3 | $15 | 1,000,000 | 64,000 |
 | `claude-sonnet-5` | Sonnet 5 | sonnet | $2 | $10 | 1,000,000 | 64,000 |
+| `claude-sonnet-5-5` | Sonnet 5.5 | sonnet | $2 | $10 | 1,000,000 | 128,000 |
 | `claude-haiku-4-5` | Haiku 4.5 | haiku | $1 | $5 | 200,000 | 64,000 |
+| `claude-haiku-5-5` | Haiku 5.5 | haiku | $0.1 | $0.5 | 1,000,000 | 128,000 |
 
 File-wide multipliers and modes, from the same file: `billing_mode` `subscription`, `cache_read_multiplier` (0.1×), `cache_write_multiplier_5m` (1.25×), `cache_write_multiplier_1h` (2.0×), `batch_discount` (0.5×). `task_profiles` carries 5 size priors (XS, S, M, L, XL).
 
 Per-model cache-read rates, from the same file: `claude-fable-5-1` (0.025×), `claude-opus-5-5` (0.05×). Each replaces the file-wide `cache_read_multiplier` for that model; the file-wide figure remains the fallback for every other row.
+
+Prompt-length pricing, from the same file: `claude-haiku-5-5`'s rates above cover prompts up to its `long_context.threshold_input_tokens` (100,000); one request over that pays its `long_context` rates ($0.5 / $2.5), cache multipliers included. `cost_report`, `session_cost` and the journal apply it per transcript message; anything that prices a summed total (counterfactuals, task-profile estimates, a whole dispatch's usage) uses the base rates and so under-counts such requests.
 
 Each entry's `notes` field carries the operational caveats a router must surface — always-on thinking, which row supersedes which, and which models carry their own cache-read rate. Read the notes rather than inferring from the rates.
 

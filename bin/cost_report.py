@@ -46,10 +46,12 @@ def match_model(model_id, pricing):
     if not model_id or model_id.startswith("<"):
         return None
     base = model_id.split("[")[0].strip()
-    for key in pricing["models"]:
-        if base == key or base.startswith(key + "-"):
-            return key
-    return None
+    # Exact key first, then the LONGEST prefix key: `claude-sonnet-5-5` must never resolve to
+    # `claude-sonnet-5` just because that row comes first in file order.
+    if base in pricing["models"]:
+        return base
+    hits = [key for key in pricing["models"] if base.startswith(key + "-")]
+    return max(hits, key=len) if hits else None
 
 
 def rates_for(key, when, pricing):
@@ -71,8 +73,31 @@ def cache_read_multiplier_for(key, pricing):
     return model.get("cache_read_multiplier", pricing["cache_read_multiplier"])
 
 
-def price(key, u, when, pricing):
+def long_context_for(key, u, pricing):
+    """The model's `long_context` block when ONE request's prompt crosses its threshold, else None.
+
+    The prompt is input + cache read + cache write tokens. Only meaningful for a single request:
+    a summed session or task-profile total crossing the threshold says nothing about any request
+    (pricing.json `long_context_note`).
+    """
+    lc = pricing["models"][key].get("long_context")
+    if not lc:
+        return None
+    prompt = u["input"] + u["cache_read"] + u["cache_write"]
+    return lc if prompt > lc["threshold_input_tokens"] else None
+
+
+def price(key, u, when, pricing, per_request=False):
+    """USD for usage `u` on model `key`.
+
+    `per_request=True` asserts `u` is ONE request's usage, which lets a long-context rate apply.
+    Aggregates must leave it False and are priced at base rates -- an underestimate whenever a
+    long-context model had a request over its threshold.
+    """
     inp, outp = rates_for(key, when, pricing)
+    lc = long_context_for(key, u, pricing) if per_request else None
+    if lc:
+        inp, outp = lc["input_per_mtok"], lc["output_per_mtok"]
     return (
         u["input"] * inp
         + u["output"] * outp
@@ -225,7 +250,7 @@ def build_report_payload(projects_dir, days=30, top=10, mode=None):
                     unknown_models[model] += sum(u.values())
                 continue
 
-            cost = price(key, u, when, pricing)
+            cost = price(key, u, when, pricing, per_request=True)
             b = by_model[key]
             for f in ("input", "output", "cache_read", "cache_write"):
                 b[f] += u[f]
@@ -236,7 +261,7 @@ def build_report_payload(projects_dir, days=30, top=10, mode=None):
             s = sessions[sid]
             s["models"].add(key)
             s["cost"] += cost
-            s["sonnet5_cost"] += price(DOWNGRADE_TARGET, u, when, pricing)
+            s["sonnet5_cost"] += price(DOWNGRADE_TARGET, u, when, pricing, per_request=True)
             s["tokens"] += u["input"] + u["output"] + u["cache_write"]
             s["tool_uses"] += tool_uses
             s["project"] = project

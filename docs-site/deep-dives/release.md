@@ -195,7 +195,7 @@ Contract versions are read from the module that owns each one; package versions 
 
 | Harness | Pricing file | cached_date | Models |
 |---|---|---|---|
-| claude-code | `data/pricing.json` | 2026-09-24 | 9 |
+| claude-code | `data/pricing.json` | 2026-10-07 | 11 |
 | codex | `data/pricing.codex.json` | 2026-09-24 | 9 |
 | copilot | `data/pricing.copilot.json` | 2026-09-24 | 31 |
 | cursor | `data/pricing.cursor.json` | 2026-09-13 | 0 |
@@ -217,7 +217,7 @@ Three answers per capability, never collapsed: does the product support it, has 
 - Install: `claude plugin install polytropos@polytropos-local`
 - Bundle: `skills/ (the plugin itself)`
 - Review form: restricted `--allowedTools` profile (never the blanket grant)
-- Pricing: `data/pricing.json` (`cached_date` 2026-09-24, 9 models)
+- Pricing: `data/pricing.json` (`cached_date` 2026-10-07, 11 models)
 - Evaluation adapter: `workflow_eval.claude_adapter`
 
 | Capability | Product | Implemented | Verified | On | Client | Effective |

@@ -175,7 +175,7 @@ def collect(files, pricing):
                         unpriced[model] += sum(u.values())
                     continue
                 when = cr.parse_timestamp(obj.get("timestamp"))
-                cost = cr.price(key, u, when, pricing)
+                cost = cr.price(key, u, when, pricing, per_request=True)
                 b = by_model[key]
                 for fld in ("input", "output", "cache_read", "cache_write"):
                     b[fld] += u[fld]
