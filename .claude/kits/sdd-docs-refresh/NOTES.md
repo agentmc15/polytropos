@@ -196,3 +196,27 @@ outcome: T10 model=sonnet attempts=1 result=pass review=none run=2026-10-23-af89
 
 reviewer: P3 model=opus findings=11 confirmed=11 result=accepted
 - Fix-up dispatch `ae307dd66635084b9` (sonnet) landed items 1–6, 8, 9, 11; pitch still 4 sheets after trimming section 4 prose; orchestrator re-ran the checks: green.
+
+## T11
+- Inventory closed (4 deferrals); committed `f181792`; T11 verify re-run by orchestrator: T11-OK.
+
+agent: T11 id=a3584ca424e429941 role=implementer model=sonnet
+outcome: T11 model=sonnet attempts=1 result=pass review=revised run=2026-10-23-af89
+
+## Phase 4 review (opus): FIX-FIRST, 4 findings + housekeeping, all adjudicated real
+- Rows 54/75 deferred on half a reason: the sentences say pricing.json HAS intro windows; no
+  row does. Soften to "any `intro_pricing` window a row carries" / "optional intro windows",
+  mark `fixed (T11)`.
+- Uninventoried: GUIDE.md:114 / guide.html:129 credit route's Estimate step with "intro/batch
+  adjustments"; `skills/route/SKILL.md` Step 3 names only `batch_discount`.
+- `f181792` body over-corrected `8a96de7`: `test_two_sections_fail_structure` IS a structure
+  fixture; the un-fixtured checks are self-containment bans, dark/print/page-break,
+  doctype/charset/style/title, total words, repo-path, bare-.md.
+- `f181792` body didn't say which `copilot_docs.py build` wrote the aic-report.json hashes
+  (the Phase 3 fix-up dispatch's sanctioned hash-only run).
+- All four fixed in one follow-up commit (fix-up dispatch, counted here in prose).
+- PLAN done-criteria 1–5 met; 6 met after the fix-up; 7 met (no trailer — the user's hook).
+
+reviewer: P4 model=opus findings=4 confirmed=4 result=accepted
+
+session: 164ceb17-fa7d-4c0f-9227-4953db2eb5fe

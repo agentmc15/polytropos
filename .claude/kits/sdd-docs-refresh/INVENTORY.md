@@ -64,7 +64,7 @@ Rates for a docs table are derived with the one-liner over `d['models']` (fields
 | 51 | docs/how-it-works.html | 83 | and Sonnet 5's intro pricing all factor in. | drop intro-pricing clause | data/pricing.json (no intro_pricing) | roster | T5  | fixed (T5) |
 | 52 | docs/how-it-works.html | 87, 203, 247 | Opus 4.8 in this setup / daily work (Opus 4.8) / Daily driver Opus 4.8 | the Opus tier's current default, Opus 5.5 | aesop_bridge tiers | roster | T5  | fixed (T5) |
 | 53 | docs/how-it-works.html | 147 | Haiku → Sonnet 5 → Opus 4.8 → Fable 5 ... Opus 4.8 daily driver | Sonnet 5.5 → Opus 5.5 → Fable 5.1 | aesop_bridge tiers | roster | T5  | fixed (T5) |
-| 54 | docs/how-it-works.html | 142 | per-model rates, `intro_pricing` windows (applied automatically by date) | the engine still supports the field; no row carries it today — soften to "any `intro_pricing` window a row carries". NOTE: T5's brief premise "the engine has no intro windows" is false (`bin/cost_report.py:60-64` still applies `intro_pricing` by date), so the claim is true of the engine | data/pricing.json; bin/cost_report.py:60-63 | behavior-claim | — | deferred: not stale — bin/cost_report.py still applies intro_pricing |
+| 54 | docs/how-it-works.html | 142 | per-model rates, `intro_pricing` windows (applied automatically by date) | the engine still supports the field; no row carries it today — soften to "any `intro_pricing` window a row carries". NOTE: T5's brief premise "the engine has no intro windows" is false (`bin/cost_report.py:60-64` still applies `intro_pricing` by date), so the claim is true of the engine | data/pricing.json; bin/cost_report.py:60-63 | behavior-claim | — | fixed (T11) |
 | 55 | docs/how-it-works.html | 180 | typically Sonnet 5 for routine coding, Opus 4.8 for harder reasoning | Sonnet 5.5 / Opus 5.5 | aesop_bridge tiers | roster | T5  | fixed (T5) |
 | 56 | docs/how-it-works.html | 184 | **Refusal fallback:** ... falls back to an Opus 4.8 subagent | skills/escalate/SKILL.md states none; rewrite as operator practice or drop | skills/escalate/SKILL.md | behavior-claim | T5  | fixed (T5) |
 | 57 | docs/how-it-works.html | 191 | Sonnet 5 intro rates applied by record date. | no row carries intro rates now; drop or "any `intro_pricing` a row carries" | data/pricing.json | behavior-claim | T5  | fixed (T5) |
@@ -85,10 +85,11 @@ Rates for a docs table are derived with the one-liner over `d['models']` (fields
 | 72 | docs/GUIDE.md | 776, 817 | python3 bin/aesop_bridge.py check-budget 25 M claude-sonnet-5 | `check-budget 25 M claude-sonnet-5-5` — the `mid` id printed by `python3 bin/aesop_bridge.py tiers` (derive it, do not recall) | python3 bin/aesop_bridge.py tiers | example | T4  | fixed (T4) |
 | 73 | docs/guide.html | 157 | security-analysis-heavy work</strong> (Fable's cyber classifiers refuse much of it; <span class="tier-opus">Opus 4.8</span> is the better tool there). Surfaces the caveats every time: <code>refusal</code> stop reason (Opus fallback), minutes-long turns, the 30-day data-retention requirement, always-on thinking ... sweep effort (Fable at <code>low</code> often beats older models at <code>max</code>) | describe only what skills/fable-check/SKILL.md states: the Opus tier (Opus 5.5 today; line 15/19) and "Thinking is always on" (line 23) and "Use the documented default as a baseline" (line 28, Fable 5.1 defaults to `high`). The skill has no security/cyber exclusion, no refusal text, no minutes-long-turn or 30-day data-retention caveat, and no sweep-effort claim. Drop each unstated item, or relabel it "operator guidance, not skill behavior" (HTML twin of row 8) | skills/fable-check/SKILL.md | behavior-claim | T5  | fixed (T5) |
 | 74 | docs/how-it-works.html | 200 | security-analysis-heavy work (Fable's cyber classifiers refuse much of it; Opus 4.8 is the better tool there). Every Fable recommendation surfaces the caveats: <code>refusal</code> stop reason with Opus fallback, minutes-long turns, the 30-day data-retention requirement, always-on thinking ... sweep effort levels (Fable at <code>low</code> often beats older models at <code>max</code>) | describe only what skills/fable-check/SKILL.md states: the Opus tier (Opus 5.5 today; line 15/19) and "Thinking is always on" (line 23) and "Use the documented default as a baseline" (line 28, Fable 5.1 defaults to `high`). The skill has no security/cyber exclusion, no refusal text, no minutes-long-turn or 30-day data-retention caveat, and no sweep-effort claim. Drop each unstated item, or relabel it "operator guidance, not skill behavior" (HTML twin of row 18) | skills/fable-check/SKILL.md | behavior-claim | T5  | fixed (T5) |
-| 75 | docs/HOW-IT-WORKS.md | 68 | pricing.json                Claude: rates, cache/batch multipliers, intro windows, | accurate file-tree description: the file still supports `intro_pricing` and the engine applies it (bin/cost_report.py:60-64); nothing to change | bin/cost_report.py:60-64 | behavior-claim | — | deferred: not stale — bin/cost_report.py still applies intro_pricing |
+| 75 | docs/HOW-IT-WORKS.md | 68 | pricing.json                Claude: rates, cache/batch multipliers, intro windows, | accurate file-tree description: the file still supports `intro_pricing` and the engine applies it (bin/cost_report.py:60-64); nothing to change | bin/cost_report.py:60-64 | behavior-claim | — | fixed (T11) |
 | 76 | docs/how-it-works.html | 78 | ~$614 API-equivalent, 87% of it on Fable 5 | replace the sentence with a pointer to `python3 bin/cost_report.py --days 30` (commit a699db6 removed the same sentence from the markdown docs); the measured "Fable 5" in it goes away with it, do not rename it | PLAN D7; bin/cost_report.py --days 30; commit a699db6 | rotting-number | T5  | fixed (T5) |
 | 77 | docs/how-it-works.html | 161 | Guardrails row: `CLAUDE.md` / skills — the Fable-judgment rails executors run on | names project CLAUDE.md / skills but not the kit-scoped GUARDRAILS.md the architect writes | skills/architect/SKILL.md layout; docs/SPEC-DRIVEN.md | stale-prose | — | deferred: PLAN D7 bounded refresh (out of scope) |
 | 78 | docs/guide.html | — | never mentions GUARDRAILS.md | no mention of the kit-scoped GUARDRAILS.md | skills/architect/SKILL.md layout | stale-prose | — | deferred: PLAN D7 bounded refresh (out of scope) |
+| 79 | docs/GUIDE.md, docs/guide.html | 114, 129 | Estimate step: "apply intro/batch adjustments" | "apply the batch discount" — skills/route/SKILL.md Step 3 names only `batch_discount`; it states no intro adjustment | skills/route/SKILL.md Step 3 | behavior-claim | T11 | fixed (T11) |
 
 ## Checked and current (do not touch)
 - README.md:46,50 — Claude checked 2026-10-07; names Fable 5.1 / Opus 5.5 / Sonnet 5.5 / Haiku 4.5 and the Haiku 5.5 caveat ("priced but not yet the cheap-tier default"). (The 2026-09-24 date on line 46 is Codex's and Copilot's; out of scope.)
@@ -122,11 +123,15 @@ Rates for a docs table are derived with the one-liner over `d['models']` (fields
 Branch: `feat/route-experiment` (nothing pushed).
 
 Commits this kit produced: `ca304e6` (roster currency), `8a96de7` (spec-driven docs and pitch),
-and this closing commit (`git log -1` on the branch prints it).
+`f181792` (inventory closeout and overclaim corrections), and the follow-up commit described below
+(`git log -1` on the branch prints it).
 
-Deferrals: four rows carry `deferred:`. Rows 54 and 75 are not stale (`bin/cost_report.py`
-still applies `intro_pricing`, so the sentence is true of the engine); rows 77 and 78 are PLAN D7
-bounded-refresh limits on the two hand-written HTML pages.
+Deferrals: 2 remain, rows 77 and 78 (PLAN D7 bounded-refresh limits on the two hand-written HTML
+pages). Rows 54 and 75 were first deferred as "not stale" and are now fixed in this follow-up
+commit: no pricing row carries `intro_pricing` (the engine, `bin/cost_report.py:57-67`, honours the
+field when present), so the sentences now say "any window a row carries" and "optional". Row 79
+(route's Estimate step crediting intro adjustments the skill does not state) is also fixed there.
+Kit commits: `ca304e6`, `8a96de7`, `f181792`, and this follow-up commit.
 
 Commands run from the repo root, exit codes read:
 

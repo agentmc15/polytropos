@@ -111,7 +111,7 @@ Picks the right model for one task and estimates its cost before you run it.
    as daily driver, complex work escalating toward Fable via the architect pattern, Haiku skipped,
    effort as the burn lever.
 3. **Estimate** — match a task-size profile (XS…XL), price each candidate, show cache-discounted
-   figures for agentic sizes, apply intro/batch adjustments.
+   figures for agentic sizes, apply the batch discount.
 4. **Recommend + act** — compact table, recommendation bolded, then *dispatch now* (Agent tool with
    the recommended `model` + a self-contained brief), *switch the session* (prints `/model …`), or —
    for big Fable-worthy tasks — hand off to `/architect`. App questions get a model ID + API params.

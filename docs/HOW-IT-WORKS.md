@@ -68,7 +68,7 @@ polytropos/
 │   └── marketplace.json            the local marketplace this repo serves itself from
 ├── data/                           the numeric sources of truth — ONE FILE PER HARNESS,
 │                                   never merged; no harness's config reads another's
-│   ├── pricing.json                Claude: rates, cache/batch multipliers, intro windows,
+│   ├── pricing.json                Claude: rates, cache/batch multipliers, optional intro windows,
 │   │                               per-model notes, task-size profiles, billing_mode
 │   ├── pricing.copilot.json        Copilot: AI Credits — the credit unit itself is data
 │   ├── pricing.codex.json          Codex: roster + burn index; model ids are best-effort
