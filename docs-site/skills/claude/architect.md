@@ -31,7 +31,9 @@ files, not a chat reply, ready for a separate skill to run.
 Dispatch mode is the normal path: the session stays on its daily driver and spawns the
 architecture work as a Fable subagent, carrying the full brief and conversation context the
 subagent otherwise never sees. Native mode (`/model fable` in-session) exists for steering
-interactively, at the cost of tying up a Fable session to do it. Before pinning models or
+interactively, at the cost of tying up a Fable session to do it. Either way it first
+shows you the goal, "done" and out-of-scope fence, and writes nothing until you approve
+them. Before pinning models or
 declaring roles in the plan, consult the evidence rather than guessing:
 
 ```bash
@@ -83,17 +85,22 @@ The goal: **Fable 5 runs once, at the start; its judgment persists as scaffoldin
 
 Check the current session model. Two entry modes:
 
-- **Dispatch mode** (session is on Opus/Sonnet — the normal daily-driver case): spawn the architecture work as a subagent via the Agent tool with `model: fable`. Give it this entire skill's Steps 1–3 as instructions plus a complete brief of the task and all relevant conversation context (the subagent sees none of it otherwise). It writes the kit files directly; you relay its summary. The main session never leaves the daily driver.
-- **Native mode** (user already ran `/model fable`, or wants to steer interactively): do Steps 1–3 in this session, then remind them to switch back (`/model opus`) once the kit is built.
+- **Dispatch mode** (session is on Opus/Sonnet — the normal daily-driver case): spawn the architecture work as a subagent via the Agent tool with `model: fable`. Give it this entire skill's Steps 1–3 as instructions plus a complete brief of the task and all relevant conversation context (the subagent sees none of it otherwise). A subagent cannot ask the user anything, so the run is two hops around Step 1's approval pause: the first hop explores and returns only the spec draft; you relay it to the user verbatim and collect their approval or edits; the second hop gets the approved spec back and writes the kit. Continue the same subagent for the second hop (SendMessage with its id) so its exploration carries over; if it cannot be continued, dispatch a fresh one with the original brief plus the approved spec, and say that the earlier exploration was not carried over. You relay its summary. The main session never leaves the daily driver.
+- **Native mode** (user already ran `/model fable`, or wants to steer interactively): do Steps 1–3 in this session, stopping at Step 1's approval pause, then remind them to switch back (`/model opus`) once the kit is built.
 
 If the task is ambiguous, ask the scoping questions BEFORE burning Fable time — Fable works best with the full spec up front in one shot.
 
 ### Step 1 — The plan
 
-Write `.claude/kits/<slug>/PLAN.md` in the target project (`<slug>` = short kebab-case task name):
+Write `.claude/kits/<slug>/PLAN.md` in the target project (`<slug>` = short kebab-case task name). It opens with the **spec** — what and why, no design yet:
 
 - **Goal** and what "done" looks like (checkable, not vibes)
 - **Constraints** and out-of-scope (explicitly fence what executors must NOT do)
+
+**Approval pause — the user signs off on the spec before any design.** Draft those two sections, then stop and show them to the user. A misread requirement caught here costs one exchange; caught after the kit is written, it costs the whole Fable run. The draft goes in your reply, never onto disk: write nothing into `.claude/kits/<slug>/` before approval, because a kit directory holding a PLAN.md and nothing else is indistinguishable from a broken kit. Below the draft, list the assumptions you made and any open question whose answer would change the plan. Continue only on the user's approval in this conversation. Their edits are the spec: write the approved text into PLAN.md as approved, and if the design later shows the spec cannot hold (a "done" that cannot be checked, a constraint that rules out every approach), stop and bring the conflict back to the user rather than quietly rewriting it. Skip the pause only when the user explicitly says to plan straight through, and say in the Step 3 handoff that the spec was not approved separately.
+
+Once the spec is approved, the rest of PLAN.md is the design:
+
 - **Architecture & key decisions, each with rationale** — the "why" is what lets a cheaper model make consistent micro-decisions later
 - **Risks and their tripwires** — what an executor should watch for and what to do when hit
 - **Autonomy posture (optional)** — a single `autonomy: advisory` or `autonomy: auto` line anywhere in PLAN.md (absent = advisory). Execute reads it as the kit's dial for live re-routing and auto-escalation; the user can override it per run at invocation. An optional PLAN.md line, not a task field — the task-field contract is unchanged.

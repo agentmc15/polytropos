@@ -121,7 +121,9 @@ Picks the right model for one task and estimates its cost before you run it.
 the phase that buys the most — decomposition, contracts, guardrails — and encode the results so
 cheaper models execute at near-Fable quality. Two entry modes: from an Opus/Sonnet session it
 dispatches a **Fable subagent** (the session never changes model); or run natively after
-`/model fable`. It produces an **execution kit** in the target project:
+`/model fable`. Either way it pauses once, before any design: it shows you the goal, the
+checkable "done" and the out-of-scope fence, and writes nothing until you approve them (or say
+to plan straight through). Then it produces an **execution kit** in the target project:
 - `.claude/kits/<slug>/PLAN.md` — goal, constraints, out-of-scope fence, architecture decisions
   *with rationale*, risks with tripwires.
 - `.claude/kits/<slug>/TASKS.md` — ordered tasks, each a self-contained brief (files, conventions,

@@ -132,7 +132,7 @@
 
 <h3><code>/polytropos:architect &lt;task&gt;</code></h3>
 <div class="callout"><strong>Fable 5 runs once, at the start; its judgment persists as scaffolding.</strong> Pay frontier rates for the phase that buys the most &mdash; decomposition, contracts, guardrails &mdash; and encode the results so cheaper models execute at near-Fable quality.</div>
-<p>Two entry modes: from an Opus/Sonnet session it dispatches a <strong>Fable subagent</strong> (the session never changes model); or run natively after <code>/model fable</code>. It produces an <strong>execution kit</strong> in the target project:</p>
+<p>Two entry modes: from an Opus/Sonnet session it dispatches a <strong>Fable subagent</strong> (the session never changes model); or run natively after <code>/model fable</code>. Either way it pauses once, before any design: it shows you the goal, the checkable &ldquo;done&rdquo; and the out-of-scope fence, and writes nothing until you approve them (or say to plan straight through). Then it produces an <strong>execution kit</strong> in the target project:</p>
 <ul>
   <li><code>.claude/kits/&lt;slug&gt;/PLAN.md</code> &mdash; goal, constraints, out-of-scope fence, architecture decisions <em>with rationale</em>, risks with tripwires.</li>
   <li><code>.claude/kits/&lt;slug&gt;/TASKS.md</code> &mdash; ordered tasks, each a self-contained brief (files, conventions, exact contracts, gotchas, acceptance criteria, a shell <strong>verify command</strong>, a suggested <code>model</code>), grouped under <code>## Phase N</code> headings, marked <code>depends:</code> / <code>independent:</code>.</li>
@@ -267,7 +267,7 @@
 
 <h3>Example 4 &mdash; Greenfield &middot; Plan once with Fable, build cheap</h3>
 <p><strong>Commands:</strong> <code>/polytropos:architect build a markdown-to-slides CLI: parse a .md file into slides, render to a self-contained HTML deck, with a --watch mode</code> &rarr; then <code>/polytropos:execute md-slides</code></p>
-<p><strong>Happens:</strong> a Fable subagent interrogates the scope once and writes the kit &mdash; PLAN.md (parser vs renderer boundary, the deck format contract, watch-mode debounce decision, all with rationale), ~12 task briefs each with a verify command, three model-pinned agents, and CLAUDE.md conventions. Fable's involvement ends (~10&ndash;20 min). <code>/execute</code> then runs for the rest of the build on Sonnet/Opus: implementer builds each task, verifier re-runs its check in fresh context, the Opus reviewer checks each phase against the plan.</p>
+<p><strong>Happens:</strong> a Fable subagent interrogates the scope once, shows you the goal and the out-of-scope fence for approval, then writes the kit &mdash; PLAN.md (parser vs renderer boundary, the deck format contract, watch-mode debounce decision, all with rationale), ~12 task briefs each with a verify command, three model-pinned agents, and CLAUDE.md conventions. Fable's involvement ends (~10&ndash;20 min). <code>/execute</code> then runs for the rest of the build on Sonnet/Opus: implementer builds each task, verifier re-runs its check in fresh context, the Opus reviewer checks each phase against the plan.</p>
 <p><strong>Why:</strong> greenfield is where up-front decomposition pays the most. One frontier planning pass sets the contracts; cheap models fill them in at near-Fable quality.</p>
 
 <h3>Example 5 &mdash; Greenfield &middot; A new project under aesop, fed by the bridge</h3>

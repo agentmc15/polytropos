@@ -38,6 +38,15 @@ The architect runs once. In dispatch mode the skill spawns the planning work as 
 limit: polytropos never switches the main session's model. The alternative is native mode,
 where the user switches the model themselves with `/model fable`.
 
+Either way the user approves the spec before any design. Step 1 of the skill drafts only the
+goal, the checkable "done", the constraints and the out-of-scope fence, shows them, and writes
+nothing into `.claude/kits/<slug>/` until the user approves; their edits are the spec. Spec Kit
+users will recognize this as the stop between its specify and plan phases. A subagent cannot ask
+the user anything, so dispatch mode runs as two hops of the same subagent, with the main session
+relaying the draft and the answer between them. The pause is a skill instruction, not a
+mechanism: nothing in `bin/` checks that it happened, and the user can waive it by saying to plan
+straight through.
+
 Execution happens on cheaper tiers. The architect writes model-pinned agents into
 `.claude/agents/`. The implementer runs on `sonnet` and "stops and reports rather than
 improvising when the brief is wrong". The verifier runs on `sonnet` by default, and on `haiku`

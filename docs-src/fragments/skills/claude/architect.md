@@ -19,7 +19,9 @@ files, not a chat reply, ready for a separate skill to run.
 Dispatch mode is the normal path: the session stays on its daily driver and spawns the
 architecture work as a Fable subagent, carrying the full brief and conversation context the
 subagent otherwise never sees. Native mode (`/model fable` in-session) exists for steering
-interactively, at the cost of tying up a Fable session to do it. Before pinning models or
+interactively, at the cost of tying up a Fable session to do it. Either way it first
+shows you the goal, "done" and out-of-scope fence, and writes nothing until you approve
+them. Before pinning models or
 declaring roles in the plan, consult the evidence rather than guessing:
 
 ```bash
