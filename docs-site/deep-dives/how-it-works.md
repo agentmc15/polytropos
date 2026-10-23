@@ -21,7 +21,7 @@ Claude Code sessions run on one model at a time, and the price spread across the
 | Sonnet 5.5 | $2 | $10 | speed-and-intelligence workhorse; successor to Sonnet 5 at the same rate |
 | Sonnet 5 | $2 | $10 | superseded by Sonnet 5.5; historical costing and compatibility |
 | Haiku 4.5 | $1 | $5 | bulk/simple API work; the haiku tier's current default |
-| Haiku 5.5 | $0.1 | $0.5 | priced for prompts up to its threshold, higher rate above it (see `data/pricing.json`); priced, not the haiku default yet — the haiku tier keeps resolving to Haiku 4.5 until Claude Code can dispatch Haiku 5.5; moving its row up in `pricing.json` is the whole switch |
+| Haiku 5.5 | $0.1 | $0.5 | priced for prompts up to its threshold, higher rate above it (see `data/pricing.json`); not the haiku default yet — the haiku tier keeps resolving to Haiku 4.5 until Claude Code can dispatch Haiku 5.5; moving its row up in `pricing.json` is the whole switch |
 
 *(Prices cached 2026-10-07 in `data/pricing.json` — the single source of truth; nothing else hard-codes a price.)*
 
@@ -182,7 +182,7 @@ Fable produces an **execution kit** in the target project:
 | `PLAN.md` | `.claude/kits/<slug>/` | Goal, constraints, out-of-scope, architecture decisions **with rationale**, risks with tripwires. The rationale is load-bearing: it's what lets a cheaper model make consistent micro-decisions later. |
 | `TASKS.md` | same | Ordered tasks. Each is a self-contained brief executable by a model with **zero access to the planning conversation**: files, conventions, exact interfaces/contracts, gotchas, acceptance criteria, a shell verify command, and a suggested model (`sonnet` default, `opus` for hard ones, `haiku` for mechanical ones). |
 | Subagents | `.claude/agents/` | `<slug>-implementer` (`model: sonnet`) executes one brief exactly; `<slug>-verifier` (`model: sonnet`; haiku only for purely mechanical checks) re-checks acceptance criteria in fresh context, adversarially; `<slug>-reviewer` (`model: opus`) reviews phases against PLAN.md. Model pinning in frontmatter means the mix enforces itself. |
-| Guardrails | project `CLAUDE.md` / skills | Conventions, invariants, "run X before claiming done", forbidden shortcuts — the Fable-judgment rails the executors run on. |
+| Guardrails | `GUARDRAILS.md` in `.claude/kits/<slug>/` | Conventions, invariants, "run X before claiming done", forbidden shortcuts — the Fable-judgment rails the executors run on. |
 
 The kit IS the spec: [SPEC-DRIVEN.md](spec-driven.md) explains the discipline end to end.
 

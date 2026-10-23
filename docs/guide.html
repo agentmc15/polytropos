@@ -86,7 +86,7 @@
 </ol>
 
 <h2 id="1-the-one-idea">1. The one idea</h2>
-<p>Claude Code runs one model per session, and the price spread across the lineup is large. Running the frontier model as a standing default is harmless on a subscription (marginal dollars are zero) but becomes a 2&times;&ndash;10&times; overpayment the moment you move to pay-per-token. The plugin's whole job is to <strong>spend frontier-model capability only where it changes the outcome, and make that capability persist afterward</strong> so cheaper models finish the work at near-frontier quality.</p>
+<p>Claude Code runs one model per session, and the price spread across the lineup is large. Running the frontier model as a standing default is harmless on a subscription (marginal dollars are zero) but becomes a 2.5&times;&ndash;10&times; overpayment the moment you move to pay-per-token. The plugin's whole job is to <strong>spend frontier-model capability only where it changes the outcome, and make that capability persist afterward</strong> so cheaper models finish the work at near-frontier quality.</p>
 <p>Three moves make that real:</p>
 <ul>
   <li><strong>Route per task</strong> &mdash; decide the cheapest <em>sufficient</em> model before running, with a cost estimate.</li>
@@ -102,7 +102,7 @@
   <tr><td class="tier-opus">Opus 5.5</td><td class="num">$4</td><td class="num">$20</td><td>Multi-file features, hard debugging, review &mdash; the daily driver</td></tr>
   <tr><td class="tier-sonnet">Sonnet 5.5</td><td class="num">$2</td><td class="num">$10</td><td>Day-to-day workhorse; near the Opus tier at high effort</td></tr>
   <tr><td class="tier-haiku">Haiku 4.5</td><td class="num">$1</td><td class="num">$5</td><td>Classification, extraction, bulk API calls; the haiku tier&rsquo;s current default</td></tr>
-  <tr><td class="tier-haiku">Haiku 5.5</td><td class="num">$0.1</td><td class="num">$0.5</td><td>Priced for prompts up to its threshold, higher rate above it (see <code>data/pricing.json</code>); priced, not the haiku default yet &mdash; the haiku tier keeps resolving to Haiku 4.5 until Claude Code can dispatch Haiku 5.5; moving its row up in <code>pricing.json</code> is the whole switch</td></tr>
+  <tr><td class="tier-haiku">Haiku 5.5</td><td class="num">$0.1</td><td class="num">$0.5</td><td>Priced for prompts up to its threshold, higher rate above it (see <code>data/pricing.json</code>); not the haiku default yet &mdash; the haiku tier keeps resolving to Haiku 4.5 until Claude Code can dispatch Haiku 5.5; moving its row up in <code>pricing.json</code> is the whole switch</td></tr>
 </table>
 <p>The same routing question gets <strong>opposite answers</strong> depending on how tokens are paid for. Every skill reads the mode from <code>pricing.json &rarr; billing_mode</code> (currently <code>subscription</code>), overridable per invocation with <code>--api</code> / <code>--sub</code>.</p>
 <ul>

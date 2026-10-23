@@ -220,11 +220,11 @@ Verify:
 <h2>Checked against the spec, not the story</h2>
 <p>Five layers stand between an implementer saying &ldquo;done&rdquo; and the task being marked <code>done</code>. Each is written into <code>skills/architect/SKILL.md</code> and <code>skills/execute/SKILL.md</code>.</p>
 <ul class="layers">
-  <li><b>The orchestrator runs the verify command itself.</b> Every task, every time; the implementer&rsquo;s report is not consulted.</li>
+  <li><b>The orchestrator runs the verify command itself.</b> Every task, every time; the implementer&rsquo;s claim of success is not evidence.</li>
   <li><b>A fresh-context verifier.</b> For non-trivial tasks a separate, adversarial agent re-checks the acceptance criteria against the files. It runs on <span class="tier-sonnet">sonnet</span> by default, and on <span class="tier-haiku">haiku</span> only when every check is mechanical.</li>
   <li><b>A phase reviewer.</b> At each phase end an <span class="tier-opus">opus</span> reviewer checks the phase against <code>PLAN.md</code> for drift.</li>
   <li><b>The red-green gate.</b> Under <code>evidence: red-green</code>, the default, a verify command that already passed on the pre-task tree means the task is <em>blocked, not done</em>. A check that could never have failed proves nothing.</li>
-  <li><b>Escalation with evidence.</b> A failed task is retried once with the failure output. A second failure marks it <code>blocked</code>, and a single-task consult on <span class="tier-fable">fable</span> receives only that brief, the failure evidence, and the relevant <code>PLAN.md</code> excerpts. Frontier spend stays proportional to genuine difficulty.</li>
+  <li><b>Escalation with evidence.</b> A failed task is retried once with the failure output. A second failure marks it <code>blocked</code>, and execute offers a <span class="tier-fable">fable</span> consult (made unasked only under <code>autonomy: auto</code>) that receives only that brief, the failure evidence, and the relevant <code>PLAN.md</code> excerpts. Frontier spend stays proportional to genuine difficulty.</li>
 </ul>
 <p class="note">The verifier and reviewer are pinned to <code>tools: Bash, Read, Grep, Glob</code>. The architect skill is candid that this removes the casual path to editing, not the capability, so both prompts also carry a restore-what-you-touch practice. The headless drivers (<code>bin/claude_execute.py</code> and its peers) add two guarantees of their own: verify commands run inside the <code>bin/exec_policy.py</code> execution boundary, and <code>bin/attempt_ledger.py</code> records every dispatch before and after it runs. The interactive execute skill runs verify commands in the session&rsquo;s own shell. <code>SECURITY.md</code> states what each guarantee does and does not promise.</p>
 
@@ -245,13 +245,13 @@ defect: T5 kind=tautological-verify</code></pre>
 <h2>Why it is cheap, and why you can believe it</h2>
 
 <h3>Frontier once</h3>
-<p>The architect runs on the frontier tier once. In dispatch mode it is a subagent, so &ldquo;the main session never leaves the daily driver&rdquo;. After that, execution reaches the frontier tier only through a blocked task&rsquo;s evidence-carrying consult; even the automatic re-route stops one rung below it.</p>
+<p>The architect runs on the frontier tier once. In dispatch mode it is a subagent, so &ldquo;the main session never leaves the daily driver&rdquo;. After that, the interactive execute skill reaches the frontier tier only through a blocked task&rsquo;s evidence-carrying consult (its automatic re-route stops one rung below); the headless drivers&rsquo; <code>escalation_ladder</code> in <code>bin/claude_execute.py</code> walks every tier above a failed task&rsquo;s, frontier included.</p>
 
 <h3>Tiers by alias</h3>
-<p>Every pin is a tier word (<span class="tier-fable">fable</span>, <span class="tier-opus">opus</span>, <span class="tier-sonnet">sonnet</span>, <span class="tier-haiku">haiku</span>), never a model id. Claude Code resolves the alias to its tier&rsquo;s current default; the headless driver resolves it to the first row of that tier in <code>data/pricing.json</code>. <code>python3 bin/aesop_bridge.py tiers</code> prints today&rsquo;s answer. When a newer model leads its tier, kits follow without an edit.</p>
+<p>Every pin is a tier word (<span class="tier-fable">fable</span>, <span class="tier-opus">opus</span>, <span class="tier-sonnet">sonnet</span>, <span class="tier-haiku">haiku</span>), never a model id. Claude Code resolves the alias to its tier&rsquo;s current default; the headless driver resolves it to the first row of that tier in <code>data/pricing.json</code>. <code>python3 bin/aesop_bridge.py tiers</code> prints today&rsquo;s answer.</p>
 
 <h3>Costs are computed, not quoted</h3>
-<p>This page carries no prices. <code>/polytropos:route</code> estimates a task&rsquo;s cost before it runs, and <code>python3 bin/routing_scorecard.py &lt;slug&gt; --session &lt;id&gt;</code> prices a finished kit against an all-frontier counterfactual. Both read <code>data/pricing.json</code> at run time.</p>
+<p>This page carries no prices. <code>/polytropos:route</code> estimates a task&rsquo;s cost before it runs, and <code>python3 bin/routing_scorecard.py &lt;slug&gt; --session &lt;id&gt;</code> prices a finished kit against an all-frontier counterfactual, both from <code>data/pricing.json</code>.</p>
 
 <h3>The track record is a command, not a number</h3>
 <p>A tally written into prose is wrong by the next kit. <code>python3 bin/routing_scorecard.py --history</code> prints first-try, retry, escalated, and blocked counts per tier, findings against confirmed findings per review role, and the brief-defect kinds. Missing data shows as <code>n/a</code>, never as zero.</p>
@@ -259,7 +259,7 @@ defect: T5 kind=tautological-verify</code></pre>
 <h3>What it is not</h3>
 <ul class="nots">
   <li><strong>Not code generation from a formal spec.</strong> The spec is prose plus shell commands; a model reads the brief and writes the change.</li>
-  <li><strong>Not proof the spec is complete.</strong> The checks cover what the architect thought to check. The reviewer and the brief-defect floor exist because the architect gets things wrong.</li>
+  <li><strong>Not proof the spec is complete.</strong> The checks cover what the architect thought to check.</li>
   <li><strong>Not a license to improvise.</strong> When a brief conflicts with the repo, the executor stops and reports. Nobody changes a task&rsquo;s scope or acceptance to make it pass.</li>
   <li><strong>Not an automatic re-router.</strong> The live re-route signal is advisory by default. Under <code>autonomy: auto</code> it moves pending tasks one tier up, never down, never to the frontier, and it never rewrites a task&rsquo;s <code>model</code> field.</li>
 </ul>

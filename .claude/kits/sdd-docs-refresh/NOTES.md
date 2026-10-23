@@ -166,3 +166,33 @@ outcome: T8 model=haiku attempts=1 result=pass review=none run=2026-10-23-af89
 agent: T9 id=a761981abf9ba3c87 role=implementer model=opus
 agent: T9 id=a501d49d5da20e680 role=verifier model=sonnet findings=1 confirmed=1 result=revised
 outcome: T9 model=opus attempts=2 result=pass review=revised run=2026-10-23-af89
+
+## T10
+- Committed `8a96de7` (full suite + four checks exit 0; trailer stripped by the user's hook;
+  verify run with the two sanctioned exemptions → T10-OK, re-run by orchestrator).
+- CARRY-FORWARD TO T11: the `8a96de7` body says "Each rule has a synthetic negative fixture",
+  but the T9 verifier found no fixture for the script/link/@import/img ban, the dark block, or
+  the total-length bound. T11's body must name `8a96de7` and correct that.
+
+agent: T10 id=a717b6951095cccc1 role=implementer model=sonnet
+outcome: T10 model=sonnet attempts=1 result=pass review=none run=2026-10-23-af89
+
+## Phase 3 review (opus): FIX-FIRST, 11 findings, all adjudicated real
+- Prose overclaims in SPEC-DRIVEN.md / pitch (consult offered not automatic unless
+  `autonomy: auto`; headless drivers' tier ladder reaches the frontier; "not consulted" →
+  "not evidence"; `--exec-mode trusted-host` opt-out), HOW-IT-WORKS.md:182 Guardrails row,
+  remaining "2×–10×" in GUIDE.md:42 / guide.html:89, PLAN.md re-read scope, bare pitch name in
+  Read next, doubled "priced" — fixed by a pre-T11 fix-up dispatch.
+- how-it-works.html:161 stale Guardrails row and guide.html's missing GUARDRAILS.md mention:
+  T11 records them in INVENTORY as `deferred: D7 bounded refresh`.
+- CARRY-FORWARD TO T11 (binding): T11's body names `8a96de7` and corrects: "each rule has a
+  synthetic negative fixture" (structure/dark/total/path checks lack committed fixtures);
+  "README, mkdocs and the concepts page link to them" (nothing links the pitch; GUIDE and
+  HOW-IT-WORKS pointers unmentioned); page-map 40→41 unnamed; "no rotting count" broader than
+  the regex; "sources every claim" contradicted by the four overclaims fixed here; "trailer
+  below" points at nothing. Also ca304e6's body omitted the plugin-manifest description change
+  and the AESOP-INTEGRATION tiers example. And state the test limits (dollar label anywhere in
+  doc, empty dark block passes, snapshot tier check is whole-file substring).
+
+reviewer: P3 model=opus findings=11 confirmed=11 result=accepted
+- Fix-up dispatch `ae307dd66635084b9` (sonnet) landed items 1–6, 8, 9, 11; pitch still 4 sheets after trimming section 4 prose; orchestrator re-ran the checks: green.

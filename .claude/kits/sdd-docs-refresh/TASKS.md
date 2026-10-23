@@ -637,7 +637,7 @@ test -f tests/test_spec_driven_pitch.py && python3 -m unittest discover -s tests
 ### T10 — Commit Phase 3 at a green boundary
 - id: T10
 - title: Full suite and generator checks green, then one commit for the spec-driven docs and pitch
-- status: in-progress
+- status: done
 - model: sonnet
 - depends: T8, T9
 - evidence: red-green
@@ -668,7 +668,7 @@ Verify:
 ### T11 — Reconcile the inventory and leave the tree green and clean
 - id: T11
 - title: Mark every INVENTORY.md row fixed or deferred, run every check once more, commit if anything moved
-- status: pending
+- status: in-progress
 - model: sonnet
 - depends: T10
 - evidence: red-green

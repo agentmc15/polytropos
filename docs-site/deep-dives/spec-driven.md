@@ -23,7 +23,7 @@ A kit lives at `.claude/kits/<slug>/`. The architect skill names what each file 
 
 | File | Pins | Read by |
 |---|---|---|
-| `PLAN.md` | goal and a checkable "done"; constraints and an explicit out-of-scope fence; architecture decisions *with rationale*; risks with tripwires; optional `autonomy:`, `budget:`, `roles:` and `workflow:` lines | execute at Setup, and again at every phase start |
+| `PLAN.md` | goal and a checkable "done"; constraints and an explicit out-of-scope fence; architecture decisions *with rationale*; risks with tripwires; optional `autonomy:`, `budget:`, `roles:` and `workflow:` lines | execute at Setup; at every phase start it re-reads `GUARDRAILS.md` and the constraints and out-of-scope section of `PLAN.md` |
 | `TASKS.md` | one block per task: `id`, `title`, `status` (`pending`/`in-progress`/`done`/`blocked`), `model`, a self-contained brief, acceptance criteria, a verify command, optional `evidence:` (`red-green` default, `regression`, `precondition`); `## Phase N` headings; `depends:` or `independent:` on every task | execute's loop and `bin/kit_contract.py` |
 | `GUARDRAILS.md` | kit-scoped fences: forbidden shortcuts, conventions, "always run X before claiming done" | execute at Setup and at every phase start |
 
@@ -70,8 +70,8 @@ pre-task tree means "the required proof failed and the task is **blocked, not do
 holds whatever the command exits afterwards.
 
 Failure follows a fixed path. A failed task is retried once with the failure output. A second
-failure marks it `blocked`. The escalation valve then sends a single-task consult on
-`model: fable` carrying only that brief, the failure evidence and the relevant `PLAN.md`
+failure marks it `blocked`. The escalation valve then offers a single-task consult (made without
+asking only under `autonomy: auto`) on `model: fable` carrying only that brief, the failure evidence and the relevant `PLAN.md`
 excerpts, and asks it to fix the task or rewrite the brief.
 
 The read-only roles get a `tools: Bash, Read, Grep, Glob` pin. The architect skill is candid
@@ -104,7 +104,8 @@ repo can make: the spec is graded, not just the code.
 The headless drivers add an execution boundary and an attempt record. Their verify runner
 (`default_verify_runner` in `bin/kit_contract.py`) runs each verify command under
 `bin/exec_policy.py`, confined to the workspace and with network access denied, and it refuses
-to run when no backend can enforce that. `python3 bin/exec_policy.py check` reports what this
+to run when no backend can enforce that; the one opt-out, `--exec-mode trusted-host`, reports
+itself as one. `python3 bin/exec_policy.py check` reports what this
 host enforces. `bin/attempt_ledger.py` records every dispatch before and after it runs, and a
 resumed run closes a dispatch that died mid-run as `unknown`, never as a pass.
 `python3 bin/attempt_ledger.py demo` shows a crash and resume. These guarantees belong to the
@@ -158,4 +159,4 @@ today's figures. Missing data renders as `n/a`, never as zero.
   scorecard).
 - `docs/ROLE-EXPERIMENT.md`: whether optional roles beyond the standing trio pay, measured by
   marginal catch.
-- The pitch: `spec-driven-pitch.html`, a printable summary of this page.
+- The pitch: `docs/spec-driven-pitch.html`, a printable summary of this page.

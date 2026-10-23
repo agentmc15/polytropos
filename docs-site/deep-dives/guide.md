@@ -44,7 +44,7 @@ tasks, greenfield builds, brownfield work, backlog burndown, security, and measu
 
 Claude Code runs one model per session, and the price spread across the lineup is large. Running
 the frontier model as a standing default is harmless on a subscription (marginal dollars are
-zero) but becomes a 2×–10× overpayment the moment you move to pay-per-token. The plugin's whole
+zero) but becomes a 2.5×–10× overpayment the moment you move to pay-per-token. The plugin's whole
 job is to **spend frontier-model capability only where it changes the outcome, and make that
 capability persist afterward** so cheaper models finish the work at near-frontier quality.
 
@@ -70,7 +70,7 @@ Labeled snapshot (cached `2026-10-07`, from `data/pricing.json`):
 | **Sonnet 5.5** | 2 | 10 | Speed-and-intelligence workhorse; successor to Sonnet 5 at the same rate |
 | **Sonnet 5** | 2 | 10 | Superseded by Sonnet 5.5 at the same rate; historical costing and compatibility |
 | **Haiku 4.5** | 1 | 5 | Classification, extraction, bulk API calls; the haiku tier's current default |
-| **Haiku 5.5** | 0.1 | 0.5 | Priced for prompts up to its threshold (a higher rate applies above it; see `data/pricing.json`); priced, not the haiku default yet — the haiku tier keeps resolving to Haiku 4.5 until Claude Code can dispatch Haiku 5.5; moving its row up in `pricing.json` is the whole switch |
+| **Haiku 5.5** | 0.1 | 0.5 | Priced for prompts up to its threshold (a higher rate applies above it; see `data/pricing.json`); not the haiku default yet — the haiku tier keeps resolving to Haiku 4.5 until Claude Code can dispatch Haiku 5.5; moving its row up in `pricing.json` is the whole switch |
 
 The same routing question gets **opposite answers** depending on how tokens are paid for. Every
 skill reads the mode from `pricing.json → billing_mode` (currently `subscription`), overridable
