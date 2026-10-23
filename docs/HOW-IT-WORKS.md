@@ -10,13 +10,13 @@ Claude Code sessions run on one model at a time, and the price spread across the
 
 | Model | Input $/MTok | Output $/MTok | Relative cost |
 |---|---:|---:|---|
-| Fable 5.1 | $10 | $50 | 2.5× Opus 5.5, 5× Sonnet, 10× Haiku |
+| Fable 5.1 | $10 | $50 | 2.5× Opus 5.5, 5× Sonnet, 10× Haiku 4.5 |
 | Opus 5.5 | $4 | $20 | default for most workloads |
 | Opus 5 | $5 | $25 | historical costing and compatibility |
 | Sonnet 5.5 | $2 | $10 | speed-and-intelligence workhorse; successor to Sonnet 5 at the same rate |
 | Sonnet 5 | $2 | $10 | superseded by Sonnet 5.5; historical costing and compatibility |
 | Haiku 4.5 | $1 | $5 | bulk/simple API work; the haiku tier's current default |
-| Haiku 5.5 | $0.1 | $0.5 | priced for prompts up to its threshold, higher rate above it (see `data/pricing.json`); not the haiku default yet — row order in `pricing.json` |
+| Haiku 5.5 | $0.1 | $0.5 | priced for prompts up to its threshold, higher rate above it (see `data/pricing.json`); priced, not the haiku default yet — the haiku tier keeps resolving to Haiku 4.5 until Claude Code can dispatch Haiku 5.5; moving its row up in `pricing.json` is the whole switch |
 
 *(Prices cached 2026-10-07 in `data/pricing.json` — the single source of truth; nothing else hard-codes a price.)*
 
@@ -43,7 +43,7 @@ The same routing question gets opposite answers depending on how tokens are paid
   marks Opus 4.8 superseded by the current Opus default (retained for historical transcript
   costing and explicit compatibility pins; its rates differ from the default's). The skills
   `skills/route/SKILL.md` and `skills/fable-check/SKILL.md` name the current default of each
-  tier as a gloss beside the tier word; read the tier, and ask the command which model it is
+  tier; read the tier, and ask the command which model it is
   today.
 - Burn is managed with **effort levels** (`low`/`medium` for routine work), not model downgrades.
 - Dollar figures are still shown, but labeled *API-equivalent burn* — a proxy for how hard a task hits the windows.
@@ -178,6 +178,8 @@ Fable produces an **execution kit** in the target project:
 | `TASKS.md` | same | Ordered tasks. Each is a self-contained brief executable by a model with **zero access to the planning conversation**: files, conventions, exact interfaces/contracts, gotchas, acceptance criteria, a shell verify command, and a suggested model (`sonnet` default, `opus` for hard ones, `haiku` for mechanical ones). |
 | Subagents | `.claude/agents/` | `<slug>-implementer` (`model: sonnet`) executes one brief exactly; `<slug>-verifier` (`model: sonnet`; haiku only for purely mechanical checks) re-checks acceptance criteria in fresh context, adversarially; `<slug>-reviewer` (`model: opus`) reviews phases against PLAN.md. Model pinning in frontmatter means the mix enforces itself. |
 | Guardrails | project `CLAUDE.md` / skills | Conventions, invariants, "run X before claiming done", forbidden shortcuts — the Fable-judgment rails the executors run on. |
+
+The kit IS the spec: [SPEC-DRIVEN.md](SPEC-DRIVEN.md) explains the discipline end to end.
 
 The kit's calibration rule: **pin down contracts exactly, leave implementation judgment open.** Over-prescription wastes the kit (and degrades output — prescriptive scaffolding hurts strong models); under-specification wastes the executor.
 

@@ -65,7 +65,7 @@ Labeled snapshot (cached `2026-10-07`, from `data/pricing.json`):
 | **Sonnet 5.5** | 2 | 10 | Speed-and-intelligence workhorse; successor to Sonnet 5 at the same rate |
 | **Sonnet 5** | 2 | 10 | Superseded by Sonnet 5.5 at the same rate; historical costing and compatibility |
 | **Haiku 4.5** | 1 | 5 | Classification, extraction, bulk API calls; the haiku tier's current default |
-| **Haiku 5.5** | 0.1 | 0.5 | Priced for prompts up to its threshold (a higher rate applies above it; see `data/pricing.json`); not the haiku default yet — row order in `pricing.json` decides |
+| **Haiku 5.5** | 0.1 | 0.5 | Priced for prompts up to its threshold (a higher rate applies above it; see `data/pricing.json`); priced, not the haiku default yet — the haiku tier keeps resolving to Haiku 4.5 until Claude Code can dispatch Haiku 5.5; moving its row up in `pricing.json` is the whole switch |
 
 The same routing question gets **opposite answers** depending on how tokens are paid for. Every
 skill reads the mode from `pricing.json → billing_mode` (currently `subscription`), overridable
@@ -136,6 +136,8 @@ dispatches a **Fable subagent** (the session never changes model); or run native
   `CLAUDE.md`, and sparingly — that file is loaded everywhere, forever.
 - `.claude/agents/<slug>-{implementer,verifier,reviewer}.md` — model-pinned (sonnet implementer / sonnet verifier / opus reviewer — haiku for a verifier
   whose checks are purely mechanical) so the model mix self-enforces.
+
+The kit IS the spec: [SPEC-DRIVEN.md](SPEC-DRIVEN.md) explains the discipline end to end.
 
 Two optional PLAN.md lines, in the same family as `autonomy:` and `budget:` and never task fields:
 a **`roles:`** line naming extra pipeline roles beyond the standing trio (tokens from exactly

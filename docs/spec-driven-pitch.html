@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>polytropos &mdash; spec-driven development</title>
+<style>
+  :root {
+    --bg: #faf9f6; --ink: #1e2430; --muted: #5c6470; --line: #e3ded3;
+    --accent: #b45309; --card: #ffffff;
+    --fable: #b91c1c; --opus: #b45309; --sonnet: #15803d; --haiku: #0e7490;
+    --code-bg: #efece4; --pre-bg: #23262e; --pre-ink: #e8e6e1; --pre-dim: #9aa1ab;
+    --th-bg: #f1eee6; --callout-bg: #fdf6ec;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #15171c; --ink: #e9e5dc; --muted: #a2a8b2; --line: #30343c;
+      --accent: #f0a04b; --card: #1c1f25;
+      --fable: #f38b8b; --opus: #f0a04b; --sonnet: #5fd08a; --haiku: #4fc9de;
+      --code-bg: #272b33; --pre-bg: #0e1014; --pre-ink: #e6e3dc; --pre-dim: #8b929c;
+      --th-bg: #23272f; --callout-bg: #2a231b;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #15171c; --ink: #e9e5dc; --muted: #a2a8b2; --line: #30343c;
+    --accent: #f0a04b; --card: #1c1f25;
+    --fable: #f38b8b; --opus: #f0a04b; --sonnet: #5fd08a; --haiku: #4fc9de;
+    --code-bg: #272b33; --pre-bg: #0e1014; --pre-ink: #e6e3dc; --pre-dim: #8b929c;
+    --th-bg: #23272f; --callout-bg: #2a231b;
+  }
+  * { box-sizing: border-box; }
+  html { background: var(--bg); }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 17px/1.65 Georgia, 'Times New Roman', serif;
+    -webkit-text-size-adjust: 100%;
+  }
+  .wrap { max-width: 860px; margin: 0 auto; padding: 3rem 1.5rem 5rem; }
+  .page { padding-bottom: 2.6rem; margin-bottom: 2.6rem; border-bottom: 1px solid var(--line); }
+  .page:last-of-type { border-bottom: 0; margin-bottom: 0; }
+  h1 { font-size: 2.3rem; line-height: 1.15; margin: .4rem 0 .6rem; letter-spacing: -.01em; }
+  h1 em { color: var(--accent); font-style: italic; }
+  .sub { color: var(--muted); font-style: italic; margin: 0 0 2rem; font-size: 1.05em; }
+  h2 { font-size: 1.5rem; line-height: 1.25; margin: .3rem 0 .9rem; }
+  h3 { font-size: 1.08rem; margin: 1.4rem 0 .35rem; }
+  p { margin: .6rem 0; }
+  a { color: var(--accent); }
+  code, pre {
+    font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+    font-size: .84em;
+  }
+  code { background: var(--code-bg); padding: .08em .34em; border-radius: 4px; overflow-wrap: anywhere; }
+  pre {
+    background: var(--pre-bg); color: var(--pre-ink); padding: .95rem 1.2rem;
+    border-radius: 10px; overflow-x: auto; line-height: 1.45; margin: 1rem 0;
+  }
+  pre code { background: none; padding: 0; color: inherit; font-size: 1em; }
+  pre .dim { color: var(--pre-dim); }
+  table {
+    border-collapse: collapse; width: 100%; margin: 1rem 0;
+    background: var(--card); font-size: .9em;
+  }
+  th, td { border: 1px solid var(--line); padding: .45rem .7rem; text-align: left; vertical-align: top; }
+  th { background: var(--th-bg); }
+  td:first-child { white-space: nowrap; }
+  td:first-child code { overflow-wrap: normal; }
+  .tier-fable { color: var(--fable); font-weight: 700; }
+  .tier-opus { color: var(--opus); font-weight: 700; }
+  .tier-sonnet { color: var(--sonnet); font-weight: 700; }
+  .tier-haiku { color: var(--haiku); font-weight: 700; }
+  .callout {
+    background: var(--callout-bg); border-left: 4px solid var(--accent);
+    padding: .8rem 1.1rem; margin: 1.2rem 0; border-radius: 0 8px 8px 0;
+  }
+  .callout.quote p:first-child { font-size: 1.2em; font-style: italic; margin-top: 0; }
+  .note { color: var(--muted); font-size: .9em; }
+  ul, ol { padding-left: 1.4rem; }
+  li { margin: .35rem 0; }
+  .kicker {
+    text-transform: uppercase; letter-spacing: .12em; font-size: .75rem;
+    color: var(--muted); font-family: ui-monospace, Menlo, monospace; margin: 0;
+  }
+  .kicker b { color: var(--accent); font-weight: 600; }
+  .loop {
+    list-style: none; padding: 0; margin: 1.2rem 0;
+    display: grid; grid-template-columns: 1fr 1fr; gap: .8rem;
+  }
+  .loop li {
+    margin: 0; min-width: 0; background: var(--card); border: 1px solid var(--line);
+    border-top: 4px solid var(--c, var(--accent)); border-radius: 8px;
+    padding: .7rem .95rem .8rem; font-size: .93em; line-height: 1.5;
+  }
+  .loop .step {
+    display: block; font-family: ui-monospace, Menlo, monospace; font-size: .72rem;
+    letter-spacing: .1em; text-transform: uppercase; color: var(--muted);
+  }
+  .loop strong { display: block; font-size: 1.05em; margin: .15rem 0 .25rem; }
+  .loop .s1 { --c: var(--fable); } .loop .s2 { --c: var(--sonnet); }
+  .loop .s3 { --c: var(--opus); }  .loop .s4 { --c: var(--haiku); }
+  .layers { list-style: none; padding: 0; margin: .8rem 0; }
+  .layers li { padding-left: .9rem; border-left: 3px solid var(--line); margin: .55rem 0; }
+  .layers b { color: var(--ink); }
+  .nots li::marker { color: var(--accent); }
+  .run { margin-top: 1.4rem; }
+  .run pre { font-size: .9em; }
+  footer {
+    margin-top: 1.6rem; padding-top: .8rem; border-top: 1px solid var(--line);
+    color: var(--muted); font-size: .85em; font-family: ui-monospace, Menlo, monospace;
+  }
+  @media (max-width: 640px) {
+    .wrap { padding: 2rem 16px 3rem; }
+    h1 { font-size: 1.8rem; }
+    .loop { grid-template-columns: 1fr; }
+    td:first-child { white-space: normal; }
+  }
+  @page { margin: 18mm; }
+  @media print {
+    :root, :root[data-theme="dark"], :root:not([data-theme="light"]) {
+      --bg: #ffffff; --ink: #1e2430; --muted: #5c6470; --line: #d9d3c6;
+      --accent: #b45309; --card: #ffffff;
+      --fable: #b91c1c; --opus: #b45309; --sonnet: #15803d; --haiku: #0e7490;
+      --code-bg: #f1eee6; --pre-bg: #f6f3ec; --pre-ink: #1e2430; --pre-dim: #6b7280;
+      --th-bg: #f1eee6; --callout-bg: #fbf5ea;
+    }
+    .page { break-after: page; page-break-after: always; border-bottom: 0; margin: 0; padding: 0; }
+    .page:last-of-type { break-after: auto; page-break-after: auto; }
+    body { font-size: 11.5pt; line-height: 1.42; }
+    .wrap { max-width: none; padding: 0; }
+    h1 { font-size: 22pt; margin: .2rem 0 .4rem; }
+    h2 { font-size: 15pt; margin: .2rem 0 .5rem; }
+    h3 { font-size: 11.5pt; margin: .75rem 0 .15rem; }
+    p { margin: .35rem 0; }
+    .sub { margin-bottom: .9rem; }
+    li { margin: .2rem 0; }
+    table { font-size: .86em; margin: .6rem 0; }
+    th, td { padding: .3rem .55rem; }
+    pre { border: 1px solid var(--line); white-space: pre-wrap; font-size: .76em; line-height: 1.32; padding: .6rem .9rem; margin: .6rem 0; }
+    .loop { gap: .55rem; margin: .7rem 0; }
+    .loop li { font-size: .86em; line-height: 1.38; padding: .5rem .75rem .55rem; }
+    .layers li { margin: .3rem 0; }
+    .callout { padding: .5rem .85rem; margin: .7rem 0; }
+    .callout.quote p:first-child { font-size: 1.1em; }
+    .note { font-size: .86em; }
+    .run { margin-top: .7rem; }
+    footer { margin-top: .8rem; padding-top: .4rem; }
+    pre, table, .callout, .loop li, .layers li { break-inside: avoid; page-break-inside: avoid; }
+    h2, h3 { break-after: avoid; page-break-after: avoid; }
+    * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  }
+</style>
+</head>
+<body>
+<main class="wrap">
+
+<section class="page" id="claim">
+<p class="kicker"><b>polytropos</b> &middot; spec-driven development &middot; a Claude Code plugin</p>
+<h1>Plan once on the frontier. <em>Build cheaply against the spec.</em></h1>
+<p class="sub">A short case for spec-driven development as polytropos practices it: who writes the spec, who builds against it, who checks the work, and how the whole loop is measured.</p>
+
+<h2>The problem</h2>
+<p>The strongest model makes the best decisions, and it costs the most per token. Run every step of a large change on it and you pay frontier rates for typing. Run everything on a cheaper model and the bill drops, but judgment goes with it: the plan drifts, shortcuts creep in, and the report at the end says &ldquo;done&rdquo; whether or not it is. Most agent workflows then believe the report.</p>
+
+<h2>The claim</h2>
+<p>polytropos splits the work by what each part needs. Judgment is spent once, up front, and written down as a spec. Execution runs on cheaper tiers, pinned task by task. Nothing is accepted on the executor&rsquo;s word. In one sentence: <strong>the architect writes the spec, pinned models execute it, verification runs against the spec, and the ledger measures the result.</strong></p>
+
+<ol class="loop">
+  <li class="s1"><span class="step">Step 1 &middot; <span class="tier-fable">fable</span></span><strong>The architect writes the spec</strong><code>/polytropos:architect</code> runs once on the frontier tier and writes an execution kit: <code>PLAN.md</code>, <code>TASKS.md</code>, <code>GUARDRAILS.md</code>, and model-pinned agents.</li>
+  <li class="s2"><span class="step">Step 2 &middot; <span class="tier-sonnet">sonnet</span> &middot; <span class="tier-opus">opus</span> &middot; <span class="tier-haiku">haiku</span></span><strong>Pinned models execute</strong><code>/polytropos:execute</code> dispatches each task to its pinned tier: <code>sonnet</code> by default, <code>opus</code> for the genuinely hard ones, <code>haiku</code> for trivial mechanical work.</li>
+  <li class="s3"><span class="step">Step 3 &middot; verify</span><strong>Verification against the spec</strong>The orchestrator runs every verify command itself. A fresh-context verifier and a phase reviewer check the work against the kit, never against the implementer&rsquo;s report.</li>
+  <li class="s4"><span class="step">Step 4 &middot; measure</span><strong>The ledger measures</strong>Each result lands as a machine-read line in the kit&rsquo;s <code>NOTES.md</code>. <code>bin/routing_scorecard.py --history</code> grades the tiers, the review roles, and the spec itself across every kit.</li>
+</ol>
+
+<div class="callout quote">
+<p>&ldquo;The implementer&rsquo;s claim of success is not evidence.&rdquo;</p>
+<p class="note">One line from <code>skills/execute/SKILL.md</code>, and the whole discipline. The next three pages are the machinery that makes it hold.</p>
+</div>
+
+<p><strong>Why a spec, and not a better prompt?</strong> A prompt is read once, by one model. A spec is read by every role that touches the work: the implementer builds from it, the verifier checks against it, the reviewer measures drift from it, and the ledger records how well it held. That reuse is what makes frontier judgment worth its price, paid once.</p>
+</section>
+
+<section class="page" id="spec">
+<p class="kicker"><b>02</b> &middot; the spec</p>
+<h2>The spec is three files and a contract</h2>
+<p>A kit lives at <code>.claude/kits/&lt;slug&gt;/</code>. The architect skill (<code>skills/architect/SKILL.md</code>) names what each file must pin down, and the execute skill reads all three before the first dispatch.</p>
+
+<table>
+  <thead><tr><th>File</th><th>What it pins</th></tr></thead>
+  <tbody>
+    <tr><td><code>PLAN.md</code></td><td>The goal and a checkable &ldquo;done&rdquo;; constraints and an explicit out-of-scope fence; architecture decisions <em>with their rationale</em>; risks with tripwires.</td></tr>
+    <tr><td><code>TASKS.md</code></td><td>One block per task: <code>id</code>, <code>title</code>, <code>status</code>, <code>model</code>, a self-contained brief, acceptance criteria, and a verify command. Tasks sit under phase headings and each one carries <code>depends:</code> or <code>independent:</code>.</td></tr>
+    <tr><td><code>GUARDRAILS.md</code></td><td>Kit-scoped fences: forbidden shortcuts, conventions, &ldquo;always run X before claiming done&rdquo;. Required even when short.</td></tr>
+  </tbody>
+</table>
+
+<p>A task block, abridged:</p>
+<pre><code>### T3 &mdash; Guard the snapshot labels
+- id: T3
+- title: Fail the suite when a price table loses its label
+- status: pending
+- model: sonnet
+- depends: T1
+- evidence: red-green
+
+<span class="dim">Brief: the files, the exact interface, the known gotchas,
+and why this approach rather than the obvious one.</span>
+
+Acceptance:
+- the new guard passes, and it was red before the change
+
+Verify:
+  python3 -m unittest discover -s tests -p 'test_labels.py'</code></pre>
+
+<p><strong>The brief is the core of the spec.</strong> The skill requires every task to be executable by a model with <em>zero access to this conversation</em>: files, conventions, interfaces pinned exactly, known gotchas, and the <em>why</em>. Its calibration rule: &ldquo;Pin down contracts and interfaces precisely; leave implementation judgment open where any competent model would do fine.&rdquo;</p>
+<p><code>GUARDRAILS.md</code> exists even when it has little to say, because &ldquo;an absent file is indistinguishable from a forgotten one&rdquo;; <code>tests/test_guardrails_layout.py</code> fails the suite for any kit that skips it. Execute writes a fourth file, <code>NOTES.md</code>, as the kit runs. That file is the run&rsquo;s record, not part of the spec.</p>
+<p>The task graph is checked before anything runs. <code>bin/kit_contract.py graph</code> rejects a duplicate id, an unknown or self dependency, or a cycle, and names the fix for each; execute will not route around an invalid plan.</p>
+</section>
+
+<section class="page" id="verify">
+<p class="kicker"><b>03</b> &middot; verification and the ledger</p>
+<h2>Checked against the spec, not the story</h2>
+<p>Five layers stand between an implementer saying &ldquo;done&rdquo; and the task being marked <code>done</code>. Each is written into <code>skills/architect/SKILL.md</code> and <code>skills/execute/SKILL.md</code>.</p>
+<ul class="layers">
+  <li><b>The orchestrator runs the verify command itself.</b> Every task, every time; the implementer&rsquo;s report is not consulted.</li>
+  <li><b>A fresh-context verifier.</b> For non-trivial tasks a separate, adversarial agent re-checks the acceptance criteria against the files. It runs on <span class="tier-sonnet">sonnet</span> by default, and on <span class="tier-haiku">haiku</span> only when every check is mechanical.</li>
+  <li><b>A phase reviewer.</b> At each phase end an <span class="tier-opus">opus</span> reviewer checks the phase against <code>PLAN.md</code> for drift.</li>
+  <li><b>The red-green gate.</b> Under <code>evidence: red-green</code>, the default, a verify command that already passed on the pre-task tree means the task is <em>blocked, not done</em>. A check that could never have failed proves nothing.</li>
+  <li><b>Escalation with evidence.</b> A failed task is retried once with the failure output. A second failure marks it <code>blocked</code>, and a single-task consult on <span class="tier-fable">fable</span> receives only that brief, the failure evidence, and the relevant <code>PLAN.md</code> excerpts. Frontier spend stays proportional to genuine difficulty.</li>
+</ul>
+<p class="note">The verifier and reviewer are pinned to <code>tools: Bash, Read, Grep, Glob</code>. The architect skill is candid that this removes the casual path to editing, not the capability, so both prompts also carry a restore-what-you-touch practice. The headless drivers (<code>bin/claude_execute.py</code> and its peers) add two guarantees of their own: verify commands run inside the <code>bin/exec_policy.py</code> execution boundary, and <code>bin/attempt_ledger.py</code> records every dispatch before and after it runs. The interactive execute skill runs verify commands in the session&rsquo;s own shell. <code>SECURITY.md</code> states what each guarantee does and does not promise.</p>
+
+<h3>The ledger</h3>
+<p>Every finished task, dispatch, and phase review appends one machine-read line to <code>NOTES.md</code>, in the grammar of <code>skills/execute/references/ledger.md</code>:</p>
+<pre><code>outcome: T3 model=sonnet attempts=1 result=pass review=clean
+agent: T3 id=&lt;agent-id&gt; role=verifier model=sonnet findings=1 confirmed=1
+reviewer: 1 model=opus findings=4 confirmed=3
+defect: T5 kind=tautological-verify</code></pre>
+
+<div class="callout">
+<p><strong>The spec is graded too.</strong> When execute confirms mid-run that a brief itself was wrong (a stale pin, a verify that could not fail, an unspecified path, contradictory acceptance), it writes a <code>defect:</code> line instead of widening the task until it passes. The scorecard totals those kinds as the architect&rsquo;s brief-defect floor, and the architect&rsquo;s routing guidance tells the next planner to read them &ldquo;as evidence about YOUR OWN briefs&rdquo;. Grading the executors is common. Grading the spec is the point.</p>
+</div>
+</section>
+
+<section class="page" id="honest">
+<p class="kicker"><b>04</b> &middot; cheap and honest</p>
+<h2>Why it is cheap, and why you can believe it</h2>
+
+<h3>Frontier once</h3>
+<p>The architect runs on the frontier tier once. In dispatch mode it is a subagent, so &ldquo;the main session never leaves the daily driver&rdquo;. After that, execution reaches the frontier tier only through a blocked task&rsquo;s evidence-carrying consult; even the automatic re-route stops one rung below it.</p>
+
+<h3>Tiers by alias</h3>
+<p>Every pin is a tier word (<span class="tier-fable">fable</span>, <span class="tier-opus">opus</span>, <span class="tier-sonnet">sonnet</span>, <span class="tier-haiku">haiku</span>), never a model id. Claude Code resolves the alias to its tier&rsquo;s current default; the headless driver resolves it to the first row of that tier in <code>data/pricing.json</code>. <code>python3 bin/aesop_bridge.py tiers</code> prints today&rsquo;s answer. When a newer model leads its tier, kits follow without an edit.</p>
+
+<h3>Costs are computed, not quoted</h3>
+<p>This page carries no prices. <code>/polytropos:route</code> estimates a task&rsquo;s cost before it runs, and <code>python3 bin/routing_scorecard.py &lt;slug&gt; --session &lt;id&gt;</code> prices a finished kit against an all-frontier counterfactual. Both read <code>data/pricing.json</code> at run time.</p>
+
+<h3>The track record is a command, not a number</h3>
+<p>A tally written into prose is wrong by the next kit. <code>python3 bin/routing_scorecard.py --history</code> prints first-try, retry, escalated, and blocked counts per tier, findings against confirmed findings per review role, and the brief-defect kinds. Missing data shows as <code>n/a</code>, never as zero.</p>
+
+<h3>What it is not</h3>
+<ul class="nots">
+  <li><strong>Not code generation from a formal spec.</strong> The spec is prose plus shell commands; a model reads the brief and writes the change.</li>
+  <li><strong>Not proof the spec is complete.</strong> The checks cover what the architect thought to check. The reviewer and the brief-defect floor exist because the architect gets things wrong.</li>
+  <li><strong>Not a license to improvise.</strong> When a brief conflicts with the repo, the executor stops and reports. Nobody changes a task&rsquo;s scope or acceptance to make it pass.</li>
+  <li><strong>Not an automatic re-router.</strong> The live re-route signal is advisory by default. Under <code>autonomy: auto</code> it moves pending tasks one tier up, never down, never to the frontier, and it never rewrites a task&rsquo;s <code>model</code> field.</li>
+</ul>
+
+<div class="run">
+<p class="kicker"><b>run it</b></p>
+<pre><code>/polytropos:architect &lt;task&gt;                <span class="dim"># plan once, on the frontier tier</span>
+/polytropos:execute &lt;slug&gt;                  <span class="dim"># run the kit on its pinned tiers</span>
+python3 bin/routing_scorecard.py --history  <span class="dim"># the track record, live</span></code></pre>
+</div>
+
+<footer>Long form: docs/SPEC-DRIVEN.md &middot; Source: github.com/agentmc15/polytropos</footer>
+</section>
+
+</main>
+</body>
+</html>

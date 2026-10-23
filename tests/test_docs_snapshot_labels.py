@@ -4,7 +4,7 @@
 (``docs/guide.html``, ``docs/how-it-works.html``) carry price tables that are
 labeled snapshots of ``data/pricing.json``. This module reads the REAL tree,
 read-only, and asserts that each file carries the file's current ``cached_date``;
-the two Markdown files must additionally name the first-row display name of every
+every doc, HTML included, must additionally name the first-row display name of every
 tier (the current default of that tier -- the rule ``bin/claude_execute.py::
 resolve_tier`` uses), derived at test time and never typed here.
 
@@ -81,6 +81,13 @@ class HtmlDocsLabelTests(unittest.TestCase):
             self.assertFalse(missing_label(text, pricing),
                              f"{rel} lacks cached_date {pricing['cached_date']}")
 
+    def test_every_tier_default_is_named(self):
+        pricing = _pricing()
+        for rel in HTML_DOCS:
+            text = (ROOT / rel).read_text(encoding="utf-8")
+            self.assertEqual(missing_tier_names(text, pricing), [],
+                             f"{rel} does not name every tier's current default")
+
 
 class NegativeFixtureTests(unittest.TestCase):
     def test_label_check_fails_on_a_synthetic_stale_doc(self):
@@ -96,6 +103,10 @@ class NegativeFixtureTests(unittest.TestCase):
         self.assertEqual(tier_defaults(pricing), {"sonnet": "Sonnet 9", "haiku": "Haiku 9"})
         self.assertEqual(missing_tier_names("| Sonnet 8 | Haiku 9 |", pricing), ["Sonnet 9"])
         self.assertEqual(missing_tier_names("| Sonnet 9 | Haiku 9 |", pricing), [])
+        html = '<td class="tier-haiku">Haiku 9</td><td>Sonnet 8</td>'
+        self.assertEqual(missing_tier_names(html, pricing), ["Sonnet 9"])
+        html_ok = '<td class="tier-sonnet">Sonnet 9</td><td class="tier-haiku">Haiku 9</td>'
+        self.assertEqual(missing_tier_names(html_ok, pricing), [])
 
 
 if __name__ == "__main__":

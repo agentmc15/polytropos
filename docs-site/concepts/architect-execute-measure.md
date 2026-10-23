@@ -63,3 +63,5 @@ a unit rather than divided; the orchestrator's own session stays one un-split li
   that never needed a kit.
 - [Deep dive: how it works](../deep-dives/how-it-works.md) — the workflow end to end, with
   a worked example and the full ledger-line specification.
+- [Deep dive: spec-driven development](../deep-dives/spec-driven.md) — the kit as a spec, and
+  how verification is held to it rather than to the implementer's claims.

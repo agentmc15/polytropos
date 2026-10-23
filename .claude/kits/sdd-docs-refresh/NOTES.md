@@ -94,3 +94,75 @@ agent: T5 id=a113c61af85315a72 role=verifier model=sonnet findings=0 confirmed=0
 
 agent: T6 id=a31b258add64347d6 role=implementer model=sonnet
 defect: T6 kind=stale-plan-decision
+- Retry: rebuilt copilot-docs (hash-only aic-report.json), full suite + four checks exit 0,
+  committed `ca304e6`. The user's untracked local `.git/hooks/commit-msg` deliberately strips
+  Claude/Anthropic `Co-Authored-By` trailers (public history stays agentmc15-only), so T6's
+  verify clause `grep -q 'Co-Authored-By:'` can never pass here; every other clause passes
+  (orchestrator re-ran it). The user's own setting wins over harness attribution; T10/T11
+  inherit this exemption. No `--no-verify`, no amend.
+
+outcome: T6 model=sonnet attempts=2 result=retry-pass review=none run=2026-10-23-af89
+defect: T6 kind=contradictory-acceptance
+
+## Phase 2 review (opus): GO, 11 findings, all adjudicated real
+- CARRY-FORWARD TO T10 (binding): the Phase 3 commit body must name `ca304e6` and correct it:
+  (1) para 1 misstates the mechanism — Haiku 4.5 still leads the haiku tier; what moved is that
+  Sonnet 5.5 leads the sonnet tier; (2) the verifier re-tier's runtime change is
+  `skills/architect/SKILL.md` Step 2 (plus GUIDE/HOW-IT-WORKS/both HTML), and REFERENCE.md:108
+  is the sanctioned exception to D4; (3) the two tests were overstated — roster_currency checks
+  skills + manifests, snapshot_labels checks the date label and (md) tier names, no rates;
+  (11) the subject ran ~97 chars, the body omitted the de-overclaiming of skill behavior
+  (refusal fallback, retention/turn-length/cyber caveats, effort sweep), and the trailer is
+  absent because of the user's local commit-msg hook.
+- Findings 4–10 (HTML tier-name check, whole-word exemption in roster guard, one Haiku 5.5
+  sentence, HOW-IT-WORKS:45 gloss claim, how-it-works.html:79 ratio, "10× Haiku 4.5",
+  guide.html:109 garbled span) fixed by a pre-T7 fix-up implementer dispatch (no task id; the
+  dispatch is counted here in prose against max-dispatches).
+
+reviewer: P2 model=opus findings=11 confirmed=11 result=accepted
+- Fix-up dispatch `a5c263a26212faf38` (sonnet) landed findings 4–10; orchestrator re-ran both test modules and both generator checks: green.
+
+## T7
+- SPEC-DRIVEN.md written (8 sections). Adding a deep dive moves FIVE pinned census numbers,
+  not the one the brief named: page-map 40→41 and md-source 38→39
+  (`tests/test_docs_build_adversarial.py`), plus `tests/test_docs_build_cli.py`
+  RealTreeIdempotence 88→89 and `tests/test_primitives_doc_adversarial.py` CensusBumpTripwire
+  38/40/88→39/41/89 — the latter two files outside T7's list. Orchestrator authorized the same
+  D5-style bump (number + lineage sentence) as bounded adaptation; recorded as a brief defect.
+- Doc describes attempt-ledger/exec-boundary as headless-driver guarantees (the interactive
+  execute skill does not invoke `exec_policy`) — accurate; T9's pitch must keep that distinction.
+
+defect: T7 kind=unspecified-path
+- Verifier FAIL: doc listed `unrunnable-verify` as a defect kind — not in the ledger grammar;
+  the token came from T7's own brief. Retry sent to the same implementer; T9 must use only the
+  six real kinds if it names any.
+
+agent: T7 id=ad182d49737e315f8 role=implementer model=opus
+agent: T7 id=a44a48f1fcb94f8c9 role=verifier model=sonnet findings=2 confirmed=2 result=revised
+defect: T7 kind=stale-pin
+- Retry fixed both; orchestrator re-ran T7 verify (T7-OK) and grep for the token (absent).
+
+outcome: T7 model=opus attempts=2 result=retry-pass review=revised run=2026-10-23-af89
+
+## T8
+- Four pointer lines added. The README line re-drifted copilot-docs; the implementer's temp
+  probe wrongly reported content changes because an unanchored `rsync --exclude journal` also
+  dropped `skills/journal/`. Orchestrator re-probed with root-anchored excludes: hash-only
+  (three `sources_sha256` lines), so ran the user-sanctioned `copilot_docs.py build` itself and
+  re-ran T8's verify (T8-OK) plus `copilot_docs.py check` (up to date). Lesson: anchor rsync
+  excludes (`/journal`) in temp-tree probes.
+
+agent: T8 id=ac10335d01ac1cb46 role=implementer model=haiku
+outcome: T8 model=haiku attempts=1 result=pass review=none run=2026-10-23-af89
+
+## T9
+- Pitch: 4 page sections (~1500 words), prints as 4 US-Letter sheets in headless Chrome (light
+  and dark). Verifier PASS with one attribution slip (verifier pins live in the architect
+  skill) — fixed by the same implementer; still 4 sheets. Dark tokens use the
+  `:root:not([data-theme="light"])` + `[data-theme="dark"]` pattern, so the file publishes as an
+  artifact unchanged. Negative-fixture gaps (script/link/img, dark block, total length) noted,
+  not required.
+
+agent: T9 id=a761981abf9ba3c87 role=implementer model=opus
+agent: T9 id=a501d49d5da20e680 role=verifier model=sonnet findings=1 confirmed=1 result=revised
+outcome: T9 model=opus attempts=2 result=pass review=revised run=2026-10-23-af89

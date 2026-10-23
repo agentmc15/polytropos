@@ -383,7 +383,7 @@ python3 -m unittest discover -s tests -p 'test_docs_snapshot_labels.py' -q && ! 
 ### T6 — Commit Phase 2 at a green boundary
 - id: T6
 - title: Full suite and all generator checks green, then one commit for the roster refresh
-- status: in-progress
+- status: done
 - model: sonnet
 - depends: T3, T5
 - evidence: red-green
@@ -429,7 +429,7 @@ Verify:
 ### T7 — docs/SPEC-DRIVEN.md: polytropos as spec-driven development, every claim sourced
 - id: T7
 - title: Write docs/SPEC-DRIVEN.md, register its site page, bump the page-map test, rebuild
-- status: pending
+- status: done
 - model: opus
 - depends: T6
 - evidence: red-green
@@ -517,7 +517,7 @@ test -f docs/SPEC-DRIVEN.md && [ "$(grep -c '^## ' docs/SPEC-DRIVEN.md)" = "8" ]
 ### T8 — Pointers to the spec-driven doc from README, GUIDE, HOW-IT-WORKS and the concepts page
 - id: T8
 - title: Link docs/SPEC-DRIVEN.md from the four entry documents and rebuild
-- status: pending
+- status: done
 - model: haiku
 - depends: T7
 - evidence: red-green
@@ -556,7 +556,7 @@ Verify:
 ### T9 — The elevator pitch: docs/spec-driven-pitch.html, 3–5 printed pages, verified by a test
 - id: T9
 - title: Write the self-contained light/dark print-ready pitch and tests/test_spec_driven_pitch.py
-- status: pending
+- status: done
 - model: opus
 - depends: T7
 - evidence: red-green
@@ -637,7 +637,7 @@ test -f tests/test_spec_driven_pitch.py && python3 -m unittest discover -s tests
 ### T10 — Commit Phase 3 at a green boundary
 - id: T10
 - title: Full suite and generator checks green, then one commit for the spec-driven docs and pitch
-- status: pending
+- status: in-progress
 - model: sonnet
 - depends: T8, T9
 - evidence: red-green

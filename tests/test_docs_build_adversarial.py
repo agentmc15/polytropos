@@ -748,7 +748,7 @@ class DeepDivePageMapRealTreeTests(unittest.TestCase):
     def test_every_real_docs_md_source_is_mapped_with_lowercased_slug(self):
         page_map = db.deep_dive_page_map(REPO_ROOT)
         md_sources = sorted((REPO_ROOT / "docs").glob("*.md"))
-        self.assertEqual(len(md_sources), 38)  # Route experiment followed the Jev judge study.
+        self.assertEqual(len(md_sources), 39)  # SPEC-DRIVEN followed the route experiment.
         for path in md_sources:
             key = f"docs/{path.name}"
             expected_value = f"deep-dives/{path.stem.lower()}.md"
@@ -785,9 +785,10 @@ class DeepDivePageMapRealTreeTests(unittest.TestCase):
     (2026-09-24), then 37 -> 38 when J01 added docs/JEV-ACCESS-CONTRACT.md
     (2026-09-25), then 38 -> 39 when the Jev judge-study design added
     docs/JEV-JUDGE-STUDY.md (2026-09-25), then 39 -> 40 when the route experiment added
-    docs/ROUTE-EXPERIMENT.md (2026-09-28)."""
+    docs/ROUTE-EXPERIMENT.md (2026-09-28), then 40 -> 41 when
+    sdd-docs-refresh added docs/SPEC-DRIVEN.md (2026-10-23)."""
         page_map = db.deep_dive_page_map(REPO_ROOT)
-        self.assertEqual(len(page_map), 40)
+        self.assertEqual(len(page_map), 41)
 
 
 class DeepDivesNeverMirrorHtmlFilesLiveTreeTests(unittest.TestCase):

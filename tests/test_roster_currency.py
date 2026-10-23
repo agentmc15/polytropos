@@ -27,7 +27,7 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-EXEMPT_WORDS = ("superseded", "historical", "retained", "older")
+EXEMPT_RE = re.compile(r"\b(superseded|historical|retained|older)\b")
 GUARDED_TIERS = ("sonnet", "opus")
 
 
@@ -56,8 +56,7 @@ def stale_lines(text: str, names: list[str]) -> list[str]:
     pats = [standalone_pattern(n) for n in names]
     hits = []
     for line in text.splitlines():
-        low = line.lower()
-        if any(w in low for w in EXEMPT_WORDS):
+        if EXEMPT_RE.search(line.lower()):
             continue
         if any(p.search(line) for p in pats):
             hits.append(line.strip())
@@ -98,6 +97,11 @@ class SkillRosterCurrencyTests(unittest.TestCase):
         self.assertEqual(names, ["Sonnet 5"])
         with self.assertRaises(AssertionError):
             assert_no_stale("use Sonnet 5 for edits", names, "synthetic")
+
+    def test_exemption_matches_whole_words_only(self):
+        names = ["Sonnet 5"]
+        self.assertEqual(stale_lines("see folder: Sonnet 5", names), ["see folder: Sonnet 5"])
+        self.assertEqual(stale_lines("older: Sonnet 5", names), [])
         # The current name and an exempted historical mention both pass.
         assert_no_stale("use Sonnet 5.5 for edits", names, "synthetic")
         assert_no_stale("Sonnet 5 is a superseded row", names, "synthetic")
