@@ -19,7 +19,7 @@ Automatic escalation needs a failing check to fire on. Before dispatching anythi
 
 ## Step 1 — Pick the first (cheapest sufficient) tier
 
-Default to the **cheapest model you'd actually trust for this task**, not the session model by reflex. Use `/route`'s framing if unsure; typically Sonnet 5 for routine coding/edits, Opus 5.5 for multi-file or harder reasoning. This is the tier you're betting can do it without Fable. Read prices only if the user asks for a cost figure — resolve `data/pricing.json` via `${CLAUDE_PLUGIN_ROOT}/data/pricing.json`, falling back to `../../data/pricing.json` relative to this SKILL.md — and never quote rates from memory.
+Default to the **cheapest model you'd actually trust for this task**, not the session model by reflex. Use `/route`'s framing if unsure; typically the sonnet tier (Sonnet 5.5 today) for routine coding/edits, Opus 5.5 for multi-file or harder reasoning. This is the tier you're betting can do it without Fable. Read prices only if the user asks for a cost figure — resolve `data/pricing.json` via `${CLAUDE_PLUGIN_ROOT}/data/pricing.json`, falling back to `../../data/pricing.json` relative to this SKILL.md — and never quote rates from memory.
 
 ## Step 2 — First attempt
 

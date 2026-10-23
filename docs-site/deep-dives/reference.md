@@ -110,7 +110,7 @@ daily work (Opus 5.5)
    ▼
 /polytropos:architect <task>        ← the frontier tier runs ONCE (in-session or as a subagent)
    │  emits an execution kit: .claude/kits/<slug>/PLAN.md + TASKS.md + GUARDRAILS.md,
-   │  model-pinned subagents (implementer=sonnet, verifier=haiku, reviewer=opus),
+   │  model-pinned subagents (implementer=sonnet, verifier=sonnet, reviewer=opus),
    │  Fable's judgment encoded as scaffolding
    ▼
 /polytropos:execute <slug>          ← back on Opus/Sonnet; loop dispatches tasks

@@ -1,13 +1,13 @@
 ---
 name: architect
-description: Plan a complex task once on Fable 5 and write the execution kit — PLAN.md, TASKS.md, GUARDRAILS.md, and model-pinned agents — that a cheaper model then executes at near-Fable quality. Use when the user says "plan this with Fable", "architect this", "review this codebase", or escalates a complex task. Not for running a kit; that is /polytropos:execute.
+description: Plan a complex task once on the frontier tier (Fable 5.1 today) and write the execution kit — PLAN.md, TASKS.md, GUARDRAILS.md, and model-pinned agents — that a cheaper model then executes at near-Fable quality. Use when the user says "plan this with Fable", "architect this", "review this codebase", or escalates a complex task. Not for running a kit; that is /polytropos:execute.
 ---
 
 # Fable-as-architect
 
 The goal: **Fable 5 runs once, at the start; its judgment persists as scaffolding.** The output is not just a plan — it is an *execution kit* a lesser model can run at near-Fable quality, because every decision that needed Fable-level judgment is already made and written down.
 
-## Step 0 — Get onto Fable 5
+## Step 0 — Get onto the frontier tier (Fable 5.1 today)
 
 Check the current session model. Two entry modes:
 
@@ -53,7 +53,7 @@ Pin down contracts and interfaces precisely; leave implementation judgment open 
 ### Project subagents (`.claude/agents/` in the target project)
 Only create what the kit needs and doesn't already exist. Typical trio, each with project-specific conventions baked into its prompt:
 - `<slug>-implementer.md` — `model: sonnet` — executes one task brief exactly; stops and reports rather than improvising when the brief is wrong
-- `<slug>-verifier.md` — `model: haiku` (or sonnet if judgment needed), `tools: Bash, Read, Grep, Glob` — fresh-context adversarial check of acceptance criteria; never trusts the implementer's claims, reruns the verify command itself
+- `<slug>-verifier.md` — `model: sonnet` by default (haiku only when every check is mechanical — a command exit code, a byte comparison; the routing history's Role quality card shows why), `tools: Bash, Read, Grep, Glob` — fresh-context adversarial check of acceptance criteria; never trusts the implementer's claims, reruns the verify command itself
 - `<slug>-reviewer.md` — `model: opus`, `tools: Bash, Read, Grep, Glob` — reviews completed phases against PLAN.md for drift
 
 **Pin the read-only roles' `tools:` frontmatter — mandatory for every kit you generate.** Verifier and reviewer get `tools: Bash, Read, Grep, Glob` (read/search plus Bash, no Write, no Edit); the implementer's tools stay unpinned, because writing is its job. Scope structurally rather than by instruction: a verifier with no editor cannot be talked into fixing the defect while it is in there. But write the honest limit into the agent file too, instead of trusting the pin — Bash alone can delete or rewrite any tracked file, and in this repo a verifier holding exactly this pin destroyed an authored docs section during mutation testing, never restored it, and reported its own damage as the implementer's defect. Removing Write/Edit removes the *casual* path, not the capability. So pair the pin with the practice that actually closes the gap, stated in both read-only agents' prompts: prefer non-mutating checks; when a check genuinely needs mutation, copy the target to a temp directory and mutate the copy, never a tracked file in place; if the tree is touched anyway, restore it byte-for-byte before reporting and say so; and close with `git status --porcelain`, reporting any unexpected change as the agent's own defect, never the implementer's.

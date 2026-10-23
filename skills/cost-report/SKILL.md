@@ -21,7 +21,7 @@ Flags:
 - `--json` — print the report payload as JSON instead of markdown
 - `--projects-dir DIR` — point the walk at a non-default transcript directory (the only way to run this against anything but the live `~/.claude/projects`)
 
-The script walks `~/.claude/projects/**/*.jsonl`, extracts per-message model + usage (input/output/cache tokens), dedupes by message id, and prices everything from `data/pricing.json` (Sonnet 5 intro pricing applied by date).
+The script walks `~/.claude/projects/**/*.jsonl`, extracts per-message model + usage (input/output/cache tokens), dedupes by message id, and prices everything from `data/pricing.json` (any `intro_pricing` window a row carries is applied by date).
 
 ## Presenting the results
 
@@ -30,7 +30,7 @@ The script emits markdown. Summarize it for the user rather than dumping raw out
 1. **Headline**: total API-equivalent cost over the window and which model dominated.
 2. **By-model table**: as emitted.
 3. **Downgrade candidates** (sessions on Fable/Opus with a small footprint — under ~50K tokens and few tool calls):
-   - In `api` mode: present the dollar delta as savings ("these sessions would have cost $X.XX less on Sonnet 5").
+   - In `api` mode: present the dollar delta as savings ("these sessions would have cost $X.XX less on the Sonnet tier").
    - In `subscription` mode: present it as burn share ("these sessions spent rate-limit budget on Fable for Sonnet-sized work") — dollars are API-equivalent, not spend.
 4. One actionable recommendation, e.g. a default-model or effort-level change, based on what the data shows.
 

@@ -22,9 +22,9 @@ State which mode you chose and why in one sentence.
 
 | Model | Route here when |
 |---|---|
-| Haiku 4.5 | Classification, extraction, formatting, simple lookups, high-volume/bulk calls. Caveat: 200K context ceiling. |
-| Sonnet 5 | The speed-and-intelligence workhorse for day-to-day coding, tests, docs, refactors, and most app inference. |
-| Opus 5.5 | Default for most workloads, including long-running agentic coding and knowledge work. Use it when Sonnet 5 at high effort falls short. |
+| Haiku 4.5 | Classification, extraction, formatting, simple lookups, high-volume/bulk calls. Caveat: 200K context ceiling. Haiku 5.5 is priced in `pricing.json` with a separate rate for single prompts over its `long_context.threshold_input_tokens`; it becomes the haiku default when its row leads its tier. |
+| Sonnet 5.5 | The speed-and-intelligence workhorse for day-to-day coding, tests, docs, refactors, and most app inference. |
+| Opus 5.5 | Default for most workloads, including long-running agentic coding and knowledge work. Use it when Sonnet 5.5 at high effort falls short. |
 | Fable 5.1 | Demanding reasoning, long-horizon agentic work, large migrations, deep research, or problems Opus 5.5 at higher effort failed on. |
 
 When in doubt between two tiers in api mode, recommend the cheaper one and say what failure signal would justify upgrading.
@@ -37,7 +37,7 @@ supports them; never infer current availability from their presence in the file.
 
 - **Opus 5.5 is the daily driver.** Skip Haiku entirely — there is no reason to use it when dollars don't apply.
 - **Escalate to Fable 5.1 for complex planning and genuinely complex tasks** — and for those, don't just recommend the model: recommend `/polytropos:architect`, which has Fable do the meta-work once (plan + execution kit of task briefs, model-pinned subagents, skills, verification loops) so Opus/Sonnet execute the rest at near-Fable quality. Fable for the portion that needs it, then back down.
-- Drop to Sonnet 5 for trivial tasks or when rate-limit windows are running hot (statusline / `/usage` `rate_limits.*.used_percentage` high).
+- Drop to the sonnet tier (Sonnet 5.5 today) for trivial tasks or when rate-limit windows are running hot (statusline / `/usage` `rate_limits.*.used_percentage` high).
 - Manage burn primarily via **effort level**, not model downgrades: `low`/`medium` for routine work, `high`/`xhigh` for hard agentic work.
 
 ## Step 3 — Estimate cost

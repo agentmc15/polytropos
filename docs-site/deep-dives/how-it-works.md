@@ -18,10 +18,12 @@ Claude Code sessions run on one model at a time, and the price spread across the
 | Fable 5.1 | $10 | $50 | 2.5× Opus 5.5, 5× Sonnet, 10× Haiku |
 | Opus 5.5 | $4 | $20 | default for most workloads |
 | Opus 5 | $5 | $25 | historical costing and compatibility |
-| Sonnet 5 | $2 | $10 | speed-and-intelligence workhorse |
-| Haiku 4.5 | $1 | $5 | bulk/simple API work |
+| Sonnet 5.5 | $2 | $10 | speed-and-intelligence workhorse; successor to Sonnet 5 at the same rate |
+| Sonnet 5 | $2 | $10 | superseded by Sonnet 5.5; historical costing and compatibility |
+| Haiku 4.5 | $1 | $5 | bulk/simple API work; the haiku tier's current default |
+| Haiku 5.5 | $0.1 | $0.5 | priced for prompts up to its threshold, higher rate above it (see `data/pricing.json`); not the haiku default yet — row order in `pricing.json` |
 
-*(Prices cached 2026-09-24 in `data/pricing.json` — the single source of truth; nothing else hard-codes a price.)*
+*(Prices cached 2026-10-07 in `data/pricing.json` — the single source of truth; nothing else hard-codes a price.)*
 
 Running the frontier tier as a standing default is harmless on a subscription (dollars don't change) but can become an overpayment under pay-per-token billing. Usage mix is local and changes over time, so `python3 bin/cost_report.py --days 30` is the evidence for a current account rather than a fixed example in this guide.
 
@@ -43,10 +45,11 @@ The same routing question gets opposite answers depending on how tokens are paid
 - The daily driver should be the best sustainable model — the **Opus tier** in this setup. Which
   concrete model that tier means is derived, never typed: `python3 bin/aesop_bridge.py tiers`
   resolves each tier to the model `data/pricing.json` currently carries for it, and that file
-  marks Opus 4.8 superseded at the same rate (kept for costing historical transcripts, and as
-  the standard fallback target for a Fable or Opus refusal). `skills/route/SKILL.md` and
-  `skills/fable-check/SKILL.md` still name Opus 4.8 in their own ladder text; read the tier, and
-  ask the command which model it is today.
+  marks Opus 4.8 superseded by the current Opus default (retained for historical transcript
+  costing and explicit compatibility pins; its rates differ from the default's). The skills
+  `skills/route/SKILL.md` and `skills/fable-check/SKILL.md` name the current default of each
+  tier as a gloss beside the tier word; read the tier, and ask the command which model it is
+  today.
 - Burn is managed with **effort levels** (`low`/`medium` for routine work), not model downgrades.
 - Dollar figures are still shown, but labeled *API-equivalent burn* — a proxy for how hard a task hits the windows.
 
@@ -162,7 +165,7 @@ Two generated mirrors under `skills/{route,fable-check}/references/` keep the ae
 Four steps, executed by the model reading the skill:
 
 1. **Mode.** Resolve `api` vs `subscription` (flag > task framing > pricing.json default). App-building questions force `api`.
-2. **Classify.** In `api` mode, a cheapest-sufficient ladder: Haiku (bulk/simple) → Sonnet 5 (workhorse) → the Opus tier (hard debugging, architecture) → Fable 5.1 (long-horizon, Opus-failed). Ties break *down*, with an explicit "upgrade if you see X" signal. In `subscription` mode: the Opus tier as daily driver, escalate complex work toward Fable (via the architect pattern), Haiku skipped, effort as the burn lever.
+2. **Classify.** In `api` mode, a cheapest-sufficient ladder: Haiku (bulk/simple) → the Sonnet tier (Sonnet 5.5 today; workhorse) → the Opus tier (hard debugging, architecture) → Fable 5.1 (long-horizon, Opus-failed). Ties break *down*, with an explicit "upgrade if you see X" signal. In `subscription` mode: the Opus tier as daily driver, escalate complex work toward Fable (via the architect pattern), Haiku skipped, effort as the burn lever.
 3. **Estimate.** Match the task to a size profile (XS 10K/1K tokens through XL 1.5M/100K), price each candidate model, show cache-discounted figures for agentic sizes, and apply the data-defined cache and batch adjustments.
 4. **Recommend + act.** A compact table with the recommendation bolded, then: **dispatch now** (Agent tool, `model` set to the recommendation, self-contained brief written from the conversation), **switch the session** (prints the `/model` command), or — for big Fable-worthy tasks — hand off to `/architect`. App questions get model ID + API parameters to paste into code instead.
 
@@ -178,7 +181,7 @@ Fable produces an **execution kit** in the target project:
 |---|---|---|
 | `PLAN.md` | `.claude/kits/<slug>/` | Goal, constraints, out-of-scope, architecture decisions **with rationale**, risks with tripwires. The rationale is load-bearing: it's what lets a cheaper model make consistent micro-decisions later. |
 | `TASKS.md` | same | Ordered tasks. Each is a self-contained brief executable by a model with **zero access to the planning conversation**: files, conventions, exact interfaces/contracts, gotchas, acceptance criteria, a shell verify command, and a suggested model (`sonnet` default, `opus` for hard ones, `haiku` for mechanical ones). |
-| Subagents | `.claude/agents/` | `<slug>-implementer` (`model: sonnet`) executes one brief exactly; `<slug>-verifier` (`model: haiku`) re-checks acceptance criteria in fresh context, adversarially; `<slug>-reviewer` (`model: opus`) reviews phases against PLAN.md. Model pinning in frontmatter means the mix enforces itself. |
+| Subagents | `.claude/agents/` | `<slug>-implementer` (`model: sonnet`) executes one brief exactly; `<slug>-verifier` (`model: sonnet`; haiku only for purely mechanical checks) re-checks acceptance criteria in fresh context, adversarially; `<slug>-reviewer` (`model: opus`) reviews phases against PLAN.md. Model pinning in frontmatter means the mix enforces itself. |
 | Guardrails | project `CLAUDE.md` / skills | Conventions, invariants, "run X before claiming done", forbidden shortcuts — the Fable-judgment rails the executors run on. |
 
 The kit's calibration rule: **pin down contracts exactly, leave implementation judgment open.** Over-prescription wastes the kit (and degrades output — prescriptive scaffolding hurts strong models); under-specification wastes the executor.
@@ -218,11 +221,11 @@ Four refinements from the "fusion" arc make the loop cheaper and self-measuring 
 The per-task sibling of `/execute`'s escalation valve, for a single task rather than a kit: run the cheapest sufficient model first, and promote toward Fable **only when a machine check fails**. The procedure:
 
 1. **Pin the trigger.** Automatic escalation needs a failing check to fire on, so first state a machine-checkable success condition — a test, a build, a lint, a `curl` + grep, any command that exits non-zero on failure. If the task has no checkable outcome, the skill says so plainly rather than pretending a vibe is a verify.
-2. **Attempt cheap.** Dispatch a subagent at the cheapest tier you'd actually trust (typically Sonnet 5 for routine coding, Opus 4.8 for harder reasoning) with a self-contained brief.
+2. **Attempt cheap.** Dispatch a subagent at the cheapest tier you'd actually trust (typically the sonnet tier — Sonnet 5.5 today — for routine coding, the Opus tier — Opus 5.5 today — for harder reasoning) with a self-contained brief.
 3. **Verify yourself, then decide.** The orchestrator runs the check itself — the subagent's claim is not evidence. Pass → done, and it never needed Fable. Fail → retry once on the *same* model with the exact failure output (a cheap attempt often just needs to see the error). Fail again → escalate.
 4. **Escalate cheaply.** Dispatch a `model: fable` subagent carrying *only* the task, the check, and the evidence from both failed attempts. Two cost levers, in order of control: **scope** (hand it the diagnosis, not a blank re-attempt — the failure evidence is what makes the Fable hop short) and **effort** (prefer `medium`, where the invocation exposes it — Fable at `medium` often beats older models at `max`). Re-verify Fable's output too; if even Fable fails, stop and report honestly.
 
-**Refusal fallback:** a Fable subagent that returns `stop_reason: "refusal"` (its cyber/bio-adjacent classifiers) won't retry into success, so that hop falls back to an Opus 4.8 subagent at high effort. In `api` mode the payoff is concrete — Fable runs only on the fraction of tasks the cheaper tier failed, so the skill reports roughly what fraction escalated. For multi-task work, prefer a kit (`/architect`) over calling this in a loop.
+**No refusal fallback in the skill:** `skills/escalate/SKILL.md` states none. Operator practice: if a Fable subagent returns `stop_reason: "refusal"` (its cyber/bio-adjacent classifiers), re-run that hop on the Opus tier yourself — the skill does not do this for you. In `api` mode the payoff is concrete — Fable runs only on the fraction of tasks the cheaper tier failed, so the skill reports roughly what fraction escalated. For multi-task work, prefer a kit (`/architect`) over calling this in a loop.
 
 ### 4.6 `/cost-report` + `bin/cost_report.py`
 
@@ -231,7 +234,7 @@ The analyzer walks `~/.claude/projects/**/*.jsonl` (Claude Code's local transcri
 - **Dedupes by message id** (resumed sessions duplicate history into new files).
 - **Normalizes model strings** — `claude-fable-5[1m]`, date-suffixed IDs — onto pricing.json keys by prefix match; unknown models are tallied and reported, never silently dropped.
 - **Prices each record** from the matching model's data-defined input, output, cache-read, and cache-write rates; historical records retain the rate applicable to their date where the registry supplies it.
-- **Aggregates** by model and session, then flags **downgrade candidates**: sessions whose models were all Fable/Opus-tier but whose footprint was Sonnet-sized (< 50K tokens, < 10 tool calls), with the exact dollar delta vs re-pricing every record at Sonnet 5 rates.
+- **Aggregates** by model and session, then flags **downgrade candidates**: sessions whose models were all Fable/Opus-tier but whose footprint was Sonnet-sized (< 50K tokens, < 10 tool calls), with the exact dollar delta vs re-pricing every record at Sonnet-tier rates.
 - Frames output per mode: savings (`api`) vs burn share (`subscription`).
 
 ### 4.7 Statusline + `/setup`
@@ -242,7 +245,7 @@ The analyzer walks `~/.claude/projects/**/*.jsonl` (Claude Code's local transcri
 
 ### 4.8 `/fable-check`
 
-The judgment reference: route to Fable for long-horizon autonomous work, problems Opus already failed on, deep research, heavy sub-agent orchestration — and *not* for routine coding, solved problems, or security-analysis-heavy work (Fable's cyber classifiers refuse much of it; Opus 4.8 is the better tool there). Every Fable recommendation surfaces the operational caveats: `refusal` stop reason with Opus fallback, minutes-long turns, the 30-day data-retention requirement, and always-on thinking. Optimal-use rules: full spec up front, sweep effort levels (Fable at `low` often beats older models at `max` — don't default to `xhigh`), de-prescribe prompts, let it delegate, give it a memory surface.
+The judgment reference: route to Fable for long-horizon autonomous work, problems Opus already failed on, deep research, heavy sub-agent orchestration — and *not* for routine coding, solved problems, or work the Sonnet tier or the Opus tier (Opus 5.5 today) handles at the needed effort. Every Fable recommendation surfaces the one caveat the skill states: thinking is always on. Optimal-use rules, per the skill: full spec up front, start from the documented default effort (Fable 5.1 defaults to `high`) and raise it only on evidence, de-prescribe prompts, let it delegate, give it a memory surface. *Operator guidance, not skill behavior:* Fable's cyber classifiers can refuse security-analysis work, so use the Opus tier there and re-run a refused hop on it by hand.
 
 ### 4.9 The execution boundary — one place each for run, path, process, store, and redaction
 
@@ -335,7 +338,7 @@ manifest, a derived dataset, and a readiness report `invalidated` and a checkpoi
 daily work (the Opus tier)
    │  complex planning / complex task detected (/route flags it, or you know)
    ▼
-/polytropos:architect <task>        ← Fable 5 runs ONCE (subagent or /model fable)
+/polytropos:architect <task>        ← Fable 5 runs ONCE (subagent or /model fable; the frontier tier — Fable 5.1 today)
    │  emits the execution kit: PLAN.md + TASKS.md + model-pinned agents + guardrails
    ▼
 /polytropos:execute <slug>          ← back on Opus/Sonnet; loop dispatches,
