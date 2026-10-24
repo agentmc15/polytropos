@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="claude:viewport-fit-sides" content="cover">
+<title>SDD Pipelines Compared</title>
+<style>
+  :root {
+    --bg: #faf9f6; --ink: #1e2430; --muted: #5c6470; --line: #e3ded3;
+    --accent: #b45309; --card: #ffffff; --code-bg: #efece4;
+    --fable: #b91c1c; --opus: #b45309; --sonnet: #15803d; --haiku: #0e7490;
+    --person: #6d28d9; --new: #2563eb; --weak: #9f1239; --weak-bg: #fdf0f2;
+    --strong-bg: #eef7f0; --new-bg: #eef3fd;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #15171c; --ink: #e9e5dc; --muted: #a2a8b2; --line: #30343c;
+      --accent: #f0a04b; --card: #1c1f25; --code-bg: #272b33;
+      --fable: #f38b8b; --opus: #f0a04b; --sonnet: #5fd08a; --haiku: #4fc9de;
+      --person: #b79cf7; --new: #7aa7ff; --weak: #f49ab0; --weak-bg: #2c1c22;
+      --strong-bg: #18271d; --new-bg: #1a2233;
+      color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #15171c; --ink: #e9e5dc; --muted: #a2a8b2; --line: #30343c;
+    --accent: #f0a04b; --card: #1c1f25; --code-bg: #272b33;
+    --fable: #f38b8b; --opus: #f0a04b; --sonnet: #5fd08a; --haiku: #4fc9de;
+    --person: #b79cf7; --new: #7aa7ff; --weak: #f49ab0; --weak-bg: #2c1c22;
+    --strong-bg: #18271d; --new-bg: #1a2233;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  html { background: var(--bg); }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 16px/1.55 Georgia, 'Times New Roman', serif; -webkit-text-size-adjust: 100%;
+  }
+  .wrap {
+    max-width: 1180px; margin: 0 auto; padding-block: 2.6rem 4rem;
+    padding-left: max(16px, env(safe-area-inset-left, 0px));
+    padding-right: max(16px, env(safe-area-inset-right, 0px));
+  }
+  .kicker {
+    text-transform: uppercase; letter-spacing: .12em; font-size: .75rem; margin: 0;
+    color: var(--muted); font-family: ui-monospace, Menlo, monospace;
+  }
+  .kicker b { color: var(--accent); font-weight: 600; }
+  h1 { font-size: 2.1rem; line-height: 1.15; margin: .4rem 0 .5rem; }
+  h1 em { color: var(--accent); }
+  .sub { color: var(--muted); font-style: italic; margin: 0 0 1.4rem; max-width: 52rem; }
+  code {
+    font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace; font-size: .84em;
+    background: var(--code-bg); padding: .06em .32em; border-radius: 4px; overflow-wrap: anywhere;
+  }
+  .legend {
+    display: flex; flex-wrap: wrap; gap: .5rem 1.1rem; margin: 0 0 1.6rem; padding: .7rem .9rem;
+    border: 1px solid var(--line); border-radius: 8px; background: var(--card); font-size: .86rem;
+  }
+  .legend span { display: inline-flex; align-items: center; gap: .4rem; }
+  .sw { width: .8rem; height: .8rem; border-radius: 3px; display: inline-block; }
+  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 1.6rem; align-items: start; }
+  .col { min-width: 0; }
+  .table-wrap { overflow-x: auto; }
+  .col h2 { font-size: 1.3rem; margin: 0 0 .2rem; }
+  .col .lede { color: var(--muted); font-size: .9rem; margin: 0 0 1rem; }
+  .flow { list-style: none; margin: 0; padding: 0; }
+  .flow > li { position: relative; margin: 0 0 1.55rem; }
+  .flow > li:not(:last-child)::after {
+    content: ""; position: absolute; left: 50%; bottom: -1.45rem; width: 2px; height: 1.2rem;
+    background: var(--muted); transform: translateX(-50%);
+  }
+  .flow > li:not(:last-child)::before {
+    content: ""; position: absolute; left: 50%; bottom: -1.5rem; transform: translateX(-50%);
+    border-left: 6px solid transparent; border-right: 6px solid transparent;
+    border-top: 7px solid var(--muted); z-index: 1;
+  }
+  .node {
+    background: var(--card); border: 1px solid var(--line); border-left: 5px solid var(--c, var(--line));
+    border-radius: 8px; padding: .6rem .85rem .65rem; font-size: .92rem;
+  }
+  .node strong { display: block; font-size: 1rem; margin-bottom: .12rem; }
+  .node .who {
+    display: block; font-family: ui-monospace, Menlo, monospace; font-size: .7rem;
+    letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin-bottom: .15rem;
+  }
+  .node.person { --c: var(--person); }
+  .node.fable { --c: var(--fable); }
+  .node.opus { --c: var(--opus); }
+  .node.sonnet { --c: var(--sonnet); }
+  .node.plain { --c: var(--muted); }
+  .node.new { --c: var(--new); background: var(--new-bg); border-style: dashed; border-left-style: solid; }
+  .badge {
+    display: inline-block; font-family: ui-monospace, Menlo, monospace; font-size: .66rem;
+    letter-spacing: .06em; text-transform: uppercase; padding: .05rem .4rem; border-radius: 99px;
+    border: 1px solid currentColor; margin-left: .35rem; vertical-align: .12em;
+  }
+  .badge.new { color: var(--new); }
+  .badge.person { color: var(--person); }
+  .note {
+    margin-top: .45rem; padding: .35rem .6rem; border-radius: 6px; font-size: .84rem;
+  }
+  .note.weak { background: var(--weak-bg); color: var(--weak); }
+  .note.weak::before { content: "Gap: "; font-weight: 700; }
+  .note.strong { background: var(--strong-bg); }
+  .note.strong::before { content: "Check: "; font-weight: 700; color: var(--sonnet); }
+  .loop {
+    border: 1px solid var(--line); border-radius: 10px; padding: .7rem .7rem .2rem;
+    background: color-mix(in srgb, var(--card) 70%, transparent);
+  }
+  .loop > .label {
+    font-family: ui-monospace, Menlo, monospace; font-size: .72rem; letter-spacing: .08em;
+    text-transform: uppercase; color: var(--muted); margin: 0 0 .5rem;
+  }
+  .loop .flow > li { margin-bottom: 1.35rem; }
+  .branch {
+    display: grid; grid-template-columns: 1fr 1fr; gap: .6rem; margin-top: .5rem; font-size: .84rem;
+  }
+  .branch div { border: 1px solid var(--line); border-radius: 6px; padding: .35rem .55rem; background: var(--card); }
+  .branch b { display: block; font-size: .78rem; font-family: ui-monospace, Menlo, monospace; }
+  .back {
+    margin-top: .5rem; font-size: .86rem; color: var(--accent); font-weight: 600;
+    border-top: 2px dashed var(--accent); padding-top: .4rem;
+  }
+  .t-fable { color: var(--fable); font-weight: 700; }
+  .t-opus { color: var(--opus); font-weight: 700; }
+  .t-sonnet { color: var(--sonnet); font-weight: 700; }
+  .t-haiku { color: var(--haiku); font-weight: 700; }
+  .compare { margin-top: 2.2rem; }
+  .compare h2 { font-size: 1.3rem; margin: 0 0 .6rem; }
+  table { border-collapse: collapse; width: 100%; background: var(--card); font-size: .9rem; }
+  th, td { border: 1px solid var(--line); padding: .45rem .65rem; text-align: left; vertical-align: top; }
+  th { background: var(--code-bg); }
+  footer {
+    margin-top: 1.8rem; padding-top: .7rem; border-top: 1px solid var(--line); color: var(--muted);
+    font-size: .82rem; font-family: ui-monospace, Menlo, monospace;
+  }
+  @media (max-width: 820px) {
+    .wrap { padding-block: 1.8rem 3rem; }
+    h1 { font-size: 1.65rem; }
+    .cols { grid-template-columns: 1fr; }
+    .branch { grid-template-columns: 1fr; }
+    table { font-size: .84rem; }
+  }
+  @media print {
+    :root, :root[data-theme="dark"], :root:not([data-theme="light"]) {
+      --bg: #ffffff; --card: #ffffff; --ink: #1e2430; --muted: #5c6470; --line: #d9d3c6;
+    }
+    .wrap { max-width: none; padding-block: 0; }
+    .node, .loop, table { break-inside: avoid; page-break-inside: avoid; }
+    * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  }
+</style>
+</head>
+<body>
+<main class="wrap">
+
+<p class="kicker"><b>polytropos</b> &middot; spec-driven development &middot; two pipelines</p>
+<h1>The usual SDD pipeline, and <em>polytropos's</em></h1>
+<p class="sub">The left column is how most AI spec-driven tools run a change. The right column is how polytropos runs one. Both start from a written spec. The difference is in who checks the work, which model does each part, and what happens to what was learned.</p>
+
+<div class="legend" aria-label="Legend">
+  <span><i class="sw" style="background:var(--person)"></i>a person decides</span>
+  <span><i class="sw" style="background:var(--fable)"></i>frontier tier (<span class="t-fable">fable</span>)</span>
+  <span><i class="sw" style="background:var(--opus)"></i><span class="t-opus">opus</span></span>
+  <span><i class="sw" style="background:var(--sonnet)"></i><span class="t-sonnet">sonnet</span> / <span class="t-haiku">haiku</span></span>
+  <span><i class="sw" style="background:var(--new)"></i>being built now (kit <code>kit-preflight</code>)</span>
+</div>
+
+<div class="cols">
+
+<section class="col" aria-labelledby="h-typical">
+  <h2 id="h-typical">Typical AI spec-driven development</h2>
+  <p class="lede">The common shape of tools such as Spec Kit and Kiro, simplified. Individual tools add steps, such as clarify, analyze, checklists, hooks or converge.</p>
+  <ol class="flow">
+    <li><div class="node plain"><span class="who">once per project</span><strong>Standing rules</strong>A constitution or rules file the agent reads as context.
+      <div class="note weak">rules are context, not enforced; nothing fails when one is broken</div></div></li>
+    <li><div class="node person"><span class="who">you + the agent</span><strong>Specify</strong>What to build and why: stories, scenarios, acceptance criteria.</div></li>
+    <li><div class="node plain"><span class="who">the agent</span><strong>Plan</strong>The technical approach and design documents.</div></li>
+    <li><div class="node plain"><span class="who">the agent</span><strong>Tasks</strong>An ordered task list, some marked parallel.
+      <div class="note weak">no model choice per task; one model does everything</div></div></li>
+    <li><div class="node plain"><span class="who">the same agent, same model</span><strong>Implement</strong>Works through the task list, writing code and tests.</div></li>
+    <li><div class="node plain"><span class="who">the same agent</span><strong>Verify</strong>Runs the tests it wrote and reports the result.
+      <div class="note weak">the builder grades its own work; Anthropic found agents "reliably skew positive" doing so</div></div></li>
+    <li><div class="node plain"><span class="who">after the change</span><strong>Done</strong>The spec is set aside, or kept but not re-checked.
+      <div class="note weak">drift goes unnoticed, and nothing records whether the spec itself was wrong</div></div></li>
+  </ol>
+</section>
+
+<section class="col" aria-labelledby="h-poly">
+  <h2 id="h-poly">polytropos</h2>
+  <p class="lede"><code>/polytropos:architect</code> writes an execution kit once; <code>/polytropos:execute</code> runs it. The source of each box is named in <code>skills/architect/SKILL.md</code> and <code>skills/execute/SKILL.md</code>.</p>
+  <ol class="flow">
+    <li><div class="node plain"><span class="who">always on, plus per kit</span><strong>Standing rules, enforced</strong><code>CLAUDE.md</code> invariants backed by tests, plus the kit's own <code>GUARDRAILS.md</code>, re-read from disk at every phase start.
+      <div class="note strong">many invariants fail the test suite when broken</div></div></li>
+    <li><div class="node fable"><span class="who"><span class="t-fable">fable</span> &middot; once</span><strong>Spec</strong>The architect drafts the goal, a checkable "done", constraints and an out-of-scope fence.</div></li>
+    <li><div class="node person"><span class="who">you <span class="badge person">gate</span></span><strong>Approval pause</strong>Nothing is written to disk until you approve the spec.</div></li>
+    <li><div class="node fable"><span class="who"><span class="t-fable">fable</span> &middot; once</span><strong>Design and tasks</strong>Decisions with reasons, risks with tripwires, and per task a self-contained brief, acceptance, a verify command, an <code>evidence:</code> rule and a pinned model.
+      <div class="note strong">every task names its proof and its price</div></div></li>
+    <li><div class="node new"><span class="who">before any dispatch <span class="badge new">being built</span></span><strong>Pre-run check</strong><code>kit_contract.py analyze</code> checks paths and verify commands without running anything; then one <span class="t-opus">opus</span> spec review for contradictions and uncovered goals, skipped for <code>workflow: direct</code> kits.</div></li>
+    <li>
+      <div class="loop">
+        <p class="label">for each task</p>
+        <ol class="flow">
+          <li><div class="node sonnet"><span class="who"><span class="t-haiku">haiku</span> / <span class="t-sonnet">sonnet</span> / <span class="t-opus">opus</span>, as pinned</span><strong>Implementer</strong>Builds from the brief alone; stops and reports if the brief is wrong.</div></li>
+          <li><div class="node plain"><span class="who">the loop, not the builder</span><strong>Verify, red-green</strong>The orchestrator runs the verify command itself. A check that already passed before the work blocks the task.</div></li>
+          <li><div class="node sonnet"><span class="who"><span class="t-sonnet">sonnet</span>, fresh context</span><strong>Independent verifier</strong>Re-checks acceptance against the files, plus a test-author and red-team when the kit declares them.
+            <div class="branch">
+              <div><b>pass</b>marked done; the outcome goes in the ledger</div>
+              <div><b>fail</b>one retry with the failure; then a <span class="t-fable">fable</span> consult carrying only the evidence</div>
+            </div></div></li>
+        </ol>
+      </div>
+    </li>
+    <li><div class="node opus"><span class="who"><span class="t-opus">opus</span> &middot; each phase end</span><strong>Phase review</strong>Checks the phase against <code>PLAN.md</code> for drift before the next phase starts.</div></li>
+    <li><div class="node plain"><span class="who">every outcome, dispatch and review</span><strong>Ledger</strong><code>NOTES.md</code> lines that record what passed, what each reviewer found, and which briefs were wrong (<code>defect:</code>). <span class="badge new">being built</span> <code>accept</code> also records each acceptance.</div></li>
+    <li><div class="node new"><span class="who">after the change <span class="badge new">being built</span></span><strong>Drift check</strong><code>kit_contract.py drift</code> re-runs a finished kit's checks against today's code and reports drift, without marking anything failed.</div></li>
+    <li><div class="node plain"><span class="who">across every kit</span><strong>Scorecard</strong><code>bin/routing_scorecard.py --history</code> grades the tiers, the review roles and the briefs.
+      <div class="back">&#8634; read by the next architect before it writes the next spec</div></div></li>
+  </ol>
+</section>
+
+</div>
+
+<section class="compare" aria-labelledby="h-compare">
+  <h2 id="h-compare">What changes</h2>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Question</th><th>Typical AI SDD</th><th>polytropos</th></tr></thead>
+    <tbody>
+      <tr><td>Who approves the spec?</td><td>You, usually informally</td><td>You, at an explicit pause before any design</td></tr>
+      <tr><td>Which model builds each part?</td><td>One model throughout</td><td>The frontier tier plans once; each task is pinned to the cheapest tier that can do it</td></tr>
+      <tr><td>Who decides the work is done?</td><td>The agent that built it</td><td>The loop runs the check, and a fresh-context verifier and a phase reviewer judge it</td></tr>
+      <tr><td>Can a check that proves nothing pass?</td><td>Yes</td><td>No: the red-green rule blocks a check that already passed before the work</td></tr>
+      <tr><td>What if the spec is wrong?</td><td>The agent works around it</td><td>The task stops and reports, and the defect is recorded by kind</td></tr>
+      <tr><td>Is the spec checked before spending anything?</td><td>Some tools have an analyze step</td><td><code>analyze</code> and a spec review, being built now</td></tr>
+      <tr><td>Is it re-checked after the change ships?</td><td>Rarely</td><td><code>drift</code>, being built now</td></tr>
+      <tr><td>Does the next spec learn from this one?</td><td>No record</td><td>The scorecard's defect kinds and tier and role history feed the next architect</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<footer>Long form: docs/sdd/guide.md and docs/SPEC-DRIVEN.md &middot; Source: github.com/agentmc15/polytropos</footer>
+
+</main>
+</body>
+</html>

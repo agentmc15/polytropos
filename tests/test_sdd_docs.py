@@ -208,6 +208,32 @@ class GuideTests(unittest.TestCase):
                 pitch.check_truth(_read(path), REPO_ROOT)
 
 
+PIPELINES = SDD / "pipelines.html"
+
+
+class PipelinesPageTests(unittest.TestCase):
+    """docs/sdd/pipelines.html: two flow diagrams, the typical AI SDD pipeline and polytropos's.
+
+    Hand-written, not rendered. It goes through the deck's truth checks, must stay
+    self-contained, and must keep both diagrams. A step the code does not have yet is shown
+    with a "being built" badge; when the step lands, the badge must go in the same change.
+    """
+
+    def test_self_contained_and_truthful(self):
+        text = _read(PIPELINES)
+        low = text.lower()
+        for banned in ("<script", "<link", "@import", "<img"):
+            self.assertNotIn(banned, low)
+        self.assertIn("prefers-color-scheme: dark", text)
+        pitch.check_truth(text, REPO_ROOT)
+
+    def test_both_diagrams_present(self):
+        text = _read(PIPELINES)
+        self.assertIn('id="h-typical"', text)
+        self.assertIn('id="h-poly"', text)
+        self.assertGreaterEqual(text.count('class="node'), 12)
+
+
 class NegativeFixtureTests(unittest.TestCase):
     """The heading check must be able to fail; otherwise the live pass proves nothing."""
 
