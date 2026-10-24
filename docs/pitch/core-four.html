@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>The core four, mapped to polytropos</title>
+<style>
+  :root {
+    --bg: #faf9f6; --ink: #1e2430; --muted: #5c6470; --line: #e3ded3;
+    --accent: #b45309; --card: #ffffff;
+    --fable: #b91c1c; --opus: #b45309; --sonnet: #15803d; --haiku: #0e7490;
+    --code-bg: #efece4; --pre-bg: #23262e; --pre-ink: #e8e6e1; --pre-dim: #9aa1ab;
+    --th-bg: #f1eee6; --callout-bg: #fdf6ec;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #15171c; --ink: #e9e5dc; --muted: #a2a8b2; --line: #30343c;
+      --accent: #f0a04b; --card: #1c1f25;
+      --fable: #f38b8b; --opus: #f0a04b; --sonnet: #5fd08a; --haiku: #4fc9de;
+      --code-bg: #272b33; --pre-bg: #0e1014; --pre-ink: #e6e3dc; --pre-dim: #8b929c;
+      --th-bg: #23272f; --callout-bg: #2a231b;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #15171c; --ink: #e9e5dc; --muted: #a2a8b2; --line: #30343c;
+    --accent: #f0a04b; --card: #1c1f25;
+    --fable: #f38b8b; --opus: #f0a04b; --sonnet: #5fd08a; --haiku: #4fc9de;
+    --code-bg: #272b33; --pre-bg: #0e1014; --pre-ink: #e6e3dc; --pre-dim: #8b929c;
+    --th-bg: #23272f; --callout-bg: #2a231b;
+  }
+  * { box-sizing: border-box; }
+  html { background: var(--bg); }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 17px/1.65 Georgia, 'Times New Roman', serif;
+    -webkit-text-size-adjust: 100%;
+  }
+  .wrap { max-width: 860px; margin: 0 auto; padding: 3rem 1.5rem 5rem; }
+  .page { padding-bottom: 2.6rem; margin-bottom: 2.6rem; border-bottom: 1px solid var(--line); }
+  .page:last-of-type { border-bottom: 0; margin-bottom: 0; }
+  h1 { font-size: 2.3rem; line-height: 1.15; margin: .4rem 0 .6rem; letter-spacing: -.01em; }
+  h1 em { color: var(--accent); font-style: italic; }
+  .sub { color: var(--muted); font-style: italic; margin: 0 0 2rem; font-size: 1.05em; }
+  h2 { font-size: 1.5rem; line-height: 1.25; margin: .3rem 0 .9rem; }
+  h3 { font-size: 1.08rem; margin: 1.4rem 0 .35rem; }
+  p { margin: .6rem 0; }
+  a { color: var(--accent); }
+  code, pre {
+    font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+    font-size: .84em;
+  }
+  code { background: var(--code-bg); padding: .08em .34em; border-radius: 4px; overflow-wrap: anywhere; }
+  pre {
+    background: var(--pre-bg); color: var(--pre-ink); padding: .95rem 1.2rem;
+    border-radius: 10px; overflow-x: auto; line-height: 1.45; margin: 1rem 0;
+  }
+  pre code { background: none; padding: 0; color: inherit; font-size: 1em; }
+  pre .dim { color: var(--pre-dim); }
+  table {
+    border-collapse: collapse; width: 100%; margin: 1rem 0;
+    background: var(--card); font-size: .9em;
+  }
+  th, td { border: 1px solid var(--line); padding: .45rem .7rem; text-align: left; vertical-align: top; }
+  th { background: var(--th-bg); }
+  td:first-child { white-space: nowrap; }
+  td:first-child code { overflow-wrap: normal; }
+  .tier-fable { color: var(--fable); font-weight: 700; }
+  .tier-opus { color: var(--opus); font-weight: 700; }
+  .tier-sonnet { color: var(--sonnet); font-weight: 700; }
+  .tier-haiku { color: var(--haiku); font-weight: 700; }
+  .callout {
+    background: var(--callout-bg); border-left: 4px solid var(--accent);
+    padding: .8rem 1.1rem; margin: 1.2rem 0; border-radius: 0 8px 8px 0;
+  }
+  .callout.quote p:first-child { font-size: 1.2em; font-style: italic; margin-top: 0; }
+  .note { color: var(--muted); font-size: .9em; }
+  ul, ol { padding-left: 1.4rem; }
+  li { margin: .35rem 0; }
+  .kicker {
+    text-transform: uppercase; letter-spacing: .12em; font-size: .75rem;
+    color: var(--muted); font-family: ui-monospace, Menlo, monospace; margin: 0;
+  }
+  .kicker b { color: var(--accent); font-weight: 600; }
+  .loop {
+    list-style: none; padding: 0; margin: 1.2rem 0;
+    display: grid; grid-template-columns: 1fr 1fr; gap: .8rem;
+  }
+  .loop li {
+    margin: 0; min-width: 0; background: var(--card); border: 1px solid var(--line);
+    border-top: 4px solid var(--c, var(--accent)); border-radius: 8px;
+    padding: .7rem .95rem .8rem; font-size: .93em; line-height: 1.5;
+  }
+  .loop .step {
+    display: block; font-family: ui-monospace, Menlo, monospace; font-size: .72rem;
+    letter-spacing: .1em; text-transform: uppercase; color: var(--muted);
+  }
+  .loop strong { display: block; font-size: 1.05em; margin: .15rem 0 .25rem; }
+  .loop .s1 { --c: var(--fable); } .loop .s2 { --c: var(--sonnet); }
+  .loop .s3 { --c: var(--opus); }  .loop .s4 { --c: var(--haiku); }
+  .layers { list-style: none; padding: 0; margin: .8rem 0; }
+  .layers li { padding-left: .9rem; border-left: 3px solid var(--line); margin: .55rem 0; }
+  .layers b { color: var(--ink); }
+  .nots li::marker { color: var(--accent); }
+  .run { margin-top: 1.4rem; }
+  .run pre { font-size: .9em; }
+  footer {
+    margin-top: 1.6rem; padding-top: .8rem; border-top: 1px solid var(--line);
+    color: var(--muted); font-size: .85em; font-family: ui-monospace, Menlo, monospace;
+  }
+  @media (max-width: 640px) {
+    .wrap { padding: 2rem 16px 3rem; }
+    h1 { font-size: 1.8rem; }
+    .loop { grid-template-columns: 1fr; }
+    td:first-child { white-space: normal; }
+  }
+  @page { margin: 18mm; }
+  @media print {
+    :root, :root[data-theme="dark"], :root:not([data-theme="light"]) {
+      --bg: #ffffff; --ink: #1e2430; --muted: #5c6470; --line: #d9d3c6;
+      --accent: #b45309; --card: #ffffff;
+      --fable: #b91c1c; --opus: #b45309; --sonnet: #15803d; --haiku: #0e7490;
+      --code-bg: #f1eee6; --pre-bg: #f6f3ec; --pre-ink: #1e2430; --pre-dim: #6b7280;
+      --th-bg: #f1eee6; --callout-bg: #fbf5ea;
+    }
+    .page { break-after: page; page-break-after: always; border-bottom: 0; margin: 0; padding: 0; }
+    .page:last-of-type { break-after: auto; page-break-after: auto; }
+    body { font-size: 11.5pt; line-height: 1.42; }
+    .wrap { max-width: none; padding: 0; }
+    h1 { font-size: 22pt; margin: .2rem 0 .4rem; }
+    h2 { font-size: 15pt; margin: .2rem 0 .5rem; }
+    h3 { font-size: 11.5pt; margin: .75rem 0 .15rem; }
+    p { margin: .35rem 0; }
+    .sub { margin-bottom: .9rem; }
+    li { margin: .2rem 0; }
+    table { font-size: .86em; margin: .6rem 0; }
+    th, td { padding: .3rem .55rem; }
+    pre { border: 1px solid var(--line); white-space: pre-wrap; font-size: .76em; line-height: 1.32; padding: .6rem .9rem; margin: .6rem 0; }
+    .loop { gap: .55rem; margin: .7rem 0; }
+    .loop li { font-size: .86em; line-height: 1.38; padding: .5rem .75rem .55rem; }
+    .layers li { margin: .3rem 0; }
+    .callout { padding: .5rem .85rem; margin: .7rem 0; }
+    .callout.quote p:first-child { font-size: 1.1em; }
+    .note { font-size: .86em; }
+    .run { margin-top: .7rem; }
+    footer { margin-top: .8rem; padding-top: .4rem; }
+    pre, table, .callout, .loop li, .layers li { break-inside: avoid; page-break-inside: avoid; }
+    h2, h3 { break-after: avoid; page-break-after: avoid; }
+    * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  }
+  .glance td:first-child { white-space: normal; }
+  .src { font-size: .85em; color: var(--muted); }
+</style>
+</head>
+<body>
+<main class="wrap">
+
+<section class="page">
+<p class="kicker"><b>polytropos</b> &middot; spec-driven development &middot; a mapping</p>
+<h1>The core four, mapped to polytropos</h1>
+<p class="sub"><strong>Spec Kit's Specify &rarr; Plan &rarr; Tasks &rarr; Implement, and the polytropos file or command that does each job.</strong></p>
+<p>GitHub's Spec Kit names the spec-driven development loop as four core phases: <strong>Specify</strong> (what and why, with no technology choices), <strong>Plan</strong> (the technical approach), <strong>Tasks</strong> (the plan cut into ordered, checkable work items), and <strong>Implement</strong> (executing those items). A project <strong>constitution</strong> sits above all four, and two optional steps, <strong>clarify</strong> and <strong>analyze</strong>, sit between them. Its command names have changed across versions (<code>/specify</code> earlier, <code>/speckit.*</code> now); the official <code>github/spec-kit</code> README is the authority on its current behavior.</p>
+<p>polytropos runs the same loop under different names. It splits the loop across two skills and adds a fifth step that Spec Kit does not have. This report maps each phase, then names where polytropos goes further and where it does less. Every polytropos claim below names the file that makes it true. The long form of the argument is <code>docs/SPEC-DRIVEN.md</code>.</p>
+<h2>At a glance</h2>
+<table class="glance"><thead><tr><th>Spec Kit</th><th>polytropos</th><th>Where it lives</th><th>Who runs it</th></tr></thead><tbody><tr><td>constitution</td><td>the repo's <code>CLAUDE.md</code> invariants, plus each kit's <code>GUARDRAILS.md</code></td><td>the target repo; <code>.claude/kits/&lt;slug&gt;/GUARDRAILS.md</code></td><td>written by people (repo) and by the architect (kit)</td></tr><tr><td><strong>Specify</strong></td><td>the spec half of <code>PLAN.md</code>: goal, checkable "done", constraints, out-of-scope fence, with an approval pause</td><td><code>skills/architect/SKILL.md</code> Steps 0–1</td><td><code>/polytropos:architect</code>, frontier tier, once</td></tr><tr><td>clarify</td><td>scoping questions before the frontier run; assumptions and open questions listed under the spec draft</td><td><code>skills/architect/SKILL.md</code> Steps 0–1</td><td>the architect, with the user</td></tr><tr><td><strong>Plan</strong></td><td>the design half of <code>PLAN.md</code>: decisions with rationale, risks with tripwires, optional <code>autonomy:</code>, <code>budget:</code>, <code>roles:</code> and <code>workflow:</code> lines</td><td><code>skills/architect/SKILL.md</code> Step 1</td><td>the architect, after approval</td></tr><tr><td><strong>Tasks</strong></td><td><code>TASKS.md</code>: one block per task with a pinned <code>model</code>, a self-contained brief, acceptance, a verify command and <code>evidence:</code></td><td><code>skills/architect/SKILL.md</code> Step 2; <code>bin/kit_contract.py</code></td><td>the architect writes it; <code>kit_contract.py graph</code> validates it</td></tr><tr><td>analyze</td><td>structural graph check before the run; drift review at each phase end</td><td><code>bin/kit_contract.py graph</code>; the kit's reviewer agent</td><td>execute</td></tr><tr><td><strong>Implement</strong></td><td>per-task dispatch to the pinned tier, orchestrator-run verify, fresh-context verifier, phase reviewer, one retry, then a frontier consult</td><td><code>skills/execute/SKILL.md</code>; <code>bin/claude_execute.py</code> and its peers</td><td><code>/polytropos:execute</code> on cheaper tiers</td></tr><tr><td><em>(none)</em></td><td><strong>Measure</strong>: a ledger in <code>NOTES.md</code> and a scorecard that grades the tiers, the review roles and the spec</td><td><code>skills/execute/references/ledger.md</code>; <code>bin/routing_scorecard.py</code></td><td>execute writes it; the next architect reads it</td></tr></tbody></table>
+</section>
+
+<section class="page">
+<h2>1 &middot; Specify</h2>
+<p><strong>Spec Kit.</strong> The specify phase captures what to build and why: user stories, scenarios, edge cases and measurable outcomes, deliberately free of implementation detail.</p>
+<p><strong>polytropos.</strong> <code>PLAN.md</code> opens with the spec, under the heading the architect skill gives it: "what and why, no design yet". It holds two sections: the <strong>goal</strong> with a "done" that is "checkable, not vibes", and the <strong>constraints</strong> with an explicit <strong>out-of-scope</strong> fence that says what executors must not do.</p>
+<p>Then comes the <strong>approval pause</strong>. The architect drafts those two sections, shows them, and stops. It writes nothing into <code>.claude/kits/&lt;slug&gt;/</code> until the user approves the draft in the conversation. The skill gives the reason: "A misread requirement caught here costs one exchange; caught after the kit is written, it costs the whole Fable run." The approved text is the spec. If the design later shows the spec cannot hold, the architect brings the conflict back to the user instead of quietly rewriting it. The pause is skipped only when the user explicitly says to plan straight through, and then the handoff says so.</p>
+<p>In dispatch mode a subagent cannot ask the user anything, so the run takes two hops. The first hop explores and returns only the spec draft, the main session relays it and collects approval, and the second hop writes the kit.</p>
+<p><strong>The difference.</strong> Spec Kit's spec is product-shaped (stories and scenarios). polytropos's spec is change-shaped: one goal, one checkable done, and a fence. The fence matters more than it looks, because it is what the executors and reviewers enforce later.</p>
+<h2>2 &middot; Plan</h2>
+<p><strong>Spec Kit.</strong> The plan phase records the technical approach and checks it against the constitution, producing supporting research, data-model, contract and quickstart artifacts.</p>
+<p><strong>polytropos.</strong> Once the spec is approved, the rest of <code>PLAN.md</code> is the design:</p>
+<ul><li><strong>Architecture and key decisions, each with rationale.</strong> The skill's reason: "the 'why' is what lets a cheaper model make consistent micro-decisions later". The rationale is written for the executors, not for the record.</li><li><strong>Risks and their tripwires</strong>: what an executor should watch for, and what to do when one hits.</li><li><strong>Run posture, as optional one-line dials.</strong> <code>autonomy:</code> (advisory or auto), <code>budget:</code> (caps on dispatches, escalations and consults), <code>roles:</code> (optional review roles beyond the standard trio, out of a fixed vocabulary of seven) and <code>workflow:</code> (<code>reviewed</code>, <code>extended</code> or <code>direct</code>).</li><li><strong>Grounding</strong>: when the target repo carries a <code>graphify-out/graph.json</code>, the architect can ground the plan with <code>bin/graph_ground.py</code>. The graph is a first map, never the sole evidence for a dependency claim.</li></ul>
+<p>The constitution's role is split. Always-on rules live in the repo's <code>CLAUDE.md</code>. Rules that bind only while one kit runs live in that kit's <code>GUARDRAILS.md</code>, which the architect must always write. <code>tests/test_guardrails_layout.py</code> fails the suite for a kit that skips it.</p>
+<p><strong>The difference.</strong> polytropos has no separate research, data-model or quickstart files. The design and its reasons sit in <code>PLAN.md</code>, next to the spec they serve. There is no explicit "check the plan against the constitution" gate at planning time. The fences are enforced later, at every phase start and every review.</p>
+</section>
+
+<section class="page">
+<h2>3 &middot; Tasks</h2>
+<p><strong>Spec Kit.</strong> The tasks phase breaks the plan into work items with stable ids, exact file paths, parallel markers and story labels.</p>
+<p><strong>polytropos.</strong> <code>TASKS.md</code> has one block per task, under <code>## Phase N</code> headings:</p>
+<ul><li><code>id</code>, <code>title</code>, and <code>status</code> (<code>pending</code>, <code>in-progress</code>, <code>done</code> or <code>blocked</code>).</li><li><strong><code>model</code></strong>: the tier the task runs on. <code>sonnet</code> is the default, <code>opus</code> is for the genuinely hard tasks and <code>haiku</code> for trivial mechanical ones. Execute passes it as the dispatch's model, overriding the agent's own default. The field is never rewritten at run time.</li><li><strong>A self-contained brief</strong>, executable "by a model with zero access to this conversation": files, conventions, exact interfaces, known gotchas, and the why.</li><li><strong>Acceptance criteria</strong>, concrete and checkable.</li><li><strong>A verify command</strong>: a shell command that proves the task done.</li><li><strong><code>evidence:</code></strong>: <code>red-green</code> by default, meaning the verify must be able to fail before the work. <code>regression</code> or <code>precondition</code> mark tasks where passing beforehand is the point.</li><li><strong><code>depends:</code> or <code>independent:</code></strong>, read by machine. Independent tasks fan out in parallel. This is Spec Kit's parallel marker as an explicit graph.</li></ul>
+<p>Before the first dispatch, <code>bin/kit_contract.py graph</code> rejects a duplicate id, an unknown or self dependency, or a cycle, and names the fix for each. Execute will not route around an invalid plan.</p>
+<p>The kit also gets its own agents in <code>.claude/agents/</code>: an implementer, a read-only verifier and a read-only reviewer, each with the project's conventions written into its prompt.</p>
+<p><strong>The difference.</strong> A polytropos task carries its own proof (verify plus evidence) and its own price (the model pin). A Spec Kit task says what to do. A polytropos task also says how to show it was done and how much model to spend on it.</p>
+<h2>4 &middot; Implement</h2>
+<p><strong>Spec Kit.</strong> The implement phase executes the generated tasks.</p>
+<p><strong>polytropos.</strong> <code>/polytropos:execute</code> runs the kit as an orchestrator on the daily-driver tier. For each task it:</p>
+<ol><li>Marks the task <code>in-progress</code>, checks the budget dial, and dispatches the brief verbatim to the implementer on the task's pinned tier.</li><li>Runs the verify command <strong>itself</strong>: "the implementer's claim of success is not evidence."</li><li>Sends non-trivial tasks to a <strong>fresh-context verifier</strong> that re-checks the acceptance criteria against the files, on <code>sonnet</code> by default and on <code>haiku</code> only when every check is mechanical.</li><li>Enforces the <strong>red-green gate</strong>: a <code>red-green</code> task whose verify already passed on the pre-task tree is <em>blocked, not done</em>.</li><li>On failure, retries once with the failure output. After a second failure it marks the task <code>blocked</code> and offers a <strong>frontier consult</strong> that carries only that brief, the evidence and the relevant <code>PLAN.md</code> excerpts.</li><li>At each phase end, dispatches an <strong><code>opus</code> reviewer</strong> to check the phase against <code>PLAN.md</code> for drift, and re-reads the fences from disk before the next phase starts.</li></ol>
+<p>The same kit also runs headless. <code>bin/claude_execute.py</code>, <code>bin/copilot_execute.py</code>, <code>bin/codex_execute.py</code> and <code>bin/cursor_execute.py</code> honor the same task contract and the same budget dial. They run verify commands inside <code>bin/exec_policy.py</code> and record every dispatch in <code>bin/attempt_ledger.py</code>.</p>
+<p><strong>The difference.</strong> Spec Kit's implement phase hands the task list to the agent. polytropos splits that agent into roles on different tiers and never takes the builder's word for it.</p>
+</section>
+
+<section class="page">
+<h2>5 &middot; Measure (no Spec Kit equivalent)</h2>
+<p>Every finished task, dispatch and phase review appends a machine-read line to the kit's <code>NOTES.md</code>: <code>outcome:</code>, <code>agent:</code>, <code>reviewer:</code> and <code>defect:</code>. The grammar is in <code>skills/execute/references/ledger.md</code>. <code>python3 bin/routing_scorecard.py --history</code> turns those lines into per-tier pass, retry, escalation and block counts across every kit, per-role findings against confirmed findings, and a tally of the kinds of brief defect found.</p>
+<p>That last tally grades the <strong>spec</strong>. When execute confirms that a brief itself was wrong (a stale pin, a verify that could never fail, a path nobody specified, acceptance criteria that contradict each other), it records a <code>defect:</code> line instead of widening the task until it passes. The architect's routing guidance tells the next planner to read those kinds "as evidence about YOUR OWN briefs", and to consult <code>--history</code> when choosing model pins. That closes the loop: the next Specify and Plan are informed by how well the last ones held.</p>
+<h2>Where polytropos does less</h2>
+<ul><li><strong>No cross-artifact consistency pass before the run.</strong> Spec Kit's analyze step checks the artifacts against each other first. <code>kit_contract.py graph</code> checks only the task graph's structure. Semantic drift between <code>PLAN.md</code> and <code>TASKS.md</code> is caught by the phase reviewer, after a phase has run.</li><li><strong>No product-level spec format.</strong> There are no user-story or scenario templates and no requirement ids. The spec is a goal, a done check and a fence, which suits code changes better than product features.</li><li><strong>No planning-time constitution gate.</strong> Fences are enforced during execution and review, not checked against the design before tasks are written.</li><li><strong>Specs per change, not per product.</strong> A kit is one change's spec. Nothing aggregates kits into a living product specification.</li></ul>
+<h2>Where polytropos goes further</h2>
+<ul><li><strong>A cost dimension in the spec.</strong> Every task names its tier, so frontier judgment is spent once, on Specify and Plan, and execution runs cheaper. <code>/polytropos:route</code> estimates the cost before a run, and <code>python3 bin/routing_scorecard.py &lt;slug&gt; --session &lt;id&gt;</code> prices a finished kit against an all-frontier counterfactual, both from <code>data/pricing.json</code>.</li><li><strong>Proof built into every task.</strong> Verify commands, the red-green rule and independent review are part of the task contract, not a convention.</li><li><strong>The spec is graded.</strong> The <code>defect:</code> ledger measures the planner, not just the builders.</li><li><strong>Bounded autonomy.</strong> Re-routing is advisory by default. Under <code>autonomy: auto</code> it moves only upward, one tier, never to the frontier. Budget caps stop a run cleanly and say so.</li></ul>
+<h2>Run it</h2>
+<pre><code>/polytropos:architect &lt;task&gt;                <span class="dim"># Specify (approval pause), then Plan and Tasks</span>
+/polytropos:execute &lt;slug&gt;                  <span class="dim"># Implement, on the pinned tiers</span>
+python3 bin/routing_scorecard.py --history  <span class="dim"># Measure, across every kit</span></code></pre>
+<p class="src">Sources for Spec Kit's phases: the official <code>github/spec-kit</code> README; the <a href="https://www.augmentcode.com/guides/github-spec-kit-practical-guide-sdd-workflow">Augment Code practical guide</a>; <a href="https://blogs.perficient.com/getting-started-with-github-spec-kit-installation-and-core-commands/">Perficient's core-commands guide</a>.</p>
+<footer>Long form for polytropos: docs/SPEC-DRIVEN.md &middot; Source: github.com/agentmc15/polytropos</footer>
+</section>
+
+</main>
+</body>
+</html>
