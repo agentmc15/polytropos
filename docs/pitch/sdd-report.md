@@ -34,9 +34,16 @@ properties the field's tools mostly lack:
 3. **The spec is graded.** A ledger records when a brief itself was wrong, and the next planner
    is told to read those records as evidence about its own briefs.
 
+The closest published design to polytropos is not an SDD tool. It is Anthropic's
+planner–generator–evaluator harness for multi-hour app builds, which found that "agents reliably
+skew positive when grading their own work". It is the strongest outside evidence for
+polytropos's independent verification, and it has its own section in this report.
+
 Its main gaps against the field are a missing cross-artifact consistency pass before the run, no
 structured requirements notation, and no living spec that is kept in sync after a change ships.
-The last section lists them with a suggested fix for each.
+Anthropic's harness adds three more: no check of a running app, no calibrated rubric for
+subjective quality, and no loop that turns a verifier's misjudgments into a better verifier. The
+last section lists all nine with a suggested fix for each.
 
 <!-- page -->
 
@@ -80,7 +87,7 @@ Across tools the artifacts line up in the same order, under different names:
 | Design | How, with reasons | plan plus research, data model, contracts | `design.md` | the design half of `PLAN.md` |
 | Tasks | Ordered, checkable work | tasks with ids and parallel markers | `tasks.md` | `TASKS.md` |
 | Implementation | Build against the tasks | implement | run tasks | `/polytropos:execute` |
-| Verification | Prove it matches | checklists; analyze | hooks, tests | verify command, verifier, reviewer, red-green rule |
+| Verification | Prove it matches | converge; checklists; analyze; test-first (Article III) | hooks, tests | verify command, verifier, reviewer, red-green rule |
 | Feedback | Learn from the run | none | none | the `NOTES.md` ledger and `bin/routing_scorecard.py` |
 
 <!-- page -->
@@ -89,7 +96,7 @@ Across tools the artifacts line up in the same order, under different names:
 
 | Tool | Shape | Level | Distinctive |
 |---|---|---|---|
-| **GitHub Spec Kit** | Open-source toolkit of slash commands and templates for many agents | spec-first, aiming at anchored | A project constitution; Specify, Plan, Tasks, Implement, with optional clarify and analyze steps |
+| **GitHub Spec Kit** | Open-source toolkit of slash commands and templates for many agents | spec-first, aiming at anchored | A project constitution; Specify, Plan, Tasks, Implement, then converge until done; clarify and analyze between phases; test-first written into its constitution |
 | **Kiro (AWS)** | An agentic IDE with specs built in | spec-first | Requirements in EARS notation ("WHEN … THE SYSTEM SHALL …"); approval gates between phases; steering files; agent hooks on file events |
 | **Tessl** | A framework and registry built around specs | anchored, aiming at as-source | One spec per file; generated code marked as not to be edited |
 | **OpenSpec** | A lightweight, tool-neutral spec format | spec-anchored | Change proposals written as deltas (added, modified, removed) against a living spec; suited to brownfield work |
@@ -147,7 +154,11 @@ Two further principles are rarely stated by the other tools and are central to p
 
 The closest match, mapped phase by phase in `docs/pitch/core-four.md`. Specify becomes the spec
 half of `PLAN.md` with the approval pause. Plan becomes the design half. Tasks becomes `TASKS.md`.
-Implement becomes the execute loop. The constitution splits between `CLAUDE.md` and
+Implement becomes the execute loop, and Spec Kit's converge corresponds to the loop ending only
+when every task is `done`. Spec Kit writes test-first into its constitution as Article III:
+tests are "written, approved, and confirmed failing before implementation". polytropos's
+red-green rule is the same idea, enforced at run time instead of stated as a principle: a task
+whose verify already passed before the work is blocked. The constitution splits between `CLAUDE.md` and
 `GUARDRAILS.md`. Clarify becomes the scoping questions and the open questions listed under the
 spec draft. Analyze has only a structural counterpart, the graph check, plus after-the-fact drift
 review.
@@ -187,6 +198,64 @@ does not. Its own pitch says it is "not code generation from a formal spec": the
 plus shell commands, and a model reads the brief and writes the change. What polytropos offers
 instead of determinism is verification. A rerun may write different code, and the same verify
 commands, evidence rule and reviewers judge it either way.
+
+<!-- page -->
+
+## Outside evidence: Anthropic's harness research
+
+In "Harness design for long-running application development" (March 2026), Prithvi Rajasekaran
+of Anthropic Labs describes a three-agent harness for multi-hour builds. A **planner** expands a
+short prompt into a product spec, a **generator** builds it one feature per sprint, and an
+**evaluator** tests the running app like a user. It is not marketed as spec-driven development,
+but it is the closest published design to polytropos. It is also the only source in this report
+that ran its design and reported what happened, though over a small number of runs.
+
+| Their harness | polytropos | Match |
+|---|---|---|
+| Planner turns a short prompt into a spec and stays high-level, because otherwise "the errors in the spec would cascade into the downstream implementation" | The architect writes `PLAN.md`; briefs "pin down contracts and interfaces precisely; leave implementation judgment open" | Close |
+| Generator builds one feature per sprint | The implementer builds one task per dispatch, on the task's pinned tier | Close |
+| Sprint contract: generator and evaluator agree "what 'done' looked like" before any code | Acceptance and verify are fixed per task when the kit is written, and the spec is approved by the user | Same aim, set earlier, by a human |
+| Evaluator drives the running app with Playwright; "if any one [criterion] fell below [its threshold], the sprint failed" | The orchestrator runs each verify command; a verifier and a phase reviewer check against the kit | Partial: no running-app check |
+| "Communication was handled via files" | Kit files and the `NOTES.md` ledger | Same |
+| Context reset: "a fresh agent" with "a structured handoff" | A fresh subagent per task, with the brief as the handoff; fences re-read from disk at each phase start | Same |
+| Evaluator tuned by reading its logs for "examples where its judgment diverged from mine" | Each verifier and reviewer line records `findings` against `confirmed` | Measured, not yet fed back |
+| Components removed when "no longer load-bearing" as models improve | Roles kept only when their measured value earns their cost; tiers re-pinned from `--history` | Same principle |
+
+<!-- page -->
+
+### What it confirms
+
+- **The builder cannot grade itself.** Agents "reliably skew positive when grading their own
+  work." This is the finding behind polytropos's rule that the implementer's claim of success is
+  not evidence.
+- **A separate evaluator is not enough on its own.** Out of the box, the evaluator would find
+  real issues and then "talk itself into deciding they weren't a big deal and approve the work
+  anyway". polytropos does not let a verdict stand alone either. The orchestrator runs the verify
+  command itself, the red-green rule rejects a check that could never fail, and a finding counts
+  only once the orchestrator confirms it produced a change.
+- **Review is worth its cost only above the model's solo ability.** The evaluator "is worth the
+  cost when the task sits beyond what the current model does reliably solo". This supports
+  optional roles that must earn their place, `workflow: direct` for low-risk kits, and the
+  ceremony threshold in gap 6.
+- **Every part of a harness is a testable assumption.** "Every component in a harness encodes an
+  assumption about what the model can't do on its own." The routing scorecard is how polytropos
+  tests those assumptions per tier and per role, and why the verifier moved from `haiku` to
+  `sonnet` once the ledger showed the difference.
+
+### Where it differs
+
+- **Cost runs the other way.** Their full harness took about six hours against twenty minutes for
+  a solo run, at over twenty times the cost, and the post describes no split of models between
+  its agents. It buys quality with spend. polytropos claims the reverse trade: frontier judgment once, cheaper tiers for the
+  build. Whether a cheaper generator holds up under a strict evaluator is the question the
+  polytropos ledger exists to answer, and the post does not test it.
+- **Who sets "done".** Their contract is negotiated between two agents before each sprint. In
+  polytropos it is written by the architect for every task up front and approved by a person.
+- **Changing course.** After each evaluation their generator could refine its direction or pivot
+  to a new one. A polytropos executor can only stop and report back.
+- **What gets checked.** Their evaluator judged design, originality, craft and function against
+  calibrated, weighted criteria. polytropos checks pass-or-fail acceptance. Gaps 7 to 9 follow
+  from these last two differences.
 
 <!-- page -->
 
@@ -230,8 +299,9 @@ commands, evidence rule and reviewers judge it either way.
 
 ## Gaps and recommendations
 
-Each gap below is something a field tool does that polytropos does not. They are ordered by
-expected value. None is built; each would be its own kit.
+Each gap below is something a field tool or Anthropic's harness research does that polytropos
+does not. Gaps 1 to 6 come from the tools surveyed, and 7 to 9 from the harness research. None
+is built; each would be its own kit.
 
 1. **A pre-run consistency check.** *Gap:* Spec Kit's analyze step checks the artifacts against
    each other before implementation, and polytropos checks only the task graph's structure.
@@ -252,9 +322,26 @@ expected value. None is built; each would be its own kit.
 5. **Change deltas for brownfield work.** *Gap:* OpenSpec's added/modified/removed format.
    *Suggestion:* an optional `PLAN.md` section listing the behaviors the change adds, modifies
    and removes, reviewed in the approval pause.
-6. **A ceremony threshold.** *Gap:* no tool, polytropos included, states when a change is too
-   small for a spec. *Suggestion:* a rule in the architect or route skill, backed by
+6. **A ceremony threshold.** *Gap:* polytropos does not state when a change is too small for a
+   kit. Spec Kit offers a lighter bug-fix workflow, and Anthropic's post says an evaluator is
+   worth its cost only "when the task sits beyond what the current model does reliably solo". *Suggestion:* a rule in the architect or route skill, backed by
    `--history`, for routing small changes to a single dispatch instead of a kit.
+7. **Checking the running app.** *Gap:* Anthropic's evaluator clicks through the running
+   application with Playwright, while polytropos verify commands are shell commands that are
+   rarely written to drive a live interface. *Suggestion:* architect guidance and a role-template
+   variant for kits with a user interface, where the verify command or the `red-team` brief
+   starts the app and drives it with the repo's own browser tooling.
+8. **Calibrated rubrics for subjective work.** *Gap:* pass-or-fail acceptance cannot grade
+   design quality; Anthropic's evaluator scored weighted criteria, each with a hard threshold,
+   calibrated with worked examples. *Suggestion:* an optional rubric section in a task's
+   acceptance, with criteria, thresholds and example judgments, read by the verifier.
+9. **Closing the calibration loop.** *Gap:* Anthropic tuned its evaluator by reading its logs for
+   cases "where its judgment diverged from mine" and rewriting its prompt. polytropos already
+   records that divergence, as `findings` against `confirmed` on every verifier and reviewer
+   line, but nothing feeds it back. *Suggestion:* a report over a role's unconfirmed and missed
+   findings across kits, for the architect to read before writing that role's agent prompt.
+
+<!-- page -->
 
 ## Run it
 
@@ -271,7 +358,11 @@ On spec-driven development and its levels:
 [Böckeler, "Understanding Spec-Driven-Development: Kiro, spec-kit, and Tessl" (martinfowler.com, via a summary)](https://www.alldevblogs.com/article/martin-fowler/understanding-spec-driven-development-kiro-spec-kit-and-tessl);
 [Wikipedia: Spec-driven development](https://en.wikipedia.org/wiki/Spec-driven_development);
 [Spec Kit vs Kiro vs Tessl (Particula)](https://particula.tech/blog/spec-driven-development-tools-spec-kit-vs-kiro-vs-tessl).
+On Anthropic's harness research:
+[Rajasekaran, "Harness design for long-running application development" (Anthropic, March 2026)](https://www.anthropic.com/research/harness-design-long-running-apps).
 On Spec Kit:
+[github/spec-kit README](https://github.com/github/spec-kit);
+[Spec Kit's spec-driven.md](https://github.com/github/spec-kit/blob/main/spec-driven.md);
 [Augment Code practical guide](https://www.augmentcode.com/guides/github-spec-kit-practical-guide-sdd-workflow);
 [Perficient core-commands guide](https://blogs.perficient.com/getting-started-with-github-spec-kit-installation-and-core-commands/).
 On Kiro:

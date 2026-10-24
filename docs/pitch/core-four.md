@@ -6,9 +6,14 @@ each job.**
 GitHub's Spec Kit names the spec-driven development loop as four core phases: **Specify** (what
 and why, with no technology choices), **Plan** (the technical approach), **Tasks** (the plan cut
 into ordered, checkable work items), and **Implement** (executing those items). A project
-**constitution** sits above all four, and two optional steps, **clarify** and **analyze**, sit
-between them. Its command names have changed across versions (`/specify` earlier, `/speckit.*`
-now); the official `github/spec-kit` README is the authority on its current behavior.
+**constitution** sits above all four. Clarification and consistency checks sit between them:
+in Spec Kit's methodology document as `[NEEDS CLARIFICATION]` markers and self-review
+checklists inside the templates, and in its walkthrough as optional steps. The current README
+also pairs Implement with a **converge** command, which checks progress; implement and converge
+repeat until converge reports `Converged`. The command syntax has changed across versions
+(`/specify`, then `/speckit.specify`, now `/speckit-specify` in the README), so this report
+names the phases, not the commands. The official `github/spec-kit` README is the authority on
+its current behavior.
 
 polytropos runs the same loop under different names. It splits the loop across two skills and
 adds a fifth step that Spec Kit does not have. This report maps each phase, then names where
@@ -26,6 +31,7 @@ that makes it true. The long form of the argument is `docs/SPEC-DRIVEN.md`.
 | **Tasks** | `TASKS.md`: one block per task with a pinned `model`, a self-contained brief, acceptance, a verify command and `evidence:` | `skills/architect/SKILL.md` Step 2; `bin/kit_contract.py` | the architect writes it; `kit_contract.py graph` validates it |
 | analyze | structural graph check before the run; drift review at each phase end | `bin/kit_contract.py graph`; the kit's reviewer agent | execute |
 | **Implement** | per-task dispatch to the pinned tier, orchestrator-run verify, fresh-context verifier, phase reviewer, one retry, then a frontier consult | `skills/execute/SKILL.md`; `bin/claude_execute.py` and its peers | `/polytropos:execute` on cheaper tiers |
+| converge | the loop ends when `bin/kit_contract.py graph` reports every task `done`; each task already converged through its own verify, verifier and retry | `bin/kit_contract.py`; `skills/execute/SKILL.md` | execute |
 | *(none)* | **Measure**: a ledger in `NOTES.md` and a scorecard that grades the tiers, the review roles and the spec | `skills/execute/references/ledger.md`; `bin/routing_scorecard.py` | execute writes it; the next architect reads it |
 
 <!-- page -->
@@ -119,7 +125,8 @@ was done and how much model to spend on it.
 
 ## 4 · Implement
 
-**Spec Kit.** The implement phase executes the generated tasks.
+**Spec Kit.** The implement phase executes the generated tasks, and converge checks the result;
+the two repeat until converge reports `Converged`.
 
 **polytropos.** `/polytropos:execute` runs the kit as an orchestrator on the daily-driver tier.
 For each task it:

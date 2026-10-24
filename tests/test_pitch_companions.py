@@ -33,10 +33,11 @@ REPORT_HTML = REPO_ROOT / "docs" / "pitch" / "sdd-report.html"
 RENDER = REPO_ROOT / "docs" / "pitch" / "render.py"
 
 # The field report is longer than the deck: more printed pages, more words per document.
-REPORT_PAGES = (5, 9)
+REPORT_PAGES = (5, 10)
 REPORT_WORDS = (2400, 4500)
 REPORT_SECTIONS = ("Summary", "What spec-driven development is", "The landscape",
                    "The principles, and how polytropos meets them", "Framework by framework",
+                   "Outside evidence: Anthropic's harness research",
                    "The criticisms of SDD, and how polytropos answers them",
                    "Gaps and recommendations", "Sources")
 REPORT_FRAMEWORKS = ("Spec Kit", "Kiro", "OpenSpec", "BMAD", "Tessl")
