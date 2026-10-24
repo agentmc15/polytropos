@@ -21,6 +21,7 @@ import io
 import json
 import re
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -571,6 +572,135 @@ class CliTests(unittest.TestCase):
         self.assertIn("this tool writes nothing", out)
         rc, out, _ = self._run(["reverify", "--harness", "cursor", "--released", "2026-10-01", "--json"])
         self.assertEqual(json.loads(out)["harness"], "cursor")
+
+
+
+# ---- bump: the version, everywhere it is stated, in one command ---------------------------------
+
+def _bump_fixture(base, version="1.2.3", reference=True):
+    root = base / "repo"
+    (root / ".claude-plugin").mkdir(parents=True)
+    (root / ".claude-plugin" / "plugin.json").write_text(
+        json.dumps({"name": "p", "version": version, "description": "d"}, indent=2) + "\n")
+    if reference:
+        (root / "docs").mkdir()
+        (root / "docs" / "REFERENCE.md").write_text(
+            f"| Surface | Count |\n| Plugin version | {version} | `.claude-plugin/plugin.json` |\n")
+    return root
+
+
+def _clean(verb, *args):
+    return 0, ""
+
+
+class BumpPlanTests(unittest.TestCase):
+    def test_a_clean_bump_plans_the_manifest_and_the_reference_row(self):
+        with tempfile.TemporaryDirectory() as td:
+            plan = rg.plan_bump(_bump_fixture(Path(td)), "1.2.4", git_read_fn=_clean)
+            self.assertEqual((plan["old"], plan["new"]), ("1.2.3", "1.2.4"))
+            self.assertEqual([rel for rel, _b, _a in plan["edits"]],
+                             [".claude-plugin/plugin.json", "docs/REFERENCE.md"])
+
+    def test_versions_that_are_malformed_or_not_greater_are_refused(self):
+        for version, reason in (("abc", "not a MAJOR.MINOR.PATCH"), ("1.2", "not a MAJOR.MINOR.PATCH"),
+                                ("1.2.3", "not greater"), ("1.2.2", "not greater"),
+                                ("0.9.9", "not greater")):
+            with self.subTest(version=version), tempfile.TemporaryDirectory() as td:
+                with self.assertRaisesRegex(rg.BumpRefused, reason):
+                    rg.plan_bump(_bump_fixture(Path(td)), version, git_read_fn=_clean)
+
+    def test_ordering_is_numeric_not_lexical(self):
+        with tempfile.TemporaryDirectory() as td:
+            plan = rg.plan_bump(_bump_fixture(Path(td), version="1.9.9"), "1.10.0", git_read_fn=_clean)
+            self.assertEqual(plan["new"], "1.10.0")
+
+    def test_uncommitted_work_or_an_unreadable_checkout_refuses(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = _bump_fixture(Path(td))
+            with self.assertRaisesRegex(rg.BumpRefused, "uncommitted or untracked"):
+                rg.plan_bump(root, "1.2.4", git_read_fn=lambda verb, *a: (0, "?? stray.txt\n"))
+            with self.assertRaisesRegex(rg.BumpRefused, "git could not read"):
+                rg.plan_bump(root, "1.2.4", git_read_fn=lambda verb, *a: (128, ""))
+
+    def test_a_version_not_stated_exactly_once_refuses(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = _bump_fixture(Path(td))
+            (root / "docs" / "REFERENCE.md").write_text("no version row here\n")
+            with self.assertRaisesRegex(rg.BumpRefused, "docs/REFERENCE.md"):
+                rg.plan_bump(root, "1.2.4", git_read_fn=_clean)
+        with tempfile.TemporaryDirectory() as td:
+            root = _bump_fixture(Path(td))
+            manifest = root / ".claude-plugin" / "plugin.json"
+            manifest.write_text('{"name": "p", "version": "1.2.3", "x": {"version": "1.2.3"}}\n')
+            with self.assertRaisesRegex(rg.BumpRefused, "exactly once"):
+                rg.plan_bump(root, "1.2.4", git_read_fn=_clean)
+
+    def test_a_tree_without_the_reference_page_bumps_the_manifest_alone(self):
+        with tempfile.TemporaryDirectory() as td:
+            plan = rg.plan_bump(_bump_fixture(Path(td), reference=False), "2.0.0", git_read_fn=_clean)
+            self.assertEqual([rel for rel, _b, _a in plan["edits"]], [".claude-plugin/plugin.json"])
+
+
+class BumpApplyTests(unittest.TestCase):
+    def test_apply_rewrites_exactly_the_stated_version_and_keeps_each_files_mode(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = _bump_fixture(Path(td))
+            manifest = root / ".claude-plugin" / "plugin.json"
+            manifest.chmod(0o644)
+            plan = rg.plan_bump(root, "1.3.0", git_read_fn=_clean)
+            self.assertEqual(rg.apply_bump(root, plan, rebuild=False),
+                             [".claude-plugin/plugin.json", "docs/REFERENCE.md"])
+            data = json.loads(manifest.read_text())
+            self.assertEqual(data, {"name": "p", "version": "1.3.0", "description": "d"})
+            self.assertEqual(manifest.stat().st_mode & 0o777, 0o644)
+            self.assertIn("| Plugin version | 1.3.0 |", (root / "docs" / "REFERENCE.md").read_text())
+
+
+class GitReadLockTests(unittest.TestCase):
+    def test_git_read_never_takes_the_optional_index_lock(self):
+        seen = {}
+
+        class FakeRunner:
+            @staticmethod
+            def run(argv, **_kwargs):
+                seen["argv"] = argv
+                return {"rc": 0, "stdout": ""}
+
+        with mock.patch.object(rg, "_sibling", return_value=FakeRunner):
+            rg.git_read(REPO_ROOT, "status", "--porcelain")
+        self.assertEqual(seen["argv"][:3], ["git", "--no-optional-locks", "status"])
+
+
+@unittest.skipUnless(shutil.which("git"), "git is not installed")
+class BumpEndToEndTests(unittest.TestCase):
+    """The real `bump` command on a throwaway git copy of this tree: it must change exactly the
+    files a hand bump changes, and leave the release block current."""
+
+    def _git(self, root, *args):
+        return subprocess.run(["git", "-c", "user.name=fixture", "-c", "user.email=fixture@example.invalid",
+                               *args], cwd=root, check=True, capture_output=True, text=True).stdout
+
+    def test_bump_on_a_copy_of_the_real_tree(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td) / "repo"
+            shutil.copytree(REPO_ROOT, root, ignore=shutil.ignore_patterns(
+                ".git", "__pycache__", ".DS_Store", "site-build"))
+            self._git(root, "init", "-q", "-b", "main")
+            self._git(root, "add", "-A")
+            self._git(root, "commit", "-q", "-m", "fixture")
+            current = json.loads((root / ".claude-plugin" / "plugin.json").read_text())["version"]
+            major, minor, patch = (int(p) for p in current.split("."))
+            nxt = f"{major}.{minor}.{patch + 1}"
+            with contextlib.redirect_stdout(io.StringIO()):
+                code = rg.main(["bump", nxt, "--repo-root", str(root)])
+            self.assertEqual(code, rg.EXIT_OK)
+            changed = {line[3:] for line in self._git(root, "status", "--porcelain").splitlines()}
+            self.assertEqual(changed, {".claude-plugin/plugin.json", "docs/REFERENCE.md",
+                                       "docs/RELEASE.md", "docs-site/deep-dives/reference.md",
+                                       "docs-site/deep-dives/release.md"})
+            self.assertEqual(json.loads((root / ".claude-plugin" / "plugin.json").read_text())["version"], nxt)
+            self.assertIn(f"polytropos {nxt}", (root / "docs" / "RELEASE.md").read_text())
+            self.assertIsNone(rg.check_release_doc(root))
 
 
 if __name__ == "__main__":

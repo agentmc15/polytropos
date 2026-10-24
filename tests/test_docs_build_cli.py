@@ -306,7 +306,8 @@ class RealTreeIdempotenceTests(unittest.TestCase):
     (2026-09-25), then 87 when docs/JEV-JUDGE-STUDY.md added its offline
     preregistration (2026-09-25), then 88 when docs/ROUTE-EXPERIMENT.md added the route
     experiment's preregistration (2026-09-28), then 89 when docs/SPEC-DRIVEN.md
-    (sdd-docs-refresh) added one deep dive (2026-10-23) -- this test derives the count dynamically for the
+    (sdd-docs-refresh) added one deep dive (2026-10-23), and 90 once the observability-dashboard kit's T8
+    added skills/dashboard (merged from main) -- this test derives the count dynamically for the
     build assertions, and the literal below is only the tripwire that makes a change in
     the page set announce itself."""
 
@@ -314,7 +315,7 @@ class RealTreeIdempotenceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = _copy_real_dirs(tmp, ("skills", "copilot", "codex", "docs"))
             expected_count = len(db.expected_pages(root))
-            self.assertEqual(expected_count, 89, "the pinned page-set size (89 total)")
+            self.assertEqual(expected_count, 90, "the pinned page-set size (90 total)")
 
             code1, out1, err1 = _run_main(["build", "--repo-root", str(root)])
             self.assertEqual(code1, 0, f"stderr={err1!r}")

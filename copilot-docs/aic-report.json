@@ -32,7 +32,7 @@
       "kind": "markdown",
       "title": "GitHub Copilot CLI Documentation Center",
       "authoring_mode": "estimated",
-      "sources_sha256": "20cef700114862ee55c5de9fa548bbb7621831b2ee85cb1b57c438409bee4bc8",
+      "sources_sha256": "d1894b5978b0a0c1269931fa39580eeb579d257e1fa0a555b1a455af4f0cf7ca",
       "measurement": {
         "bytes": 3586,
         "words": 564,
@@ -77,7 +77,7 @@
       "kind": "markdown",
       "title": "Installing the Copilot CLI bundle",
       "authoring_mode": "estimated",
-      "sources_sha256": "8c90004402ef08d9c29a58d7ee9e09a761344f6badd695211bafb094b9f0efbf",
+      "sources_sha256": "eb32dcf6a96a91dc362d8d506434302d94053717480ced0e74450873f8fb6247",
       "measurement": {
         "bytes": 3516,
         "words": 551,
@@ -167,11 +167,11 @@
       "kind": "markdown",
       "title": "Skills reference",
       "authoring_mode": "estimated",
-      "sources_sha256": "a12991d07903bc93a495bf6bfd9939c91f969e7b638e0c9aaf136af54a89aed6",
+      "sources_sha256": "1f1064cc728a6c55778e3629b838ebebc7780de8b9e9830ea5394b2019081fe4",
       "measurement": {
-        "bytes": 22631,
-        "words": 3728,
-        "lexemes": 5251,
+        "bytes": 22805,
+        "words": 3768,
+        "lexemes": 5301,
         "ai_output_lexemes": 4150
       },
       "cost": {
@@ -199,7 +199,7 @@
       "authoring_mode": "estimated",
       "markdown_source": "SKILLS.md",
       "measurement": {
-        "bytes": 26766
+        "bytes": 26945
       },
       "cost": {
         "usd": 0.0,
@@ -302,7 +302,7 @@
       "kind": "markdown",
       "title": "Costs and AIC accounting",
       "authoring_mode": "estimated",
-      "sources_sha256": "caa03e7ed418a1fa057d0c080cc6f41d4654eb20cafc71675363b29bec7074d0",
+      "sources_sha256": "adc0eff07355bf0de985bf38956eaceef3af0da2f96758fea06303c75e99cd3a",
       "measurement": {
         "bytes": 8430,
         "words": 1350,
@@ -347,7 +347,7 @@
       "kind": "markdown",
       "title": "Practical workflows",
       "authoring_mode": "estimated",
-      "sources_sha256": "e90a7c28bb9cfc6a93fe0c50f8badf665fad3da87e6392906567bf79757aa235",
+      "sources_sha256": "3aa19d802ffbc53a7acb39538096315a59967619dfe83f7adf2d121ff66c9228",
       "measurement": {
         "bytes": 12380,
         "words": 1997,

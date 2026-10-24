@@ -75,6 +75,7 @@ WF_SPEC.loader.exec_module(wf)
 
 _LIVE = {}
 _DATA_HOME = None
+_DATA_HOME_PATCH = None
 
 
 def setUpModule():
@@ -82,14 +83,22 @@ def setUpModule():
 
     `bin/exec_policy.py` resolves no store and reads no home, which is why nothing below needs
     the pin today. It is here so a later edit that reaches for one cannot reach a real one.
+
+    The pin is a patch, not an assignment, so teardown restores whatever root the run had
+    before. Popping the variable instead unset the whole run's pin for every module after this
+    one -- a run started with `POLYTROPOS_DATA_HOME` set, or the suite's own canary
+    (`tests/test__data_home_canary.py`), lost it here, and any later module that relied on it
+    wrote to the real store.
     """
-    global _DATA_HOME
+    global _DATA_HOME, _DATA_HOME_PATCH
     _DATA_HOME = tempfile.TemporaryDirectory(prefix="polytropos-sentinel-home-")
-    os.environ["POLYTROPOS_DATA_HOME"] = _DATA_HOME.name
+    _DATA_HOME_PATCH = mock.patch.dict(os.environ, {"POLYTROPOS_DATA_HOME": _DATA_HOME.name})
+    _DATA_HOME_PATCH.start()
 
 
 def tearDownModule():
-    os.environ.pop("POLYTROPOS_DATA_HOME", None)
+    if _DATA_HOME_PATCH is not None:
+        _DATA_HOME_PATCH.stop()
     if _DATA_HOME is not None:
         _DATA_HOME.cleanup()
 

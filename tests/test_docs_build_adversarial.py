@@ -349,8 +349,9 @@ class LiveTreeInventoryTests(unittest.TestCase):
         counts = {"claude": 0, "copilot": 0, "codex": 0}
         for r in records:
             counts[r["harness"]] += 1
-        # 15 since D25 added skills/assess-improvement (was 14).
-        self.assertEqual(counts["claude"], 15)
+        # 16 since the observability-dashboard kit added skills/dashboard (was 15, since
+        # D25 added skills/assess-improvement).
+        self.assertEqual(counts["claude"], 16)
         self.assertEqual(counts["copilot"], 13)
         self.assertEqual(counts["codex"], 17)
         self.assertIn(("claude", "route"), pairs)

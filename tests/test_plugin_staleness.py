@@ -643,6 +643,202 @@ class MainCliTests(unittest.TestCase):
 
 # ---- static hygiene: mirrors the task's own verify-command checks for extra regression safety --
 
+# ---- 2026-09-25: other cached versions, the whole tree, and what a session loaded --------------
+
+TRACKED = sorted(DEFAULT_FILES) + ["docs/guide.md"]
+TREE_FILES = {**DEFAULT_FILES, "docs/guide.md": "# guide\n"}
+
+
+def _cache_layout(base, versions=("1.0.0",), active="1.0.0", files=None):
+    """An install at `<base>/cache/fake-market/fake-plugin/<active>` plus sibling versions."""
+    for version in versions:
+        _make_install(base, files=files if files is not None else TREE_FILES,
+                      subdir=f"cache/fake-market/fake-plugin/{version}")
+    return base / "cache" / "fake-market" / "fake-plugin" / active
+
+
+class SupersededVersionsTests(unittest.TestCase):
+    def test_lists_the_other_version_dirs_oldest_first_and_skips_non_versions(self):
+        with tempfile.TemporaryDirectory() as td:
+            active = _cache_layout(Path(td), versions=("0.10.0", "0.9.0", "1.0.0"))
+            (active.parent / "notes").mkdir()
+            found = ps.superseded_versions(active, "fake-plugin", "fake-market")
+            self.assertEqual([Path(p).name for p in found], ["0.9.0", "0.10.0"])
+
+    def test_only_the_active_version_is_an_empty_list(self):
+        with tempfile.TemporaryDirectory() as td:
+            active = _cache_layout(Path(td))
+            self.assertEqual(ps.superseded_versions(active, "fake-plugin", "fake-market"), [])
+
+    def test_an_unrecognised_layout_is_none_so_no_removal_line_is_ever_printed(self):
+        with tempfile.TemporaryDirectory() as td:
+            active = _cache_layout(Path(td), versions=("0.9.0", "1.0.0"))
+            self.assertIsNone(ps.superseded_versions(active, "other-plugin", "fake-market"))
+            self.assertIsNone(ps.superseded_versions(active, "fake-plugin", "other-market"))
+            self.assertIsNone(ps.superseded_versions(None, "fake-plugin", "fake-market"))
+
+    def test_prune_commands_are_shell_quoted(self):
+        cmds = ps.prune_commands(["/tmp/a b/0.9.0"])
+        self.assertEqual(cmds, ["rm -rf -- '/tmp/a b/0.9.0'"])
+
+
+class CompareTreeTests(unittest.TestCase):
+    def _pair(self, td, install_files):
+        base = Path(td)
+        repo = _make_repo(base, files=TREE_FILES)
+        install = _make_install(base, files=install_files)
+        return repo, install
+
+    def test_an_identical_tree_counts_every_tracked_file(self):
+        with tempfile.TemporaryDirectory() as td:
+            repo, install = self._pair(td, TREE_FILES)
+            tree = ps.compare_tree(repo, install, TRACKED)
+            self.assertEqual(tree["tracked_total"], len(TRACKED))
+            self.assertEqual(tree["identical"], len(TRACKED))
+            self.assertEqual(tree["differs"] + tree["missing_from_install"], [])
+
+    def test_a_differing_file_outside_the_core_globs_is_seen(self):
+        with tempfile.TemporaryDirectory() as td:
+            repo, install = self._pair(td, {**TREE_FILES, "docs/guide.md": "# stale guide\n"})
+            tree = ps.compare_tree(repo, install, TRACKED)
+            self.assertEqual(tree["differs"], ["docs/guide.md"])
+            self.assertEqual(tree["by_dir"]["docs/"]["differs"], 1)
+
+    def test_missing_untracked_and_absent_from_checkout_are_kept_apart(self):
+        with tempfile.TemporaryDirectory() as td:
+            install_files = {k: v for k, v in TREE_FILES.items() if k != "bin/tool.py"}
+            install_files[".claude/settings.local.json"] = "{}\n"
+            repo, install = self._pair(td, install_files)
+            tree = ps.compare_tree(repo, install, TRACKED + ["docs/deleted.md"])
+            self.assertEqual(tree["missing_from_install"], ["bin/tool.py"])
+            self.assertEqual(tree["untracked_in_install"], [".claude/settings.local.json"])
+            self.assertEqual(tree["missing_in_checkout"], ["docs/deleted.md"])
+
+
+class ResolveWithTreeTests(unittest.TestCase):
+    def _sha_stale(self, td, install_files):
+        base = Path(td)
+        repo = _make_repo(base, files=TREE_FILES)
+        _add_git_ref_head(repo, "6" * 40)
+        install = _make_install(base, files=install_files)
+        manifest = _write_manifest(base, "fake-plugin@fake-market", {
+            "installPath": str(install), "version": "1.0.0", "gitCommitSha": "e" * 40})
+        result = ps.check_staleness(repo, manifest)
+        self.assertEqual(result["status"], "SHA STALE")  # the per-glob answer, before settling
+        return repo, install, result
+
+    def test_sha_stale_with_every_tracked_file_identical_settles_as_in_sync(self):
+        with tempfile.TemporaryDirectory() as td:
+            repo, install, result = self._sha_stale(td, TREE_FILES)
+            settled = ps.resolve_with_tree(result, ps.compare_tree(repo, install, TRACKED))
+            self.assertEqual(settled["status"], "IN SYNC")
+            self.assertTrue(settled["commit_id_only"])
+            self.assertEqual(settled["note"], ps.COMMIT_ID_ONLY_NOTE)
+            self.assertEqual(settled["exit_code"], ps.EXIT_OK)
+
+    def test_the_2026_09_21_case_a_sha_stale_install_with_a_differing_doc_is_drifted(self):
+        with tempfile.TemporaryDirectory() as td:
+            repo, install, result = self._sha_stale(
+                td, {**TREE_FILES, "docs/guide.md": "# what the install still says\n"})
+            settled = ps.resolve_with_tree(result, ps.compare_tree(repo, install, TRACKED))
+            self.assertEqual(settled["status"], "DRIFTED")
+            self.assertEqual(settled["exit_code"], ps.EXIT_DRIFTED)
+            self.assertIn("remedy", settled)
+            self.assertNotIn("note", settled)
+
+    def test_not_installed_passes_through_unchanged(self):
+        result = {"installed": False, "status": None}
+        self.assertEqual(ps.resolve_with_tree(result, {}), result)
+
+
+class CheckLoadedTests(unittest.TestCase):
+    def _setup(self, td, installed="1.0.0", versions=("0.9.0", "1.0.0")):
+        base = Path(td)
+        active = _cache_layout(base, versions=versions, active=installed)
+        for version in versions:
+            vdir = active.parent / version
+            (vdir / ".claude-plugin").mkdir(parents=True)
+            (vdir / ".claude-plugin" / "plugin.json").write_text(
+                json.dumps({"name": "fake-plugin", "version": version}))
+            (vdir / ".claude-plugin" / "marketplace.json").write_text(json.dumps({"name": "fake-market"}))
+        manifest = _write_manifest(base, "fake-plugin@fake-market",
+                                   {"installPath": str(active), "version": installed})
+        return base, active, manifest
+
+    def test_the_installed_copy_is_current(self):
+        with tempfile.TemporaryDirectory() as td:
+            _base, active, manifest = self._setup(td)
+            loaded = ps.check_loaded(active, manifest)
+            self.assertEqual(loaded["status"], ps.LOADED_CURRENT)
+            self.assertEqual(loaded["exit_code"], ps.EXIT_OK)
+
+    def test_an_older_cached_version_means_restart_needed(self):
+        with tempfile.TemporaryDirectory() as td:
+            _base, active, manifest = self._setup(td)
+            loaded = ps.check_loaded(active.parent / "0.9.0", manifest)
+            self.assertEqual(loaded["status"], ps.LOADED_RESTART)
+            self.assertEqual(loaded["exit_code"], ps.EXIT_DRIFTED)
+            self.assertIn("Restart Claude Code", loaded["note"])
+
+    def test_a_plugin_dir_session_is_not_the_installed_copy_and_not_a_failure(self):
+        with tempfile.TemporaryDirectory() as td:
+            base, _active, manifest = self._setup(td)
+            checkout = _make_repo(base / "checkout", version="1.0.0")
+            loaded = ps.check_loaded(checkout, manifest)
+            self.assertEqual(loaded["status"], ps.LOADED_ELSEWHERE)
+            self.assertEqual(loaded["exit_code"], ps.EXIT_OK)
+
+    def test_a_directory_without_plugin_identity_fails(self):
+        with tempfile.TemporaryDirectory() as td:
+            _base, _active, manifest = self._setup(td)
+            loaded = ps.check_loaded(Path(td) / "nowhere", manifest)
+            self.assertEqual(loaded["status"], "not a plugin root")
+            self.assertEqual(loaded["exit_code"], ps.EXIT_DRIFTED)
+
+
+class FullAndLoadedCliTests(unittest.TestCase):
+    """CLI paths that never ask git: `--full` always gets `--tracked-file` here."""
+
+    def _fixture(self, td, install_files):
+        base = Path(td)
+        repo = _make_repo(base, files=TREE_FILES)
+        _add_git_ref_head(repo, "6" * 40)
+        active = _cache_layout(base, versions=("0.9.0", "1.0.0"), files=install_files)
+        manifest = _write_manifest(base, "fake-plugin@fake-market", {
+            "installPath": str(active), "version": "1.0.0", "gitCommitSha": "e" * 40})
+        tracked = base / "tracked.txt"
+        tracked.write_text("\0".join(TRACKED) + "\0")
+        return repo, manifest, tracked
+
+    def test_full_settles_sha_stale_and_prints_the_tree_and_the_cache_block(self):
+        with tempfile.TemporaryDirectory() as td:
+            repo, manifest, tracked = self._fixture(td, TREE_FILES)
+            code, out = _run_main(["--repo", str(repo), "--installed-manifest", str(manifest),
+                                   "--full", "--tracked-file", str(tracked)])
+            self.assertEqual(code, 0)
+            self.assertIn("whole tree: 6 tracked files", out)
+            self.assertIn("status: IN SYNC", out)
+            self.assertIn("rm -rf -- ", out)
+            self.assertIn("0.9.0", out)
+
+    def test_full_exits_3_when_a_doc_differs(self):
+        with tempfile.TemporaryDirectory() as td:
+            repo, manifest, tracked = self._fixture(td, {**TREE_FILES, "docs/guide.md": "old\n"})
+            code, out = _run_main(["--repo", str(repo), "--installed-manifest", str(manifest),
+                                   "--full", "--tracked-file", str(tracked)])
+            self.assertEqual(code, 3)
+            self.assertIn("docs/guide.md", out)
+
+    def test_loaded_reports_a_restart_as_exit_3(self):
+        with tempfile.TemporaryDirectory() as td:
+            loaded_tests = CheckLoadedTests()
+            _base, active, manifest = loaded_tests._setup(td)
+            code, out = _run_main(["--installed-manifest", str(manifest),
+                                   "--loaded", str(active.parent / "0.9.0")])
+            self.assertEqual(code, 3)
+            self.assertIn("restart needed", out)
+
+
 class SourceHygieneTests(unittest.TestCase):
     def setUp(self):
         self.source = (BIN_DIR / "plugin_staleness.py").read_text()

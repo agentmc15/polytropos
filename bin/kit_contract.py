@@ -1348,10 +1348,23 @@ def count_plan_budget_usage(notes_text):
     imports no pricing/scorecard module -- the same tier-resolution precedent above), read-only
     over `notes_text`. Per `outcome:` line: `attempts=` (default 1 when absent or non-integer,
     mirroring `routing_scorecard.parse_outcomes`) counts toward `max-dispatches`; `attempts - 1`
-    counts toward `max-escalations` (an in-ladder escalation IS an extra dispatch); a line
-    carrying `parent=` counts ONE `max-consults` (a run dispatched with `--parent` is a consult
-    by definition, whether it passed, was blocked, or was itself a budget-stop). Returns a dict
-    with all three `PLAN_BUDGET_KEYS`, always present (0 when nothing is recorded yet).
+    counts toward `max-escalations` (an in-ladder escalation IS an extra dispatch) EXCEPT on a
+    `result=retry-pass` line, which counts none; a line carrying `parent=` counts ONE
+    `max-consults` (a run dispatched with `--parent` is a consult by definition, whether it
+    passed, was blocked, or was itself a budget-stop). Returns a dict with all three
+    `PLAN_BUDGET_KEYS`, always present (0 when nothing is recorded yet).
+
+    Why `retry-pass` is the one exemption. `OPERATION_CAPS` charges `max-escalations` only for
+    an `escalation` operation, never for a same-model `retry`, and `retry-pass` is the one
+    result word that says every extra attempt was a retry: the execute skill writes it for a
+    task that passed on a same-model retry (its only escalation, the Fable consult, writes
+    `escalated-pass`), and no driver writes it at all. Charging those lines made a kit whose
+    tasks each needed one retry read as over its escalation cap with nothing ever escalated.
+    Every other result keeps `attempts - 1`, an upper bound, because its line cannot tell the
+    two apart: a driver's `pass` can still carry an escalation from an earlier run that died
+    before projecting (`ledger_attempts` spans runs, `escalations` does not), and `blocked` or
+    `escalated-pass` may mix retries with rungs. Over-counting there stops a run early; the
+    fix never trades that for under-counting a cap.
     """
     used = {k: 0 for k in PLAN_BUDGET_KEYS}
     for line in notes_text.splitlines():
@@ -1369,7 +1382,8 @@ def count_plan_budget_usage(notes_text):
         # Every task dispatch is also a model call. `max-model-calls` additionally covers
         # review and acceptance, which `max-dispatches` has never counted and still does not.
         used["max-model-calls"] += attempts
-        used["max-escalations"] += max(attempts - 1, 0)
+        if not re.search(r"(?:^|\s)result=retry-pass(?:\s|$)", s):
+            used["max-escalations"] += max(attempts - 1, 0)
         if re.search(r"(?:^|\s)parent=\S+", s):
             used["max-consults"] += 1
     return used

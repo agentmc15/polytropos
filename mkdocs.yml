@@ -71,6 +71,7 @@ nav:
       - bench-routing: skills/claude/bench-routing.md
       - context-weight: skills/claude/context-weight.md
       - cost-report: skills/claude/cost-report.md
+      - dashboard: skills/claude/dashboard.md
       - escalate: skills/claude/escalate.md
       - execute: skills/claude/execute.md
       - fable-check: skills/claude/fable-check.md

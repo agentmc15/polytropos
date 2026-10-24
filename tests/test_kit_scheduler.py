@@ -165,6 +165,24 @@ class SnapshotTests(_Case):
         self.assertEqual(ks.coordinator_paths({".claude/kits/k/TASKS.md", "a.txt"}, ".claude/kits/k"),
                          [".claude/kits/k/TASKS.md"])
 
+    def test_a_worker_snapshots_under_the_lock_that_guards_coordinator_writes(self):
+        # A sibling's in-progress projection rewrites TASKS.md through a temp file. A copy
+        # taken outside the lock either lists that temp file and finds it gone
+        # (FileNotFoundError), or hashes one TASKS.md and copies the next, and the worker is
+        # then blocked for a coordinator-state edit it never made. One worker keeps this
+        # deterministic: the only holder the lock can have is the snapshotting thread.
+        sched = self.scheduler(max_parallel=1)
+        real = ks.snapshot_tree
+        held = []
+
+        def spy(src, dest, *a, **kw):
+            held.append(sched._lock.locked())
+            return real(src, dest, *a, **kw)
+
+        with mock.patch.object(ks, "snapshot_tree", side_effect=spy):
+            sched.run()
+        self.assertEqual(held, [True])
+
 
 # ---- the batch ----------------------------------------------------------------------------------------
 

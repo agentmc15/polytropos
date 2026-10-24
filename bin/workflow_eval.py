@@ -3568,7 +3568,14 @@ def _variant_summary(variant_id, recs, floor, repeats):
     incorrect = sum(1 for r in live if r.get("incorrect_acceptance"))
     review_reject_solved = sum(1 for r in live if r.get("solved") and r.get("accepted") is False)
     reviews = [r for r in live if r.get("review")]
-    coverage = {"tests_oracle": (sum(1 for r in live if (r.get("oracles") or {}).get("tests", {}).get("available"))
+    def _tests_oracle_available(r):
+        # A malformed `oracles` (or its `tests`) is an oracle that did not report: counted as
+        # not available, never an AttributeError that erases the whole card.
+        oracles = r.get("oracles")
+        tests = oracles.get("tests") if isinstance(oracles, dict) else None
+        return isinstance(tests, dict) and bool(tests.get("available"))
+
+    coverage = {"tests_oracle": (sum(1 for r in live if _tests_oracle_available(r))
                                  / n) if n else None,
                 "review_parsed": (sum(1 for r in reviews if r["review"].get("parsed")) / len(reviews))
                 if reviews else None}
@@ -3736,10 +3743,22 @@ def render_card_markdown(card):
 # ---- store readers ------------------------------------------------------------------------------------------
 
 def read_envelope(store_dir, run_id):
-    path = Path(store_dir) / run_id / "results.json"
-    if not path.exists():
+    """One run's `results.json`, read through `safe_paths` so `run_id` cannot leave the store.
+
+    `run_id` must be a single safe component (`safe_paths.validate_id`): `../x`, an absolute
+    path, or a separator is refused with `SafePathError` (a `ValueError`), and a linked run
+    directory or `results.json` is refused rather than followed. An absent run is still
+    `FileNotFoundError`, as before.
+    """
+    sp = _sp()
+    run_id = sp.validate_id(run_id, "run id")
+    raw = None
+    if Path(store_dir).is_dir():
+        raw = sp.confined_read_bytes(Path(store_dir), f"{run_id}/results.json",
+                                     what="evaluation run", missing_ok=True)
+    if raw is None:
         raise FileNotFoundError(f"no results.json for run {run_id!r} under {store_dir}")
-    return json.loads(path.read_text())
+    return json.loads(raw.decode())
 
 
 def write_envelope(store_dir, run_id, envelope):
@@ -3767,10 +3786,17 @@ def list_runs(store_dir):
         except (OSError, ValueError):
             notes.append(f"{entry.name}: results.json unreadable")
             continue
-        if env.get("v") != EVAL_VERSION:
+        if not isinstance(env, dict) or env.get("v") != EVAL_VERSION:
             notes.append(f"{entry.name}: not a {EVAL_VERSION} envelope")
             continue
-        rows.append({"run_id": env.get("run_id", entry.name), "repo": env.get("repo"),
+        # The DIRECTORY name is the run id: it is what `read_envelope`, `card`, `adjudicate`
+        # and `propose` address a run by. A declared id that differs is flagged, never shown
+        # in its place -- a row must name a run that can actually be opened.
+        declared = env.get("run_id")
+        if declared is not None and declared != entry.name:
+            notes.append(f"{entry.name}: results.json declares run id {declared!r}; "
+                         f"listed by its directory name")
+        rows.append({"run_id": entry.name, "repo": env.get("repo"),
                      "harness": env.get("harness"), "trials": len(env.get("trials") or []),
                      "spent_usd": (env.get("spend") or {}).get("spent_usd"),
                      "labels": env.get("labels") or []})

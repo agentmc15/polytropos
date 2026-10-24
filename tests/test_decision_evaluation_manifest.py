@@ -732,10 +732,13 @@ class EvaluationManifestTests(unittest.TestCase):
     def test_the_evals_store_has_exactly_one_engine_naming_it(self):
         # "One local store, written by its own engine ONLY." `bin/runtime_data.py` declares the
         # store; `bin/workflow_eval.py` is the only module that resolves it. A second writer
-        # would have to name it here.
+        # would have to name it here. `bin/dashboard.py` (the observability-dashboard kit, T7)
+        # is the one sanctioned exception: it READS every checkout's evals store through this
+        # owner's own `list_runs`/`read_envelope`/`build_card` functions and writes one only as
+        # a temp-root fixture (`synthetic_world`), never a real store.
         naming = sorted(p.name for p in BIN_DIR.glob("*.py")
                         if '"evals"' in p.read_text() or "'evals'" in p.read_text())
-        self.assertEqual(naming, ["runtime_data.py", "workflow_eval.py"])
+        self.assertEqual(naming, ["dashboard.py", "runtime_data.py", "workflow_eval.py"])
         self.assertIn("evals", _load("runtime_data").STORES)
 
     # ---- the envelope, end to end, through the owning evaluator ------------------------------

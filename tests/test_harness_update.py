@@ -4,8 +4,8 @@ SAFETY CONTRACT: every fixture used below lives under a fresh `tempfile.Temporar
 (or, for `demo`, `harness_update.py`'s own self-cleaning `tempfile.mkdtemp()`) and is handed to
 the engine via explicit `--repo-root` / `--installed-manifest` / `--copilot-home` /
 `--codex-home` CLI flags (or the matching pure-function parameters). Every `_run_main` call
-below passes `--copilot-home` and `--codex-home` explicitly so a run never falls through to the
-real-home argparse defaults. This file never reads or writes the real `~/.claude`, `~/.copilot`,
+below passes `--copilot-home` and `--codex-home` explicitly -- and every `check` call also
+`--known-marketplaces` -- so a run never falls through to the real-home argparse defaults. This file never reads or writes the real `~/.claude`, `~/.copilot`,
 or `~/.codex` -- `Path.home()` is never invoked anywhere in this file, and the real
 `claude`/`copilot`/`codex`/`gh` CLIs are never invoked. `LiveTreeFreshnessTests` below is the one
 exception that deliberately reads the real repo tree -- read-only, per PLAN.md D7 -- it is not a
@@ -28,6 +28,7 @@ import io
 import json
 import os
 import shutil
+import subprocess
 import tempfile
 import unittest
 from datetime import date
@@ -432,6 +433,7 @@ class JsonEnvelopeTests(unittest.TestCase):
                     "--installed-manifest", str(manifest),
                     "--copilot-home", str(copilot_home),
                     "--codex-home", str(codex_home),
+                    "--known-marketplaces", str(base / "no-known-marketplaces.json"),
                     "--json",
                 ]
             )
@@ -475,6 +477,7 @@ class JsonEnvelopeTests(unittest.TestCase):
                     "--installed-manifest", str(manifest),
                     "--copilot-home", str(copilot_home),
                     "--codex-home", str(codex_home),
+                    "--known-marketplaces", str(base / "no-known-marketplaces.json"),
                     "--json",
                 ]
             )
@@ -501,6 +504,7 @@ class JsonEnvelopeTests(unittest.TestCase):
                     "--installed-manifest", str(manifest),
                     "--copilot-home", str(copilot_home),
                     "--codex-home", str(codex_home),
+                    "--known-marketplaces", str(base / "no-known-marketplaces.json"),
                 ]
             )
             self.assertEqual(code, 0)
@@ -762,6 +766,146 @@ class CodexSectionConflictTests(unittest.TestCase):
             self.assertTrue(section["drift"])
             self.assertGreaterEqual(section["counts"].get("conflict", 0), 1)
             self.assertEqual(result["exit"], 3)
+
+
+def _write_known_marketplaces(base, install_location, marketplace="fake-market"):
+    """A fixture `known_marketplaces.json` naming `install_location` as `marketplace`'s source,
+    in the shape Claude Code records (`installLocation` plus `source.path`)."""
+    known = base / "known_marketplaces.json"
+    known.write_text(json.dumps({marketplace: {
+        "installLocation": str(install_location),
+        "source": {"source": "directory", "path": str(install_location)}}}))
+    return known
+
+
+class CodexSectionInstallSourceTests(unittest.TestCase):
+    """`--repo-root` at the plugin's install clone: its absent project agents are not drift.
+
+    The install clone never carries `<repo>/.codex/agents/` -- installing them there would put
+    an untracked `.codex/` into the Claude plugin cache -- so `check` used to exit 3 there for
+    four agents that belong in the checkout where Codex works.
+    """
+
+    def _install_clone(self, base):
+        """A fully fresh repo + codex home whose project agents were then removed, which is
+        exactly what an install clone looks like."""
+        repo, _dates = _build_fresh_data_fixture(base)
+        codex_home = base / "codex-home"
+        _apply_full_codex_install(hs, repo, codex_home)
+        shutil.rmtree(repo / ".codex")
+        return repo, codex_home
+
+    def test_absent_project_agents_at_the_install_source_are_not_applicable_not_drift(self):
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            repo, codex_home = self._install_clone(base)
+            known = _write_known_marketplaces(base, repo)
+            result = hu.run_check(repo, base / "absent.json", codex_home=codex_home,
+                                  today=date(2020, 1, 10), known_marketplaces=known)
+            section = result["codex"]
+            self.assertTrue(section["install_source"])
+            self.assertFalse(section["drift"])
+            self.assertEqual(section["counts"].get(hu.CODEX_NOT_APPLICABLE), 4)
+            self.assertEqual(section["counts"].get("install", 0), 0)
+            # Reported, never dropped: each agent is still an action carrying the reason.
+            na = [a for a in section["actions"] if a["state"] == hu.CODEX_NOT_APPLICABLE]
+            self.assertEqual({Path(a["destination"]).stem for a in na},
+                             set(_CODEX_AGENT_ROSTER))
+            for action in na:
+                self.assertEqual(action["component"], "agents")
+                self.assertIn("not applicable here (install source)", action["reason"])
+            self.assertEqual(result["exit"], 0)
+            card = hu.render_card(result)
+            self.assertIn("project agents: 4 not applicable here (install source)", card)
+            self.assertIn("verdict: all sections fresh", card)
+            self.assertNotIn(str(base), card.split("## codex")[1].split("## data")[0]
+                             .split("project agents:")[1].splitlines()[0])
+
+    def test_absent_optional_legacy_copies_stay_absent_and_never_count(self):
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            repo = _add_fake_codex_bundle(_make_repo(base))
+            codex_home = base / "codex-home"
+            codex_home.mkdir()  # nothing installed: agents absent, legacy copies absent
+            known = _write_known_marketplaces(base, repo)
+            section = hu.run_check(repo, base / "absent.json", codex_home=codex_home,
+                                   known_marketplaces=known)["codex"]
+            self.assertEqual(section["counts"].get("absent"), 3)
+            self.assertEqual(section["counts"].get(hu.CODEX_NOT_APPLICABLE), 4)
+            self.assertFalse(section["drift"])
+            self.assertNotIn("absent", hu._CODEX_DRIFT_STATES)
+            self.assertNotIn(hu.CODEX_NOT_APPLICABLE, hu._CODEX_DRIFT_STATES)
+
+    def test_a_record_naming_another_checkout_keeps_the_agents_as_drift(self):
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            repo, codex_home = self._install_clone(base)
+            other = base / "elsewhere"
+            other.mkdir()
+            known = _write_known_marketplaces(base, other)
+            result = hu.run_check(repo, base / "absent.json", codex_home=codex_home,
+                                  today=date(2020, 1, 10), known_marketplaces=known)
+            self.assertFalse(result["codex"]["install_source"])
+            self.assertTrue(result["codex"]["drift"])
+            self.assertEqual(result["codex"]["counts"].get("install"), 4)
+            self.assertNotIn(hu.CODEX_NOT_APPLICABLE, result["codex"]["counts"])
+            self.assertEqual(result["exit"], 3)
+
+    def test_no_record_an_unreadable_record_or_another_marketplace_keeps_todays_drift(self):
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            repo, codex_home = self._install_clone(base)
+            broken = base / "broken.json"
+            broken.write_text("{not json")
+            for known in (None, base / "missing.json", broken,
+                          _write_known_marketplaces(base, repo, marketplace="other-market")):
+                with self.subTest(known=known):
+                    result = hu.run_check(repo, base / "absent.json", codex_home=codex_home,
+                                          today=date(2020, 1, 10), known_marketplaces=known)
+                    self.assertTrue(result["codex"]["drift"])
+                    self.assertEqual(result["exit"], 3)
+
+    def test_the_record_is_compared_by_real_path(self):
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            repo, codex_home = self._install_clone(base)
+            link = base / "clone-link"
+            link.symlink_to(repo, target_is_directory=True)
+            known = _write_known_marketplaces(base, link)
+            section = hu.run_check(repo, base / "absent.json", codex_home=codex_home,
+                                   today=date(2020, 1, 10), known_marketplaces=known)["codex"]
+            self.assertTrue(section["install_source"])
+            self.assertFalse(section["drift"])
+
+    def test_a_project_agent_that_exists_and_differs_in_the_install_source_is_still_drift(self):
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            repo, codex_home = self._install_clone(base)
+            stray = repo / ".codex" / "agents" / "kit-implementer.toml"
+            _write(stray, "name = \"someone else's\"\n")
+            known = _write_known_marketplaces(base, repo)
+            section = hu.run_check(repo, base / "absent.json", codex_home=codex_home,
+                                   today=date(2020, 1, 10), known_marketplaces=known)["codex"]
+            self.assertTrue(section["drift"])
+            self.assertEqual(section["counts"].get("conflict"), 1)
+            self.assertEqual(section["counts"].get(hu.CODEX_NOT_APPLICABLE), 3)
+
+    def test_the_cli_reads_the_record_it_is_given_and_writes_nothing(self):
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            repo, codex_home = self._install_clone(base)
+            known = _write_known_marketplaces(base, repo)
+            before = (_tree_digest(repo), _tree_digest(codex_home))
+            code, out = _run_main(["check", "--repo-root", str(repo),
+                                   "--installed-manifest", str(base / "absent.json"),
+                                   "--copilot-home", str(base / _UNUSED_HOME_NAME),
+                                   "--codex-home", str(codex_home),
+                                   "--known-marketplaces", str(known)])
+            self.assertIn("project agents: 4 not applicable here (install source)", out)
+            self.assertIn("verdict: all sections fresh", out)
+            self.assertEqual(code, 0)
+            self.assertEqual(before, (_tree_digest(repo), _tree_digest(codex_home)))
+            self.assertFalse((repo / ".codex").exists())
 
 
 class CodexSectionUnmanagedWarningTests(unittest.TestCase):
@@ -1668,6 +1812,7 @@ class ReadOnlyTests(unittest.TestCase):
                     "--installed-manifest", str(manifest),
                     "--copilot-home", str(copilot_home),
                     "--codex-home", str(codex_home),
+                    "--known-marketplaces", str(base / "no-known-marketplaces.json"),
                     "--json",
                 ]
             )
@@ -1682,6 +1827,344 @@ class ReadOnlyTests(unittest.TestCase):
 
 
 # ---- source-introspection guard over the pure layer ----------------------------------------------
+
+# ---- 2026-09-25: the whole-tree claude section, credential files, and preflight ----------------
+
+TRACKED_FIXTURE = ["CLAUDE.md", "bin/tool.py", "docs/guide.md"]
+DOC = {"docs/guide.md": "# guide\n"}
+
+
+def _claude_fixture(base, install_extra=None, repo_extra=None, cache=False):
+    """A SHA STALE fixture: identical core files, a differing recorded commit."""
+    repo = _make_repo(base)
+    for rel, text in (repo_extra or {}).items():
+        _write(repo / rel, text)
+    _add_git_ref_head(repo, "6" * 40)
+    install = _make_install(base, subdir="cache/fake-market/fake-plugin/1.0.0" if cache else "install/1.0.0")
+    for rel, text in (install_extra or {}).items():
+        _write(install / rel, text)
+    manifest = _write_manifest(base, "fake-plugin@fake-market", {
+        "installPath": str(install), "version": "1.0.0", "gitCommitSha": "e" * 40})
+    return repo, install, manifest
+
+
+class ClaudeSectionWholeTreeTests(unittest.TestCase):
+    def test_sha_stale_with_an_identical_tree_settles_in_sync_and_is_not_drift(self):
+        with tempfile.TemporaryDirectory() as td:
+            repo, _install, manifest = _claude_fixture(Path(td), install_extra=DOC, repo_extra=DOC)
+            section = hu.build_claude_section(repo, manifest, lambda root: TRACKED_FIXTURE)
+            self.assertEqual(section["status"], "IN SYNC")
+            self.assertFalse(section["drift"])
+            self.assertTrue(section["whole_tree"])
+            self.assertTrue(section["detail"]["commit_id_only"])
+            self.assertIn("only the recorded commit id differs", hu._render_claude_section(section))
+
+    def test_sha_stale_with_a_differing_doc_is_drifted(self):
+        with tempfile.TemporaryDirectory() as td:
+            repo, _install, manifest = _claude_fixture(
+                Path(td), install_extra={"docs/guide.md": "# stale\n"}, repo_extra=DOC)
+            section = hu.build_claude_section(repo, manifest, lambda root: TRACKED_FIXTURE)
+            self.assertEqual(section["status"], "DRIFTED")
+            self.assertTrue(section["drift"])
+            self.assertIn("differs: docs/guide.md", hu._render_claude_section(section))
+
+    def test_without_a_tracked_list_sha_stale_still_counts_as_drift(self):
+        with tempfile.TemporaryDirectory() as td:
+            repo, _install, manifest = _claude_fixture(Path(td), install_extra=DOC, repo_extra=DOC)
+            section = hu.build_claude_section(repo, manifest, lambda root: None)
+            self.assertEqual(section["status"], "SHA STALE")
+            self.assertTrue(section["drift"])
+            self.assertFalse(section["whole_tree"])
+            self.assertIn("git could not list the tracked files", hu._render_claude_section(section))
+
+    def test_a_credential_shaped_file_in_the_installed_copy_is_drift(self):
+        with tempfile.TemporaryDirectory() as td:
+            repo, _install, manifest = _claude_fixture(
+                Path(td), install_extra={**DOC, ".env": "KEY=v\n"}, repo_extra=DOC)
+            section = hu.build_claude_section(repo, manifest, lambda root: TRACKED_FIXTURE)
+            self.assertEqual(section["status"], "IN SYNC")
+            self.assertEqual(section["credential_files"], [".env"])
+            self.assertTrue(section["drift"])
+            self.assertIn("!! credential-shaped file inside the installed copy: .env",
+                          hu._render_claude_section(section))
+
+    def test_other_cached_versions_are_named_and_the_human_card_stays_path_free(self):
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            repo, install, manifest = _claude_fixture(base, install_extra=DOC, repo_extra=DOC, cache=True)
+            (install.parent / "0.9.0").mkdir()
+            section = hu.build_claude_section(repo, manifest, lambda root: TRACKED_FIXTURE)
+            self.assertEqual([Path(p).name for p in section["superseded"]], ["0.9.0"])
+            self.assertTrue(section["prune"][0].startswith("rm -rf -- "))
+            card = hu._render_claude_section(section)
+            self.assertIn("(0.9.0)", card)
+            self.assertNotIn(str(base), card)
+
+    def test_cmd_check_is_what_wires_the_git_bridge_in(self):
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            repo, _install, manifest = _claude_fixture(base, install_extra=DOC, repo_extra=DOC)
+            real = hu.git_tracked_paths
+            hu.git_tracked_paths = lambda root: TRACKED_FIXTURE
+            try:
+                _code, out = _run_main(["check", "--repo-root", str(repo), "--installed-manifest",
+                                        str(manifest), "--copilot-home", str(base / "copilot"),
+                                        "--codex-home", str(base / "codex"), "--known-marketplaces",
+                                        str(base / "no-known-marketplaces.json"), "--json"])
+            finally:
+                hu.git_tracked_paths = real
+            self.assertEqual(json.loads(out)["claude"]["status"], "IN SYNC")
+
+
+class LooksLikeCredentialTests(unittest.TestCase):
+    def test_names_from_the_one_list_plus_env_variants(self):
+        cases = {".env": True, ".env.local": True, "config/.env.production": True,
+                 ".env.example": False, "id_rsa": True, "certs/server.pem": True,
+                 "deploy.key": True, ".netrc": True, "settings.local.json": False,
+                 "README.md": False, ".codex/agents/kit-verifier.toml": False}
+        for rel, expected in cases.items():
+            with self.subTest(rel=rel):
+                self.assertEqual(hu.looks_like_credential(rel), expected)
+
+
+class ParseStatusV2Tests(unittest.TestCase):
+    def test_every_record_kind_including_renames_conflicts_and_spaces(self):
+        text = "\0".join([
+            "# branch.oid 1234abcd",
+            "# branch.head main",
+            "# branch.upstream origin/main",
+            "# branch.ab +1 -2",
+            "1 .M N... 100644 100644 100644 aaaa bbbb bin/my tool.py",
+            "2 R. N... 100644 100644 100644 aaaa bbbb R100 new name.md", "old name.md",
+            "u UU N... 100644 100644 100644 100644 aaaa bbbb cccc conflicted.py",
+            "? scratch.txt",
+            "! .env",
+            "! .codex/",
+        ]) + "\0"
+        info = hu.parse_status_v2(text)
+        self.assertEqual((info["branch"], info["upstream"], info["ahead"], info["behind"]),
+                         ("main", "origin/main", 1, 2))
+        self.assertEqual(info["changed"], ["bin/my tool.py", "new name.md", "conflicted.py"])
+        self.assertEqual(info["untracked"], ["scratch.txt"])
+        self.assertEqual(info["ignored"], [".env", ".codex/"])
+
+    def test_no_upstream_leaves_ahead_and_behind_unknown(self):
+        info = hu.parse_status_v2("# branch.oid 1\0# branch.head main\0")
+        self.assertIsNone(info["upstream"])
+        self.assertIsNone(info["behind"])
+
+
+def _status(branch="main", upstream="origin/main", behind=0, changed=(), untracked=(), ignored=()):
+    records = ["# branch.oid 1234", f"# branch.head {branch}"]
+    if upstream:
+        records += [f"# branch.upstream {upstream}", f"# branch.ab +0 -{behind}"]
+    records += [f"1 .M N... 100644 100644 100644 aaaa bbbb {p}" for p in changed]
+    records += [f"? {p}" for p in untracked] + [f"! {p}" for p in ignored]
+    return "\0".join(records) + "\0"
+
+
+class PreflightTests(unittest.TestCase):
+    def _setup(self, td, source_version="1.0.1", installed_version="1.0.0", record=True):
+        base = Path(td)
+        source = _make_repo(base, version=source_version)
+        manifest = _write_manifest(base, "fake-plugin@fake-market",
+                                   {"installPath": str(base / "cache"), "version": installed_version})
+        known = base / "known_marketplaces.json"
+        known.write_text(json.dumps({"fake-market": {
+            "installLocation": str(source), "source": {"source": "directory", "path": str(source)}}}
+            if record else {}))
+        return source, manifest, known
+
+    def _run(self, source, manifest, known, **status):
+        return hu.run_preflight(source, manifest, known,
+                                git_status_fn=lambda src: (0, _status(**status)))
+
+    def _gate(self, report, key):
+        return next(g for g in report["gates"] if g["gate"] == key)
+
+    def test_a_clean_main_checkout_at_a_new_version_is_ready_and_gets_the_commands(self):
+        with tempfile.TemporaryDirectory() as td:
+            report = self._run(*self._setup(td))
+            self.assertTrue(report["ready"])
+            self.assertEqual(report["exit"], hu.EXIT_OK)
+            self.assertEqual([g["gate"] for g in report["gates"]], list(hu.PREFLIGHT_GATES))
+            self.assertEqual(report["commands"][0], ps.update_command("fake-plugin", "fake-market"))
+            self.assertIn(hu.POST_RESTART_CHECK, report["commands"][1])
+            self.assertIn("verdict: ready", hu.render_preflight(report))
+
+    def test_each_failing_condition_fails_its_own_gate_and_withholds_the_commands(self):
+        cases = {
+            "on-branch": {"branch": "feat/jev-offline-provider-j01"},
+            "clean": {"untracked": ["bin/jev_decision_provider.py"]},
+            "up-to-date": {"behind": 7},
+        }
+        for key, status in cases.items():
+            with self.subTest(gate=key), tempfile.TemporaryDirectory() as td:
+                report = self._run(*self._setup(td), **status)
+                self.assertFalse(self._gate(report, key)["ok"])
+                self.assertFalse(report["ready"])
+                self.assertEqual(report["exit"], hu.EXIT_DRIFT)
+                self.assertEqual(report["commands"], [])
+
+    def test_a_modified_tracked_file_fails_clean_by_name(self):
+        with tempfile.TemporaryDirectory() as td:
+            report = self._run(*self._setup(td), changed=["mkdocs.yml"])
+            self.assertIn("mkdocs.yml", self._gate(report, "clean")["detail"])
+
+    def test_no_upstream_is_not_a_failure(self):
+        with tempfile.TemporaryDirectory() as td:
+            report = self._run(*self._setup(td), upstream=None)
+            self.assertTrue(self._gate(report, "up-to-date")["ok"])
+            self.assertTrue(report["ready"])
+
+    def test_an_ignored_env_file_or_one_inside_an_ignored_dir_refuses(self):
+        with tempfile.TemporaryDirectory() as td:
+            source, manifest, known = self._setup(td)
+            _write(source / ".env", "TYPESAFE_API_KEY=synthetic\n")
+            _write(source / ".secrets" / ".env.local", "K=v\n")
+            report = self._run(source, manifest, known, ignored=[".env", ".secrets/", ".DS_Store"])
+            gate = self._gate(report, "no-credential-files")
+            self.assertFalse(gate["ok"])
+            self.assertEqual(report["credential_files"], [".env", ".secrets/.env.local"])
+            self.assertFalse(report["ready"])
+
+    def test_a_template_env_file_does_not_refuse(self):
+        with tempfile.TemporaryDirectory() as td:
+            source, manifest, known = self._setup(td)
+            report = self._run(source, manifest, known, ignored=[".env.example", ".DS_Store"])
+            self.assertTrue(self._gate(report, "no-credential-files")["ok"])
+
+    def test_a_scan_that_hits_its_cap_cannot_vouch_and_fails(self):
+        with tempfile.TemporaryDirectory() as td:
+            source, manifest, known = self._setup(td)
+            for i in range(5):
+                _write(source / "junk" / f"f{i}.txt", "x\n")
+            saved = hu.PREFLIGHT_SCAN_LIMIT
+            hu.PREFLIGHT_SCAN_LIMIT = 3
+            try:
+                report = self._run(source, manifest, known, ignored=["junk/"])
+            finally:
+                hu.PREFLIGHT_SCAN_LIMIT = saved
+            gate = self._gate(report, "no-credential-files")
+            self.assertFalse(gate["ok"])
+            self.assertIn("cannot vouch", gate["detail"])
+
+    def test_an_unchanged_version_fails_and_points_at_the_bump(self):
+        with tempfile.TemporaryDirectory() as td:
+            report = self._run(*self._setup(td, source_version="1.0.0"))
+            gate = self._gate(report, "version-changed")
+            self.assertFalse(gate["ok"])
+            self.assertIn("release_gate.py bump", gate["detail"])
+
+    def test_not_yet_installed_is_a_first_install_not_a_failure(self):
+        with tempfile.TemporaryDirectory() as td:
+            source, _manifest, known = self._setup(td)
+            report = self._run(source, Path(td) / "no-such-manifest.json", known)
+            self.assertTrue(self._gate(report, "version-changed")["ok"])
+            # `update` refuses a plugin that is not installed; a first install prints `install`.
+            self.assertTrue(report["ready"])
+            self.assertEqual(report["commands"][0], ps.install_command("fake-plugin", "fake-market"))
+            self.assertNotEqual(report["commands"][0], ps.update_command("fake-plugin", "fake-market"))
+
+    def test_a_missing_marketplace_record_stops_at_the_first_gate(self):
+        with tempfile.TemporaryDirectory() as td:
+            report = self._run(*self._setup(td, record=False))
+            self.assertEqual([g["gate"] for g in report["gates"]], ["source-found"])
+            self.assertFalse(report["ready"])
+
+    def test_without_a_way_to_ask_git_the_git_gate_fails_rather_than_passing(self):
+        with tempfile.TemporaryDirectory() as td:
+            source, manifest, known = self._setup(td)
+            report = hu.run_preflight(source, manifest, known)
+            self.assertEqual([g["gate"] for g in report["gates"]],
+                             ["source-found", "matches-marketplace", "git-checkout"])
+            self.assertFalse(report["ready"])
+
+    def test_vetting_a_tree_the_marketplace_does_not_install_from_is_not_ready(self):
+        # The 2026-09-25 rehearsal: `--source` named a clean clone while the marketplace still
+        # installed from another checkout, and the report said ready. Every other gate passes here.
+        with tempfile.TemporaryDirectory() as td:
+            source, manifest, known = self._setup(td)
+            elsewhere = _make_repo(Path(td) / "elsewhere", version="1.0.1")
+            report = hu.run_preflight(source, manifest, known, source=str(elsewhere),
+                                      git_status_fn=lambda src: (0, _status()))
+            gate = self._gate(report, "matches-marketplace")
+            self.assertFalse(gate["ok"])
+            self.assertIn(str(source), gate["detail"])
+            self.assertEqual([g["gate"] for g in report["gates"] if not g["ok"]], ["matches-marketplace"])
+            self.assertFalse(report["ready"])
+            self.assertEqual(report["commands"], [])
+
+    def test_the_same_checkout_by_another_path_matches(self):
+        with tempfile.TemporaryDirectory() as td:
+            source, manifest, known = self._setup(td)
+            link = Path(td) / "link-to-source"
+            link.symlink_to(source, target_is_directory=True)
+            report = hu.run_preflight(source, manifest, known, source=str(link),
+                                      git_status_fn=lambda src: (0, _status()))
+            self.assertTrue(self._gate(report, "matches-marketplace")["ok"])
+            self.assertTrue(report["ready"])
+
+    def test_an_explicit_source_with_no_marketplace_record_is_not_ready(self):
+        with tempfile.TemporaryDirectory() as td:
+            source, manifest, known = self._setup(td, record=False)
+            report = hu.run_preflight(source, manifest, known, source=str(source),
+                                      git_status_fn=lambda src: (0, _status()))
+            gate = self._gate(report, "matches-marketplace")
+            self.assertFalse(gate["ok"])
+            self.assertIn("no marketplace record", gate["detail"])
+
+
+class ResolveInstallSourceTests(unittest.TestCase):
+    def test_install_location_then_source_path_then_none(self):
+        with tempfile.TemporaryDirectory() as td:
+            known = Path(td) / "known.json"
+            known.write_text(json.dumps({"m": {"installLocation": "/a", "source": {"path": "/b"}}}))
+            self.assertEqual(hu.resolve_install_source(known, "m"), "/a")
+            known.write_text(json.dumps({"m": {"source": {"path": "/b"}}}))
+            self.assertEqual(hu.resolve_install_source(known, "m"), "/b")
+            self.assertIsNone(hu.resolve_install_source(known, "other"))
+            known.write_text("not json")
+            self.assertIsNone(hu.resolve_install_source(known, "m"))
+            self.assertIsNone(hu.resolve_install_source(Path(td) / "absent.json", "m"))
+
+
+@unittest.skipUnless(shutil.which("git"), "git is not installed")
+class PreflightRealGitTests(unittest.TestCase):
+    """The one place the parser meets real `git status` output: a throwaway repo in a temp dir."""
+
+    def _git(self, repo, *args):
+        subprocess.run(["git", "-c", "user.name=fixture", "-c", "user.email=fixture@example.invalid",
+                        *args], cwd=repo, check=True, capture_output=True)
+
+    def test_the_parser_reads_what_git_actually_prints(self):
+        with tempfile.TemporaryDirectory() as td:
+            repo = _make_repo(Path(td), version="1.0.1")
+            _write(repo / ".gitignore", ".env\n")
+            self._git(repo, "init", "-q", "-b", "main")
+            self._git(repo, "add", "-A")
+            self._git(repo, "commit", "-q", "-m", "fixture")
+            _write(repo / ".env", "K=synthetic\n")
+            _write(repo / "scratch notes.txt", "wip\n")
+            rc, text = hu.git_status_v2(repo)
+            self.assertEqual(rc, 0)
+            info = hu.parse_status_v2(text)
+            self.assertEqual(info["branch"], "main")
+            self.assertIsNone(info["upstream"])
+            self.assertEqual(info["untracked"], ["scratch notes.txt"])
+            self.assertIn(".env", info["ignored"])
+
+    def test_the_cli_refuses_a_directory_git_cannot_read(self):
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            source = _make_repo(base)
+            known = base / "known.json"
+            known.write_text(json.dumps({"fake-market": {"installLocation": str(source)}}))
+            code, out = _run_main(["preflight", "--repo-root", str(source), "--installed-manifest",
+                                   str(base / "none.json"), "--known-marketplaces", str(known)])
+            self.assertEqual(code, hu.EXIT_DRIFT)
+            self.assertIn("FAIL  git-checkout", out)
+
 
 class SourceHygieneTests(unittest.TestCase):
     def test_pure_layer_never_resolves_home_shells_out_or_hits_network(self):

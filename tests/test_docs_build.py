@@ -284,9 +284,10 @@ class LiveTreeInventoryTests(unittest.TestCase):
     def test_real_repo_counts_and_known_skills_present(self):
         records = db.skill_inventory(REPO_ROOT)
         harnesses = [r["harness"] for r in records]
-        # 15 since D25 added skills/assess-improvement (was 14). A roster tripwire, not a
-        # derived fact: re-derive it from `skill_inventory()` when a skill lands.
-        self.assertEqual(harnesses.count("claude"), 15)
+        # 16 since the observability-dashboard kit added skills/dashboard (was 15, since D25
+        # added skills/assess-improvement). A roster tripwire, not a derived fact: re-derive it
+        # from `skill_inventory()` when a skill lands.
+        self.assertEqual(harnesses.count("claude"), 16)
         self.assertEqual(harnesses.count("copilot"), 13)
         self.assertEqual(harnesses.count("codex"), 17)
         pairs = {(r["harness"], r["name"]) for r in records}

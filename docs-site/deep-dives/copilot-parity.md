@@ -56,7 +56,7 @@ one side and not the other shows up as a gap rather than silently matching.
 | `/polytropos:graphify`, `/polytropos:repo-bench`, `/polytropos:update`, `/polytropos:assess-improvement` | no Copilot twin; all four now ship as Codex-native skills, and `assess-improvement` also ships for Cursor. Codex `$repo-bench` is planning-only and refuses live dispatch. |
 | (no Claude twin) | `/effort` skill, or `copilot --agent effort` — Copilot's per-model Reasoning dial |
 | (no Claude twin) | `/budget` skill (skill only) — one-tier-lower dispatch, the `/budget` half of `bin/copilot_execute.py run --budget` |
-| (no Claude twin) | `/goliath` skill (skill only) — the Copilot-CLI-only five-role pipeline policy |
+| (no Claude twin) | `/goliath` skill (skill only) — the Copilot-CLI-only ten-role (R10) pipeline policy |
 | (no Claude twin) | `/lessons-loop` skill (skill only) — scoped lessons with provenance and expiry, over `bin/lessons_store.py` |
 
 Naming note: `usage` and `frontier-check` are the harness-parity names for what Claude

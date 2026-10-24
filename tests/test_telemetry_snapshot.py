@@ -1131,6 +1131,38 @@ class ListSummaryTests(unittest.TestCase):
                                         "last_date", "latest_status", "latest_labels"})
 
 
+    def test_malformed_labels_are_a_noted_state_never_a_crash(self):
+        # A `labels` that is not a list of strings must not raise out of the summary and
+        # erase every other source: it becomes a malformed state (None) with a note.
+        self._write("cost_report", "2026-01-01.json",
+                    {"status": "ok", "payload": {}, "labels": 42})
+        self._write("codex_usage", "2026-01-01.json",
+                    {"status": "ok", "payload": {}, "labels": "est."})
+        self._write("copilot_usage", "2026-01-01.json",
+                    {"status": "ok", "payload": {}, "labels": ["est.", 7]})
+        self._write("attempts", "2026-01-01.json",
+                    {"status": "ok", "payload": {}, "labels": ["healthy"]})
+        summary, notes = ts.build_list_summary(self.store)
+        rows = {r["source"]: r for r in summary["sources"]}
+        for source in ("cost_report", "codex_usage", "copilot_usage"):
+            self.assertIsNone(rows[source]["latest_labels"], source)
+            self.assertEqual(rows[source]["latest_status"], "ok")
+            self.assertTrue(
+                any(f"malformed labels" in n and f"{source}/2026-01-01.json" in n
+                    for n in notes), notes)
+        self.assertEqual(rows["attempts"]["latest_labels"], ["healthy"])
+        rendered = ts.render_list_markdown(summary, notes)
+        self.assertIn("labels: malformed (see notes)", rendered)
+        self.assertIn("labels: healthy", rendered)
+
+    def test_absent_labels_stay_an_honest_empty_list(self):
+        self._write("cost_report", "2026-01-01.json", {"status": "ok", "payload": {}})
+        summary, notes = ts.build_list_summary(self.store)
+        row = next(r for r in summary["sources"] if r["source"] == "cost_report")
+        self.assertEqual(row["latest_labels"], [])
+        self.assertFalse(any("malformed labels" in n for n in notes), notes)
+
+
 class ListCliTests(unittest.TestCase):
     def setUp(self):
         self.world = _TempWorld()
@@ -1170,6 +1202,18 @@ class ListCliTests(unittest.TestCase):
         self.assertEqual(set(payload), {"store_dir", "sources", "notes"})
         sources = {row["source"] for row in payload["sources"]}
         self.assertEqual(sources, set(ts.SOURCES))
+
+
+    def test_list_cli_survives_a_malformed_labels_envelope(self):
+        d = self.world.store / "cost_report"
+        d.mkdir(parents=True)
+        (d / "2026-03-04.json").write_text(
+            json.dumps({"status": "ok", "payload": {}, "labels": {"not": "a list"}}))
+        for argv in (["--list", "--store-dir", str(self.world.store)],
+                     ["--list", "--store-dir", str(self.world.store), "--json"]):
+            rc, out, _ = self._run(argv)
+            self.assertEqual(rc, 0)
+            self.assertIn("malformed labels", out)
 
 
 class DemoTests(unittest.TestCase):

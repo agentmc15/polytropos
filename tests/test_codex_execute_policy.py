@@ -1,6 +1,7 @@
 """Execution-driver tests for reserved Astra recovery; never invokes the real Codex CLI."""
 
 import importlib.util
+import os
 import tempfile
 import unittest
 import json
@@ -14,6 +15,24 @@ BIN_DIR = Path(__file__).resolve().parent.parent / "bin"
 SPEC = importlib.util.spec_from_file_location("codex_execute_policy_tests", BIN_DIR / "codex_execute.py")
 ce = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(ce)
+
+# The driver opens the attempt ledger under the per-user data root by default, and the phase
+# reviews below reach it: without this, every run left three `tmp*` namespaces in the real
+# store. Every test in this module runs with that root pointed at a temp dir instead.
+_DATA_HOME = None
+_DATA_HOME_PATCH = None
+
+
+def setUpModule():
+    global _DATA_HOME, _DATA_HOME_PATCH
+    _DATA_HOME = tempfile.TemporaryDirectory(prefix="polytropos-test-data-")
+    _DATA_HOME_PATCH = mock.patch.dict(os.environ, {"POLYTROPOS_DATA_HOME": _DATA_HOME.name})
+    _DATA_HOME_PATCH.start()
+
+
+def tearDownModule():
+    _DATA_HOME_PATCH.stop()
+    _DATA_HOME.cleanup()
 
 
 def item(kind, text):

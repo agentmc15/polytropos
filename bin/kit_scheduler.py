@@ -751,9 +751,14 @@ class Scheduler:
             e["write_set"] = {"changed": [], "added": [], "removed": []}
             e["workspace"] = None
             return
+        # The copy is taken under the same lock as every coordinator write into the tree.
+        # Outside it, a sibling worker's `project_status` swaps TASKS.md mid-walk: the walk
+        # either lists that write's temporary file and then finds it gone, or hashes one
+        # TASKS.md and copies the next -- a baseline that disagrees with its own copy and
+        # later reads as this worker editing coordinator state.
         with self._lock:
             kc.project_status(self.kit_dir / "TASKS.md", task["id"], "in-progress")
-        e["index_before"] = snapshot_tree(self.workspace, ws)
+            e["index_before"] = snapshot_tree(self.workspace, ws)
         prompt = self._prompt(task, batch_id, preamble)
         if e.get("recon", {}).get("mode") == "retry":
             prompt += e["recon"]["context"]

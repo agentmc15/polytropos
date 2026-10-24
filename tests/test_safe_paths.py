@@ -113,6 +113,45 @@ class ContainmentTests(unittest.TestCase):
             sp.confined_replace(self.root, "via/state.json", "{}")
         self.assertFalse((self.outside / "state.json").exists())
 
+    def _in_unwritable_cwd(self):
+        """Run from a directory nothing may be created in, restoring the cwd afterwards."""
+        cwd = self.td / "caller-cwd"
+        cwd.mkdir()
+        previous = os.getcwd()
+        os.chdir(cwd)
+        self.addCleanup(os.chdir, previous)
+        cwd.chmod(0o500)
+        self.addCleanup(cwd.chmod, 0o700)
+        return cwd
+
+    def test_replacement_never_touches_the_callers_working_directory(self):
+        # The temp file belongs beside the destination, inside the root. A caller whose cwd
+        # is unwritable (or on another filesystem) must not make a confined replace fail, and
+        # nothing -- not even transiently -- may be created in that cwd.
+        cwd = self._in_unwritable_cwd()
+        sp.confined_replace(self.root, "sub/state.json", '{"a":1}', mode=0o600)
+        self.assertEqual((self.root / "sub" / "state.json").read_text(), '{"a":1}')
+        self.assertEqual(list(cwd.iterdir()), [])
+        self.assertEqual([p.name for p in (self.root / "sub").iterdir()], ["state.json"])
+
+    def test_a_failed_rename_leaves_no_temp_in_the_root_or_the_cwd(self):
+        cwd = self._in_unwritable_cwd()
+        sp.confined_replace(self.root, "sub/state.json", "OLD", mode=0o600)
+        real_rename = sp.os.rename
+
+        def failing_rename(*args, **kwargs):
+            raise OSError("simulated rename failure")
+
+        sp.os.rename = failing_rename
+        try:
+            with self.assertRaises(OSError):
+                sp.confined_replace(self.root, "sub/state.json", "NEW", mode=0o600)
+        finally:
+            sp.os.rename = real_rename
+        self.assertEqual((self.root / "sub" / "state.json").read_text(), "OLD")
+        self.assertEqual([p.name for p in (self.root / "sub").iterdir()], ["state.json"])
+        self.assertEqual(list(cwd.iterdir()), [])
+
     def test_leaf_is_regular_distinguishes_absent_from_occupied(self):
         self.assertFalse(sp.leaf_is_regular(self.root, "nothing.txt"))
         sp.confined_write_bytes(self.root, "real.txt", "x")
