@@ -164,3 +164,5 @@ today's figures. Missing data renders as `n/a`, never as zero.
 - `docs/ROLE-EXPERIMENT.md`: whether optional roles beyond the standing trio pay, measured by
   marginal catch.
 - The pitch: `docs/spec-driven-pitch.html`, a printable summary of this page.
+- The guide: `docs/sdd/guide.md` (printable as `docs/sdd/guide.html`), spec-driven development
+  itself, mapped to polytropos and back, with an assessment and roadmap.

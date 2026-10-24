@@ -37,7 +37,7 @@ Routine work can go straight from routing to a suitable worker. Complex work get
 - Escalation that carries failure evidence instead of routinely starting at the most capable model.
 - Local usage, freshness, graph-grounding, assessment, and benchmark-planning tools, with capability differences documented per harness.
 
-The detailed mechanics, limits, and examples live in the [documentation site](https://agentmc15.github.io/polytropos/), [architecture guide](docs/HOW-IT-WORKS.md), and [complete guide & cookbook](docs/GUIDE.md). For harness-specific behavior, see [Claude skills](skills/), [Copilot CLI](docs/COPILOT-HARNESS.md), and [Codex CLI](docs/CODEX-HARNESS.md). Why this is spec-driven development — the architect writes the spec, pinned cheaper models execute it, verification is against the spec — is in [docs/SPEC-DRIVEN.md](docs/SPEC-DRIVEN.md).
+The detailed mechanics, limits, and examples live in the [documentation site](https://agentmc15.github.io/polytropos/), [architecture guide](docs/HOW-IT-WORKS.md), and [complete guide & cookbook](docs/GUIDE.md). For harness-specific behavior, see [Claude skills](skills/), [Copilot CLI](docs/COPILOT-HARNESS.md), and [Codex CLI](docs/CODEX-HARNESS.md). Why this is spec-driven development — the architect writes the spec, pinned cheaper models execute it, verification is against the spec — is in [docs/SPEC-DRIVEN.md](docs/SPEC-DRIVEN.md). A guide to spec-driven development itself, mapped to polytropos and back, is in [docs/sdd/guide.md](docs/sdd/guide.md).
 
 Polytropos also has a [Cursor headless harness](docs/CURSOR-HARNESS.md). Its adapter and bundle are separate from the three quick starts above, and its usage remains unpriced where no rates are known.
 

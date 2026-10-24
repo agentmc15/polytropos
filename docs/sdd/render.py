@@ -1,12 +1,12 @@
-"""Render the docs/pitch/ Markdown reports to their printable HTML forms.
+"""Render the docs/sdd/ Markdown documents to their printable HTML forms.
 
-    python3 docs/pitch/render.py build    # rewrite every report's .html from its .md
-    python3 docs/pitch/render.py check    # exit 1 if any .html differs from a fresh render
+    python3 docs/sdd/render.py build    # rewrite every report's .html from its .md
+    python3 docs/sdd/render.py check    # exit 1 if any .html differs from a fresh render
 
 The Markdown is the source; the .html beside it is generated and never hand-edited
-(tests/test_pitch_companions.py fails on drift). The page style is taken from the printable deck,
+(tests/test_sdd_docs.py fails on drift). The page style is taken from the printable deck,
 docs/spec-driven-pitch.html, so the reports print and theme the same way. The deck itself is
-hand-written HTML and is not rendered here; docs/pitch/spec-driven-pitch.md is its Markdown twin.
+hand-written HTML and is not rendered here; docs/sdd/spec-driven-pitch.md is its Markdown twin.
 
 Only the Markdown subset the reports use is supported: # to ### headings, paragraphs, - and 1.
 lists with indented continuation lines, pipe tables, ``` fences, > quotes, ---, inline
@@ -23,8 +23,8 @@ DOCS = HERE.parent
 DECK = DOCS / "spec-driven-pitch.html"
 # Each report: (markdown source, the kicker line printed above its title).
 REPORTS = {
+    "guide.md": "a guide",
     "core-four.md": "a mapping",
-    "sdd-report.md": "a field report",
 }
 PAGE = "<!-- page -->"
 BLOCK_START = re.compile(r"(#{1,3} |\||```|- |\d+\. |---|> |" + re.escape(PAGE) + ")")
@@ -156,7 +156,7 @@ def render(md, kicker):
         "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n<meta charset=\"UTF-8\">\n"
         "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n"
         f"<title>{plain_title}</title>\n{deck_style()}\n</head>\n<body>\n<main class=\"wrap\">\n\n"
-        "<!-- Generated from the .md beside this file by docs/pitch/render.py; edit the .md. -->\n"
+        "<!-- Generated from the .md beside this file by docs/sdd/render.py; edit the .md. -->\n"
         "<section class=\"page\">\n" + "\n".join(body) + "\n</section>\n\n</main>\n</body>\n</html>\n"
     )
 
@@ -173,7 +173,7 @@ def rendered():
 def main(argv):
     if len(argv) != 1 or argv[0] not in ("build", "check"):
         print(__doc__.strip().splitlines()[0])
-        print("usage: python3 docs/pitch/render.py build|check")
+        print("usage: python3 docs/sdd/render.py build|check")
         return 2
     stale = []
     for path, text in rendered().items():
@@ -186,10 +186,10 @@ def main(argv):
                 stale.append(path.relative_to(DOCS.parent))
     if stale:
         for p in stale:
-            print(f"stale: {p} (run python3 docs/pitch/render.py build)")
+            print(f"stale: {p} (run python3 docs/sdd/render.py build)")
         return 1
     if argv[0] == "check":
-        print("docs/pitch: every report's HTML matches its Markdown")
+        print("docs/sdd: every report's HTML matches its Markdown")
     return 0
 
 
