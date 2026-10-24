@@ -31,7 +31,7 @@ generated pages are rebuilt, never edited; stdlib only.
 ### T1 — Canonical defect kinds, folds, exclusions and `when=` in the scorecard
 - id: T1
 - title: Add the sanctioned defect vocabulary, read-time folding, the pre-run count and lessons_promote parity
-- status: pending
+- status: done
 - model: sonnet
 - depends: (none)
 - evidence: red-green
@@ -107,13 +107,13 @@ test file is red before the change (import of `canonical_defect_kind` fails) and
 
 **Verify.**
 ```bash
-python3 -m unittest discover -s tests -p 'test_defect_vocabulary.py' -q && python3 -m unittest discover -s tests -p 'test_role_ledger.py' -q && python3 -m unittest discover -s tests -p 'test_routing_history.py' -q && python3 -m unittest discover -s tests -p 'test_routing_scorecard.py' -q && python3 -m unittest discover -s tests -p 'test_lessons_promote.py' -q && python3 bin/routing_scorecard.py --history | grep -q 'folded:' && git diff --quiet -- .claude/kits
+python3 -m unittest discover -s tests -p 'test_defect_vocabulary.py' -q && python3 -m unittest discover -s tests -p 'test_role_ledger.py' -q && python3 -m unittest discover -s tests -p 'test_routing_history.py' -q && python3 -m unittest discover -s tests -p 'test_routing_scorecard.py' -q && python3 -m unittest discover -s tests -p 'test_lessons_promote.py' -q && python3 bin/routing_scorecard.py --history | grep -q 'folded:' && test -z "$(git diff --name-only -- .claude/kits | grep -v '^.claude/kits/kit-preflight/')"
 ```
 
 ### T2 — Document the vocabulary and `when=pre-run` everywhere the kinds are enumerated
 - id: T2
 - title: Update ledger.md, routing-evidence.md, SPEC-DRIVEN.md and the guide's Part 4 to the sanctioned list, then rebuild the docs site
-- status: pending
+- status: done
 - model: sonnet
 - depends: T1
 - evidence: red-green
@@ -175,7 +175,7 @@ python3 -m unittest discover -s tests -p 'test_defect_vocabulary.py' -q && pytho
 ### T3 — Commit Phase 1 at a green boundary
 - id: T3
 - title: Commit the vocabulary change on feat/route-experiment in the user's convention
-- status: pending
+- status: done
 - model: haiku
 - depends: T2
 - evidence: red-green
@@ -280,6 +280,10 @@ and `cd "$(git rev-parse --show-toplevel)"`, both sound); (8) `-m unittest tests
 to tests/test_x.py; `discover -s tests -p 'test_x.py'` maps to the same; (9) a task's own verify naming
 the file its own brief says it creates is `created-by` self; (10) mutation: delete the file
 from case 1 → exit flips to 3 (`verify-missing-path`); (11) the never-runs assertion above;
+(11a) the D3 amendment: a verify `git log -1 --format=%s | grep -qE '^(feat|fix|docs)\(x\): y$'`
+and a verify `test "$(git branch --show-current)" = feat/some-branch` are both sound (no
+missing executable for the quoted alternatives, no path check on `test` operands), while an
+unquoted `foo | no-such-binary-xyz` still yields `verify-missing-executable`;
 (12) the kit dir's bytes and `os.listdir` are unchanged after every call; (13) CLI: `--json`
 parses and `exit` matches the process return; an invalid graph returns 2 before any analysis.
 
@@ -293,7 +297,7 @@ stay green; `git status --porcelain` shows only `bin/kit_contract.py` and the ne
 
 **Verify.**
 ```bash
-python3 -m unittest discover -s tests -p 'test_kit_analyze.py' -q && python3 -m unittest discover -s tests -p 'test_kit_contract.py' -q && python3 -m unittest discover -s tests -p 'test_kit_graph.py' -q && python3 bin/kit_contract.py analyze --kit .claude/kits/kit-preflight && git diff --quiet -- .claude/kits
+python3 -m unittest discover -s tests -p 'test_kit_analyze.py' -q && python3 -m unittest discover -s tests -p 'test_kit_contract.py' -q && python3 -m unittest discover -s tests -p 'test_kit_graph.py' -q && python3 bin/kit_contract.py analyze --kit .claude/kits/kit-preflight && test -z "$(git diff --name-only -- .claude/kits | grep -v '^.claude/kits/kit-preflight/')"
 ```
 
 ### T5 — Every headless driver runs `analyze` before its first dispatch and fails closed
@@ -434,7 +438,7 @@ changed — do not run `accept` against any committed kit.
 
 **Verify.**
 ```bash
-python3 -m unittest discover -s tests -p 'test_kit_evidence.py' -q && python3 -m unittest discover -s tests -p 'test_kit_contract.py' -q && python3 -m unittest discover -s tests -p 'test_attempt_ledger.py' -q && python3 bin/kit_contract.py --help | grep -q 'accept' && git diff --quiet -- .claude/kits
+python3 -m unittest discover -s tests -p 'test_kit_evidence.py' -q && python3 -m unittest discover -s tests -p 'test_kit_contract.py' -q && python3 -m unittest discover -s tests -p 'test_attempt_ledger.py' -q && python3 bin/kit_contract.py --help | grep -q 'accept' && test -z "$(git diff --name-only -- .claude/kits | grep -v '^.claude/kits/kit-preflight/')"
 ```
 
 ### T8 — `kit_contract.py drift`: re-run finished kits' checks read-only and report drift, not failure
@@ -507,7 +511,7 @@ test_kit_contract.py`, `tests/test_attempt_history.py`, `tests/test_attempt_ledg
 
 **Verify.**
 ```bash
-python3 -m unittest discover -s tests -p 'test_kit_evidence.py' -q && python3 -m unittest discover -s tests -p 'test_kit_contract.py' -q && python3 -m unittest discover -s tests -p 'test_attempt_history.py' -q && python3 -m unittest discover -s tests -p 'test_attempt_ledger.py' -q && python3 -m unittest discover -s tests -p 'test_exec_policy.py' -q && python3 bin/kit_contract.py --help | grep -q 'drift' && git diff --quiet -- .claude/kits
+python3 -m unittest discover -s tests -p 'test_kit_evidence.py' -q && python3 -m unittest discover -s tests -p 'test_kit_contract.py' -q && python3 -m unittest discover -s tests -p 'test_attempt_history.py' -q && python3 -m unittest discover -s tests -p 'test_attempt_ledger.py' -q && python3 -m unittest discover -s tests -p 'test_exec_policy.py' -q && python3 bin/kit_contract.py --help | grep -q 'drift' && test -z "$(git diff --name-only -- .claude/kits | grep -v '^.claude/kits/kit-preflight/')"
 ```
 
 ### T9 — Commit Phase 3 at a green boundary

@@ -36,8 +36,8 @@ how to honor it while working.
 - The defect fold is a read-time view. `parse_defects` keeps its grammar and event shape
   (`{"task","kind"}`, plus `when` only when the pair is present); canonicalization is
   `canonical_defect_kind`, used by BOTH the scorecard aggregate and `lessons_promote`. No
-  committed NOTES.md is ever edited — `git diff --quiet -- .claude/kits` is in verify commands
-  for a reason. `verifier-destructive-restore` is excluded, never folded.
+  committed NOTES.md is ever edited — the check that `git diff --name-only -- .claude/kits`
+  lists nothing outside `.claude/kits/kit-preflight/` is in verify commands for a reason. `verifier-destructive-restore` is excluded, never folded.
 - D3's heuristics are the specification for `analyze`. Where a fixture or a committed kit
   trips them, fix the fixture or record the kit's defect; never loosen a rule to make a kit
   pass, and never widen `_extract_verify` (the drivers execute what it returns).

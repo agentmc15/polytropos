@@ -174,11 +174,14 @@ trailing `.,:;` and a `:<digits>` line suffix (`bin/x.py:42` → `bin/x.py`). Cl
 (transitively), preceded within 40 characters by one of `new`, `create`, `creates`, `add`,
 `adds`, `write`, `writes` (case-insensitive); else `missing`. Verify runnability: first drop
 heredoc bodies (from a line containing `<<'TAG'`, `<<"TAG"`, or `<<TAG` through the line that
-is exactly `TAG`) and `$(…)` substitutions; split the rest on newlines, then on `&&`, `||`,
-`;`, `|`; `shlex.split` each simple command (posix; on `ValueError` fall back to whitespace
-split). The first word: a token containing `=` before any `/` is an assignment, skip; a token
-in `{cd test [ ! echo printf export set true false exit for do done if then else elif fi while
-until read}` is a builtin, skip; a token containing `/` is a path and must exist (absolute or
+is exactly `TAG`) and `$(…)` substitutions; split the rest on newlines, then tokenize each
+line with `shlex.shlex(line, posix=True, punctuation_chars=True)` and `whitespace_split=True`,
+so `&&`, `||`, `;` and `|` separate simple commands only where they stand OUTSIDE quotes (on
+`ValueError` fall back to whitespace split). The first word: a token containing `=` before any
+`/` is an assignment, skip; a token in `{cd test [ ! echo printf export set true false exit for
+do done if then else elif fi while until read}` is a builtin, skip — and the operands of `test`
+and `[` are values being compared, not files being read, so they are never path-checked; a
+token containing `/` is a path and must exist (absolute or
 repo-relative); anything else must resolve via `shutil.which` → otherwise
 `verify-missing-executable`. Arguments: after `-m` a dotted module (`tests.test_x`) maps to
 `tests/test_x.py`; after `-p` following a `discover`, a glob-free pattern maps to
@@ -197,6 +200,13 @@ creates); `missing` is the finding `verify-missing-path`. A verify block that
 Why this strictness split (approved Q1): briefs legitimately name files a task will create and
 the created-by heuristic will sometimes miss, so a brief path is advice; a verify path is the
 run's proof and must be there.
+
+*D3 amended 2026-10-24, before T4, by the user's decision after the Phase 1 review.* The first
+version split on `|`/`&&`/`;` before honoring quotes and path-checked every `/`-bearing operand.
+Read literally, it made this kit's own commit-task verifies (a quoted `'^(feat|fix|docs|…)'`
+regex, and `test … = feat/route-experiment`) report missing executables and a missing path, so
+T4's own acceptance could not hold. The amendment makes the reading quote-aware and exempts
+`test`/`[` operands. It does not narrow what counts as a missing script, executable or path.
 
 **D4 — The spec review is a `P0` phase review, not a role.** Adding a roster token is a
 contract change in three places; a phase review with token `P0` is already in grammar
