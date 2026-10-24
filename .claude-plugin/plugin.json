@@ -1,6 +1,6 @@
 {
   "name": "polytropos",
   "description": "Per-task model routing and cost estimation for Claude Code: pick the right tier (frontier / Opus / Sonnet / Haiku) per task, estimate cost before running, track historical spend, and use the frontier tier optimally.",
-  "version": "0.6.9",
+  "version": "0.6.10",
   "author": { "name": "agentmc15" }
 }
