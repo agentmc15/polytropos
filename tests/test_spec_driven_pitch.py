@@ -107,7 +107,7 @@ def cached_date(repo_root):
     return value
 
 
-def check_structure(text, repo_root):
+def check_structure(text, repo_root, min_pages=MIN_PAGES, max_pages=MAX_PAGES):
     if not text.lstrip().upper().startswith("<!DOCTYPE HTML>"):
         _fail("missing <!DOCTYPE html>")
     if "<meta charset" not in text.lower():
@@ -125,8 +125,8 @@ def check_structure(text, repo_root):
         if required not in text:
             _fail(f"missing {required!r}")
     pages = text.count(SECTION_OPEN)
-    if not MIN_PAGES <= pages <= MAX_PAGES:
-        _fail(f"{pages} page sections; need {MIN_PAGES}-{MAX_PAGES}")
+    if not min_pages <= pages <= max_pages:
+        _fail(f"{pages} page sections; need {min_pages}-{max_pages}")
     m = re.search(r"<title>(.*?)</title>", text, re.IGNORECASE | re.DOTALL)
     if not m or not m.group(1).strip():
         _fail("missing or empty <title>")
@@ -134,7 +134,7 @@ def check_structure(text, repo_root):
         _fail(f"<title> longer than {MAX_TITLE_CHARS} chars")
 
 
-def check_lengths(text, repo_root):
+def check_lengths(text, repo_root, min_total=MIN_TOTAL_WORDS, max_total=MAX_TOTAL_WORDS):
     whole, sections = visible(text)
     if not sections:
         _fail('no <section class="page"> found')
@@ -143,8 +143,8 @@ def check_lengths(text, repo_root):
         if n > MAX_SECTION_WORDS:
             _fail(f"section {i} has {n} visible words; max {MAX_SECTION_WORDS}")
     total = words(whole)
-    if not MIN_TOTAL_WORDS <= total <= MAX_TOTAL_WORDS:
-        _fail(f"{total} visible words; need {MIN_TOTAL_WORDS}-{MAX_TOTAL_WORDS}")
+    if not min_total <= total <= max_total:
+        _fail(f"{total} visible words; need {min_total}-{max_total}")
 
 
 def check_truth(text, repo_root):

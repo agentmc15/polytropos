@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Spec-driven development, and where polytropos stands</title>
+<style>
+  :root {
+    --bg: #faf9f6; --ink: #1e2430; --muted: #5c6470; --line: #e3ded3;
+    --accent: #b45309; --card: #ffffff;
+    --fable: #b91c1c; --opus: #b45309; --sonnet: #15803d; --haiku: #0e7490;
+    --code-bg: #efece4; --pre-bg: #23262e; --pre-ink: #e8e6e1; --pre-dim: #9aa1ab;
+    --th-bg: #f1eee6; --callout-bg: #fdf6ec;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #15171c; --ink: #e9e5dc; --muted: #a2a8b2; --line: #30343c;
+      --accent: #f0a04b; --card: #1c1f25;
+      --fable: #f38b8b; --opus: #f0a04b; --sonnet: #5fd08a; --haiku: #4fc9de;
+      --code-bg: #272b33; --pre-bg: #0e1014; --pre-ink: #e6e3dc; --pre-dim: #8b929c;
+      --th-bg: #23272f; --callout-bg: #2a231b;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #15171c; --ink: #e9e5dc; --muted: #a2a8b2; --line: #30343c;
+    --accent: #f0a04b; --card: #1c1f25;
+    --fable: #f38b8b; --opus: #f0a04b; --sonnet: #5fd08a; --haiku: #4fc9de;
+    --code-bg: #272b33; --pre-bg: #0e1014; --pre-ink: #e6e3dc; --pre-dim: #8b929c;
+    --th-bg: #23272f; --callout-bg: #2a231b;
+  }
+  * { box-sizing: border-box; }
+  html { background: var(--bg); }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 17px/1.65 Georgia, 'Times New Roman', serif;
+    -webkit-text-size-adjust: 100%;
+  }
+  .wrap { max-width: 860px; margin: 0 auto; padding: 3rem 1.5rem 5rem; }
+  .page { padding-bottom: 2.6rem; margin-bottom: 2.6rem; border-bottom: 1px solid var(--line); }
+  .page:last-of-type { border-bottom: 0; margin-bottom: 0; }
+  h1 { font-size: 2.3rem; line-height: 1.15; margin: .4rem 0 .6rem; letter-spacing: -.01em; }
+  h1 em { color: var(--accent); font-style: italic; }
+  .sub { color: var(--muted); font-style: italic; margin: 0 0 2rem; font-size: 1.05em; }
+  h2 { font-size: 1.5rem; line-height: 1.25; margin: .3rem 0 .9rem; }
+  h3 { font-size: 1.08rem; margin: 1.4rem 0 .35rem; }
+  p { margin: .6rem 0; }
+  a { color: var(--accent); }
+  code, pre {
+    font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+    font-size: .84em;
+  }
+  code { background: var(--code-bg); padding: .08em .34em; border-radius: 4px; overflow-wrap: anywhere; }
+  pre {
+    background: var(--pre-bg); color: var(--pre-ink); padding: .95rem 1.2rem;
+    border-radius: 10px; overflow-x: auto; line-height: 1.45; margin: 1rem 0;
+  }
+  pre code { background: none; padding: 0; color: inherit; font-size: 1em; }
+  pre .dim { color: var(--pre-dim); }
+  table {
+    border-collapse: collapse; width: 100%; margin: 1rem 0;
+    background: var(--card); font-size: .9em;
+  }
+  th, td { border: 1px solid var(--line); padding: .45rem .7rem; text-align: left; vertical-align: top; }
+  th { background: var(--th-bg); }
+  td:first-child { white-space: nowrap; }
+  td:first-child code { overflow-wrap: normal; }
+  .tier-fable { color: var(--fable); font-weight: 700; }
+  .tier-opus { color: var(--opus); font-weight: 700; }
+  .tier-sonnet { color: var(--sonnet); font-weight: 700; }
+  .tier-haiku { color: var(--haiku); font-weight: 700; }
+  .callout {
+    background: var(--callout-bg); border-left: 4px solid var(--accent);
+    padding: .8rem 1.1rem; margin: 1.2rem 0; border-radius: 0 8px 8px 0;
+  }
+  .callout.quote p:first-child { font-size: 1.2em; font-style: italic; margin-top: 0; }
+  .note { color: var(--muted); font-size: .9em; }
+  ul, ol { padding-left: 1.4rem; }
+  li { margin: .35rem 0; }
+  .kicker {
+    text-transform: uppercase; letter-spacing: .12em; font-size: .75rem;
+    color: var(--muted); font-family: ui-monospace, Menlo, monospace; margin: 0;
+  }
+  .kicker b { color: var(--accent); font-weight: 600; }
+  .loop {
+    list-style: none; padding: 0; margin: 1.2rem 0;
+    display: grid; grid-template-columns: 1fr 1fr; gap: .8rem;
+  }
+  .loop li {
+    margin: 0; min-width: 0; background: var(--card); border: 1px solid var(--line);
+    border-top: 4px solid var(--c, var(--accent)); border-radius: 8px;
+    padding: .7rem .95rem .8rem; font-size: .93em; line-height: 1.5;
+  }
+  .loop .step {
+    display: block; font-family: ui-monospace, Menlo, monospace; font-size: .72rem;
+    letter-spacing: .1em; text-transform: uppercase; color: var(--muted);
+  }
+  .loop strong { display: block; font-size: 1.05em; margin: .15rem 0 .25rem; }
+  .loop .s1 { --c: var(--fable); } .loop .s2 { --c: var(--sonnet); }
+  .loop .s3 { --c: var(--opus); }  .loop .s4 { --c: var(--haiku); }
+  .layers { list-style: none; padding: 0; margin: .8rem 0; }
+  .layers li { padding-left: .9rem; border-left: 3px solid var(--line); margin: .55rem 0; }
+  .layers b { color: var(--ink); }
+  .nots li::marker { color: var(--accent); }
+  .run { margin-top: 1.4rem; }
+  .run pre { font-size: .9em; }
+  footer {
+    margin-top: 1.6rem; padding-top: .8rem; border-top: 1px solid var(--line);
+    color: var(--muted); font-size: .85em; font-family: ui-monospace, Menlo, monospace;
+  }
+  @media (max-width: 640px) {
+    .wrap { padding: 2rem 16px 3rem; }
+    h1 { font-size: 1.8rem; }
+    .loop { grid-template-columns: 1fr; }
+    td:first-child { white-space: normal; }
+  }
+  @page { margin: 18mm; }
+  @media print {
+    :root, :root[data-theme="dark"], :root:not([data-theme="light"]) {
+      --bg: #ffffff; --ink: #1e2430; --muted: #5c6470; --line: #d9d3c6;
+      --accent: #b45309; --card: #ffffff;
+      --fable: #b91c1c; --opus: #b45309; --sonnet: #15803d; --haiku: #0e7490;
+      --code-bg: #f1eee6; --pre-bg: #f6f3ec; --pre-ink: #1e2430; --pre-dim: #6b7280;
+      --th-bg: #f1eee6; --callout-bg: #fbf5ea;
+    }
+    .page { break-after: page; page-break-after: always; border-bottom: 0; margin: 0; padding: 0; }
+    .page:last-of-type { break-after: auto; page-break-after: auto; }
+    body { font-size: 11.5pt; line-height: 1.42; }
+    .wrap { max-width: none; padding: 0; }
+    h1 { font-size: 22pt; margin: .2rem 0 .4rem; }
+    h2 { font-size: 15pt; margin: .2rem 0 .5rem; }
+    h3 { font-size: 11.5pt; margin: .75rem 0 .15rem; }
+    p { margin: .35rem 0; }
+    .sub { margin-bottom: .9rem; }
+    li { margin: .2rem 0; }
+    table { font-size: .86em; margin: .6rem 0; }
+    th, td { padding: .3rem .55rem; }
+    pre { border: 1px solid var(--line); white-space: pre-wrap; font-size: .76em; line-height: 1.32; padding: .6rem .9rem; margin: .6rem 0; }
+    .loop { gap: .55rem; margin: .7rem 0; }
+    .loop li { font-size: .86em; line-height: 1.38; padding: .5rem .75rem .55rem; }
+    .layers li { margin: .3rem 0; }
+    .callout { padding: .5rem .85rem; margin: .7rem 0; }
+    .callout.quote p:first-child { font-size: 1.1em; }
+    .note { font-size: .86em; }
+    .run { margin-top: .7rem; }
+    footer { margin-top: .8rem; padding-top: .4rem; }
+    pre, table, .callout, .loop li, .layers li { break-inside: avoid; page-break-inside: avoid; }
+    h2, h3 { break-after: avoid; page-break-after: avoid; }
+    * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  }
+  table.grid td:first-child { white-space: normal; }
+  .src { font-size: .85em; color: var(--muted); }
+  blockquote { margin: 1rem 0; padding: .6rem 1rem; border-left: 4px solid var(--line); color: var(--muted); }
+  blockquote p { margin: .3rem 0; }
+</style>
+</head>
+<body>
+<main class="wrap">
+
+<!-- Generated from the .md beside this file by docs/pitch/render.py; edit the .md. -->
+<section class="page">
+<p class="kicker"><b>polytropos</b> &middot; spec-driven development &middot; a field report</p>
+<h1>Spec-driven development, and where polytropos stands</h1>
+<p class="sub"><strong>A field report on spec-driven development: what it is, how the main tools practice it, the principles they share, and how polytropos maps to each one.</strong></p>
+<blockquote><p>Companions: <code>docs/pitch/core-four.md</code> maps Spec Kit's four phases one by one; <code>docs/SPEC-DRIVEN.md</code> is the long form of how polytropos works; <code>docs/spec-driven-pitch.html</code> is the short pitch. Claims about other tools come from the sources listed at the end, most of them secondary write-ups; each tool's own documentation is the authority on its current behavior. Claims about polytropos name the file that makes them true.</p></blockquote>
+<h2>Summary</h2>
+<p><strong>Spec-driven development (SDD)</strong> is the practice of writing down what a change must do, and how it will be checked, before an AI agent writes the code, then holding the agent's work to that written spec instead of to the conversation that produced it. The idea is old: it echoes contract-first design and test-first development. What is new is the executor. When the implementer is a model that can produce a lot of plausible code quickly, the spec becomes the one fixed point that every step is checked against.</p>
+<p>The tools that define the field in 2026, GitHub's Spec Kit, AWS's Kiro, Tessl, OpenSpec and the BMAD method, share a chain of artifacts: standing project rules, then requirements, then a design, then a task list, then implementation. They differ in how much ceremony they impose and in how long the spec lives after the code ships.</p>
+<p><strong>Where polytropos stands.</strong> polytropos is a spec-first SDD system for Claude Code with three properties the field's tools mostly lack:</p>
+<ol><li><strong>Verification is independent of the builder.</strong> The spec carries a verify command and an evidence rule for every task, and the orchestrator, a fresh-context verifier and a phase reviewer check the work against it. "The implementer's claim of success is not evidence."</li><li><strong>The spec is priced.</strong> Every task names the model tier it runs on, so the expensive model writes the spec once and cheaper models build against it.</li><li><strong>The spec is graded.</strong> A ledger records when a brief itself was wrong, and the next planner is told to read those records as evidence about its own briefs.</li></ol>
+<p>Its main gaps against the field are a missing cross-artifact consistency pass before the run, no structured requirements notation, and no living spec that is kept in sync after a change ships. The last section lists them with a suggested fix for each.</p>
+</section>
+
+<section class="page">
+<h2>What spec-driven development is</h2>
+<h3>The problem it answers</h3>
+<p>An agent given a prompt builds what it understood from the prompt, and reports success in the same voice whether it succeeded or not. Without a written spec there is nothing outside the conversation to check the result against, so review falls back to reading the code and trusting the summary. The usual name for the alternative is "vibe coding": iterate on prompts until the output looks right.</p>
+<p>SDD moves the decisions out of the conversation and into files. Intent, constraints and acceptance criteria are written before implementation and kept in the repository, where they can be reviewed like code, read by every agent that touches the change, and checked after the fact.</p>
+<h3>The three levels</h3>
+<p>Birgitta Böckeler's widely cited analysis on martinfowler.com sorts SDD tools into three levels by how long the spec lives and who edits it:</p>
+<table class="grid"><thead><tr><th>Level</th><th>What happens to the spec</th><th>Example</th></tr></thead><tbody><tr><td><strong>Spec-first</strong></td><td>Written for a change, used to build it, then set aside.</td><td>Kiro; Spec Kit in practice</td></tr><tr><td><strong>Spec-anchored</strong></td><td>Kept and maintained alongside the code for the feature's lifetime, and used to detect drift.</td><td>Spec Kit's stated aim</td></tr><tr><td><strong>Spec-as-source</strong></td><td>The only thing people edit; code is regenerated from it.</td><td>Tessl (reported as in beta)</td></tr></tbody></table>
+<p>Her finding, as summarized by several sources, is that most tools claim the higher levels and deliver spec-first. Spec-as-source remains the minority position. Spec-anchored with drift detection is widely called the defensible middle.</p>
+<h3>The artifact chain</h3>
+<p>Across tools the artifacts line up in the same order, under different names:</p>
+<table class="grid"><thead><tr><th>Stage</th><th>Purpose</th><th>Spec Kit</th><th>Kiro</th><th>polytropos</th></tr></thead><tbody><tr><td>Standing rules</td><td>Rules every change obeys</td><td><code>constitution.md</code></td><td>steering files</td><td><code>CLAUDE.md</code> invariants; each kit's <code>GUARDRAILS.md</code></td></tr><tr><td>Requirements</td><td>What and why, no design</td><td>spec (stories, scenarios)</td><td><code>requirements.md</code> (EARS)</td><td>the spec half of <code>PLAN.md</code></td></tr><tr><td>Design</td><td>How, with reasons</td><td>plan plus research, data model, contracts</td><td><code>design.md</code></td><td>the design half of <code>PLAN.md</code></td></tr><tr><td>Tasks</td><td>Ordered, checkable work</td><td>tasks with ids and parallel markers</td><td><code>tasks.md</code></td><td><code>TASKS.md</code></td></tr><tr><td>Implementation</td><td>Build against the tasks</td><td>implement</td><td>run tasks</td><td><code>/polytropos:execute</code></td></tr><tr><td>Verification</td><td>Prove it matches</td><td>checklists; analyze</td><td>hooks, tests</td><td>verify command, verifier, reviewer, red-green rule</td></tr><tr><td>Feedback</td><td>Learn from the run</td><td>none</td><td>none</td><td>the <code>NOTES.md</code> ledger and <code>bin/routing_scorecard.py</code></td></tr></tbody></table>
+</section>
+
+<section class="page">
+<h2>The landscape</h2>
+<table class="grid"><thead><tr><th>Tool</th><th>Shape</th><th>Level</th><th>Distinctive</th></tr></thead><tbody><tr><td><strong>GitHub Spec Kit</strong></td><td>Open-source toolkit of slash commands and templates for many agents</td><td>spec-first, aiming at anchored</td><td>A project constitution; Specify, Plan, Tasks, Implement, with optional clarify and analyze steps</td></tr><tr><td><strong>Kiro (AWS)</strong></td><td>An agentic IDE with specs built in</td><td>spec-first</td><td>Requirements in EARS notation ("WHEN … THE SYSTEM SHALL …"); approval gates between phases; steering files; agent hooks on file events</td></tr><tr><td><strong>Tessl</strong></td><td>A framework and registry built around specs</td><td>anchored, aiming at as-source</td><td>One spec per file; generated code marked as not to be edited</td></tr><tr><td><strong>OpenSpec</strong></td><td>A lightweight, tool-neutral spec format</td><td>spec-anchored</td><td>Change proposals written as deltas (added, modified, removed) against a living spec; suited to brownfield work</td></tr><tr><td><strong>BMAD method</strong></td><td>A full methodology with specialized agent personas</td><td>spec-first</td><td>Analyst, product, architect and developer roles hand work along a phase pipeline; heavy, aimed at greenfield and regulated work</td></tr><tr><td><strong>polytropos</strong></td><td>A Claude Code plugin with headless drivers for other harnesses</td><td>spec-first, with the record kept</td><td>Model tier pinned per task; independent verification; a ledger that grades the spec and the models</td></tr></tbody></table>
+<p>Practitioner comparisons consistently place these tools on a ceremony scale, with OpenSpec lightest, Spec Kit in the middle and BMAD heaviest, and report run time and cost growing with the ceremony. Those comparisons are single-author trials with their own rubrics, not controlled benchmarks.</p>
+<p>polytropos sits nearest Spec Kit and Kiro in shape: a spec, a design and a task list, written once per change. It differs from all of them in where it puts its effort. The others concentrate on producing a good spec. polytropos assumes a good spec and concentrates on the part after it: who builds against it, at what price, and how the result is proved and measured.</p>
+</section>
+
+<section class="page">
+<h2>The principles, and how polytropos meets them</h2>
+<p>These ten principles recur across the tools, Böckeler's analysis and the practitioner literature. Each is mapped to the polytropos mechanism that meets it, or marked where it does not.</p>
+<table class="grid"><thead><tr><th>#</th><th>Principle</th><th>polytropos</th><th>Rating</th></tr></thead><tbody><tr><td>P1</td><td><strong>Intent before implementation.</strong> The what and why are written before any design or code.</td><td><code>PLAN.md</code> opens with the spec: the goal, a checkable "done", constraints and an out-of-scope fence, under the rule "what and why, no design yet" (<code>skills/architect/SKILL.md</code>).</td><td>Strong</td></tr><tr><td>P2</td><td><strong>A human approves the spec.</strong> Requirements are signed off before design starts.</td><td>The architect's approval pause: it shows the spec draft and writes nothing to disk until the user approves. Skipping it must be asked for and is disclosed in the handoff.</td><td>Strong</td></tr><tr><td>P3</td><td><strong>Standing rules.</strong> Project-wide constraints apply to every change.</td><td><code>CLAUDE.md</code> holds always-on invariants. Each kit's <code>GUARDRAILS.md</code> holds rules for that change only, re-read from disk at every phase start.</td><td>Strong</td></tr><tr><td>P4</td><td><strong>Testable acceptance.</strong> Each requirement can be checked.</td><td>Every task carries acceptance criteria and a shell verify command. The <code>red-green</code> evidence rule rejects a check that could never have failed.</td><td>Strong at task level; no notation for requirements</td></tr><tr><td>P5</td><td><strong>Design with reasons.</strong> Decisions are recorded with their rationale.</td><td><code>PLAN.md</code> decisions carry rationale "so a cheaper model can make consistent micro-decisions later", plus risks with tripwires.</td><td>Strong</td></tr><tr><td>P6</td><td><strong>Small, ordered, traceable tasks.</strong></td><td><code>TASKS.md</code> blocks with ids, phases and <code>depends:</code>/<code>independent:</code>; <code>bin/kit_contract.py graph</code> rejects duplicates, unknown or self dependencies, and cycles.</td><td>Strong; no requirement-to-task ids</td></tr><tr><td>P7</td><td><strong>Build against the spec, verified independently.</strong></td><td>The orchestrator runs every verify command itself; a fresh-context verifier and an <code>opus</code> phase reviewer check the work against the kit, never against the implementer's report.</td><td>Strongest in the field</td></tr><tr><td>P8</td><td><strong>Keep spec and code in sync.</strong> Drift is detected.</td><td>During a run, the phase reviewer checks for drift from <code>PLAN.md</code>. After a kit is done, nothing keeps its spec in sync with later changes.</td><td>Partial</td></tr><tr><td>P9</td><td><strong>Change management.</strong> Changes to existing behavior are specified as changes.</td><td>A kit is one change, and its out-of-scope fence bounds it. There is no delta format against a standing spec.</td><td>Partial</td></tr><tr><td>P10</td><td><strong>Right-sized ceremony.</strong> Small changes do not pay for a full spec.</td><td><code>/polytropos:route</code> picks a model for a single task without a kit, and <code>workflow: direct</code> drops independent review for low-risk kits. There is no rule for when a change needs a kit.</td><td>Partial</td></tr></tbody></table>
+<p>Two further principles are rarely stated by the other tools and are central to polytropos:</p>
+<ul><li><strong>P11 &middot; Spend judgment where it pays.</strong> The spec is written once on the frontier tier, and each task is pinned to the cheapest tier that can do it: <code>sonnet</code> by default, <code>opus</code> for the hard ones, <code>haiku</code> for mechanical ones. After planning, the frontier is reached only when a task fails: interactively, through a consult that carries that task's brief and failure evidence; headless, through the driver's escalation ladder.</li><li><strong>P12 &middot; Measure the spec, not just the code.</strong> Every outcome, review and confirmed brief defect lands in <code>NOTES.md</code> in the grammar of <code>skills/execute/references/ledger.md</code>. <code>python3 bin/routing_scorecard.py --history</code> reports per-tier and per-role quality across every kit, and the architect is told to read recurring defect kinds "as evidence about YOUR OWN briefs".</li></ul>
+</section>
+
+<section class="page">
+<h2>Framework by framework</h2>
+<h3>Spec Kit</h3>
+<p>The closest match, mapped phase by phase in <code>docs/pitch/core-four.md</code>. Specify becomes the spec half of <code>PLAN.md</code> with the approval pause. Plan becomes the design half. Tasks becomes <code>TASKS.md</code>. Implement becomes the execute loop. The constitution splits between <code>CLAUDE.md</code> and <code>GUARDRAILS.md</code>. Clarify becomes the scoping questions and the open questions listed under the spec draft. Analyze has only a structural counterpart, the graph check, plus after-the-fact drift review.</p>
+<h3>Kiro</h3>
+<p>Kiro's <code>requirements.md</code>, <code>design.md</code> and <code>tasks.md</code> correspond to the two halves of <code>PLAN.md</code> and to <code>TASKS.md</code>. Its approval gates between phases correspond to the approval pause, though polytropos gates only once, after the spec, not after the design. Steering files correspond to <code>CLAUDE.md</code> and <code>GUARDRAILS.md</code>. Kiro's hooks run agent actions on file events. polytropos has no file-event hooks; its checks run at fixed points in the loop instead: after each task, at each phase end, and at each phase start. Kiro's EARS notation has no polytropos counterpart. Acceptance in polytropos is written as checkable prose plus a command.</p>
+<h3>OpenSpec</h3>
+<p>OpenSpec keeps a living spec and writes each change as a delta against it. polytropos writes a fresh, self-contained spec per change and keeps the finished kit in the repository as a record, not as a living spec. For brownfield work this is the largest structural difference. In polytropos the "current spec" of the system is the code plus <code>CLAUDE.md</code>, not an accumulated spec document.</p>
+<h3>BMAD</h3>
+<p>BMAD hands work between persona agents (analyst, product manager, architect, developer, QA). polytropos has a role pipeline too: the standing implementer, verifier and reviewer, and seven optional roles declared on a <code>roles:</code> line (<code>scout</code>, <code>test-author</code>, <code>second-verifier</code>, <code>red-team</code>, <code>security-auditor</code>, <code>docs-editor</code>, <code>synthesizer</code>). The difference is that polytropos roles are opt-in per kit and measured. <code>python3 bin/routing_scorecard.py --roles</code> reports each role's findings, confirmed findings and marginal catches, and the routing guidance says to keep a role only "when its measured marginal value earns its measured cost".</p>
+<h3>Tessl</h3>
+<p>Tessl aims at spec-as-source: people edit specs and code is regenerated. polytropos explicitly does not. Its own pitch says it is "not code generation from a formal spec": the spec is prose plus shell commands, and a model reads the brief and writes the change. What polytropos offers instead of determinism is verification. A rerun may write different code, and the same verify commands, evidence rule and reviewers judge it either way.</p>
+</section>
+
+<section class="page">
+<h2>What polytropos adds to the field</h2>
+<ul><li><strong>Independent verification as part of the contract.</strong> Most tools check work with tests the agent itself writes or runs. polytropos makes the orchestrator run each verify command itself, dispatches a fresh-context verifier with read-only tools, and gates each phase on an <code>opus</code> review against <code>PLAN.md</code>. Under <code>evidence: red-green</code>, a verify that already passed before the work means the task is blocked, not done.</li><li><strong>A stop-and-report rule.</strong> When a brief conflicts with the repo, the executor stops and reports instead of improvising. Nobody changes a task's scope or acceptance to make it pass; the conflict becomes a <code>defect:</code> line and a question for the user.</li><li><strong>Cost-tiered execution.</strong> The spec names a model tier per task. <code>/polytropos:route</code> estimates cost before a run, and <code>python3 bin/routing_scorecard.py &lt;slug&gt; --session &lt;id&gt;</code> prices a finished kit against an all-frontier counterfactual, both from <code>data/pricing.json</code>.</li><li><strong>A graded spec.</strong> The <code>defect:</code> ledger records each confirmed brief defect by kind, such as <code>stale-pin</code>, <code>tautological-verify</code>, <code>unspecified-path</code> and <code>contradictory-acceptance</code>. The architect reads which kinds recur before writing the next kit.</li><li><strong>Bounded autonomy.</strong> Re-routing is advisory by default. Under <code>autonomy: auto</code> it moves pending tasks up one tier, never down and never to the frontier. A <code>budget:</code> line caps dispatches and consults, and a run that hits a cap stops and says so.</li><li><strong>One spec, several harnesses.</strong> The same kit runs interactively in Claude Code or headless through <code>bin/claude_execute.py</code>, <code>bin/copilot_execute.py</code>, <code>bin/codex_execute.py</code> and <code>bin/cursor_execute.py</code>. The headless drivers run verify commands inside <code>bin/exec_policy.py</code> and record every dispatch in <code>bin/attempt_ledger.py</code>.</li></ul>
+<h2>The criticisms of SDD, and how polytropos answers them</h2>
+<table class="grid"><thead><tr><th>Criticism</th><th>polytropos's answer</th><th>Still open</th></tr></thead><tbody><tr><td><strong>It is waterfall again.</strong> Specs are written up front and reality changes.</td><td>Specs are per change, not per product, and a spec that cannot hold goes back to the user instead of being rewritten silently.</td><td>The design is still fixed before tasks run. There is no mid-run re-plan step short of a stop.</td></tr><tr><td><strong>The ceremony outweighs small changes.</strong></td><td><code>/polytropos:route</code> for single tasks; <code>workflow: direct</code> for low-risk kits; optional roles are off unless declared.</td><td>There is no stated threshold for when a change needs a kit.</td></tr><tr><td><strong>Specs drift from code.</strong></td><td>Phase-end drift review against <code>PLAN.md</code>; fences re-read from disk at every phase start.</td><td>Nothing checks a finished kit's spec against later changes.</td></tr><tr><td><strong>Matching a wrong spec is false confidence.</strong></td><td>The approval pause catches misread intent early. The <code>defect:</code> ledger records specs that turned out wrong.</td><td>The pitch says it plainly: "The checks cover what the architect thought to check."</td></tr><tr><td><strong>Review burden moves from code to verbose specs.</strong></td><td>The brief must be self-contained but not prescriptive: "pin down contracts and interfaces precisely; leave implementation judgment open".</td><td>No size limit on a kit; a large change still produces a large <code>TASKS.md</code>.</td></tr><tr><td><strong>Regeneration is non-deterministic.</strong></td><td>polytropos does not regenerate from specs. It verifies whatever was written.</td><td>Not applicable.</td></tr><tr><td><strong>The evidence base is thin.</strong></td><td>The ledger and scorecard turn every kit into recorded evidence about tiers, roles and briefs.</td><td>That evidence is per-user and per-repo, not a controlled study.</td></tr></tbody></table>
+</section>
+
+<section class="page">
+<h2>Gaps and recommendations</h2>
+<p>Each gap below is something a field tool does that polytropos does not. They are ordered by expected value. None is built; each would be its own kit.</p>
+<ol><li><strong>A pre-run consistency check.</strong> <em>Gap:</em> Spec Kit's analyze step checks the artifacts against each other before implementation, and polytropos checks only the task graph's structure. <em>Suggestion:</em> extend <code>bin/kit_contract.py</code> or add an architect step that checks every <code>PLAN.md</code> goal and constraint is covered by some task's acceptance, and that every task traces to the plan. It would run read-only, before the first dispatch.</li><li><strong>Traceable requirement ids.</strong> <em>Gap:</em> Kiro and Spec Kit give requirements ids that tasks reference. <em>Suggestion:</em> an optional id on each <code>PLAN.md</code> goal line, and an optional <code>covers:</code> field on tasks. Because the task-field contract is shared by the architect and execute skills and <code>bin/kit_contract.py</code>, this would need all three changed together.</li><li><strong>Structured acceptance notation.</strong> <em>Gap:</em> EARS makes requirements testable by form. <em>Suggestion:</em> recommend, not require, a WHEN/THEN form for the "done" line in <code>PLAN.md</code>, so each condition maps to one verify command.</li><li><strong>A spec-anchored afterlife.</strong> <em>Gap:</em> finished kits are kept as records but never re-checked. <em>Suggestion:</em> a read-only command that re-runs a done kit's verify commands against the current tree and reports which no longer pass. That is a drift detector built from checks that already exist.</li><li><strong>Change deltas for brownfield work.</strong> <em>Gap:</em> OpenSpec's added/modified/removed format. <em>Suggestion:</em> an optional <code>PLAN.md</code> section listing the behaviors the change adds, modifies and removes, reviewed in the approval pause.</li><li><strong>A ceremony threshold.</strong> <em>Gap:</em> no tool, polytropos included, states when a change is too small for a spec. <em>Suggestion:</em> a rule in the architect or route skill, backed by <code>--history</code>, for routing small changes to a single dispatch instead of a kit.</li></ol>
+<h2>Run it</h2>
+<pre><code>/polytropos:architect &lt;task&gt;                <span class="dim"># spec, approval pause, design, tasks</span>
+/polytropos:execute &lt;slug&gt;                  <span class="dim"># build and verify on the pinned tiers</span>
+python3 bin/routing_scorecard.py --history  <span class="dim"># the record across every kit</span>
+python3 bin/routing_scorecard.py --roles    <span class="dim"># what each review role has caught</span></code></pre>
+<h2>Sources</h2>
+<p class="src">On spec-driven development and its levels: <a href="https://www.alldevblogs.com/article/martin-fowler/understanding-spec-driven-development-kiro-spec-kit-and-tessl">Böckeler, "Understanding Spec-Driven-Development: Kiro, spec-kit, and Tessl" (martinfowler.com, via a summary)</a>; <a href="https://en.wikipedia.org/wiki/Spec-driven_development">Wikipedia: Spec-driven development</a>; <a href="https://particula.tech/blog/spec-driven-development-tools-spec-kit-vs-kiro-vs-tessl">Spec Kit vs Kiro vs Tessl (Particula)</a>. On Spec Kit: <a href="https://www.augmentcode.com/guides/github-spec-kit-practical-guide-sdd-workflow">Augment Code practical guide</a>; <a href="https://blogs.perficient.com/getting-started-with-github-spec-kit-installation-and-core-commands/">Perficient core-commands guide</a>. On Kiro: <a href="https://kiro.dev/docs/getting-started/first-project/">Kiro docs: first project</a>; <a href="https://smile.eu/en/publications-and-events/kiro-aws-s-agentic-ide-spec-driven-development">Smile: Kiro, AWS's agentic IDE</a>. On OpenSpec, BMAD and the criticisms: <a href="https://openspec.pro/comparison/">OpenSpec vs Spec Kit vs BMAD vs Kiro</a>; <a href="https://faun.dev/toolbox/bmad-method-vs-openspec/">BMAD vs OpenSpec (FAUN)</a>; <a href="https://dev.to/mudassirworks/spec-driven-development-what-it-fixes-and-breaks-1co3">Spec Driven Development: what it fixes (and breaks)</a>; <a href="https://dev.to/krlz/spec-driven-development-in-2026-what-it-is-the-tooling-and-how-teams-actually-use-it-2fk2">Spec-driven development in 2026 (DEV Community)</a>.</p>
+<footer>Long form for polytropos: docs/SPEC-DRIVEN.md &middot; Source: github.com/agentmc15/polytropos</footer>
+</section>
+
+</main>
+</body>
+</html>

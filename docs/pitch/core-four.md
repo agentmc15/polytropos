@@ -28,6 +28,8 @@ that makes it true. The long form of the argument is `docs/SPEC-DRIVEN.md`.
 | **Implement** | per-task dispatch to the pinned tier, orchestrator-run verify, fresh-context verifier, phase reviewer, one retry, then a frontier consult | `skills/execute/SKILL.md`; `bin/claude_execute.py` and its peers | `/polytropos:execute` on cheaper tiers |
 | *(none)* | **Measure**: a ledger in `NOTES.md` and a scorecard that grades the tiers, the review roles and the spec | `skills/execute/references/ledger.md`; `bin/routing_scorecard.py` | execute writes it; the next architect reads it |
 
+<!-- page -->
+
 ## 1 · Specify
 
 **Spec Kit.** The specify phase captures what to build and why: user stories, scenarios, edge
@@ -81,6 +83,8 @@ write. `tests/test_guardrails_layout.py` fails the suite for a kit that skips it
 design and its reasons sit in `PLAN.md`, next to the spec they serve. There is no explicit
 "check the plan against the constitution" gate at planning time. The fences are enforced later,
 at every phase start and every review.
+
+<!-- page -->
 
 ## 3 · Tasks
 
@@ -141,6 +145,8 @@ budget dial. They run verify commands inside `bin/exec_policy.py` and record eve
 **The difference.** Spec Kit's implement phase hands the task list to the agent. polytropos
 splits that agent into roles on different tiers and never takes the builder's word for it.
 
+<!-- page -->
+
 ## 5 · Measure (no Spec Kit equivalent)
 
 Every finished task, dispatch and phase review appends a machine-read line to the kit's
@@ -195,4 +201,5 @@ python3 bin/routing_scorecard.py --history  # Measure, across every kit
 Sources for Spec Kit's phases: the official `github/spec-kit` README; the
 [Augment Code practical guide](https://www.augmentcode.com/guides/github-spec-kit-practical-guide-sdd-workflow);
 [Perficient's core-commands guide](https://blogs.perficient.com/getting-started-with-github-spec-kit-installation-and-core-commands/).
+
 Long form for polytropos: docs/SPEC-DRIVEN.md · Source: github.com/agentmc15/polytropos
