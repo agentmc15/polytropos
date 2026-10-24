@@ -1,0 +1,30 @@
+{
+  "id": "T9-graph-brief-paths",
+  "title": "Report shortest dependency paths from graph_brief",
+  "kind": "feature",
+  "source_files": ["bin/graph_brief.py"],
+  "allowed_paths": ["bin/graph_brief.py", "tests/"],
+  "allowed_generated": [],
+  "regression": ["test_graph_brief.py"],
+  "guardrails": [
+    {"kind": "subprocess", "regex": "\\bimport subprocess\\b|\\bsubprocess\\.(run|Popen|call|check_output)\\b"},
+    {"kind": "shell-true", "regex": "shell\\s*=\\s*True"},
+    {"kind": "os-system", "regex": "\\bos\\.system\\("},
+    {"kind": "home-dir", "regex": "Path\\.home\\(|expanduser\\("},
+    {"kind": "debug-print", "regex": "^\\s*(breakpoint\\(\\)|import pdb|pdb\\.set_trace)"}
+  ],
+  "rubric": [
+    "The CLI exposes a paths subcommand with --graph, --direction, --max-hops, --max-paths, and --json while preserving brief/demo behaviour.",
+    "Endpoint lookup prefers exact stringified ids over exact labels and reports deterministic not-found and ambiguity errors with status 2.",
+    "Path search honours forward, reverse, and both edge directions and ignores malformed or unknown-endpoint links.",
+    "Shortest-path computation respects max_hops, handles cycles without repeated nodes, and treats identical endpoints as one zero-hop path.",
+    "All shortest paths are collected, sorted lexicographically by full node-id tuple, and only then truncated by --max-paths with the exact text notice.",
+    "Text output matches the specified success, no-path, lookup-error, and truncation formats exactly.",
+    "JSON output uses sorted indented payloads with the exact specified keys and counts for success and errors.",
+    "New tests cover directionality, hop limits, cycles, tie ordering, JSON, lookup edge cases, malformed edges, and unchanged legacy graph_brief behaviour without adding subprocess/home/network access."
+  ],
+  "prompt": "prompt.md",
+  "oracle": "oracle.py",
+  "reference": "reference.patch",
+  "naive": "naive.patch"
+}

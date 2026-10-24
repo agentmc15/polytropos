@@ -1,0 +1,218 @@
+--- a/bin/graph_brief.py
++++ b/bin/graph_brief.py
+@@ -17,7 +17,7 @@
+ import json
+ import shutil
+ import tempfile
+-from collections import Counter
++from collections import Counter, defaultdict, deque
+ from pathlib import Path
+ 
+ DEFAULT_GRAPH_PATH = "graphify-out/graph.json"
+@@ -317,10 +317,144 @@
+     if brief["low_cross_file_warning"]:
+         lines.append("")
+         lines.append(brief["low_cross_file_warning_text"])
++
++    return "\n".join(lines)
++
++
++# --------------------------------------------------------------------------- path search
++
++def _bounded_int(label, minimum):
++    def parse(value):
++        try:
++            parsed = int(value)
++        except ValueError as exc:
++            raise argparse.ArgumentTypeError(f"must be a {label} integer") from exc
++        if parsed < minimum:
++            raise argparse.ArgumentTypeError(f"must be a {label} integer")
++        return parsed
++    return parse
++
++
++def _pid(node):
++    node_id = node.get("id")
++    return None if node_id is None else str(node_id)
++
++
++def _plabel(node):
++    return node.get("label") or node.get("norm_label") or _pid(node)
++
++
++def _lookup_node(nodes, query):
++    eligible = [node for node in nodes if _pid(node) is not None]
++    id_matches = [node for node in eligible if _pid(node) == query]
++    if len(id_matches) == 1:
++        return id_matches[0], None
++    if len(id_matches) > 1:
++        candidates = sorted(_pid(node) for node in id_matches)
++        message = f"ambiguous node query {query!r} matched {len(candidates)} ids:"
++        return None, {"error": "ambiguous-node", "message": message,
++                      "query": query, "candidates": candidates}
++    label_matches = [node for node in eligible if node.get("label") == query]
++    if len(label_matches) == 1:
++        return label_matches[0], None
++    if len(label_matches) > 1:
++        candidates = sorted(_pid(node) for node in label_matches)
++        message = f"ambiguous node query {query!r} matched {len(candidates)} labels:"
++        return None, {"error": "ambiguous-node", "message": message,
++                      "query": query, "candidates": candidates}
++    message = f"node not found for query {query!r} (lookup checks exact id first, then exact label)"
++    return None, {"error": "node-not-found", "message": message, "query": query}
++
++
++def _print_lookup_error(error, as_json):
++    if as_json:
++        print(json.dumps(error, indent=2, sort_keys=True))
++        return
++    lines = [error["message"]]
++    lines.extend(f"  {candidate}" for candidate in error.get("candidates", []))
++    print("\n".join(lines))
++
++
++def _path_adjacency(nodes, links, direction):
++    ids = {_pid(node) for node in nodes if _pid(node) is not None}
++    adjacency = {node_id: set() for node_id in ids}
++    for link in links:
++        source, target = link.get("source"), link.get("target")
++        if source is None or target is None:
++            continue
++        source_id, target_id = str(source), str(target)
++        if source_id not in ids or target_id not in ids:
++            continue
++        if direction in ("forward", "both"):
++            adjacency[source_id].add(target_id)
++        if direction in ("reverse", "both"):
++            adjacency[target_id].add(source_id)
++    return adjacency
++
++
++def _shortest_paths(nodes, links, start_id, end_id, direction, max_hops):
++    if start_id == end_id:
++        return [[start_id]]
++    adjacency = _path_adjacency(nodes, links, direction)
++    distances, parents, queue, found = {start_id: 0}, defaultdict(set), deque([start_id]), None
++    while queue:
++        current = queue.popleft()
++        depth = distances[current]
++        if depth >= max_hops or (found is not None and depth >= found):
++            continue
++        for neighbor in sorted(adjacency.get(current, ())):
++            next_depth = depth + 1
++            if found is not None and next_depth > found:
++                continue
++            if neighbor not in distances:
++                distances[neighbor] = next_depth
++                queue.append(neighbor)
++            if distances.get(neighbor) == next_depth:
++                parents[neighbor].add(current)
++            if neighbor == end_id:
++                found = next_depth
++    if end_id not in distances or distances[end_id] > max_hops:
++        return []
+ 
++    def expand(node_id):
++        if node_id == start_id:
++            return [[start_id]]
++        return [prefix + [node_id]
++                for parent in sorted(parents[node_id])
++                for prefix in expand(parent)
++                if node_id not in prefix]
++
++    return sorted(expand(end_id), key=tuple)
++
++
++def _paths_payload(nodes, links, start_node, end_node, direction, max_hops, max_paths):
++    start_id, end_id = _pid(start_node), _pid(end_node)
++    paths = _shortest_paths(nodes, links, start_id, end_id, direction, max_hops)
++    if not paths:
++        message = f"no path from {start_id} to {end_id} within {max_hops} hops (direction={direction})"
++        return None, {"direction": direction, "end": end_id, "error": "no-path",
++                      "max_hops": max_hops, "message": message, "start": start_id}
++    shown = paths[:max_paths]
++    return {"direction": direction, "end": {"id": end_id, "label": _plabel(end_node)},
++            "hops": len(paths[0]) - 1, "max_hops": max_hops, "path_count": len(paths),
++            "paths": shown, "shown_path_count": len(shown),
++            "start": {"id": start_id, "label": _plabel(start_node)},
++            "truncated": len(shown) < len(paths)}, None
++
++
++def _render_paths(payload):
++    lines = [f"shortest paths from {payload['start']['id']} to {payload['end']['id']} "
++             f"(hops={payload['hops']}, count={payload['path_count']}, "
++             f"direction={payload['direction']}):"]
++    lines.extend(f"  {index}. {' -> '.join(path)}"
++                 for index, path in enumerate(payload["paths"], start=1))
++    remaining = payload["path_count"] - payload["shown_path_count"]
++    if remaining:
++        lines.append(f"  ... {remaining} more shortest path(s) not shown (increase --max-paths)")
+     return "\n".join(lines)
+ 
+ 
++
+ # --------------------------------------------------------------------------- subcommands
+ 
+ def cmd_brief(args):
+@@ -344,6 +478,38 @@
+     return 0
+ 
+ 
++def cmd_paths(args):
++    data, error = load_graph(args.graph)
++    if error == "missing":
++        print(
++            f"no graph at {args.graph} -- run `graphify update <repo>` first "
++            "(graphify is an external, user-installed tool; this repo never installs "
++            "or invokes it)"
++        )
++        return 0
++    if error is not None:
++        print(error)
++        return 2
++
++    nodes, links = _nodes_of(data), _links_of(data)
++    start_node, start_error = _lookup_node(nodes, args.start)
++    if start_error is not None:
++        _print_lookup_error(start_error, args.json)
++        return 2
++    end_node, end_error = _lookup_node(nodes, args.end)
++    if end_error is not None:
++        _print_lookup_error(end_error, args.json)
++        return 2
++
++    payload, no_path = _paths_payload(nodes, links, start_node, end_node,
++                                      args.direction, args.max_hops, args.max_paths)
++    if no_path is not None:
++        print(json.dumps(no_path, indent=2, sort_keys=True) if args.json else no_path["message"])
++        return 1
++    print(json.dumps(payload, indent=2, sort_keys=True) if args.json else _render_paths(payload))
++    return 0
++
++
+ # --------------------------------------------------------------------------- demo data
+ 
+ def _demo_normal_graph():
+@@ -454,6 +620,22 @@
+     p_brief.add_argument("--json", action="store_true", help="machine-readable output")
+     p_brief.set_defaults(func=cmd_brief)
+ 
++    p_paths = sub.add_parser("paths", help="render shortest dependency paths from a graph.json")
++    p_paths.add_argument("start", help="start node id or exact label")
++    p_paths.add_argument("end", help="end node id or exact label")
++    p_paths.add_argument(
++        "--graph", default=DEFAULT_GRAPH_PATH,
++        help=f"path to graph.json (default: {DEFAULT_GRAPH_PATH}, relative to cwd)",
++    )
++    p_paths.add_argument(
++        "--direction", choices=("forward", "reverse", "both"), default="forward",
++        help="edge direction to follow: forward, reverse, or both (default: forward)",
++    )
++    p_paths.add_argument("--max-hops", type=_bounded_int("non-negative", 0), default=8)
++    p_paths.add_argument("--max-paths", type=_bounded_int("positive", 1), default=20)
++    p_paths.add_argument("--json", action="store_true", help="machine-readable output")
++    p_paths.set_defaults(func=cmd_paths)
++
+     p_demo = sub.add_parser(
+         "demo",
+         help=(

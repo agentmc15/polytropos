@@ -301,9 +301,13 @@ class RealTreeIdempotenceTests(unittest.TestCase):
     skills/assess-improvement card, 77 once D34 added docs/TRAINING-DATA-READINESS.md
     and 78 once D29 added docs/DECISION-IMPROVEMENT-CONFORMANCE.md
     (both 2026-09-20), 79 once D30 added docs/DECISION-IMPROVEMENT-V1-HANDOFF.md
-    (2026-09-21), then 84 when the Codex skill parity ports added five pages, 85 once docs/REFERENCE.md took the long-form page out of README.md
-    (2026-09-24), and 86 once the observability-dashboard kit's T8 added
-    skills/dashboard -- this test derives the count dynamically for the
+    (2026-09-21), then 84 when the Codex skill parity ports added five pages, and 85 once docs/REFERENCE.md took the long-form page out of README.md
+    (2026-09-24), then 86 when J01 added docs/JEV-ACCESS-CONTRACT.md
+    (2026-09-25), then 87 when docs/JEV-JUDGE-STUDY.md added its offline
+    preregistration (2026-09-25), then 88 when docs/ROUTE-EXPERIMENT.md added the route
+    experiment's preregistration (2026-09-28), then 89 when docs/SPEC-DRIVEN.md
+    (sdd-docs-refresh) added one deep dive (2026-10-23), and 90 once the observability-dashboard kit's T8
+    added skills/dashboard (merged from main) -- this test derives the count dynamically for the
     build assertions, and the literal below is only the tripwire that makes a change in
     the page set announce itself."""
 
@@ -311,7 +315,7 @@ class RealTreeIdempotenceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = _copy_real_dirs(tmp, ("skills", "copilot", "codex", "docs"))
             expected_count = len(db.expected_pages(root))
-            self.assertEqual(expected_count, 86, "the pinned page-set size (86 total)")
+            self.assertEqual(expected_count, 90, "the pinned page-set size (90 total)")
 
             code1, out1, err1 = _run_main(["build", "--repo-root", str(root)])
             self.assertEqual(code1, 0, f"stderr={err1!r}")

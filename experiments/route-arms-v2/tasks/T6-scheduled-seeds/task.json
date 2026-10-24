@@ -1,0 +1,31 @@
+{
+  "id": "T6-scheduled-seeds",
+  "title": "Add date-aware scheduled seed lines to the journal runbook",
+  "kind": "feature",
+  "source_files": ["bin/journal_plan.py"],
+  "allowed_paths": ["bin/journal_plan.py", "tests/"],
+  "allowed_generated": [],
+  "regression": ["test_journal_plan.py"],
+  "guardrails": [
+    {"kind": "subprocess", "regex": "\\bimport subprocess\\b|\\bsubprocess\\.(run|Popen|call|check_output)\\b"},
+    {"kind": "shell-true", "regex": "shell\\s*=\\s*True"},
+    {"kind": "os-system", "regex": "\\bos\\.system\\("},
+    {"kind": "home-dir", "regex": "Path\\.home\\(|expanduser\\("},
+    {"kind": "debug-print", "regex": "^\\s*(breakpoint\\(\\)|import pdb|pdb\\.set_trace)"},
+    {"kind": "hardcoded-model-id", "regex": "[\\\"'](claude|gpt|gemini|grok|kimi|mai)-[A-Za-z0-9.\\-]+[\\\"']"}
+  ],
+  "rubric": [
+    "Ordinary seed lines and existing runbook output remain backward-compatible when no directive is present",
+    "The on-date directive includes only on the exact target runbook date and validates real calendar dates",
+    "The from/every-N-days directive handles before-start exclusion, divisibility, month/year rollover, and leap-year differences",
+    "The weekday directive handles comma lists, case-insensitivity, whitespace, and invalid weekday tokens",
+    "Invalid directives add the specified note format without aborting the build or creating a card",
+    "Scheduled seed card titles and What/How bodies strip the directive prefix and preserve seed ordering",
+    "Scheduled seeds deduplicate by stripped title so existing carried/enriched cards still win",
+    "The implementation stays offline/stdlib-only and does not add subprocess, scheduler, home-dir, or generated-file behaviour"
+  ],
+  "prompt": "prompt.md",
+  "oracle": "oracle.py",
+  "reference": "reference.patch",
+  "naive": "naive.patch"
+}

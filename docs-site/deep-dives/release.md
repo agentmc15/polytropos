@@ -74,9 +74,10 @@ and unimplemented modes stay visible rather than being presented as parity.
 
 ## Release 1 of the decision work, and what "Jev-free" means here
 
-The decision-and-improvement work ships as an offline edition. "Jev" is the optional provider a
-separately gated Release 2 would add; it does not exist in this tree, and the block below computes
-that rather than asserting it. `python3 bin/release_gate.py decision` walks the decision surface
+The decision-and-improvement work ships as an offline edition. A separately gated Release 2
+Jev adapter exists for offline preparation, but it is not registered for V1 decisions or dispatch.
+The block below computes the V1 path boundary rather than inferring it from the adapter's mere
+presence. `python3 bin/release_gate.py decision` walks the decision surface
 (`bin/decision_*.py`, `bin/improvement_loop.py`, `bin/workflow_eval.py`) and what starts a run (the
 four native drivers and `bin/kit_contract.py`) by AST: a network import, a name carrying the
 provider's token, or an environment read on the decision surface is a finding and fails `check`.
@@ -182,7 +183,7 @@ Contract versions are read from the module that owns each one; package versions 
 
 | Package | Version |
 |---|---|
-| Claude Code plugin | polytropos 0.6.9 |
+| Claude Code plugin | polytropos 0.6.10 |
 | Local marketplace | polytropos-local |
 | Codex package | polytropos 0.5.0+codex.20260925020824 |
 | Codex marketplace | polytropos-local |
@@ -194,9 +195,9 @@ Contract versions are read from the module that owns each one; package versions 
 
 | Harness | Pricing file | cached_date | Models |
 |---|---|---|---|
-| claude-code | `data/pricing.json` | 2026-09-24 | 9 |
+| claude-code | `data/pricing.json` | 2026-10-07 | 11 |
 | codex | `data/pricing.codex.json` | 2026-09-24 | 9 |
-| copilot | `data/pricing.copilot.json` | 2026-09-24 | 29 |
+| copilot | `data/pricing.copilot.json` | 2026-09-24 | 31 |
 | cursor | `data/pricing.cursor.json` | 2026-09-13 | 0 |
 
 ### Operational support by harness
@@ -216,7 +217,7 @@ Three answers per capability, never collapsed: does the product support it, has 
 - Install: `claude plugin install polytropos@polytropos-local`
 - Bundle: `skills/ (the plugin itself)`
 - Review form: restricted `--allowedTools` profile (never the blanket grant)
-- Pricing: `data/pricing.json` (`cached_date` 2026-09-24, 9 models)
+- Pricing: `data/pricing.json` (`cached_date` 2026-10-07, 11 models)
 - Evaluation adapter: `workflow_eval.claude_adapter`
 
 | Capability | Product | Implemented | Verified | On | Client | Effective |
@@ -264,7 +265,7 @@ Three answers per capability, never collapsed: does the product support it, has 
 - Install: `python3 bin/harness_select.py install --harness copilot`
 - Bundle: `copilot/.github/`
 - Review form: the reviewer agent without `--allow-all-tools` (no narrower pin exists)
-- Pricing: `data/pricing.copilot.json` (`cached_date` 2026-09-24, 29 models)
+- Pricing: `data/pricing.copilot.json` (`cached_date` 2026-09-24, 31 models)
 - Evaluation adapter: `workflow_eval.copilot_adapter`
 
 | Capability | Product | Implemented | Verified | On | Client | Effective |
@@ -502,12 +503,12 @@ free text is redacted and bounded before it is persisted or dispatched and repor
 
 ### Decision and improvement (Release 1): what runs, and with what absent
 
-Release 1 is Jev-free by construction -- the optional provider a separately gated Release 2 would add does not exist in this tree. The columns below are read from the capability registry and from the constant in the module that owns each word (`decision_policy.SELECTION_MODES` and `DEFERRED_MODES`, `decision_provider.PROVIDER_MODES`, `workflow_eval.CONFINED_DISPATCH_WIRED` and `RUNTIME_REASONS`), never typed here.
+Release 1 is Jev-free by construction. A separately gated Release 2 offline adapter exists in this tree, but is not registered or reachable from the inspected V1 decision and driver paths. The columns below are read from the capability registry and from the constant in the module that owns each word (`decision_policy.SELECTION_MODES` and `DEFERRED_MODES`, `decision_provider.PROVIDER_MODES`, `workflow_eval.CONFINED_DISPATCH_WIRED` and `RUNTIME_REASONS`), never typed here.
 
 - this matrix makes NO performance claim. It reports what is available and on what evidence; no cell carries a gain, a ratio, a latency or a cost, no live trial has run, and a mechanism release is valid without one -- a well-run trial that retains the baseline is a valid outcome.
 - `canary` and `active` are UNAVAILABLE on every harness, and the refusal is machine-derived: `workflow_eval.CONFINED_DISPATCH_WIRED` is False, so `activation_decision` refuses every transition and `runtime_activation` resolves every run to legacy. Absent D23 evidence there is no such thing as a partially available canary.
 - Cursor's adaptive profile is `unsupported` pending independent proof, and that is a claim about the ADAPTIVE PROFILE ONLY. Cursor's current CLI implementation is present and verified -- its dispatch, identity probe, read-only dispatch, structured events, durable attempts and independent review all carry a dated `verified: supported` row against a named client version -- and nothing here reimplements it, retires it or reports it as absent.
-- V1 starts, decides and rolls back with every optional provider ABSENT. `rules` computes locally over the request's own state, `replay` reads a caller-selected local store and abstains on a miss, and a rollback names a fallback `decision_policy.resolve_bundle` chose and contacts nothing. No endpoint, key, SDK, model id or price for an optional provider appears anywhere in this repository, and none is guessed at here.
+- V1 starts, decides and rolls back with every optional provider ABSENT. `rules` computes locally over the request's own state, `replay` reads a caller-selected local store and abstains on a miss, and a rollback names a fallback `decision_policy.resolve_bundle` chose and contacts nothing. The inspected V1 decision and driver paths have no optional-provider import, endpoint, credential lookup, SDK or dispatch; the separately gated Release 2 offline adapter is outside those paths.
 - training-data collection is NOT a capability of any harness and has no registry row. `training_data.COLLECTION_ENABLED` and `CAPTURE_WIRED` are both False, there is no production call site -- the only call sites are the module's own offline `demo` and its tests -- and `build_dataset` requires an explicit `store_dir`. What ships is code that is present and unwired; `training/` in the packaging table means the store's ignore rule is present, never that a record, a dataset or an export manifest exists.
 
 | Harness | Client | OS | Adapter | Enforcement | Decision mode | Fallback |
@@ -615,6 +616,7 @@ Every top-level tracked path and its role. `packaging` fails on a path with no r
 | `docs` | documentation source (docs/RELEASE.md carries this gate's generated block) |
 | `docs-site` | generated mirror (bin/docs_build.py) |
 | `docs-src` | documentation fragments and the hash-locked site toolchain |
+| `experiments` | preregistered experiment definitions (task specs, hidden oracles, reference patches) read by bin/route_experiment.py; never installed behaviour |
 | `mkdocs.yml` | site configuration |
 | `primitives` | capability registry, historical primitive matrix, primitive model |
 | `skills` | plugin skills: runtime behaviour |
@@ -630,6 +632,7 @@ Every top-level tracked path and its role. `packaging` fails on a path with no r
 | `journal/` | present |
 | `memory/` | present |
 | `prefs/` | present |
+| `routeruns/` | present |
 | `telemetry/` | present |
 | `training/` | present |
 | `trends/` | present |
@@ -658,7 +661,7 @@ Each guarantee names the evidence behind it and what stays unresolved. Every com
 
 | Surface | Forward | Back |
 |---|---|---|
-| Runtime stores (memory, telemetry, journal, benchruns, prefs, trends, attempts, evals, training) | `python3 bin/runtime_data.py where`; an in-tree store keeps being used; `python3 bin/runtime_data.py migrate --store NAME --apply` copies it out and never deletes the original | delete the copy; the original was never touched. `export` copies anywhere; `forget` lists before it deletes and deletes only with `--apply` |
+| Runtime stores (memory, telemetry, journal, benchruns, prefs, trends, attempts, evals, training, routeruns) | `python3 bin/runtime_data.py where`; an in-tree store keeps being used; `python3 bin/runtime_data.py migrate --store NAME --apply` copies it out and never deletes the original | delete the copy; the original was never touched. `export` copies anywhere; `forget` lists before it deletes and deletes only with `--apply` |
 | Copilot home (`~/.copilot`) | `python3 bin/harness_select.py install --harness copilot` (add `--adopt-existing` once for files installed before the ownership manifest) | each adopted file keeps a `.polytropos-bak` beside it; a run that fails midway rolls back only the bytes it wrote |
 | Codex home (`~/.codex`) | `python3 bin/harness_select.py install --harness codex`; `python3 bin/harness_select.py doctor --harness codex` diagnoses; `python3 bin/harness_update.py apply --only codex` refreshes managed copies | `python3 bin/harness_select.py restore-legacy --harness codex` restores proven legacy copies from the backup root `retire-legacy` wrote; `config.toml` is never written, so nothing there needs undoing |
 | Cursor project bundle (`.cursor/`) | `python3 bin/harness_select.py install --harness cursor --project DIR`; `python3 bin/harness_select.py doctor --harness cursor --project DIR` | the manifest at `.cursor/polytropos/install-manifest.json` names every file the installer owns; remove those and only those |

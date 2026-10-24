@@ -14,7 +14,7 @@ a preference file was read from, which tiers carry a pin, which model ids are ex
 each symbolic tier (`cheap`, `mid`, `strong`, `frontier`) currently resolves to and why.
 
 <!-- BEGIN GENERATED: model-preferences -->
-Snapshot: `data/pricing.copilot.json` (cached_date 2026-09-24) — pricing sha256 `f29eb145cfcdd05fb649caff9b02acda832bdb20e880342d7e3c0fa3308ba6b4`, roster sha256 `51b4cbb450cc300e151098004ff738ff651882c40bddd867a5a90295ad7465c2`.
+Snapshot: `data/pricing.copilot.json` (cached_date 2026-09-24) — pricing sha256 `80df97c4c954bf1fc9be1f92f78c006eb25a4eb0d6357ba033d2117df9bbc612`, roster sha256 `a99041c2aacc42d4b0224c7e5915221b0e27bc2027ec7e0c002517d06faff91b`.
 
 - Prefs source: `(none — defaults)`
 
@@ -53,7 +53,7 @@ per-million-token rates, any notes the pricing data itself carries, and whether 
 eligible or excluded under active preferences.
 
 <!-- BEGIN GENERATED: model-roster -->
-Snapshot: `data/pricing.copilot.json` (cached_date 2026-09-24) — pricing sha256 `f29eb145cfcdd05fb649caff9b02acda832bdb20e880342d7e3c0fa3308ba6b4`, roster sha256 `51b4cbb450cc300e151098004ff738ff651882c40bddd867a5a90295ad7465c2`.
+Snapshot: `data/pricing.copilot.json` (cached_date 2026-09-24) — pricing sha256 `80df97c4c954bf1fc9be1f92f78c006eb25a4eb0d6357ba033d2117df9bbc612`, roster sha256 `a99041c2aacc42d4b0224c7e5915221b0e27bc2027ec7e0c002517d06faff91b`.
 
 | Model | Display | Vendor | Tier | Input $/MTok | Cached input $/MTok | Output $/MTok | Notes | Preference |
 |---|---|---|---|---|---|---|---|---|
@@ -61,6 +61,7 @@ Snapshot: `data/pricing.copilot.json` (cached_date 2026-09-24) — pricing sha25
 | `claude-fable-5.1` | Claude Fable 5.1 | anthropic | frontier | 10.0 | 0.25 | 50.0 | Account /model picker and a zero-prompt CLI check confirmed this slug on 2026-09-24. GitHub documents default Anthropic retention for Fable requests, so it is an opt-in frontier alternative rather than the no-preference default. | eligible |
 | `claude-fable-5` | Claude Fable 5 | anthropic | frontier | 10.0 | 1.0 | 50.0 | Earlier Fable frontier alternative. GitHub documents default Anthropic retention for Fable requests; use only when that policy is acceptable. GPT-6 Astra leads the no-preference frontier lane. | eligible |
 | `gpt-6-sol` | GPT-6 Sol | openai | strong | 2.0 | 0.2 | 10.0 | Current default strong lane. Account /model picker and a zero-prompt CLI check confirmed this slug on 2026-09-24. GitHub lists base and >272K single-request rates. | eligible |
+| `gpt-6.1-sol` | GPT-6.1 Sol | openai | strong | 2.0 | 0.1 | 10.0 | Added 2026-10-04 from GitHub's models-and-pricing page (GA; base and >272K single-request rates) and seen in this account's Copilot CLI 1.0.91 model list. A separate strong model, not a replacement: it sits after GPT-6 Sol, which stays the no-preference strong default. Same rates as GPT-6 Sol except half the cached-input rate. | eligible |
 | `claude-opus-5.5` | Claude Opus 5.5 | anthropic | strong | 4.0 | 0.2 | 20.0 | Account /model picker and a zero-prompt CLI check confirmed this slug on 2026-09-24. Current Anthropic strong alternative at lower published rates than prior Opus entries. | eligible |
 | `claude-opus-4.8` | Claude Opus 4.8 | anthropic | strong | 5.0 | 0.5 | 25.0 | GitHub-listed Anthropic strong alternative. The active strong default is GPT-6 Sol; route by the current tier order and account availability. | eligible |
 | `claude-opus-4.7` | Claude Opus 4.7 | anthropic | strong | 5.0 | 0.5 | 25.0 | Scheduled to retire 2026-10-02; GitHub recommends Claude Opus 5. Keep only for compatibility while the provider still lists it. | eligible |
@@ -69,6 +70,7 @@ Snapshot: `data/pricing.copilot.json` (cached_date 2026-09-24) — pricing sha25
 | `claude-opus-4.8-fast` | Claude Opus 4.8 (fast mode) | anthropic | strong | 10.0 | 1.0 | 50.0 | Preview fast mode with GitHub-listed $10/$1/$12.50/$50 per-MTok rates. Select it only when its latency tradeoff is appropriate for the task. | eligible |
 | `gemini-3.8-flash` | Gemini 3.8 Flash | google | mid | 0.75 | 0.075 | 3.75 | Current default mid lane. Account /model picker and a zero-prompt CLI check confirmed this slug on 2026-09-24. | eligible |
 | `claude-sonnet-5` | Claude Sonnet 5 | anthropic | mid | 2.0 | 0.2 | 10.0 | Current Anthropic versatile alternative for day-to-day coding, tests, docs, and refactors. | eligible |
+| `claude-sonnet-5.5` | Claude Sonnet 5.5 | anthropic | mid | 2.0 | 0.2 | 10.0 | Added 2026-10-04 from GitHub's models-and-pricing page (GA, same rates as Claude Sonnet 5) and seen in this account's Copilot CLI 1.0.91 model list. Sits after Claude Sonnet 5, which keeps its place in the mid lane; no zero-prompt check was run. | eligible |
 | `gpt-5.4` | GPT-5.4 | openai | mid | 2.5 | 0.25 | 15.0 | OpenAI workhorse; step-up rates above 272K input tokens. | eligible |
 | `gemini-3.5-flash` | Gemini 3.5 Flash | google | mid | 1.5 | 0.15 | 9.0 | Scheduled to retire 2026-10-02; GitHub recommends Gemini 3.8 Flash. Retained only while the provider still lists it. | eligible |
 | `kimi-k2.7-code` | Kimi K2.7 Code | moonshot | mid | 0.95 | 0.19 | 4.0 | Scheduled to retire 2026-10-02; GitHub recommends Kimi K3. Retained only while the provider still lists it. | eligible |
@@ -106,7 +108,7 @@ Some models expose a configurable reasoning-effort control; others do not. The t
 read directly from the pricing data's own knob facts.
 
 <!-- BEGIN GENERATED: reasoning-knobs -->
-Snapshot: `data/pricing.copilot.json` (cached_date 2026-09-24) — pricing sha256 `f29eb145cfcdd05fb649caff9b02acda832bdb20e880342d7e3c0fa3308ba6b4`, roster sha256 `51b4cbb450cc300e151098004ff738ff651882c40bddd867a5a90295ad7465c2`.
+Snapshot: `data/pricing.copilot.json` (cached_date 2026-09-24) — pricing sha256 `80df97c4c954bf1fc9be1f92f78c006eb25a4eb0d6357ba033d2117df9bbc612`, roster sha256 `a99041c2aacc42d4b0224c7e5915221b0e27bc2027ec7e0c002517d06faff91b`.
 
 | Reasoning effort |
 |---|
@@ -136,7 +138,7 @@ output-token count. These are convenience buckets for estimation, not measured t
 particular task.
 
 <!-- BEGIN GENERATED: task-profiles -->
-Snapshot: `data/pricing.copilot.json` (cached_date 2026-09-24) — pricing sha256 `f29eb145cfcdd05fb649caff9b02acda832bdb20e880342d7e3c0fa3308ba6b4`, roster sha256 `51b4cbb450cc300e151098004ff738ff651882c40bddd867a5a90295ad7465c2`.
+Snapshot: `data/pricing.copilot.json` (cached_date 2026-09-24) — pricing sha256 `80df97c4c954bf1fc9be1f92f78c006eb25a4eb0d6357ba033d2117df9bbc612`, roster sha256 `a99041c2aacc42d4b0224c7e5915221b0e27bc2027ec7e0c002517d06faff91b`.
 
 | Profile | Label | Input tokens | Output tokens |
 |---|---|---|---|

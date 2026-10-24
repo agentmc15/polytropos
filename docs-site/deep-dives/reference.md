@@ -28,7 +28,7 @@ That is the one-line version. The longer version is that polytropos is a **routi
 | Runtime stores, all outside the tree | 10 | `python3 bin/runtime_data.py where` |
 | Capability rows in the operational registry | 62 | `python3 bin/harness_adapter.py` |
 | Pipeline roles in the kit contract | 10 | `kit_contract.PIPELINE_ORDER` — 3 standing + 7 extended |
-| Plugin version | 0.6.9 | `.claude-plugin/plugin.json` |
+| Plugin version | 0.6.10 | `.claude-plugin/plugin.json` |
 
 > **Security posture — read before unattended use.** On macOS the kit drivers run each verify
 > command inside an OS boundary (`bin/exec_policy.py`, `sandbox-exec`): writes confined to the
@@ -110,7 +110,7 @@ daily work (Opus 5.5)
    ▼
 /polytropos:architect <task>        ← the frontier tier runs ONCE (in-session or as a subagent)
    │  emits an execution kit: .claude/kits/<slug>/PLAN.md + TASKS.md + GUARDRAILS.md,
-   │  model-pinned subagents (implementer=sonnet, verifier=haiku, reviewer=opus),
+   │  model-pinned subagents (implementer=sonnet, verifier=sonnet, reviewer=opus),
    │  Fable's judgment encoded as scaffolding
    ▼
 /polytropos:execute <slug>          ← back on Opus/Sonnet; loop dispatches tasks
@@ -140,7 +140,7 @@ Four pricing files are the **single numeric source of truth — one file per har
 
 ### Claude — `data/pricing.json`
 
-Derived from `data/pricing.json`, `cached_date` **2026-09-24** — 9 models, USD per million tokens.
+Derived from `data/pricing.json`, `cached_date` **2026-10-07** — 11 models, USD per million tokens.
 
 | Model id | Display | Tier | Input | Output | Context window | Max output |
 |---|---|---|---:|---:|---:|---:|
@@ -152,11 +152,15 @@ Derived from `data/pricing.json`, `cached_date` **2026-09-24** — 9 models, USD
 | `claude-opus-5-5` | Opus 5.5 | opus | $4 | $20 | 1,000,000 | 128,000 |
 | `claude-sonnet-4-6` | Sonnet 4.6 | sonnet | $3 | $15 | 1,000,000 | 64,000 |
 | `claude-sonnet-5` | Sonnet 5 | sonnet | $2 | $10 | 1,000,000 | 64,000 |
+| `claude-sonnet-5-5` | Sonnet 5.5 | sonnet | $2 | $10 | 1,000,000 | 128,000 |
 | `claude-haiku-4-5` | Haiku 4.5 | haiku | $1 | $5 | 200,000 | 64,000 |
+| `claude-haiku-5-5` | Haiku 5.5 | haiku | $0.1 | $0.5 | 1,000,000 | 128,000 |
 
 File-wide multipliers and modes, from the same file: `billing_mode` `subscription`, `cache_read_multiplier` (0.1×), `cache_write_multiplier_5m` (1.25×), `cache_write_multiplier_1h` (2.0×), `batch_discount` (0.5×). `task_profiles` carries 5 size priors (XS, S, M, L, XL).
 
 Per-model cache-read rates, from the same file: `claude-fable-5-1` (0.025×), `claude-opus-5-5` (0.05×). Each replaces the file-wide `cache_read_multiplier` for that model; the file-wide figure remains the fallback for every other row.
+
+Prompt-length pricing, from the same file: `claude-haiku-5-5`'s rates above cover prompts up to its `long_context.threshold_input_tokens` (100,000); one request over that pays its `long_context` rates ($0.5 / $2.5), cache multipliers included. `cost_report`, `session_cost` and the journal apply it per transcript message; anything that prices a summed total (counterfactuals, task-profile estimates, a whole dispatch's usage) uses the base rates and so under-counts such requests.
 
 Each entry's `notes` field carries the operational caveats a router must surface — always-on thinking, which row supersedes which, and which models carry their own cache-read rate. Read the notes rather than inferring from the rates.
 
@@ -184,9 +188,9 @@ Orchestration policy (same file, `orchestration_policy`): orchestrator tier `fro
 
 ### Copilot — `data/pricing.copilot.json`
 
-Derived from `data/pricing.copilot.json`, `cached_date` **2026-09-24** — 29 rows across 6 vendors. Rates are USD per million tokens; Copilot settles them in `billing_unit.name` = **AIC** at `usd_per_credit` 0.01, so credits = USD ÷ that field — the unit itself is data, never a literal in a skill.
+Derived from `data/pricing.copilot.json`, `cached_date` **2026-09-24** — 31 rows across 6 vendors. Rates are USD per million tokens; Copilot settles them in `billing_unit.name` = **AIC** at `usd_per_credit` 0.01, so credits = USD ÷ that field — the unit itself is data, never a literal in a skill.
 
-6 retired models live apart from the roster, in `retired_models`, each with its `retired_on` date and `replacement`: they keep historical sessions costable, and no routing, preference, forecast or dispatch path reads them (`claude-opus-4.5`, `claude-opus-4.6`, `claude-sonnet-4.5`, `claude-sonnet-4.6`, `gemini-3.1-pro`, `mai-code-1-flash`). 10 rows carry a `long_context` step-up block and 2 carry a `promo` window; both are broken out under the main table.
+6 retired models live apart from the roster, in `retired_models`, each with its `retired_on` date and `replacement`: they keep historical sessions costable, and no routing, preference, forecast or dispatch path reads them (`claude-opus-4.5`, `claude-opus-4.6`, `claude-sonnet-4.5`, `claude-sonnet-4.6`, `gemini-3.1-pro`, `mai-code-1-flash`). 11 rows carry a `long_context` step-up block and 2 carry a `promo` window; both are broken out under the main table.
 
 | Model id | Display | Vendor | Tier | Input | Cached in | Cache write | Output | Flags |
 |---|---|---|---|---:|---:|---:|---:|---|
@@ -202,10 +206,12 @@ Derived from `data/pricing.copilot.json`, `cached_date` **2026-09-24** — 29 ro
 | `gpt-5.6-sol` | GPT-5.6 Sol | openai | strong | $4 | $0.4 | $5 | $20 | long-context ≥272,000 |
 | `kimi-k3` | Kimi K3 | moonshot | strong | $3 | $0.3 | — | $15 | — |
 | `gpt-6-sol` | GPT-6 Sol | openai | strong | $2 | $0.2 | $2.5 | $10 | long-context ≥272,000 |
+| `gpt-6.1-sol` | GPT-6.1 Sol | openai | strong | $2 | $0.1 | $2.5 | $10 | long-context ≥272,000 |
 | `grok-4.6` | Grok 4.6 | xai | strong | $2 | $0.5 | — | $6 | long-context ≥200,000 |
 | `gpt-5.3-codex` | GPT-5.3-Codex | openai | strong | $1.75 | $0.175 | — | $14 | — |
 | `gpt-5.4` | GPT-5.4 | openai | mid | $2.5 | $0.25 | — | $15 | long-context ≥272,000 |
 | `claude-sonnet-5` | Claude Sonnet 5 | anthropic | mid | $2 | $0.2 | $2.5 | $10 | — |
+| `claude-sonnet-5.5` | Claude Sonnet 5.5 | anthropic | mid | $2 | $0.2 | $2.5 | $10 | — |
 | `gpt-5.6-terra` | GPT-5.6 Terra | openai | mid | $2 | $0.2 | $2.5 | $12 | long-context ≥272,000 |
 | `grok-4.7` | Grok 4.7 | xai | mid | $2 | $0.5 | — | $6 | long-context ≥200,000 |
 | `gemini-3.5-flash` | Gemini 3.5 Flash | google | mid | $1.5 | $0.15 | — | $9 | — |
@@ -230,6 +236,7 @@ A `—` in the cache-write column means the file records no cache-write rate for
 | `gpt-5.5` | 272,000 | $10 | $1 | — | $45 |
 | `gpt-5.6-sol` | 272,000 | $8 | $0.8 | $10 | $30 |
 | `gpt-6-sol` | 272,000 | $4 | $0.4 | $5 | $15 |
+| `gpt-6.1-sol` | 272,000 | $4 | $0.2 | $5 | $15 |
 | `grok-4.6` | 200,000 | $4 | $1 | — | $12 |
 | `gpt-5.4` | 272,000 | $5 | $0.5 | — | $22.5 |
 | `gpt-5.6-terra` | 272,000 | $4 | $0.4 | $5 | $18 |
@@ -323,7 +330,7 @@ A skill's `SKILL.md` **is** its runtime behavior, not documentation of it. All s
 
 ### Planning and execution
 
-**`/polytropos:architect <task>`** — plan once on the frontier tier and write the execution kit. Step 0 gets onto that tier (dispatch mode, keeping your main session on the daily driver; or native mode if you switched). Step 1 writes `PLAN.md`: goal and a checkable "done", constraints and an explicit out-of-scope fence, architecture decisions **each with rationale** (the "why" is what lets a cheaper model make consistent micro-decisions later), risks with their tripwires, and four optional single-line dials — `autonomy:`, `budget:`, `roles:`, `workflow:` — which are PLAN.md line families, never task fields. Step 2 writes `TASKS.md` (self-contained briefs, acceptance criteria, a verify command per task, `depends:`/`independent:` marking, an optional `evidence:` field, phase headings), the project subagents with their models and `tools:` pinned, and the kit's own `GUARDRAILS.md` — always created, never a stub, because an absent file is indistinguishable from a forgotten one. Step 3 hands off with the exact next command. It reads a repo's graph first when one exists, and treats a `stale` or `unknown` graph as hints rather than evidence.
+**`/polytropos:architect <task>`** — plan once on the frontier tier and write the execution kit. Step 0 gets onto that tier (dispatch mode, keeping your main session on the daily driver; or native mode if you switched). Step 1 writes `PLAN.md`, and pauses partway: it shows you the goal and a checkable "done", constraints and an explicit out-of-scope fence, and writes nothing until you approve them (in dispatch mode, as two hops of the same subagent). Then come architecture decisions **each with rationale** (the "why" is what lets a cheaper model make consistent micro-decisions later), risks with their tripwires, and four optional single-line dials — `autonomy:`, `budget:`, `roles:`, `workflow:` — which are PLAN.md line families, never task fields. Step 2 writes `TASKS.md` (self-contained briefs, acceptance criteria, a verify command per task, `depends:`/`independent:` marking, an optional `evidence:` field, phase headings), the project subagents with their models and `tools:` pinned, and the kit's own `GUARDRAILS.md` — always created, never a stub, because an absent file is indistinguishable from a forgotten one. Step 3 hands off with the exact next command. It reads a repo's graph first when one exists, and treats a `stale` or `unknown` graph as hints rather than evidence.
 
 **`/polytropos:execute <slug>`** — run the kit. Setup locates it, reads `PLAN.md` + `GUARDRAILS.md` + `TASKS.md`, and reads the four dials once. Before the first dispatch it runs `python3 bin/kit_contract.py graph --kit .claude/kits/<slug>` (exit 2 on a duplicate id, unknown or self dependency, or cycle — each named with its fix; it fixes `TASKS.md` and reports the defect, never routes around an invalid plan) and then `roster`. Per task: mark `in-progress` → check the budget dial → dispatch the brief **verbatim** to the implementer with the task's `model` field passed as the Agent tool's `model` parameter (**which overrides the agent file's frontmatter**) → verify independently → on pass mark `done` and append the ledger line; on fail retry once with the failure output, then mark `blocked` and move on. Independent tasks dispatch in parallel; phase boundaries dispatch the reviewer. Three properties are worth naming: the `evidence:` rule means a `red-green` task whose check already passed beforehand is **blocked, not done**, whatever it exits now; the fences are **re-read from disk at every phase start** as an unconditional guarantee (compaction-triggered re-reads are best-effort, and the skill says which it is honoring); and a budget stop appends one `result=budget-stop` line, leaves statuses untouched, and is never folded into a fluent "all done" summary.
 

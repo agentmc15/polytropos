@@ -1,0 +1,31 @@
+{
+  "id": "T4-project-filters",
+  "title": "Filter cost reports by transcript project name",
+  "kind": "feature",
+  "source_files": ["bin/cost_report.py"],
+  "allowed_paths": ["bin/cost_report.py", "tests/"],
+  "allowed_generated": [],
+  "regression": ["test_cost_report.py"],
+  "guardrails": [
+    {"kind": "subprocess", "regex": "\\bimport subprocess\\b|\\bsubprocess\\.(run|Popen|call|check_output)\\b"},
+    {"kind": "shell-true", "regex": "shell\\s*=\\s*True"},
+    {"kind": "os-system", "regex": "\\bos\\.system\\("},
+    {"kind": "home-dir", "regex": "Path\\.home\\(|expanduser\\("},
+    {"kind": "debug-print", "regex": "^\\s*(breakpoint\\(\\)|import pdb|pdb\\.set_trace)"},
+    {"kind": "hardcoded-model-id", "regex": "[\\\"'](claude|gpt|gemini|grok|kimi|mai)-[A-Za-z0-9.\\-]+[\\\"']"}
+  ],
+  "rubric": [
+    "The CLI exposes repeatable --project and --exclude-project options that also split comma-separated patterns.",
+    "Filter normalization, including normalize_project_patterns, rejects empty patterns and path-like patterns with argparse exit status 2.",
+    "Project matching, including project_allowed, uses case-sensitive fnmatchcase semantics with exclude patterns overriding includes.",
+    "build_report_payload accepts project/exclude_project keywords and always emits the project_filters object.",
+    "Filtering is applied before parsing and deduplication, so excluded projects affect no totals, sessions, unknown models, candidates, errors, or dedupe state.",
+    "Filtered markdown includes the exact Project filters line, while unfiltered markdown remains byte-for-byte unchanged.",
+    "Empty filtered results preserve found:false, dir_present:true, zero totals, and the existing no-transcripts-in-window label.",
+    "New unit tests cover validation, glob/tie precedence, JSON payload shape, and unchanged unfiltered behaviour without hardcoded prices or model ids."
+  ],
+  "prompt": "prompt.md",
+  "oracle": "oracle.py",
+  "reference": "reference.patch",
+  "naive": "naive.patch"
+}

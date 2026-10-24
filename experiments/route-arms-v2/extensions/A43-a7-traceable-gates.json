@@ -1,0 +1,31 @@
+{
+  "version": "polytropos.route-experiment.extension/1",
+  "arm": "A43",
+  "added": "2026-10-06",
+  "reason": "Pipeline-improvement variant (traceable-gates). Twin of A7 whose verifier must trace every requirement to evidence and may fail only on a failing test or an unmet requirement. Post hoc; never judged (adding a candidate would replace the preregistered judgments).",
+  "definition": {
+    "label": "Sol 6 plans -> Luna 6 (max) tests/builds/traceable-verifies, no reviewer",
+    "shape": "pipeline",
+    "stages": {
+      "planner": {
+        "model": "gpt-6-sol",
+        "effort": "high"
+      },
+      "test_author": {
+        "model": "gpt-6-luna",
+        "effort": "max"
+      },
+      "implementer": {
+        "model": "gpt-6-luna",
+        "effort": "max"
+      },
+      "verifier": {
+        "model": "gpt-6-luna",
+        "effort": "max"
+      }
+    },
+    "variant": {
+      "gates": "traceable"
+    }
+  }
+}

@@ -1,0 +1,51 @@
+{
+  "id": "T2-est-multi-model",
+  "title": "copilot_pricing est accepts a comma-separated model list",
+  "kind": "feature",
+  "source_files": [
+    "bin/copilot_pricing.py"
+  ],
+  "allowed_paths": [
+    "bin/copilot_pricing.py",
+    "tests/"
+  ],
+  "regression": [
+    "test_copilot_pricing.py",
+    "test_copilot_usage.py",
+    "test_copilot_statusline.py",
+    "test_journal_advisor.py"
+  ],
+  "guardrails": [
+    {
+      "kind": "subprocess",
+      "regex": "\\bimport subprocess\\b|\\bsubprocess\\.(run|Popen|call|check_output)\\b"
+    },
+    {
+      "kind": "shell-true",
+      "regex": "shell\\s*=\\s*True"
+    },
+    {
+      "kind": "os-system",
+      "regex": "\\bos\\.system\\("
+    },
+    {
+      "kind": "home-dir",
+      "regex": "Path\\.home\\(|expanduser\\("
+    },
+    {
+      "kind": "debug-print",
+      "regex": "^\\s*(breakpoint\\(\\)|import pdb|pdb\\.set_trace)"
+    },
+    {
+      "kind": "hardcoded-model-id",
+      "regex": "[\\\"'](claude|gpt|gemini|grok|kimi|mai)-[A-Za-z0-9.\\-]+[\\\"']"
+    },
+    {
+      "kind": "hardcoded-aic-rate",
+      "regex": "(?<![\\w.])0\\.01(?![\\d])"
+    }
+  ],
+  "prompt": "prompt.md",
+  "oracle": "oracle.py",
+  "reference": "reference.patch"
+}

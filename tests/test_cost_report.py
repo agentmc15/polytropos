@@ -48,6 +48,19 @@ class MatchModelTests(unittest.TestCase):
             with self.subTest(raw=raw):
                 self.assertEqual(cr.match_model(raw, self.pricing), expected)
 
+    def test_longest_key_wins_regardless_of_file_order(self):
+        # `claude-sonnet-5-5` starts with `claude-sonnet-5-`; with the older row listed first,
+        # a first-prefix-wins match would price Sonnet 5.5 transcripts as Sonnet 5.
+        reordered = dict(self.pricing)
+        reordered["models"] = {
+            k: self.pricing["models"][k] for k in ("claude-sonnet-5", "claude-sonnet-5-5")
+        }
+        self.assertEqual(cr.match_model("claude-sonnet-5-5", reordered), "claude-sonnet-5-5")
+        self.assertEqual(
+            cr.match_model("claude-sonnet-5-5-20261001", reordered), "claude-sonnet-5-5")
+        self.assertEqual(
+            cr.match_model("claude-sonnet-5-20260203", reordered), "claude-sonnet-5")
+
     def test_unknowns_return_none(self):
         bad = [
             None,
@@ -108,6 +121,72 @@ class PriceTests(unittest.TestCase):
              "cache_write": 100_000}
         cost = cr.price("claude-opus-5-5", u, None, pricing)
         self.assertAlmostEqual(cost, 6.7)
+
+
+class LongContextPriceTests(unittest.TestCase):
+    """Haiku 5.5 is priced by prompt length; the long-context rate is per REQUEST only."""
+
+    def setUp(self):
+        self.pricing = cr.load_pricing()
+        self.key = "claude-haiku-5-5"
+        self.lc = self.pricing["models"][self.key]["long_context"]
+        self.threshold = self.lc["threshold_input_tokens"]
+
+    def _expected(self, inp_rate, out_rate, u):
+        m = self.pricing["models"][self.key]
+        read = m.get("cache_read_multiplier", self.pricing["cache_read_multiplier"])
+        return (u["input"] * inp_rate + u["output"] * out_rate
+                + u["cache_read"] * inp_rate * read
+                + u["cache_write"] * inp_rate * self.pricing["cache_write_multiplier_5m"]) / 1e6
+
+    def test_prompt_at_threshold_is_base_rate(self):
+        u = {"input": self.threshold - 2000, "output": 5000, "cache_read": 1000,
+             "cache_write": 1000}
+        base_in, base_out = cr.rates_for(self.key, None, self.pricing)
+        self.assertAlmostEqual(cr.price(self.key, u, None, self.pricing, per_request=True),
+                               self._expected(base_in, base_out, u))
+
+    def test_prompt_over_threshold_uses_long_rates_including_cache(self):
+        # Crosses only because cache tokens count toward the prompt.
+        u = {"input": self.threshold - 2000, "output": 5000, "cache_read": 1001,
+             "cache_write": 1000}
+        self.assertAlmostEqual(
+            cr.price(self.key, u, None, self.pricing, per_request=True),
+            self._expected(self.lc["input_per_mtok"], self.lc["output_per_mtok"], u))
+
+    def test_aggregate_never_triggers_long_rates(self):
+        u = {"input": self.threshold * 10, "output": 5000, "cache_read": 0, "cache_write": 0}
+        base_in, base_out = cr.rates_for(self.key, None, self.pricing)
+        self.assertAlmostEqual(cr.price(self.key, u, None, self.pricing),
+                               self._expected(base_in, base_out, u))
+
+    def test_model_without_long_context_ignores_per_request(self):
+        u = {"input": 900_000, "output": 1000, "cache_read": 0, "cache_write": 0}
+        self.assertEqual(
+            cr.price("claude-sonnet-5-5", u, None, self.pricing, per_request=True),
+            cr.price("claude-sonnet-5-5", u, None, self.pricing))
+
+    def test_report_prices_each_transcript_message_on_its_own_prompt(self):
+        # The production path: two messages, one over and one under the threshold, must price
+        # differently even though their sum is over it.
+        now = (datetime.now(timezone.utc) - timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        big = {"input_tokens": self.threshold + 1, "output_tokens": 1000}
+        small = {"input_tokens": 1000, "output_tokens": 1000}
+        lines = [json.dumps({"timestamp": now, "sessionId": "s1", "message": {
+            "id": mid, "model": self.key, "usage": usage}})
+            for mid, usage in (("m1", big), ("m2", small))]
+        with tempfile.TemporaryDirectory() as td:
+            proj = Path(td) / "proj"
+            proj.mkdir()
+            (proj / "s1.jsonl").write_text("\n".join(lines) + "\n")
+            payload = cr.build_report_payload(Path(td), days=30, top=10, mode=None)
+        (row,) = [r for r in payload["by_model"] if r["model"] == self.key]
+        base_in, base_out = cr.rates_for(self.key, None, self.pricing)
+        zero = {"cache_read": 0, "cache_write": 0}
+        want = (self._expected(self.lc["input_per_mtok"], self.lc["output_per_mtok"],
+                               {"input": big["input_tokens"], "output": 1000, **zero})
+                + self._expected(base_in, base_out, {"input": 1000, "output": 1000, **zero}))
+        self.assertAlmostEqual(row["usd"], want)
 
 
 class ParseTimestampTests(unittest.TestCase):

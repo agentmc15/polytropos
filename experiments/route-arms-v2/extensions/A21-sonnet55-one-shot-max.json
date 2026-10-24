@@ -1,0 +1,16 @@
+{
+  "version": "polytropos.route-experiment.extension/1",
+  "arm": "A21",
+  "added": "2026-10-04",
+  "reason": "Requested during the v2 run: add Claude Sonnet 5.5 to the one-shot effort sweep at medium, high and max, alongside Opus 5.5, Sol 6, Sol 6.1 and Luna 6. Post hoc; never judged (adding a candidate would replace the preregistered judgments).",
+  "definition": {
+    "label": "Sonnet 5.5 one-shot (max)",
+    "shape": "one-shot",
+    "stages": {
+      "solo": {
+        "model": "claude-sonnet-5.5",
+        "effort": "max"
+      }
+    }
+  }
+}

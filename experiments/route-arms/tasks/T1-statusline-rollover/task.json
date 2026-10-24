@@ -1,0 +1,40 @@
+{
+  "id": "T1-statusline-rollover",
+  "title": "Fix the K->M rollover in statusline.fmt_tokens",
+  "kind": "bugfix",
+  "source_files": [
+    "bin/statusline.py"
+  ],
+  "allowed_paths": [
+    "bin/statusline.py",
+    "tests/"
+  ],
+  "regression": [
+    "test_statusline.py"
+  ],
+  "guardrails": [
+    {
+      "kind": "subprocess",
+      "regex": "\\bimport subprocess\\b|\\bsubprocess\\.(run|Popen|call|check_output)\\b"
+    },
+    {
+      "kind": "shell-true",
+      "regex": "shell\\s*=\\s*True"
+    },
+    {
+      "kind": "os-system",
+      "regex": "\\bos\\.system\\("
+    },
+    {
+      "kind": "home-dir",
+      "regex": "Path\\.home\\(|expanduser\\("
+    },
+    {
+      "kind": "debug-print",
+      "regex": "^\\s*(breakpoint\\(\\)|import pdb|pdb\\.set_trace)"
+    }
+  ],
+  "prompt": "prompt.md",
+  "oracle": "oracle.py",
+  "reference": "reference.patch"
+}

@@ -1,0 +1,440 @@
+# Spec-driven development: a guide, with polytropos
+
+**A guide to spec-driven development, a map from the practice to polytropos and from polytropos
+back to the practice, and an assessment of what polytropos should build next.**
+
+> **How to read this guide.** Part 1 is about spec-driven development itself and names no
+> polytropos feature. Part 2 walks the practice stage by stage and principle by principle and
+> shows how polytropos does each one. Part 3 goes the other way: every polytropos component and
+> the idea it implements, including the ones the practice has no name for. Part 4 assesses where
+> polytropos stands and what it should build next.
+>
+> Companions: `docs/sdd/core-four.md` maps Spec Kit's phases one by one; `docs/SPEC-DRIVEN.md`
+> is the long form of how polytropos works; `docs/spec-driven-pitch.html` is the four-page pitch.
+> Claims about other tools come from the sources at the end, many of them secondary write-ups;
+> each tool's own documentation is the authority on its current behavior. Claims about
+> polytropos name the file or command that makes them true.
+
+## Part 1 · Spec-driven development
+
+### What it is
+
+**Spec-driven development (SDD)** means writing down what a change must do, and how it will be
+checked, before an AI agent writes the code, and then holding the agent's work to that written
+spec rather than to the conversation that produced it.
+
+The problem it answers is specific to agents. An agent given a prompt builds what it understood,
+and reports success in the same confident voice whether it succeeded or not. Without a written
+spec there is nothing outside the conversation to check the result against, so review falls
+back on reading the code and trusting the summary. Iterating on prompts until the output looks
+right is usually called "vibe coding". IBM's primer names three debts it builds up: context drift,
+where a fix in one place breaks another; fragmentation, where new code ignores the existing
+architecture; and token cost, from long prompting cycles that fix what a clear spec would have
+prevented.
+
+The idea is old. SDD descends from test-driven development, which writes the test before the
+code, and behavior-driven development, which writes the behavior before the test. SDD moves one
+step earlier still and asks whether the change has been defined at all. What is new is the
+executor: a model that can produce a lot of plausible code quickly makes the spec the one fixed
+point that every step is checked against.
+
+The field has not settled what belongs in a spec. Spec Kit keeps technology choices out of its
+specify step and puts them in a later plan. IBM's definition includes implementation details,
+agreed before coding starts. Most practitioners split the difference: the *what and why* first,
+reviewed on their own, then the *how*.
+
+### The levels
+
+Birgitta Böckeler's analysis on martinfowler.com sorts SDD by how long the spec lives and who
+edits it. IBM's primer adds a fourth, hybrid level.
+
+| Level | What happens to the spec | Example |
+|---|---|---|
+| **Spec-first** | Written for a change, used to build it, then set aside. | Kiro; most tools in practice |
+| **Hybrid** | Kept as a versioned record of the change, like an architecture decision record, but not maintained. | Specs as ADRs; issue trackers as the source of truth |
+| **Spec-anchored** | Kept and maintained for the feature's lifetime. Automated tests, often in CI, tie the spec to the code and catch drift. | OpenSpec; Spec Kit's stated aim |
+| **Spec-as-source** | The only thing people edit; code is regenerated from it. | Tessl (reported as in beta); Spec Kit's long-term vision |
+
+Böckeler's finding, as several summaries report it, is that most tools claim a higher level than
+they deliver. Spec-as-source has "the least field evidence behind it", in Panaversity's words, and
+regeneration is non-deterministic. Spec-anchored is widely called the defensible middle, and the
+usual advice is to start spec-first and grow into it.
+
+<!-- page -->
+
+### The lifecycle
+
+Every tool walks the same stages under different names. A stage's *gate* is what must be true
+before the next stage starts.
+
+| Stage | Purpose | Typical output | Gate |
+|---|---|---|---|
+| Standing rules | Constraints every change obeys | a constitution or rules file | exists before the first change |
+| Research | Map the problem and the existing code | findings, not design | findings reviewed |
+| Specify | What and why, without design | goal, scenarios, acceptance criteria, out-of-scope | a person approves it |
+| Clarify | Surface ambiguity while it is cheap | questions and answers folded into the spec | no open question would change the plan |
+| Plan | How, with reasons | architecture, decisions, risks | consistent with the standing rules |
+| Tasks | Ordered, checkable work | a task list with dependencies | every task traces to the plan |
+| Analyze | Check the artifacts against each other | a consistency report | no contradiction or gap |
+| Implement | Build against the tasks | code, task by task | each task verified |
+| Verify and converge | Prove the whole matches the spec | test results, review verdicts | the spec's "done" holds |
+| Feedback | Learn from the run | updated rules, better specs next time | recorded where the next planner reads it |
+
+Panaversity's crash course gives the reason for the early gates: clarification is "the cheapest
+place in the entire process to fix a mistake". Its rule for a gap found mid-build is to fix the
+spec first, so that the spec's history and the code's history tell the same story.
+
+### Principles
+
+These recur across the tools, Böckeler's analysis, Anthropic's harness research and the
+practitioner literature. The first ten are common ground. The last two are rarely stated
+outright, and they are where agent-era SDD most differs from its ancestors.
+
+- **P1 · Intent before implementation.** Write the what and why before any design or code.
+- **P2 · A person approves the spec.** Requirements are signed off before design starts.
+- **P3 · Standing rules, enforced.** Project-wide constraints apply to every change. Panaversity
+  warns that a rules file is "persistent context, not enforced law", so the rules that must never
+  break need tests, hooks or CI behind them.
+- **P4 · Testable acceptance.** Every requirement can be checked, ideally by a command.
+- **P5 · Design with reasons.** Decisions are recorded with their rationale.
+- **P6 · Small, ordered, traceable tasks.** Tasks have ids and dependencies, and trace to the plan.
+- **P7 · Verified independently.** The work is checked against the spec by something other than
+  the agent that built it. Anthropic found that agents "reliably skew positive when grading their
+  own work".
+- **P8 · Spec and code stay in sync.** Drift is detected, not discovered.
+- **P9 · Changes are specified as changes.** For existing code, the spec says what is added,
+  modified and removed.
+- **P10 · Right-sized ceremony.** In IBM's words, "the cost of refining the spec should always be
+  lower than the cost of fixing misunderstandings in implementation." A one-line fix needs no plan.
+- **P11 · Spend judgment where it pays.** "Plan with a strong model, implement with a cheaper one,"
+  as Panaversity puts it: the expensive reasoning goes into the spec, and execution runs cheaper.
+- **P12 · Measure the spec, not just the code.** Record when a spec itself was wrong, so the next
+  spec is better.
+
+<!-- page -->
+
+### Writing a good spec
+
+A spec is good when a stranger could build the right thing from it, and could not build the wrong
+thing while still satisfying it. In practice:
+
+- **One goal and a checkable "done".** "Checkable, not vibes": a person or a command can say
+  whether it holds.
+- **An explicit out-of-scope fence.** What the change must not touch. Executors and reviewers
+  enforce this later, so it does more work than it looks.
+- **Acceptance criteria that can fail.** A check that would pass before the work proves nothing.
+  Spec Kit's constitution makes the same point for tests: they are "written, approved, and
+  confirmed failing before implementation".
+- **Edge cases and inputs named.** Inputs, outputs, data shapes, error paths.
+- **Decisions with their reasons.** The reason is what lets the builder make the next hundred small
+  decisions consistently.
+- **Contracts pinned, implementation open.** Exact interfaces and file paths; freedom in how the
+  code is written. Anthropic's planner stayed high-level for the same reason, because otherwise
+  "the errors in the spec would cascade into the downstream implementation".
+- **Self-contained tasks.** Each task should be buildable by someone who has not seen the
+  conversation. Panaversity calls this the stranger test.
+
+Two line-by-line tests catch most bad specs. **The wrong-build test:** could "a competent person
+build the wrong thing and still technically satisfy this line"? **The red-first test:** would this
+acceptance check have failed before the work began?
+
+### Failure modes
+
+| Failure | What it looks like | The counter |
+|---|---|---|
+| Waterfall again | A long spec written once and defended after reality changes | Specs per change; a broken spec goes back to a person, not around them |
+| Ceremony for small changes | Böckeler saw a minor bug turned into several user stories with many acceptance criteria | A size threshold; lighter flows for fixes |
+| Drift | Spec and code disagree a month later | Tests that tie the spec to the code, run in CI |
+| False confidence | The code matches a spec that was wrong | Approval before design; recording spec defects |
+| Spec bloat | Review moves from code to verbose, repetitive specs | Pin contracts, leave implementation open |
+| Self-grading | The builder reports success and is believed | An independent verifier, and a check the builder does not control |
+| Lenient evaluation | A separate evaluator still waves work through | Hard thresholds; a check that must be able to fail; calibrating the evaluator |
+| Over-specification | The spec becomes pseudo-code, and the program is written twice | Specify behavior and contracts, not statements |
+
+### When not to use it
+
+SDD fits work whose outcome can be stated before it starts. It fits exploration poorly, where the
+point is to find out what to build, and it costs more than it returns on changes small enough to
+check by reading the diff. Anthropic's version of the cost rule is about review rather than
+specs, but it generalizes: an evaluator "is worth the cost when the task sits beyond what the
+current model does reliably solo."
+
+<!-- page -->
+
+### The field
+
+| Approach | Shape | Level | Distinctive |
+|---|---|---|---|
+| **GitHub Spec Kit** | Open-source templates and slash commands for many agents | spec-first, aiming at anchored | A constitution with articles such as test-first; Specify, Plan, Tasks, Implement, then converge until done |
+| **Kiro (AWS)** | An agentic IDE with specs built in | spec-first | `requirements.md` in EARS notation ("WHEN … THE SYSTEM SHALL …"), `design.md`, `tasks.md`; approval gates; steering files; hooks on file events |
+| **OpenSpec** | A lightweight, tool-neutral format | spec-anchored | Each change is a delta (added, modified, removed) against a living spec |
+| **BMAD method** | A full methodology with persona agents | spec-first | Analyst, product, architect and developer roles hand work along a pipeline |
+| **Tessl** | A framework and registry built around specs | anchored, aiming at as-source | One spec per file; generated code marked not to be edited |
+| **Anthropic's harness** | A published research design, not a product | spec-first | Planner, generator and evaluator; sprint contracts for "done"; an evaluator that drives the running app |
+
+Practitioner comparisons place the tools on a ceremony scale, with OpenSpec lightest, Spec Kit in
+the middle and BMAD heaviest, and report time and cost rising with ceremony. Those are
+single-author trials with their own rubrics, not controlled benchmarks.
+
+**Anthropic's harness research** deserves a closer look than its place in the table suggests. In
+"Harness design for long-running application development" (March 2026), Prithvi Rajasekaran of
+Anthropic Labs ran a three-agent design on multi-hour builds. A planner expands a short prompt
+into a product spec, a generator builds it one feature per sprint, and an evaluator tests the
+running app like a user, with a hard threshold per criterion: "if any one fell below it, the
+sprint failed." Before each sprint, generator and evaluator agree "what 'done' looked like".
+Agents hand work to each other through files, and a context reset starts "a fresh agent" with "a
+structured handoff".
+
+Its findings are the field's best evidence on verification. Self-grading is lenient. A separate
+evaluator, out of the box, would find real issues and then "talk itself into deciding they weren't
+a big deal and approve the work anyway", until the author tuned it by reading its logs for
+"examples where its judgment diverged from mine". And the parts of a harness should change as
+models do: "every component in a harness encodes an assumption about what the model can't do on
+its own." The full harness cost over twenty times as much as a solo run, which buys quality with
+spend. The evidence comes from a small number of runs.
+
+<!-- page -->
+
+## Part 2 · From spec-driven development to polytropos
+
+polytropos is a Claude Code plugin. `/polytropos:architect` writes the spec once on the frontier
+tier, as an *execution kit* in `.claude/kits/<slug>/`. `/polytropos:execute` builds against it
+task by task on cheaper tiers, and checks every task against the kit rather than against the
+builder's report. A ledger in the kit's `NOTES.md` records how it went. This part maps the
+practice onto that system.
+
+### The lifecycle in polytropos
+
+| Stage | In polytropos | Where |
+|---|---|---|
+| Standing rules | `CLAUDE.md` holds always-on invariants, many enforced by tests. Each kit's `GUARDRAILS.md` holds rules for that change only. | the repo; the kit |
+| Research | The architect explores before planning, optionally grounded in a code graph with `bin/graph_ground.py`; a `scout` role is available. | `skills/architect/SKILL.md` |
+| Specify | The spec half of `PLAN.md`: a goal, a checkable "done", constraints and an out-of-scope fence. | `skills/architect/SKILL.md` Step 1 |
+| Clarify | Scoping questions before the frontier run; assumptions and open questions listed under the spec draft. | Steps 0–1 |
+| *(gate)* | **The approval pause.** The architect shows the spec draft and writes nothing to disk until the user approves it. | Step 1 |
+| Plan | The design half of `PLAN.md`: decisions with rationale, risks with tripwires, and optional `autonomy:`, `budget:`, `roles:` and `workflow:` lines. | Step 1 |
+| Tasks | `TASKS.md`: per task an id, a pinned `model`, a self-contained brief, acceptance, a verify command, `evidence:` and `depends:`. | Step 2 |
+| Analyze | Structural only: `bin/kit_contract.py graph` rejects duplicate ids, unknown or self dependencies and cycles. Semantic consistency waits for the phase reviewer. | `bin/kit_contract.py` |
+| Implement | Each task is dispatched to the implementer on its pinned tier. | `skills/execute/SKILL.md` |
+| Verify and converge | The orchestrator runs every verify command itself; a fresh-context verifier and a phase reviewer check the work; one retry, then a frontier consult. The kit converges when `kit_contract.py graph` reports every task done. | `skills/execute/SKILL.md` |
+| Feedback | `outcome:`, `agent:`, `reviewer:` and `defect:` lines in `NOTES.md`, read by `bin/routing_scorecard.py` and by the next architect. | `skills/execute/references/ledger.md` |
+
+<!-- page -->
+
+### The principles in polytropos
+
+| # | Principle | How polytropos meets it | Rating |
+|---|---|---|---|
+| P1 | Intent before implementation | `PLAN.md` opens with the spec under the rule "what and why, no design yet". | Strong |
+| P2 | A person approves the spec | The approval pause; skipping it must be asked for and is disclosed in the handoff. | Strong |
+| P3 | Standing rules, enforced | `CLAUDE.md` invariants are backed by tests: `tests/test_kit_contract.py` fails if the kit contract is copied into a second driver, and `tests/test_guardrails_layout.py` fails for a kit without `GUARDRAILS.md`. Kit fences are re-read from disk at every phase start. | Strong |
+| P4 | Testable acceptance | Every task carries acceptance and a verify command; the `red-green` evidence rule blocks a task whose check already passed before the work. | Strong; no requirements notation |
+| P5 | Design with reasons | Decisions carry rationale "so a cheaper model can make consistent micro-decisions later". | Strong |
+| P6 | Small, ordered, traceable tasks | Phased task blocks with machine-read `depends:`; the graph check before any dispatch. | Strong; no requirement ids |
+| P7 | Verified independently | "The implementer's claim of success is not evidence": orchestrator-run verify, a read-only verifier, an `opus` phase reviewer, and confirmation required before a finding counts. | Strongest in the field |
+| P8 | Spec and code stay in sync | Within a kit, `kit_contract.py freshness` marks a finished task stale when work it relied on is re-accepted, and `refresh` re-verifies it. After a kit ends, nothing re-checks it against later changes. | Partial |
+| P9 | Changes specified as changes | One kit is one change, bounded by its fence; there is no delta format against a standing spec. | Partial |
+| P10 | Right-sized ceremony | `/polytropos:route` handles a single task without a kit; `workflow: direct` drops independent review for low-risk kits. No threshold says when a kit is needed. | Partial |
+| P11 | Spend judgment where it pays | The spec is written once on the frontier tier; each task is pinned to `sonnet`, `opus` or `haiku`; the frontier is reached again only when a task fails. | Strong, and rare in the field |
+| P12 | Measure the spec | Every confirmed brief defect becomes a `defect:` line by kind, and the architect is told to read recurring kinds "as evidence about YOUR OWN briefs". | Strong, and rare in the field |
+
+### Spec Kit, phase by phase
+
+Spec Kit is the closest tool, mapped in full in `docs/sdd/core-four.md`. Its constitution splits
+into `CLAUDE.md` and `GUARDRAILS.md`. Specify and clarify become the spec half of `PLAN.md` with
+the approval pause. Plan becomes the design half. Tasks becomes `TASKS.md`, where Spec Kit's
+parallel marker is an explicit `independent: yes`. Implement becomes the execute loop, and
+converge corresponds to the loop ending only when every task is done. Spec Kit's Article III
+states test-first as a principle; polytropos's red-green rule enforces it at run time. Spec Kit's
+plan template checks the design against the constitution in a "Phase -1" gate, which polytropos
+has no counterpart for.
+
+<!-- page -->
+
+### Anthropic's harness, component by component
+
+| Their harness | polytropos | Match |
+|---|---|---|
+| Planner writes a high-level spec so that spec errors do not cascade | The architect; briefs "pin down contracts and interfaces precisely; leave implementation judgment open" | Close |
+| Generator builds one feature per sprint | The implementer builds one task per dispatch, on the task's pinned tier | Close |
+| Sprint contract agreed between two agents before each sprint | Acceptance and verify fixed per task when the kit is written, and approved by a person | Same aim, set earlier, by a human |
+| Evaluator drives the running app, with a hard threshold per criterion | Orchestrator-run verify commands, a verifier and a phase reviewer | Partial: no running-app check, no graded criteria |
+| Communication through files | Kit files and the `NOTES.md` ledger | Same |
+| Context reset with a structured handoff | A fresh subagent per task, with the brief as the handoff | Same |
+| Evaluator tuned from its logs | Every verifier and reviewer line records `findings` against `confirmed` | Measured, not yet fed back |
+| Components removed when no longer load-bearing | Roles kept only when their measured value earns their cost; tiers re-pinned from the ledger | Same principle |
+
+The sharpest difference is cost. Their harness buys quality with spend and describes no split of
+models between its agents. polytropos claims the reverse trade, and its ledger is how that claim
+gets tested: when the verifier tier is wrong, the record shows it, which is how polytropos moved
+its default verifier from `haiku` to `sonnet`.
+
+### The other tools
+
+- **Kiro.** Its `requirements.md`, `design.md` and `tasks.md` correspond to the two halves of
+  `PLAN.md` and to `TASKS.md`, and its steering files to `CLAUDE.md` and `GUARDRAILS.md`. Kiro gates
+  after each phase; polytropos gates once, after the spec. Kiro's hooks fire on file events;
+  polytropos checks at fixed points in its loop instead. EARS notation has no counterpart.
+- **OpenSpec.** It keeps a living spec and writes each change as a delta. polytropos writes a fresh
+  spec per change and keeps the finished kit as a record, not as a living spec.
+- **BMAD.** Its persona pipeline corresponds to polytropos's roles: the standing implementer,
+  verifier and reviewer, plus seven optional ones declared on a `roles:` line. The difference is
+  that polytropos roles are opt-in and measured: the routing guidance keeps a role only "when its
+  measured marginal value earns its measured cost".
+- **Tessl.** It aims at regenerating code from specs; polytropos is "not code generation from a
+  formal spec". It offers verification instead of determinism: a rerun may write different code,
+  and the same checks judge it.
+
+<!-- page -->
+
+### The failure modes, answered
+
+| Failure | polytropos's answer | Still open |
+|---|---|---|
+| Waterfall again | Specs per change; a spec that cannot hold goes back to the user, and an executor that hits a wrong brief stops and reports | No sanctioned re-plan mid-run |
+| Ceremony for small changes | `/polytropos:route` for single tasks; `workflow: direct`; optional roles off unless declared | No stated threshold for when a change needs a kit |
+| Drift | Phase-end drift review; fences re-read at every phase start; `freshness` within a kit | Nothing re-checks a finished kit later |
+| False confidence | The approval pause catches misread intent; `defect:` lines record specs that were wrong | "The checks cover what the architect thought to check" |
+| Spec bloat | Contracts pinned, implementation left open | No size limit on a kit |
+| Self-grading | The orchestrator runs every verify command; the implementer's report is not evidence | — |
+| Lenient evaluation | The red-green rule; a finding counts only once confirmed | Verifier prompts are not tuned from their own record |
+| Over-specification | Briefs pin interfaces and paths, not statements | — |
+
+<!-- page -->
+
+## Part 3 · From polytropos to spec-driven development
+
+### Every component, and the idea it implements
+
+| Component | What it does | SDD idea |
+|---|---|---|
+| `/polytropos:architect` | Writes the kit once, on the frontier tier | Specify, plan, tasks |
+| Approval pause | Shows the spec draft; writes nothing until approved | Human approval of the spec (P2) |
+| `PLAN.md` spec half | Goal, checkable done, constraints, out-of-scope fence | Specify (P1) |
+| `PLAN.md` design half | Decisions with rationale; risks with tripwires | Plan (P5) |
+| `CLAUDE.md` invariants | Always-on rules, many backed by tests | Constitution (P3) |
+| `GUARDRAILS.md` | Rules that bind only while one kit runs | Constitution, scoped to a change |
+| `TASKS.md` | Phased, self-contained task blocks | Tasks (P6) |
+| `model` field | The tier a task runs on | *No SDD equivalent* (P11) |
+| `evidence:` field | `red-green` by default: the check must be able to fail first | Test-first (P4) |
+| `depends:` / `independent:` | A machine-read dependency graph | Task ordering; parallel markers |
+| `kit_contract.py graph` | Rejects an invalid task graph before any dispatch | Analyze, structural part |
+| Kit agents in `.claude/agents/` | Implementer, read-only verifier, read-only reviewer | Role separation (P7) |
+| `/polytropos:execute` | Dispatches, verifies, retries, reviews | Implement and converge |
+| Orchestrator-run verify | The verify command run by the loop, never trusted from a report | Independent verification (P7) |
+| Verifier and phase reviewer | Fresh-context checks against the kit and `PLAN.md` | Independent verification; drift review (P8) |
+| Fence re-read | `GUARDRAILS.md` and the out-of-scope fence re-read from disk each phase | Standing rules, enforced (P3) |
+| Stop-and-report | A wrong brief halts the task instead of being worked around | Fix the spec first |
+| Retry, then frontier consult | One retry with the failure; then an evidence-only consult | *No SDD equivalent* (P11) |
+| `autonomy:` / `budget:` | Advisory-by-default re-routing; caps that stop a run cleanly | *No SDD equivalent* |
+| `roles:` / `workflow:` | Optional review roles; the assurance level | Right-sized ceremony (P10) |
+| `NOTES.md` ledger | Machine-read lines for every outcome, dispatch and review | Feedback |
+| `defect:` lines | Confirmed brief defects, by kind | Measure the spec (P12) |
+| `bin/routing_scorecard.py` | `--history`, `--roles`, `--session` | Feedback, measured |
+| `freshness` / `refresh` | Stale evidence within a kit; re-verify without dispatch | Drift detection, within a change (P8) |
+| Headless drivers | `bin/claude_execute.py` and peers run the same kit elsewhere | One spec, several executors |
+| `bin/exec_policy.py`, `bin/attempt_ledger.py` | A boundary for verify commands; a record of every dispatch | Verification you can audit |
+| `/polytropos:route` | One task, no kit, with a cost estimate | Right-sized ceremony (P10) |
+
+### What polytropos adds that SDD has no name for
+
+- **A price on every task.** The spec says which model builds each part. That makes cost a design
+  decision, written next to the acceptance criteria.
+- **Escalation with evidence.** A failed task reaches the frontier tier carrying only its brief,
+  its failure output and the relevant plan excerpts, so frontier spend tracks difficulty.
+- **A graded spec.** Executors are graded in every agent system. polytropos also grades the
+  planner, by kind of brief defect, across every kit.
+- **Measured review.** Each review role's findings, confirmed findings and catches that no earlier
+  check made are recorded, so whether a role is worth its cost is a question with an answer.
+- **Bounded autonomy.** Re-routing moves only upward, one tier at a time, never to the frontier,
+  and budget caps stop a run and say so instead of ending it quietly.
+
+<!-- page -->
+
+## Part 4 · Assessment and roadmap
+
+### Where polytropos stands
+
+On the levels of Part 1, polytropos is **hybrid**: each kit is a spec for one change, committed
+and kept as a record but not maintained afterward. Within a run it behaves like spec-anchored,
+because every task is checked against the spec and stale evidence is detected. It is strongest
+where the field is weakest, in independent verification (P7), spending judgment where it pays
+(P11) and measuring the spec (P12). It is weakest at keeping specs in sync after a change ships
+(P8), at checking artifacts against each other before a run, and at right-sizing (P10).
+
+### What its own ledger says
+
+The ledger is the best evidence for what to improve, because it records where specs actually
+failed. `python3 bin/routing_scorecard.py --history` lists every brief defect by kind across
+every kit. When this guide was written, on 2026-10-24, the most frequent kinds were contradictory
+acceptance, stale plan decisions, stale pins (references to files or lines that had moved) and
+unspecified paths. Most were caught mid-run, after dispatches had already been spent. The same
+card showed several kinds outside the sanctioned vocabulary, coined mid-run, which splits
+recurring problems across synonyms. `python3 bin/routing_scorecard.py --roles` showed `red-team`
+and `test-author` with the highest rate of catches no earlier check made, on small samples.
+Re-run both commands before acting on any of this.
+
+The interactive execute loop does not record the file versions that `kit_contract.py freshness`
+compares, so `freshness` reports every task of an interactively run kit as `unknown`. The
+headless drivers record them.
+
+<!-- page -->
+
+### Roadmap
+
+Each item would be its own kit, approved through the architect's approval pause. None is built.
+
+| # | Improvement | Evidence | Principle | Size |
+|---|---|---|---|---|
+| **A** | **Check the spec before the run.** A read-only pass before the first dispatch: every path and script a brief names exists, every verify command can run, and a fresh-context review of `PLAN.md` against `TASKS.md` looks for contradictory acceptance and uncovered goals. | The most frequent defect kinds; Spec Kit's analyze | P6, P12 | Medium |
+| **B** | **Make freshness work interactively, then re-check finished kits.** The interactive loop records the versions `freshness` needs. A follow-on command re-runs finished kits' verify commands against the current tree and reports drift, not failure, since some checks are legitimately superseded. | Every task `unknown` on an interactive kit; IBM's CI-anchored level | P8 | Medium |
+| **C** | **Settle the defect vocabulary.** Sanction the coined kinds that recur, map the rest onto existing kinds. | Coined kinds in `--history` | P12 | Small |
+| **D** | **Close the calibration loop.** A report of each role's unconfirmed findings across kits, for the architect to read before writing that role's prompt. | Anthropic's log-reading; `findings` vs `confirmed` | P7 | Small |
+| **E** | **Recommend the roles that earn their place** for high-risk kits, as advice backed by `--roles`, not a mandate. | `--roles` | P7, P10 | Small |
+| F | **Requirement ids and coverage.** An optional id per goal and a `covers:` field per task. It makes A's coverage check exact, but changes the task contract shared by both skills and `bin/kit_contract.py`. | Spec Kit, Kiro | P6 | Large |
+| G | **Running-app checks** for kits with a user interface: guidance and a role-template variant that drives the app. | Anthropic's evaluator | P7 | Small |
+| H | **A ceremony threshold and rubrics.** When a change is too small for a kit; graded criteria for subjective work. | Not enough data yet | P10 | Later |
+
+**Recommended order:** A, B and C together first: they target the most frequent defect kinds and
+make drift detection possible. D and E are small and can ride along. F waits until A shows
+whether coverage is a real gap.
+
+**Not recommended:** regenerating code from specs, which trades polytropos's strength
+(verification) for determinism it cannot have; mandating EARS notation; and OpenSpec-style
+change deltas, which little of the evidence asks for.
+
+<!-- page -->
+
+## Run it
+
+```text
+/polytropos:architect <task>                # spec, approval pause, design, tasks
+/polytropos:execute <slug>                  # build and verify on the pinned tiers
+python3 bin/routing_scorecard.py --history  # the record across every kit
+python3 bin/routing_scorecard.py --roles    # what each review role has caught
+python3 bin/kit_contract.py freshness --kit .claude/kits/<slug>   # stale evidence
+```
+
+## Sources
+
+On spec-driven development:
+[Böckeler, "Understanding Spec-Driven-Development: Kiro, spec-kit, and Tessl" (martinfowler.com, via a summary)](https://www.alldevblogs.com/article/martin-fowler/understanding-spec-driven-development-kiro-spec-kit-and-tessl);
+[IBM, "What is spec-driven development?" (Gutowska, May 2026)](https://www.ibm.com/think/topics/spec-driven-development);
+[Panaversity, "Spec-Driven Development: A Crash Course"](https://agentfactory.panaversity.org/docs/spec-driven-development-crash-course);
+[Wikipedia: Spec-driven development](https://en.wikipedia.org/wiki/Spec-driven_development).
+On Anthropic's harness research:
+[Rajasekaran, "Harness design for long-running application development" (Anthropic, March 2026)](https://www.anthropic.com/research/harness-design-long-running-apps).
+On Spec Kit:
+[github/spec-kit README](https://github.com/github/spec-kit);
+[Spec Kit's spec-driven.md](https://github.com/github/spec-kit/blob/main/spec-driven.md);
+[Augment Code practical guide](https://www.augmentcode.com/guides/github-spec-kit-practical-guide-sdd-workflow).
+On Kiro:
+[Kiro docs: first project](https://kiro.dev/docs/getting-started/first-project/);
+[Smile: Kiro, AWS's agentic IDE](https://smile.eu/en/publications-and-events/kiro-aws-s-agentic-ide-spec-driven-development).
+On OpenSpec, BMAD, Tessl and the criticisms:
+[Spec Kit vs Kiro vs Tessl (Particula)](https://particula.tech/blog/spec-driven-development-tools-spec-kit-vs-kiro-vs-tessl);
+[OpenSpec vs Spec Kit vs BMAD vs Kiro](https://openspec.pro/comparison/);
+[BMAD vs OpenSpec (FAUN)](https://faun.dev/toolbox/bmad-method-vs-openspec/);
+[Spec Driven Development: what it fixes (and breaks)](https://dev.to/mudassirworks/spec-driven-development-what-it-fixes-and-breaks-1co3).
+
+Long form for polytropos: docs/SPEC-DRIVEN.md · Source: github.com/agentmc15/polytropos

@@ -23,6 +23,11 @@ __pycache__/
 # workflow-eval store (trial records, attempt ledgers, sandboxes, dollar data — never committed)
 /evals/
 
+# route-experiment store (trial records, patches, redacted stage outputs, judge scores, measured
+# AIC — never committed; its default home is the per-user data root, this entry covers a legacy
+# in-tree store only)
+/routeruns/
+
 # attempt ledger (per-run dispatch/verify records with bounded output tails — never committed;
 # its default home is the per-user data root, this entry covers a legacy in-tree store only)
 /attempts/

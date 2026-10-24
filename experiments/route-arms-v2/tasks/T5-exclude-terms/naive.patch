@@ -1,0 +1,158 @@
+--- a/bin/memory_recall.py
++++ b/bin/memory_recall.py
+@@ -100,6 +100,26 @@
+         seen_set.add(tok)
+         seen.append(tok)
+     return seen
++
++
++def _normalize_exclude_terms(exclude_terms):
++    if not exclude_terms:
++        return []
++    if isinstance(exclude_terms, str):
++        return [exclude_terms.lower()]
++    return [str(term).lower() for term in exclude_terms if str(term).strip()]
++
++
++def _matches_exclude(meta, body, exclude_terms):
++    if not exclude_terms:
++        return False
++    haystack = " ".join([
++        meta.get("name", ""),
++        meta.get("tags", ""),
++        meta.get("description", ""),
++        body,
++    ]).lower()
++    return any(term in haystack for term in exclude_terms)
+ 
+ 
+ def _last_verified(meta):
+@@ -168,7 +188,8 @@
+     return f"{header_line}\n{body}"
+ 
+ 
+-def recall(memory_dir, query, now, include_expired=False, project=None, provider=None):
++def recall(memory_dir, query, now, include_expired=False, project=None, provider=None,
++           exclude_terms=None):
+     """Read the store and return the gate-surviving facts, sorted (score desc, last_verified
+     desc, slug asc) — BEFORE the budget cap. Pure function of the store: no writes, no dispatch.
+ 
+@@ -179,15 +200,19 @@
+     ``project`` and ``provider`` are eligibility scopes (step 13): a fact declaring a different
+     project, or a provider allowlist this dispatch is not on, is withheld from recall entirely
+     rather than ranked lower. Facts without those fields are eligible everywhere, so an
+-    existing store behaves exactly as before.
++    existing store behaves exactly as before. ``exclude_terms`` withholds in-scope, non-expired
++    facts whose searchable content has an exact normalized token match; excluded facts never
++    enter corpus statistics, scoring, the relevance gate, or the budget cap.
+     """
+     facts, notes = ms.load_store(memory_dir)
+     terms = _query_terms(query)
++    exclude_terms = _normalize_exclude_terms(exclude_terms)
+ 
+     # Partition: expired facts are excluded from recall AND from N/df unless --include-expired.
+     corpus = []
+     withheld_expired = 0
+     withheld_scope = 0
++    withheld_excluded = 0
+     for slug, meta, body in facts:
+         if not _eligible(meta, project, provider):
+             withheld_scope += 1
+@@ -225,6 +250,9 @@
+     # Second pass: raw BM25-lite score, staleness/confidence multipliers, and the gate.
+     survivors = []
+     for slug, meta, body, state, wtf in scored:
++        if _matches_exclude(meta, body, exclude_terms):
++            withheld_excluded += 1
++            continue
+         raw = 0.0
+         for t, weight in wtf.items():
+             df_t = df[t]
+@@ -259,7 +287,7 @@
+         })
+ 
+     survivors.sort(key=lambda r: (-r["score"], _neg_date_key(r["last_verified"]), r["slug"]))
+-    return {
++    result = {
+         "query": terms,
+         "survivors": survivors,
+         "withheld_expired": withheld_expired,
+@@ -267,6 +295,10 @@
+         "notes": notes,
+         "store_empty": not facts,
+     }
++    if exclude_terms:
++        result["exclude_terms"] = exclude_terms
++        result["withheld_excluded"] = withheld_excluded
++    return result
+ 
+ 
+ def _neg_date_key(s):
+@@ -305,11 +337,20 @@
+ 
+ # --------------------------------------------------------------------------- rendering
+ 
++def _exclude_note(result):
++    if result.get("exclude_terms") and result.get("withheld_excluded"):
++        return f"({result['withheld_excluded']} fact(s) excluded by --exclude)"
++    return None
++
++
+ def render_markdown(result, max_facts, budget_chars):
+     survivors = result["survivors"]
+     if result["store_empty"]:
+         return "no memory store yet"
+     if not survivors:
++        note = _exclude_note(result)
++        if note:
++            return f"{GATE_EMPTY_LINE}\n\n{note}"
+         return GATE_EMPTY_LINE
+ 
+     emitted, dropped = apply_budget(survivors, max_facts, budget_chars)
+@@ -327,6 +368,10 @@
+         lines.append("")
+         lines.append(f"({result['withheld_expired']} expired fact(s) withheld — "
+                       f"memory_store.py review to prune)")
++    note = _exclude_note(result)
++    if note:
++        lines.append("")
++        lines.append(note)
+     return "\n".join(lines)
+ 
+ 
+@@ -357,6 +402,9 @@
+         "withheld_scope": result["withheld_scope"],
+         "notes": result["notes"],
+     }
++    if result.get("exclude_terms"):
++        out["exclude_terms"] = result["exclude_terms"]
++        out["withheld_excluded"] = result["withheld_excluded"]
+     return json.dumps(out, indent=2)
+ 
+ 
+@@ -447,6 +495,8 @@
+                     help="only recall facts scoped to this project (or to no project)")
+     ap.add_argument("--provider", default=None,
+                     help="only recall facts this provider is on the allowlist for")
++    ap.add_argument("--exclude", action="append", default=None, metavar="TERM",
++                    help="exclude facts whose searchable content contains this token/term")
+     ap.add_argument("--include-expired", action="store_true",
+                     help="include expired facts in recall AND corpus stats (review flows)")
+     ap.add_argument("--now", default=date.today().isoformat(),
+@@ -462,9 +512,13 @@
+     if not args.query:
+         ap.error("--query is required (or use --demo)")
+ 
+-    result = recall(args.memory_dir, args.query, args.now,
+-                    include_expired=args.include_expired,
+-                    project=args.project, provider=args.provider)
++    try:
++        result = recall(args.memory_dir, args.query, args.now,
++                        include_expired=args.include_expired,
++                        project=args.project, provider=args.provider,
++                        exclude_terms=args.exclude)
++    except ValueError as exc:
++        ap.error(str(exc))
+ 
+     if args.json:
+         print(render_json(result, args.max_facts, args.budget_chars))

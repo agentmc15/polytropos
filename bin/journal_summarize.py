@@ -134,10 +134,11 @@ def _match_model(model_id, pricing):
     if not model_id or model_id.startswith("<"):
         return None
     base = model_id.split("[")[0].strip()
-    for key in pricing.get("models", {}):
-        if base == key or base.startswith(key + "-"):
-            return key
-    return None
+    models = pricing.get("models", {})
+    if base in models:
+        return base
+    hits = [key for key in models if base.startswith(key + "-")]
+    return max(hits, key=len) if hits else None
 
 
 def _next_date(date_str):

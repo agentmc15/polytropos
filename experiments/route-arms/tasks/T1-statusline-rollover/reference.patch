@@ -1,0 +1,20 @@
+diff --git a/bin/statusline.py b/bin/statusline.py
+index 4217d8b..8324164 100755
+--- a/bin/statusline.py
++++ b/bin/statusline.py
+@@ -63,10 +63,12 @@ def pct_color(p):
+ 
+ def fmt_tokens(n):
+     n = int(n)
+-    if n >= 1_000_000:
+-        return f"{n / 1_000_000:.1f}M"
+     if n >= 1_000:
+-        return f"{n / 1_000:.0f}K"
++        thousands = f"{n / 1_000:.0f}"
++        # Rounding can carry a K value to 1000 (999_500 -> "1000K"); that belongs in M.
++        if n < 1_000_000 and int(thousands) < 1_000:
++            return f"{thousands}K"
++        return f"{n / 1_000_000:.1f}M"
+     return str(n)
+ 
+ 

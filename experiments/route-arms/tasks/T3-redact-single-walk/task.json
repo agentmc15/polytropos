@@ -1,0 +1,43 @@
+{
+  "id": "T3-redact-single-walk",
+  "title": "One pattern walk in redact.py (behaviour-preserving refactor)",
+  "kind": "refactor",
+  "source_files": [
+    "bin/redact.py"
+  ],
+  "allowed_paths": [
+    "bin/redact.py",
+    "tests/"
+  ],
+  "regression": [
+    "test_privacy_primitives.py",
+    "test_journal_collect.py",
+    "test_context_weight.py",
+    "test_training_data.py"
+  ],
+  "guardrails": [
+    {
+      "kind": "subprocess",
+      "regex": "\\bimport subprocess\\b|\\bsubprocess\\.(run|Popen|call|check_output)\\b"
+    },
+    {
+      "kind": "shell-true",
+      "regex": "shell\\s*=\\s*True"
+    },
+    {
+      "kind": "os-system",
+      "regex": "\\bos\\.system\\("
+    },
+    {
+      "kind": "home-dir",
+      "regex": "Path\\.home\\(|expanduser\\("
+    },
+    {
+      "kind": "debug-print",
+      "regex": "^\\s*(breakpoint\\(\\)|import pdb|pdb\\.set_trace)"
+    }
+  ],
+  "prompt": "prompt.md",
+  "oracle": "oracle.py",
+  "reference": "reference.patch"
+}

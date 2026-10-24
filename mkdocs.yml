@@ -135,6 +135,8 @@ nav:
     - Decision & improvement conformance: deep-dives/decision-improvement-conformance.md
     - Decision & improvement reconciliation: deep-dives/decision-improvement-reconciliation.md
     - Decision & improvement V1 handoff: deep-dives/decision-improvement-v1-handoff.md
+    - Jev access contract (offline J01): deep-dives/jev-access-contract.md
+    - Jev outcome-judge study (offline design): deep-dives/jev-judge-study.md
     - Effort dial: deep-dives/effort-dial.md
     - Evidence loop: deep-dives/evidence-loop.md
     - Fusion tier 1: deep-dives/fusion-tier1.md
@@ -148,8 +150,10 @@ nav:
     - Per-task dollars: deep-dives/per-task-dollars.md
     - Privacy: deep-dives/privacy.md
     - Role experiment: deep-dives/role-experiment.md
+    - Route experiment: deep-dives/route-experiment.md
     - Routing history: deep-dives/routing-history.md
     - Routing trends: deep-dives/routing-trends.md
+    - Spec-driven development: deep-dives/spec-driven.md
     - Training-data readiness: deep-dives/training-data-readiness.md
     - Workflow evaluation: deep-dives/workflow-eval.md
     - Release gate: deep-dives/release.md

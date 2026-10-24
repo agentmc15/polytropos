@@ -1,0 +1,24 @@
+# Task: Add term exclusions to memory recall
+
+`bin/memory_recall.py` is a read-only, relevance-gated, budget-capped memory recall engine. Users sometimes know that a term would pull in noisy or sensitive-but-out-of-scope records for the current question. Add an explicit exclusion filter without changing the existing unfiltered output.
+
+## Required behaviour
+
+1. Add a repeatable CLI option `--exclude TERM`. Add a matching keyword argument `exclude_terms=None` to `recall(...)`. The CLI passes every `--exclude` value to that keyword. Existing callers that omit it must keep working.
+2. Normalize exclude values into exclude tokens using exactly the same lexical rules as query terms: `re.findall(r"[a-z0-9]+", value.lower())`, discard one-character tokens, discard tokens in `STOPWORDS`, de-duplicate normalized tokens in first-appearance order, and preserve that order for JSON output. A single option value may contain punctuation or spaces; all normalized tokens from that value are active.
+3. Validation is per raw exclude value. If any raw value normalizes to zero tokens (for example `""`, whitespace, `"a"`, or `"the and"`), the CLI must exit through argparse with status 2 and an error message containing exactly `exclude terms must contain at least one searchable token`. The function API must raise `ValueError` with that same text. If the function API receives a non-string exclude value, raise `ValueError` with text containing `exclude terms must be strings`.
+4. A fact matches the exclusion filter when any normalized exclude token exactly equals a token from the fact's searchable content: `name`, `tags`, `description`, or `body`, tokenized with the same `[a-z0-9]+` lowercase/drop-one-character/drop-STOPWORDS rules. Matching is case-insensitive whole-token matching only: `cache` does not match `cacheable`. Do not match against provenance or scope fields such as `source`, `project`, `providers`, `trust`, dates, slug, type, confidence, or rendered warning text.
+5. Apply filters in this order: project/provider scope eligibility first, expiration eligibility second (unless `--include-expired` is set), exclusion third, then corpus document-frequency statistics, scoring, the relevance gate, sorting, and `apply_budget`. Therefore excluded facts do not affect `n_docs`, document frequencies, scores, the gate, emitted facts, dropped-for-budget counts, or the `(+N more above the gate ...)` line. `withheld_excluded` counts only facts that pass the earlier scope and expiration steps and are then withheld by exclude terms. With `--include-expired`, expired facts can be excluded and counted as excluded instead of expired.
+6. Preserve scope/provenance for emitted facts exactly. JSON fact objects must still include the existing `provenance` object and body for emitted facts, and imported/model-derived/unspecified trust warnings in markdown must still render exactly as before.
+7. When exclude terms are active, JSON output must add top-level keys `exclude_terms` (the normalized token list) and `withheld_excluded` (the count). When no exclude terms are supplied, JSON output must be byte-for-byte identical to the previous output and must not add those keys.
+8. Markdown output must remain byte-for-byte unchanged when no exclude terms are supplied. When exclude terms are active and at least one fact is withheld, append this exact note after the expired-facts note if one is present, otherwise at the end of the output: `(<N> fact(s) excluded by --exclude)`. If all gate survivors are excluded, output the existing gate-empty line followed by a blank line and the same note. If no fact is withheld by exclusion, add no markdown line.
+9. Store-empty behaviour is unchanged: `no memory store yet` remains the whole markdown output, even if `--exclude` is provided.
+10. Keep the module invariants: recall is pull-only, read-only over the store, relevance-gated, and budget-capped; no home-directory reads in tests; no network; no external CLI invocations; no pricing/model-id data; Python stdlib only.
+
+## Scope and rules
+
+- You may change `bin/memory_recall.py` and add or update unit tests under `tests/` only.
+- Do not change `bin/memory_store.py`, `bin/runtime_data.py`, pricing data, generated docs, skills, or experiment files.
+- Tests must use fixture memory directories and explicit `--now` values. Do not read the user's real memory store or home directory.
+- Do not invoke `copilot`, `codex`, `claude`, `agent`, graphify, or any other external CLI. A self-invocation with `sys.executable bin/memory_recall.py` is only acceptable if it mirrors existing tests and uses fixture/demo data.
+- Run from the repo root and keep green: `python3 -m unittest discover -s tests -p test_memory_recall.py`. If you add another `test_memory_recall*.py` module, it must also pass with `python3 -m unittest discover -s tests -p 'test_memory_recall*.py'`.

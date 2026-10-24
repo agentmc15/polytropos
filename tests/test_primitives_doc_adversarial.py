@@ -305,20 +305,22 @@ class CensusBumpTripwireTests(unittest.TestCase):
     (33 / 35 / 78), for the same reason. 2026-09-21: all three moved by one once more
     when D30 added docs/DECISION-IMPROVEMENT-V1-HANDOFF.md (34 / 36 / 79). 2026-09-24: all three
     moved by one again when docs/REFERENCE.md took the long-form page out of README.md (35 / 37 / 85).
-    2026-09-26: the doc pins (35 / 37) did NOT move when the observability-dashboard kit's T8
-    added skills/dashboard, but the total did, for the same reason as D25 (35 / 37 / 86)."""
+    J01's docs/JEV-ACCESS-CONTRACT.md adds one more mirrored page (36 / 38 / 86).
+    The Jev judge-study design adds another (37 / 39 / 87), and the route experiment's
+    docs/ROUTE-EXPERIMENT.md one more (38 / 40 / 88). docs/SPEC-DRIVEN.md (sdd-docs-refresh)
+    adds one deep dive (39 / 41 / 89). The observability-dashboard kit's T8 added
+    skills/dashboard, moving only the total (39 / 41 / 90)."""
 
     def test_pinned_counts_match_the_real_tree(self):
         docs_build = _load("_t8_docs_build_real", BIN_DIR / "docs_build.py")
         md_sources = sorted((REPO_ROOT / "docs").glob("*.md"))
-        self.assertEqual(len(md_sources), 35)
+        self.assertEqual(len(md_sources), 39)
         page_map = docs_build.deep_dive_page_map(REPO_ROOT)
-        self.assertEqual(len(page_map), 37)
-        # 86 once the observability-dashboard kit's T8 added skills/dashboard; 85 after
-        # docs/REFERENCE.md; 84 after five Codex skill parity pages; 79 since D30's V1 handoff
+        self.assertEqual(len(page_map), 41)
+        # 90 after skills/dashboard (from main); 89 after docs/SPEC-DRIVEN.md; 88 after the route experiment; 87 after the Jev judge study; 86 after J01's Jev contract; 85 after docs/REFERENCE.md; 84 after five Codex skill parity pages; 79 since D30's V1 handoff
         # (78 after D29's conformance report, 77 after D34's readiness runbook, 76 before).
-        # Unlike 35/37 above, this total is not a doc-only pin: every skill page counts too.
-        self.assertEqual(len(docs_build.expected_pages(REPO_ROOT)), 86)
+        # Unlike 38/40 above, this total is not a doc-only pin: every skill page counts too.
+        self.assertEqual(len(docs_build.expected_pages(REPO_ROOT)), 90)
 
     def test_one_more_doc_breaks_the_pinned_counts(self):
         docs_build = _load("_t8_docs_build_copy", BIN_DIR / "docs_build.py")
@@ -328,15 +330,15 @@ class CensusBumpTripwireTests(unittest.TestCase):
                 shutil.copytree(REPO_ROOT / name, tmp / name)
 
             md_before = sorted((tmp / "docs").glob("*.md"))
-            self.assertEqual(len(md_before), 35)
+            self.assertEqual(len(md_before), 39)
             pages_before = len(docs_build.expected_pages(tmp))
 
             (tmp / "docs" / "ZZZ-STUB.md").write_text("# Stub\n\nStub content.\n", encoding="utf-8")
 
             md_after = sorted((tmp / "docs").glob("*.md"))
-            self.assertEqual(len(md_after), 36, "one more doc must move the pinned 35 -> 36")
+            self.assertEqual(len(md_after), 40, "one more doc must move the pinned 39 -> 40")
             page_map_after = docs_build.deep_dive_page_map(tmp)
-            self.assertEqual(len(page_map_after), 38, "one more doc must move the pinned 37 -> 38")
+            self.assertEqual(len(page_map_after), 42, "one more doc must move the pinned 41 -> 42")
             self.assertEqual(len(docs_build.expected_pages(tmp)), pages_before + 1,
                              "one more doc must add exactly one page to the set")
 

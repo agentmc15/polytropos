@@ -1,0 +1,32 @@
+{
+  "id": "T7-routing-policy-refactor",
+  "title": "Refactor routing policy catalog lookup and candidate filtering",
+  "kind": "refactor",
+  "source_files": ["bin/routing_policy.py"],
+  "allowed_paths": ["bin/routing_policy.py", "tests/"],
+  "allowed_generated": [],
+  "regression": ["test_routing_policy.py"],
+  "regression_classes": {"test_routing_policy.py": ["VocabularyTests", "CatalogTests", "FiltersTests", "FloorAndEffortTests", "PreferenceAndShapeTests", "EstimateAndExplainTests", "CodexRouteTests", "RunTaskRoutingTests", "PlanRoutingLineTests", "NeutralCommandLineTests"]},
+  "guardrails": [
+    {"kind": "subprocess", "regex": "\\bimport subprocess\\b|\\bsubprocess\\.(run|Popen|call|check_output)\\b"},
+    {"kind": "shell-true", "regex": "shell\\s*=\\s*True"},
+    {"kind": "os-system", "regex": "\\bos\\.system\\("},
+    {"kind": "home-dir", "regex": "Path\\.home\\(|expanduser\\("},
+    {"kind": "debug-print", "regex": "^\\s*(breakpoint\\(\\)|import pdb|pdb\\.set_trace)"},
+    {"kind": "hardcoded-model-id", "regex": "[\\\"'](claude|gpt|gemini|grok|kimi|mai)-[A-Za-z0-9.\\-]+[\\\"']"}
+  ],
+  "rubric": [
+    "Public behaviour is byte-for-byte and value-for-value preserved for decide(), explain(), catalog_from_pricing(), catalog_entry(), RoutingError messages, and the demo/decide CLI commands.",
+    "The private _catalog_by_id(catalog) helper exists exactly once, builds the id-to-row mapping exactly once, and is used by _floor, decide, and _estimate instead of repeated ad hoc lookups.",
+    "The private _candidate_filter_reason(entry, floor, request, rules, excludes, explicit_effort, budget) helper owns the first-hard-filter decision and returns exactly one existing filter reason string or None.",
+    "decide() constructs candidates by calling _candidate_filter_reason once per catalog entry, and no longer duplicates the not-routable/unavailable/pinned/excluded/reserved/below-floor/over-budget checks inline.",
+    "The hard-filter ordering and first-reason semantics are unchanged, including the special unsupported-effort refusal supporter list and budget refusal behaviour.",
+    "Chosen-model handling uses the shared id lookup rather than a generator scan, while preserving the exact RoutingError for a missing chosen model.",
+    "No public constants, vocabulary tuples, returned dictionary keys, estimate structure, candidate reason lists, or human-readable explanation lines change.",
+    "Unit tests or equivalent coverage are added/updated for behaviour preservation and the refactor structure without adding dependencies or invoking real external CLIs."
+  ],
+  "prompt": "prompt.md",
+  "oracle": "oracle.py",
+  "reference": "reference.patch",
+  "naive": "naive.patch"
+}

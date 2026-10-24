@@ -1,27 +1,32 @@
 ---
 name: architect
-description: Plan a complex task once on Fable 5 and write the execution kit — PLAN.md, TASKS.md, GUARDRAILS.md, and model-pinned agents — that a cheaper model then executes at near-Fable quality. Use when the user says "plan this with Fable", "architect this", "review this codebase", or escalates a complex task. Not for running a kit; that is /polytropos:execute.
+description: Plan a complex task once on the frontier tier (Fable 5.1 today) and write the execution kit — PLAN.md, TASKS.md, GUARDRAILS.md, and model-pinned agents — that a cheaper model then executes at near-Fable quality. Use when the user says "plan this with Fable", "architect this", "review this codebase", or escalates a complex task. Not for running a kit; that is /polytropos:execute.
 ---
 
 # Fable-as-architect
 
 The goal: **Fable 5 runs once, at the start; its judgment persists as scaffolding.** The output is not just a plan — it is an *execution kit* a lesser model can run at near-Fable quality, because every decision that needed Fable-level judgment is already made and written down.
 
-## Step 0 — Get onto Fable 5
+## Step 0 — Get onto the frontier tier (Fable 5.1 today)
 
 Check the current session model. Two entry modes:
 
-- **Dispatch mode** (session is on Opus/Sonnet — the normal daily-driver case): spawn the architecture work as a subagent via the Agent tool with `model: fable`. Give it this entire skill's Steps 1–3 as instructions plus a complete brief of the task and all relevant conversation context (the subagent sees none of it otherwise). It writes the kit files directly; you relay its summary. The main session never leaves the daily driver.
-- **Native mode** (user already ran `/model fable`, or wants to steer interactively): do Steps 1–3 in this session, then remind them to switch back (`/model opus`) once the kit is built.
+- **Dispatch mode** (session is on Opus/Sonnet — the normal daily-driver case): spawn the architecture work as a subagent via the Agent tool with `model: fable`. Give it this entire skill's Steps 1–3 as instructions plus a complete brief of the task and all relevant conversation context (the subagent sees none of it otherwise). A subagent cannot ask the user anything, so the run is two hops around Step 1's approval pause: the first hop explores and returns only the spec draft; you relay it to the user verbatim and collect their approval or edits; the second hop gets the approved spec back and writes the kit. Continue the same subagent for the second hop (SendMessage with its id) so its exploration carries over; if it cannot be continued, dispatch a fresh one with the original brief plus the approved spec, and say that the earlier exploration was not carried over. You relay its summary. The main session never leaves the daily driver.
+- **Native mode** (user already ran `/model fable`, or wants to steer interactively): do Steps 1–3 in this session, stopping at Step 1's approval pause, then remind them to switch back (`/model opus`) once the kit is built.
 
 If the task is ambiguous, ask the scoping questions BEFORE burning Fable time — Fable works best with the full spec up front in one shot.
 
 ## Step 1 — The plan
 
-Write `.claude/kits/<slug>/PLAN.md` in the target project (`<slug>` = short kebab-case task name):
+Write `.claude/kits/<slug>/PLAN.md` in the target project (`<slug>` = short kebab-case task name). It opens with the **spec** — what and why, no design yet:
 
 - **Goal** and what "done" looks like (checkable, not vibes)
 - **Constraints** and out-of-scope (explicitly fence what executors must NOT do)
+
+**Approval pause — the user signs off on the spec before any design.** Draft those two sections, then stop and show them to the user. A misread requirement caught here costs one exchange; caught after the kit is written, it costs the whole Fable run. The draft goes in your reply, never onto disk: write nothing into `.claude/kits/<slug>/` before approval, because a kit directory holding a PLAN.md and nothing else is indistinguishable from a broken kit. Below the draft, list the assumptions you made and any open question whose answer would change the plan. Continue only on the user's approval in this conversation. Their edits are the spec: write the approved text into PLAN.md as approved, and if the design later shows the spec cannot hold (a "done" that cannot be checked, a constraint that rules out every approach), stop and bring the conflict back to the user rather than quietly rewriting it. Skip the pause only when the user explicitly says to plan straight through, and say in the Step 3 handoff that the spec was not approved separately.
+
+Once the spec is approved, the rest of PLAN.md is the design:
+
 - **Architecture & key decisions, each with rationale** — the "why" is what lets a cheaper model make consistent micro-decisions later
 - **Risks and their tripwires** — what an executor should watch for and what to do when hit
 - **Autonomy posture (optional)** — a single `autonomy: advisory` or `autonomy: auto` line anywhere in PLAN.md (absent = advisory). Execute reads it as the kit's dial for live re-routing and auto-escalation; the user can override it per run at invocation. An optional PLAN.md line, not a task field — the task-field contract is unchanged.
@@ -53,7 +58,7 @@ Pin down contracts and interfaces precisely; leave implementation judgment open 
 ### Project subagents (`.claude/agents/` in the target project)
 Only create what the kit needs and doesn't already exist. Typical trio, each with project-specific conventions baked into its prompt:
 - `<slug>-implementer.md` — `model: sonnet` — executes one task brief exactly; stops and reports rather than improvising when the brief is wrong
-- `<slug>-verifier.md` — `model: haiku` (or sonnet if judgment needed), `tools: Bash, Read, Grep, Glob` — fresh-context adversarial check of acceptance criteria; never trusts the implementer's claims, reruns the verify command itself
+- `<slug>-verifier.md` — `model: sonnet` by default (haiku only when every check is mechanical — a command exit code, a byte comparison; the routing history's Role quality card shows why), `tools: Bash, Read, Grep, Glob` — fresh-context adversarial check of acceptance criteria; never trusts the implementer's claims, reruns the verify command itself
 - `<slug>-reviewer.md` — `model: opus`, `tools: Bash, Read, Grep, Glob` — reviews completed phases against PLAN.md for drift
 
 **Pin the read-only roles' `tools:` frontmatter — mandatory for every kit you generate.** Verifier and reviewer get `tools: Bash, Read, Grep, Glob` (read/search plus Bash, no Write, no Edit); the implementer's tools stay unpinned, because writing is its job. Scope structurally rather than by instruction: a verifier with no editor cannot be talked into fixing the defect while it is in there. But write the honest limit into the agent file too, instead of trusting the pin — Bash alone can delete or rewrite any tracked file, and in this repo a verifier holding exactly this pin destroyed an authored docs section during mutation testing, never restored it, and reported its own damage as the implementer's defect. Removing Write/Edit removes the *casual* path, not the capability. So pair the pin with the practice that actually closes the gap, stated in both read-only agents' prompts: prefer non-mutating checks; when a check genuinely needs mutation, copy the target to a temp directory and mutate the copy, never a tracked file in place; if the tree is touched anyway, restore it byte-for-byte before reporting and say so; and close with `git status --porcelain`, reporting any unexpected change as the agent's own defect, never the implementer's.

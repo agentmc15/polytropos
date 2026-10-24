@@ -749,7 +749,7 @@ class DeepDivePageMapRealTreeTests(unittest.TestCase):
     def test_every_real_docs_md_source_is_mapped_with_lowercased_slug(self):
         page_map = db.deep_dive_page_map(REPO_ROOT)
         md_sources = sorted((REPO_ROOT / "docs").glob("*.md"))
-        self.assertEqual(len(md_sources), 35)  # 2026-09-16: D03 added docs/DECISION-IMPROVEMENT-AUTHORITY-INVENTORY.md (30 -> 31 sources); 2026-09-20: D34 added docs/TRAINING-DATA-READINESS.md (31 -> 32), then D29 added docs/DECISION-IMPROVEMENT-CONFORMANCE.md (32 -> 33); 2026-09-21: D30 added docs/DECISION-IMPROVEMENT-V1-HANDOFF.md (33 -> 34); 2026-09-24: docs/REFERENCE.md took the long-form page out of README.md (34 -> 35)
+        self.assertEqual(len(md_sources), 39)  # SPEC-DRIVEN followed the route experiment.
         for path in md_sources:
             key = f"docs/{path.name}"
             expected_value = f"deep-dives/{path.stem.lower()}.md"
@@ -771,8 +771,8 @@ class DeepDivePageMapRealTreeTests(unittest.TestCase):
         for value in page_map.values():
             self.assertTrue(value.endswith(".md"), f"non-.md page_map value: {value!r}")
 
-    def test_page_map_has_exactly_31_entries(self):
-        """29 docs/*.md sources + 2 .html companions = 31 keys; the .html
+    def test_page_map_has_current_expected_entries(self):
+        """Historically, 29 docs/*.md sources + 2 .html companions = 31 keys; the .html
         files themselves never get an extra mirror page (30 pages: 29
         mirrors + 1 index, per the brief's 'Currently 24 sources -> 25
         pages'). 2026-09-13: 27 -> 28 when step 23 added docs/CURSOR-HARNESS.md,
@@ -783,9 +783,13 @@ class DeepDivePageMapRealTreeTests(unittest.TestCase):
     docs/TRAINING-DATA-READINESS.md (2026-09-20), 34 -> 35 when D29 added
     docs/DECISION-IMPROVEMENT-CONFORMANCE.md (2026-09-20), 35 -> 36 when D30 added
     docs/DECISION-IMPROVEMENT-V1-HANDOFF.md (2026-09-21), 36 -> 37 when docs/REFERENCE.md took the long-form page out of README.md
-    (2026-09-24)."""
+    (2026-09-24), then 37 -> 38 when J01 added docs/JEV-ACCESS-CONTRACT.md
+    (2026-09-25), then 38 -> 39 when the Jev judge-study design added
+    docs/JEV-JUDGE-STUDY.md (2026-09-25), then 39 -> 40 when the route experiment added
+    docs/ROUTE-EXPERIMENT.md (2026-09-28), then 40 -> 41 when
+    sdd-docs-refresh added docs/SPEC-DRIVEN.md (2026-10-23)."""
         page_map = db.deep_dive_page_map(REPO_ROOT)
-        self.assertEqual(len(page_map), 37)
+        self.assertEqual(len(page_map), 41)
 
 
 class DeepDivesNeverMirrorHtmlFilesLiveTreeTests(unittest.TestCase):

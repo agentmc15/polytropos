@@ -71,7 +71,7 @@
   <li>Styled version of this guide: <a href="guide.html">guide.html</a></li>
 </ul>
 
-<div class="callout">Prices in this document are a <strong>labeled snapshot</strong> (cached <code>2026-07-01</code>) of <code>data/pricing.json</code> &mdash; the single source of truth. Nothing else hard-codes a price; when <code>pricing.json</code> changes, these tables are updated together with its <code>cached_date</code>.</div>
+<div class="callout">Prices in this document are a <strong>labeled snapshot</strong> (cached <code>2026-10-07</code>) of <code>data/pricing.json</code> &mdash; the single source of truth. Nothing else hard-codes a price; when <code>pricing.json</code> changes, these tables are updated together with its <code>cached_date</code>.</div>
 
 <h2>Table of contents</h2>
 <ol>
@@ -86,26 +86,27 @@
 </ol>
 
 <h2 id="1-the-one-idea">1. The one idea</h2>
-<p>Claude Code runs one model per session, and the price spread across the lineup is large. Running the frontier model as a standing default is harmless on a subscription (marginal dollars are zero) but becomes a 2&times;&ndash;10&times; overpayment the moment you move to pay-per-token. The plugin's whole job is to <strong>spend frontier-model capability only where it changes the outcome, and make that capability persist afterward</strong> so cheaper models finish the work at near-frontier quality.</p>
+<p>Claude Code runs one model per session, and the price spread across the lineup is large. Running the frontier model as a standing default is harmless on a subscription (marginal dollars are zero) but becomes a 2.5&times;&ndash;10&times; overpayment the moment you move to pay-per-token. The plugin's whole job is to <strong>spend frontier-model capability only where it changes the outcome, and make that capability persist afterward</strong> so cheaper models finish the work at near-frontier quality.</p>
 <p>Three moves make that real:</p>
 <ul>
   <li><strong>Route per task</strong> &mdash; decide the cheapest <em>sufficient</em> model before running, with a cost estimate.</li>
-  <li><strong>Escalate, don't default</strong> &mdash; start cheap behind a check; promote to <span class="tier-fable">Fable 5</span> only on failure, or concentrate Fable in a one-time planning phase whose judgment is written down as scaffolding.</li>
+  <li><strong>Escalate, don't default</strong> &mdash; start cheap behind a check; promote to <span class="tier-fable">Fable 5.1</span> only on failure, or concentrate Fable in a one-time planning phase whose judgment is written down as scaffolding.</li>
   <li><strong>See the spend, and prove it held</strong> &mdash; historical transcript analysis, an ambient statusline, and a routing scorecard that audits whether the cheap tiers actually held quality.</li>
 </ul>
 
 <h2 id="2-the-model-lineup-and-the-two-billing-modes">2. The model lineup and the two billing modes</h2>
-<p>Labeled snapshot (cached <code>2026-07-01</code>, from <code>data/pricing.json</code>):</p>
+<p>Labeled snapshot (cached <code>2026-10-07</code>, from <code>data/pricing.json</code>):</p>
 <table>
   <tr><th>Model</th><th>Input $/MTok</th><th>Output $/MTok</th><th>Best for</th></tr>
-  <tr><td class="tier-fable">Fable 5</td><td class="num">$10</td><td class="num">$50</td><td>Long-horizon autonomous work, hardest reasoning, planning</td></tr>
-  <tr><td class="tier-opus">Opus 4.8</td><td class="num">$5</td><td class="num">$25</td><td>Multi-file features, hard debugging, review &mdash; the daily driver</td></tr>
-  <tr><td class="tier-sonnet">Sonnet 5</td><td class="num">$3 <span class="note">($2 intro until 2026-08-31)</span></td><td class="num">$15 <span class="note">($10 intro)</span></td><td>Day-to-day workhorse; near Opus 4.8 at high effort</td></tr>
-  <tr><td class="tier-haiku">Haiku 4.5</td><td class="num">$1</td><td class="num">$5</td><td>Classification, extraction, bulk API calls</td></tr>
+  <tr><td class="tier-fable">Fable 5.1</td><td class="num">$10</td><td class="num">$50</td><td>Long-horizon autonomous work, hardest reasoning, planning</td></tr>
+  <tr><td class="tier-opus">Opus 5.5</td><td class="num">$4</td><td class="num">$20</td><td>Multi-file features, hard debugging, review &mdash; the daily driver</td></tr>
+  <tr><td class="tier-sonnet">Sonnet 5.5</td><td class="num">$2</td><td class="num">$10</td><td>Day-to-day workhorse; near the Opus tier at high effort</td></tr>
+  <tr><td class="tier-haiku">Haiku 4.5</td><td class="num">$1</td><td class="num">$5</td><td>Classification, extraction, bulk API calls; the haiku tier&rsquo;s current default</td></tr>
+  <tr><td class="tier-haiku">Haiku 5.5</td><td class="num">$0.1</td><td class="num">$0.5</td><td>Priced for prompts up to its threshold, higher rate above it (see <code>data/pricing.json</code>); not the haiku default yet &mdash; the haiku tier keeps resolving to Haiku 4.5 until Claude Code can dispatch Haiku 5.5; moving its row up in <code>pricing.json</code> is the whole switch</td></tr>
 </table>
 <p>The same routing question gets <strong>opposite answers</strong> depending on how tokens are paid for. Every skill reads the mode from <code>pricing.json &rarr; billing_mode</code> (currently <code>subscription</code>), overridable per invocation with <code>--api</code> / <code>--sub</code>.</p>
 <ul>
-  <li><strong><code>api</code> mode &mdash; optimize dollars.</strong> Any pay-per-token usage (an app you're building, or Claude Code on API-key billing). The cheapest <em>sufficient</em> model wins; <span class="tier-haiku">Haiku</span> earns its keep; cache reads (0.1&times;), the 50% batch discount, and <span class="tier-sonnet">Sonnet</span>'s intro pricing all factor in.</li>
+  <li><strong><code>api</code> mode &mdash; optimize dollars.</strong> Any pay-per-token usage (an app you're building, or Claude Code on API-key billing). The cheapest <em>sufficient</em> model wins; <span class="tier-haiku">Haiku</span> earns its keep; cache reads (0.1&times;), the 50% batch discount, and per-model rate data all factor in.</li>
   <li><strong><code>subscription</code> mode &mdash; optimize rate-limit burn.</strong> On a plan, marginal dollar cost is zero; the scarce resource is the 5-hour and 7-day windows. Haiku is pointless (you'd only lose capability), the daily driver is the best sustainable model, and burn is managed with <strong>effort levels</strong>, not model downgrades. Dollar figures are labeled <em>API-equivalent burn</em> &mdash; a proxy for window pressure, not spend.</li>
 </ul>
 <div class="callout">The mode attaches to the <strong>question, not the user</strong>: "which model should my app call?" is always an <code>api</code>-mode question, even asked from a subscription session.</div>
@@ -124,18 +125,18 @@
 <p>Picks the right model for one task and estimates its cost before you run it.</p>
 <ol>
   <li><strong>Resolve mode</strong> &mdash; <code>--api</code>/<code>--sub</code> flag &gt; task framing (app-building forces <code>api</code>) &gt; pricing.json default.</li>
-  <li><strong>Classify</strong> &mdash; in <code>api</code> mode, a cheapest-sufficient ladder <span class="tier-haiku">Haiku</span> &rarr; <span class="tier-sonnet">Sonnet 5</span> &rarr; <span class="tier-opus">Opus 4.8</span> &rarr; <span class="tier-fable">Fable 5</span>, ties broken <em>down</em> with an explicit "upgrade if you see X" signal; in <code>subscription</code> mode, Opus as daily driver, complex work escalating toward Fable via the architect pattern, Haiku skipped, effort as the burn lever.</li>
-  <li><strong>Estimate</strong> &mdash; match a task-size profile (XS&hellip;XL), price each candidate, show cache-discounted figures for agentic sizes, apply intro/batch adjustments.</li>
+  <li><strong>Classify</strong> &mdash; in <code>api</code> mode, a cheapest-sufficient ladder <span class="tier-haiku">Haiku</span> &rarr; <span class="tier-sonnet">Sonnet 5.5</span> &rarr; <span class="tier-opus">Opus 5.5</span> &rarr; <span class="tier-fable">Fable 5.1</span>, ties broken <em>down</em> with an explicit "upgrade if you see X" signal; in <code>subscription</code> mode, Opus as daily driver, complex work escalating toward Fable via the architect pattern, Haiku skipped, effort as the burn lever.</li>
+  <li><strong>Estimate</strong> &mdash; match a task-size profile (XS&hellip;XL), price each candidate, show cache-discounted figures for agentic sizes, apply the batch discount.</li>
   <li><strong>Recommend + act</strong> &mdash; compact table, recommendation bolded, then <em>dispatch now</em> (Agent tool with the recommended <code>model</code> + a self-contained brief), <em>switch the session</em> (prints <code>/model &hellip;</code>), or &mdash; for big Fable-worthy tasks &mdash; hand off to <code>/architect</code>. App questions get a model ID + API params.</li>
 </ol>
 
 <h3><code>/polytropos:architect &lt;task&gt;</code></h3>
 <div class="callout"><strong>Fable 5 runs once, at the start; its judgment persists as scaffolding.</strong> Pay frontier rates for the phase that buys the most &mdash; decomposition, contracts, guardrails &mdash; and encode the results so cheaper models execute at near-Fable quality.</div>
-<p>Two entry modes: from an Opus/Sonnet session it dispatches a <strong>Fable subagent</strong> (the session never changes model); or run natively after <code>/model fable</code>. It produces an <strong>execution kit</strong> in the target project:</p>
+<p>Two entry modes: from an Opus/Sonnet session it dispatches a <strong>Fable subagent</strong> (the session never changes model); or run natively after <code>/model fable</code>. Either way it pauses once, before any design: it shows you the goal, the checkable &ldquo;done&rdquo; and the out-of-scope fence, and writes nothing until you approve them (or say to plan straight through). Then it produces an <strong>execution kit</strong> in the target project:</p>
 <ul>
   <li><code>.claude/kits/&lt;slug&gt;/PLAN.md</code> &mdash; goal, constraints, out-of-scope fence, architecture decisions <em>with rationale</em>, risks with tripwires.</li>
   <li><code>.claude/kits/&lt;slug&gt;/TASKS.md</code> &mdash; ordered tasks, each a self-contained brief (files, conventions, exact contracts, gotchas, acceptance criteria, a shell <strong>verify command</strong>, a suggested <code>model</code>), grouped under <code>## Phase N</code> headings, marked <code>depends:</code> / <code>independent:</code>.</li>
-  <li><code>.claude/agents/&lt;slug&gt;-{implementer,verifier,reviewer}.md</code> &mdash; model-pinned (<span class="tier-sonnet">sonnet</span> / <span class="tier-haiku">haiku</span> / <span class="tier-opus">opus</span>) so the model mix self-enforces.</li>
+  <li><code>.claude/agents/&lt;slug&gt;-{implementer,verifier,reviewer}.md</code> &mdash; model-pinned (<span class="tier-sonnet">sonnet</span> implementer / <span class="tier-sonnet">sonnet</span> verifier / <span class="tier-opus">opus</span> reviewer &mdash; <span class="tier-haiku">haiku</span> for a verifier whose checks are purely mechanical) so the model mix self-enforces.</li>
   <li>Guardrails in <code>CLAUDE.md</code> or a project skill. <strong>Aesop-managed target?</strong> If the project has an <code>aesop.yaml</code> or an <code>&lt;!-- aesop:begin</code> fence, those files are compiled output &mdash; the architect puts guardrails in <code>aesop.yaml</code> under <code>primitives.instructions.blocks</code> + <code>aesop compile</code> instead.</li>
 </ul>
 
@@ -150,14 +151,14 @@
   <li>Pick the <strong>cheapest sufficient tier</strong>.</li>
   <li>Dispatch a subagent with a self-contained brief + the verify command.</li>
   <li><strong>Verify yourself.</strong> Pass &rarr; done (Fable never touched). Fail &rarr; retry once with the failure output. Fail again &rarr; escalate.</li>
-  <li>Dispatch a <strong>Fable subagent</strong> carrying the task, the verify command, and the failure evidence. The always-available cost lever is <strong>scope</strong> (hand it the diagnosis, not a blank re-attempt); the <strong>effort</strong> lever (<code>medium</code>) applies only where the invocation exposes per-agent effort. Refusal fallback: a Fable <code>refusal</code> stop reason &rarr; retry that hop on <span class="tier-opus">Opus 4.8</span>.</li>
+  <li>Dispatch a <strong>Fable subagent</strong> carrying the task, the verify command, and the failure evidence. The always-available cost lever is <strong>scope</strong> (hand it the diagnosis, not a blank re-attempt); the <strong>effort</strong> lever (<code>medium</code>) applies only where the invocation exposes per-agent effort. The skill states no refusal fallback; operator practice: if a frontier subagent returns a <code>refusal</code> stop reason, re-run that hop on the <span class="tier-opus">Opus tier</span> yourself &mdash; the skill does not do this for you.</li>
 </ol>
 
 <h3><code>/polytropos:fable-check &lt;task&gt;</code></h3>
-<p>The judgment reference: <strong>is Fable worth it here, and how to run it.</strong> Route to Fable for long-horizon autonomous work, problems Opus already failed on, deep research, and heavy parallel sub-agent orchestration &mdash; <strong>not</strong> for routine coding, solved problems, work Sonnet handles at high effort, or <strong>security-analysis-heavy work</strong> (Fable's cyber classifiers refuse much of it; <span class="tier-opus">Opus 4.8</span> is the better tool there). Surfaces the caveats every time: <code>refusal</code> stop reason (Opus fallback), minutes-long turns, the 30-day data-retention requirement, always-on thinking. Optimal use: full spec up front, sweep effort (Fable at <code>low</code> often beats older models at <code>max</code>), de-prescribe prompts, let it delegate, give it a memory surface.</p>
+<p>The judgment reference: <strong>is Fable worth it here, and how to run it.</strong> Route to Fable for long-horizon autonomous work, problems Opus already failed on, deep research, and heavy parallel sub-agent orchestration &mdash; <strong>not</strong> for routine coding, solved problems, or work the Sonnet tier or the <span class="tier-opus">Opus tier</span> handles at the needed effort. Surfaces the one caveat the skill states every time: thinking is always on. Optimal use, per the skill: full spec up front, start from the documented default effort (Fable 5.1 defaults to <code>high</code>) and raise it only on evidence, de-prescribe prompts, let it delegate, give it a memory surface. <em>Operator guidance, not skill behavior:</em> Fable's cyber classifiers can refuse security-analysis work, so use the Opus tier there and re-run a refused hop on it by hand.</p>
 
 <h3><code>/polytropos:cost-report</code></h3>
-<p>Wraps <code>bin/cost_report.py</code> (python3, stdlib only). Walks <code>~/.claude/projects/**/*.jsonl</code>, dedupes by message id, normalizes model strings onto pricing keys (unknowns tallied, never dropped), and prices each record from <code>pricing.json</code> (intro rates applied by date). Reports spend by model, top sessions, and <strong>downgrade candidates</strong> &mdash; Fable/Opus-only sessions with a Sonnet-sized footprint, with the exact delta of re-pricing at <span class="tier-sonnet">Sonnet 5</span>. <code>--days N</code>, <code>--mode api|subscription</code>.</p>
+<p>Wraps <code>bin/cost_report.py</code> (python3, stdlib only). Walks <code>~/.claude/projects/**/*.jsonl</code>, dedupes by message id, normalizes model strings onto pricing keys (unknowns tallied, never dropped), and prices each record from <code>pricing.json</code> (any <code>intro_pricing</code> window a row carries is applied by date). Reports spend by model, top sessions, and <strong>downgrade candidates</strong> &mdash; Fable/Opus-only sessions with a Sonnet-sized footprint, with the exact delta of re-pricing at the <span class="tier-sonnet">Sonnet tier</span>. <code>--days N</code>, <code>--mode api|subscription</code>.</p>
 
 <h3><code>/polytropos:journal</code></h3>
 <p>Builds the <strong>daily work journal</strong>. A read-only collector (<code>bin/journal_collect.py</code>) sweeps <em>today's</em> AI usage across <strong>Claude Code, Copilot CLI, and Codex CLI</strong> &mdash; plus git activity &mdash; into a <strong>metadata-only</strong> <code>digest.json</code> (session counts, models, token/turn tallies, commits &mdash; never any transcript text). <code>bin/journal_summarize.py</code> then writes three summaries &mdash; <code>narrative.md</code>, <code>technical.md</code>, <code>next-day.md</code> &mdash; under the gitignored <code>journal/&lt;date&gt;/</code>; its <code>claude -p</code> runner is injectable and <code>--dry-run</code> prints the prompts and spawns nothing. <code>bin/journal_schedule.py</code> installs a macOS launchd job for a nightly run. Codex activity is counted but never priced (no Codex prices exist in <code>data/</code> by design). <code>allowed-tools: Bash, Read, Write</code>.</p>
@@ -201,7 +202,7 @@
                                  &#9500;&#9472; pass &#8594; done + NOTES.md   |   fail &#8594; retry once &#8594; blocked
                                  &#9500;&#9472; blocked &#8594; single-task Fable consult &#8594; resume cheap
                                  &#9492;&#9472; phase end &#8594; Opus reviewer checks against PLAN.md</code></pre>
-<p>Fable spend = the one planning pass plus the occasional consult. Execution quality is bounded below by the kit, not by the executor's unaided judgment. This guide's own existence is an example: <strong>11 kits have shipped this way</strong> &mdash; each architected once by Fable, then executed on Sonnet/Opus with adversarial verifiers and phase reviews. The routing scorecard (&sect;6) audits the result: <strong>32/32 first-try task passes, zero escalations, zero execution work on Fable.</strong></p>
+<p>Fable spend = the one planning pass plus the occasional consult. Execution quality is bounded below by the kit, not by the executor's unaided judgment. This guide's own existence is an example: kits ship this way &mdash; each architected once by Fable, then executed on Sonnet/Opus with adversarial verifiers and phase reviews. The routing scorecard (&sect;6) audits the result, and the track record is a command, not a number: <code>python3 bin/routing_scorecard.py --history</code> prints the cross-kit per-tier first-try and escalation rates for this checkout.</p>
 <p><strong>The aesop goal loop (recurring, verifiable work).</strong> A portable "Ralph" runner: a fresh agent invocation per tick against a fixed prompt, <code>self_verify()</code> after every tick, and <strong>three hard stops</strong> &mdash; an iteration ceiling, a no-progress detector, and a <code>budget_usd</code> cap. Right for grindable, measurable goals ("keep the test suite green", "fix CI"); the kit pattern is for judgment-heavy builds. <code>bin/aesop_bridge.py check-budget</code> sizes the budget stop from real prices.</p>
 <p><strong>The routing ladder (<code>/route</code>, decision only).</strong> In <code>api</code> mode, cheapest-sufficient with ties broken down; in <code>subscription</code> mode, Opus daily driver with effort as the lever and Fable reached via the architect pattern.</p>
 
@@ -224,7 +225,7 @@
   <li><strong><code>--snapshot</code> / <code>--trend</code></strong> (both ride <code>--history</code>) &mdash; <code>--snapshot</code> writes the history card as a dated JSON into the gitignored <code>trends/</code> store (<strong>the one sanctioned write</strong>); <code>--trend</code> renders per-tier first-try rate across stored snapshots as a <strong>text table</strong> (needs &ge;2 snapshots, else it says so).</li>
 </ul>
 <p><code>bin/session_cost.py</code> is the single-session companion: it prices <strong>one</strong> session &mdash; the main transcript plus each subagent's <code>*.output</code> &mdash; against an <strong>all-one-model counterfactual</strong>, so you see what a run cost and what defaulting to Fable <em>would</em> have cost.</p>
-<div class="callout"><strong>Real track record:</strong> <strong>11 kits</strong> have now shipped through architect &rarr; execute &mdash; harden-plugin, aesop-bridge, copilot-harness, copilot-workflow, copilot-costviz, daily-journal, fusion-tier1, fusion-tier2, routing-history, per-task-dollars, crossrepo-trend &mdash; for <strong>32/32 first-try task passes, zero escalations, and zero execution work on Fable</strong>. This guide is one of their outputs.</div>
+<div class="callout"><strong>Real track record:</strong> it is a command, not a number &mdash; <code>python3 bin/routing_scorecard.py --history</code> prints the cross-kit per-tier first-try and escalation rates for this checkout. This guide is one of those kits' outputs.</div>
 
 <h2 id="7-what-aesop-is-and-how-it-fits">7. What aesop is, and how it fits</h2>
 <p><strong>Aesop</strong> (<code>github:agentmc15/aesop</code>) is an <em>environment compiler</em> for AI coding agents. One manifest &mdash; <code>aesop.yaml</code> &mdash; is compiled into native configuration (instruction files, skills, subagents, commands, MCP servers, hooks, permissions, loops, goals) for <strong>any harness</strong>: Claude Code, Codex, Copilot, Cursor, Antigravity, VS Code. It federates content registries, offers <strong>pathway profiles</strong> as a cost/accuracy dial (<code>token-lean</code> &rarr; <code>balanced</code> &rarr; <code>accuracy-max</code>), and runs <strong>goal loops with the three hard stops</strong>. <em>(Aesop behavior described here is pinned to aesop commit <code>5506617</code>.)</em></p>
@@ -251,12 +252,12 @@
 
 <h3>Example 1 &mdash; Task &middot; "Which model, and what will it cost?"</h3>
 <p><strong>Command:</strong> <code>/polytropos:route add input validation to the signup form handler</code></p>
-<p><strong>Happens:</strong> route resolves <code>subscription</code> mode, classifies the task as routine single-file work, and prints a compact table: <span class="tier-sonnet">Sonnet 5</span> (recommended, effort <code>medium</code>), <span class="tier-opus">Opus 4.8</span> (overkill here), with API-equivalent burn per candidate from the XS/S profile. It then offers to <em>dispatch now</em> or prints <code>`/model sonnet`</code>.</p>
-<p><strong>Why:</strong> the cheapest sufficient model for routine edits is <span class="tier-sonnet">Sonnet 5</span>; the estimate is a burn proxy, not a bill. This is the everyday "should I even be on Opus for this?" check.</p>
+<p><strong>Happens:</strong> route resolves <code>subscription</code> mode, classifies the task as routine single-file work, and prints a compact table: <span class="tier-sonnet">Sonnet 5.5</span> (recommended, effort <code>medium</code>), <span class="tier-opus">Opus 5.5</span> (overkill here), with API-equivalent burn per candidate from the XS/S profile. It then offers to <em>dispatch now</em> or prints <code>`/model sonnet`</code>.</p>
+<p><strong>Why:</strong> the cheapest sufficient model for routine edits is <span class="tier-sonnet">Sonnet 5.5</span>; the estimate is a burn proxy, not a bill. This is the everyday "should I even be on Opus for this?" check.</p>
 
 <h3>Example 2 &mdash; Task &middot; Dispatch a self-contained job to a cheaper subagent</h3>
 <p><strong>Command:</strong> <code>/polytropos:route --sub write unit tests for utils/date.py</code></p>
-<p><strong>Happens:</strong> route recommends <span class="tier-sonnet">Sonnet 5</span> and offers <em>dispatch now</em>. You accept; the orchestrator writes a self-contained brief (the subagent sees none of your conversation), dispatches <code>Agent(model="sonnet")</code>, and relays the result. Your Opus session's context stays clean.</p>
+<p><strong>Happens:</strong> route recommends <span class="tier-sonnet">Sonnet 5.5</span> and offers <em>dispatch now</em>. You accept; the orchestrator writes a self-contained brief (the subagent sees none of your conversation), dispatches <code>Agent(model="sonnet")</code>, and relays the result. Your Opus session's context stays clean.</p>
 <p><strong>Why:</strong> delegation is the automatable half of routing (the session model can't be switched programmatically). Read-heavy or context-polluting work belongs in a pinned-cheap subagent.</p>
 
 <h3>Example 3 &mdash; Task &middot; Try it cheap, fall back to Fable only if it fails</h3>
@@ -266,17 +267,17 @@
 
 <h3>Example 4 &mdash; Greenfield &middot; Plan once with Fable, build cheap</h3>
 <p><strong>Commands:</strong> <code>/polytropos:architect build a markdown-to-slides CLI: parse a .md file into slides, render to a self-contained HTML deck, with a --watch mode</code> &rarr; then <code>/polytropos:execute md-slides</code></p>
-<p><strong>Happens:</strong> a Fable subagent interrogates the scope once and writes the kit &mdash; PLAN.md (parser vs renderer boundary, the deck format contract, watch-mode debounce decision, all with rationale), ~12 task briefs each with a verify command, three model-pinned agents, and CLAUDE.md conventions. Fable's involvement ends (~10&ndash;20 min). <code>/execute</code> then runs for the rest of the build on Sonnet/Opus: implementer builds each task, verifier re-runs its check in fresh context, the Opus reviewer checks each phase against the plan.</p>
+<p><strong>Happens:</strong> a Fable subagent interrogates the scope once, shows you the goal and the out-of-scope fence for approval, then writes the kit &mdash; PLAN.md (parser vs renderer boundary, the deck format contract, watch-mode debounce decision, all with rationale), ~12 task briefs each with a verify command, three model-pinned agents, and CLAUDE.md conventions. Fable's involvement ends (~10&ndash;20 min). <code>/execute</code> then runs for the rest of the build on Sonnet/Opus: implementer builds each task, verifier re-runs its check in fresh context, the Opus reviewer checks each phase against the plan.</p>
 <p><strong>Why:</strong> greenfield is where up-front decomposition pays the most. One frontier planning pass sets the contracts; cheap models fill them in at near-Fable quality.</p>
 
 <h3>Example 5 &mdash; Greenfield &middot; A new project under aesop, fed by the bridge</h3>
 <p><strong>Commands:</strong></p>
 <pre><code>aesop init &amp;&amp; aesop compile &amp;&amp; aesop doctor --fix        # scaffold the environment (start token-lean)
 python3 bin/aesop_bridge.py tiers                         # which concrete model each tier means now
-python3 bin/aesop_bridge.py check-budget 25 M claude-sonnet-5   # does budget_usd:25 buy enough iterations?
+python3 bin/aesop_bridge.py check-budget 25 M claude-sonnet-5-5   # does budget_usd:25 buy enough iterations?
 /polytropos:architect &lt;the build spec&gt;             # detects aesop.yaml &rarr; guardrails go in the manifest
 /polytropos:execute &lt;slug&gt;</code></pre>
-<p><strong>Happens:</strong> aesop compiles a correct, drift-checked environment for every harness you selected. The bridge tells you <code>strong&rarr;claude-opus-4-8, mid&rarr;claude-sonnet-5, cheap&rarr;claude-haiku-4-5</code> to pin in profiles, and sizes the goal-loop budget from real prices. <code>/architect</code>, seeing the <code>&lt;!-- aesop:begin</code> fence, writes its guardrails into <code>aesop.yaml</code> (<code>primitives.instructions.blocks</code>) and recompiles rather than hand-editing the compiled <code>CLAUDE.md</code>.</p>
+<p><strong>Happens:</strong> aesop compiles a correct, drift-checked environment for every harness you selected. The bridge tells you <code>strong&rarr;claude-opus-5-5, mid&rarr;claude-sonnet-5-5, cheap&rarr;claude-haiku-4-5</code> to pin in profiles, and sizes the goal-loop budget from real prices. <code>/architect</code>, seeing the <code>&lt;!-- aesop:begin</code> fence, writes its guardrails into <code>aesop.yaml</code> (<code>primitives.instructions.blocks</code>) and recompiles rather than hand-editing the compiled <code>CLAUDE.md</code>.</p>
 <p><strong>Why:</strong> aesop builds the static rails once; the optimizer decides the model economics inside them. The two layers compose cleanly &mdash; this is the recommended greenfield path when you use multiple harnesses or a team.</p>
 
 <h3>Example 6 &mdash; Brownfield &middot; Review an existing codebase</h3>
@@ -292,7 +293,7 @@ python3 bin/aesop_bridge.py check-budget 25 M claude-sonnet-5   # does budget_us
 <h3>Example 8 &mdash; Backlog &middot; Burn it down cost-optimally, then keep it green</h3>
 <p><strong>Commands (one-off backlog):</strong> for each item, <code>/polytropos:escalate &lt;item with its check&gt;</code> &mdash; or, if the items share a theme, one <code>/polytropos:architect &lt;backlog theme&gt;</code> producing a multi-task kit you <code>/execute</code>.</p>
 <p><strong>Commands (recurring maintenance):</strong> an aesop goal loop with a bridge-sized budget:</p>
-<pre><code>python3 bin/aesop_bridge.py check-budget 25 M claude-sonnet-5   # size the budget_usd stop
+<pre><code>python3 bin/aesop_bridge.py check-budget 25 M claude-sonnet-5-5   # size the budget_usd stop
 # aesop.yaml &rarr; loops: [{ name: green-tests, goal: "suite passes", verify: "npm test",
 #                        stops: { max_iterations: 40, no_progress_after: 3, budget_usd: 25 } }]</code></pre>
 <p><strong>Happens:</strong> the one-off backlog is cleared with Fable touched only on the items a cheap tier fails. The recurring "keep it green" work runs as a bounded goal loop &mdash; verify after every tick, halting on the iteration ceiling, the no-progress detector, or the dollar cap.</p>
@@ -300,7 +301,7 @@ python3 bin/aesop_bridge.py check-budget 25 M claude-sonnet-5   # does budget_us
 
 <h3>Example 9 &mdash; Security &middot; Reviewing a diff (and why <em>not</em> Fable)</h3>
 <p><strong>Commands:</strong> <code>/security-review</code> (built-in) for the pending diff; for model choice on the analysis, <code>/polytropos:route --sub security review of the new auth/session changes</code></p>
-<p><strong>Happens:</strong> route recommends <strong><span class="tier-opus">Opus 4.8</span>, not <span class="tier-fable">Fable 5</span></strong>, and says why: Fable's cyber-adjacent safety classifiers <strong>refuse</strong> much security-analysis work (<code>stop_reason: "refusal"</code>), and <span class="tier-opus">Opus 4.8</span> is the stronger tool for cybersecurity analysis regardless. If a Fable hop is ever mid-flight and returns a refusal, escalate's <strong>refusal fallback</strong> reruns that hop on <span class="tier-opus">Opus 4.8</span>.</p>
+<p><strong>Happens:</strong> in <code>subscription</code> mode route recommends <strong><span class="tier-opus">Opus 5.5</span>, not <span class="tier-fable">Fable 5.1</span></strong> (its daily-driver posture, <code>skills/route/SKILL.md</code>); the skill has no security-specific rule. <em>Operator guidance, not skill behavior:</em> Fable's cyber-adjacent safety classifiers can <strong>refuse</strong> security-analysis work (<code>stop_reason: "refusal"</code>), so if a Fable hop returns a refusal, re-run that hop on the Opus tier yourself &mdash; no skill does it for you.</p>
 <p><strong>Why:</strong> more expensive is not more capable here. This is the one place the "escalate to Fable" instinct is wrong &mdash; <code>fable-check</code> encodes it so you don't learn it the hard way.</p>
 
 <h3>Example 10 &mdash; Security &middot; Hardening an existing codebase as a kit</h3>
@@ -310,10 +311,10 @@ python3 bin/aesop_bridge.py check-budget 25 M claude-sonnet-5   # does budget_us
 
 <h3>Example 11 &mdash; Measurement &middot; Prove the cheap tiers actually held</h3>
 <p><strong>Command:</strong> <code>python3 bin/routing_scorecard.py harden-plugin --session &lt;id&gt;</code> (after <code>/execute</code> finishes and has recorded its <code>outcome:</code> / <code>session:</code> lines)</p>
-<p><strong>Happens:</strong> the scorecard parses <code>TASKS.md</code> + the <code>outcome:</code> ledger into a verdict &mdash; per-task outcomes, the model mix, and the <strong>cheap-model review-survival rate</strong> &mdash; then, from the <code>session:</code> line, folds in the run's real transcript dollars beside an <strong>all-Fable counterfactual</strong>. Across the plugin's own 11 kits it reads 32/32 first-try passes with zero escalations. <code>--history</code> widens the lens to the per-tier track record across every kit; <code>--by-task</code> (with <code>--session</code>) splits the dollars per task by role; <code>--snapshot</code> / <code>--trend</code> chart first-try rate over time.</p>
+<p><strong>Happens:</strong> the scorecard parses <code>TASKS.md</code> + the <code>outcome:</code> ledger into a verdict &mdash; per-task outcomes, the model mix, and the <strong>cheap-model review-survival rate</strong> &mdash; then, from the <code>session:</code> line, folds in the run's real transcript dollars beside an <strong>all-Fable counterfactual</strong>. <code>--history</code> widens the lens to the per-tier track record across every kit; <code>--by-task</code> (with <code>--session</code>) splits the dollars per task by role; <code>--snapshot</code> / <code>--trend</code> chart first-try rate over time.</p>
 <p><strong>Why:</strong> routing cheap is only a saving if quality held &mdash; this closes the loop with evidence, not faith. Nothing is fabricated: a missing transcript reads <code>null</code>, never a guess.</p>
 
-<p class="note" style="margin-top:3rem; border-top:1px solid var(--line); padding-top:1rem;"><em>polytropos &middot; guide generated 2026-07-01, refreshed 2026-07-03 &middot; prices are a labeled snapshot cached <code>2026-07-01</code> in <code>data/pricing.json</code> (single source of truth) &middot; aesop claims pinned to commit <code>5506617</code>.</em></p>
+<p class="note" style="margin-top:3rem; border-top:1px solid var(--line); padding-top:1rem;"><em>polytropos &middot; guide refreshed 2026-10-23 &middot; prices are a labeled snapshot cached <code>2026-10-07</code> in <code>data/pricing.json</code> (single source of truth) &middot; aesop claims pinned to commit <code>5506617</code>.</em></p>
 
 </div>
 </body>

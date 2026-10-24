@@ -37,17 +37,17 @@ Routine work can go straight from routing to a suitable worker. Complex work get
 - Escalation that carries failure evidence instead of routinely starting at the most capable model.
 - Local usage, freshness, graph-grounding, assessment, and benchmark-planning tools, with capability differences documented per harness.
 
-The detailed mechanics, limits, and examples live in the [documentation site](https://agentmc15.github.io/polytropos/), [architecture guide](docs/HOW-IT-WORKS.md), and [complete guide & cookbook](docs/GUIDE.md). For harness-specific behavior, see [Claude skills](skills/), [Copilot CLI](docs/COPILOT-HARNESS.md), and [Codex CLI](docs/CODEX-HARNESS.md).
+The detailed mechanics, limits, and examples live in the [documentation site](https://agentmc15.github.io/polytropos/), [architecture guide](docs/HOW-IT-WORKS.md), and [complete guide & cookbook](docs/GUIDE.md). For harness-specific behavior, see [Claude skills](skills/), [Copilot CLI](docs/COPILOT-HARNESS.md), and [Codex CLI](docs/CODEX-HARNESS.md). Why this is spec-driven development — the architect writes the spec, pinned cheaper models execute it, verification is against the spec — is in [docs/SPEC-DRIVEN.md](docs/SPEC-DRIVEN.md). A guide to spec-driven development itself, mapped to polytropos and back, is in [docs/sdd/guide.md](docs/sdd/guide.md).
 
 Polytropos also has a [Cursor headless harness](docs/CURSOR-HARNESS.md). Its adapter and bundle are separate from the three quick starts above, and its usage remains unpriced where no rates are known.
 
 ## Current model routes
 
-These are **configuration snapshots checked on 2026-09-24**, not an automatic feed of new releases or a guarantee for every account. Each harness has its own pricing and model registry; public availability and your client’s picker can still differ. The links lead to the provider catalogs used for this refresh.
+These are **configuration snapshots** — Claude’s checked on 2026-10-07, Codex’s and Copilot’s on 2026-09-24 — not an automatic feed of new releases or a guarantee for every account. Each harness has its own pricing and model registry; public availability and your client’s picker can still differ. The links lead to the provider catalogs used for this refresh.
 
 | Harness | Current Polytropos routes | Why an older model may still appear |
 |---|---|---|
-| **Claude Code** · [Anthropic lineup](https://platform.claude.com/docs/en/models/overview) | Fable 5.1 (frontier), Opus 5.5 (strong), Sonnet 5 (mid), Haiku 4.5 (cheap). | Prior generations remain for historical estimates and explicit compatibility pins where the provider still supports them. |
+| **Claude Code** · [Anthropic lineup](https://platform.claude.com/docs/en/models/overview) | Fable 5.1 (frontier), Opus 5.5 (strong), Sonnet 5.5 (mid), Haiku 4.5 (cheap). Haiku 5.5 is priced but not yet the cheap-tier default. | Prior generations remain for historical estimates and explicit compatibility pins where the provider still supports them. |
 | **Codex CLI** · [OpenAI lineup](https://developers.openai.com/api/docs/models) | GPT-6 Astra (reserved orchestration), GPT-6 Sol (strong work and verification), GPT-5.6 Terra (mid work), GPT-6 Luna (cheap work). | Terra remains the available mid-tier worker; older Sol/Luna entries are cost-only. |
 | **GitHub Copilot CLI** · [GitHub CLI model support](https://docs.github.com/en/copilot/reference/ai-models/supported-models) | The curated roster now includes GPT-6 Astra/Sol/Luna, Claude Fable 5.1 and Opus 5.5, Gemini 3.8 Flash, MAI-Code-1.1-Flash, Grok 4.7, and Kimi K3 alongside retained models. | Published support alone does not grant an account access; check `/model` and your organization’s policies. Fable 5.1 has a [data-retention caveat](https://docs.github.com/en/copilot/reference/ai-models/supported-models). |
 

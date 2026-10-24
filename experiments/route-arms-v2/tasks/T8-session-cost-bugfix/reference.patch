@@ -1,0 +1,134 @@
+--- a/bin/session_cost.py
++++ b/bin/session_cost.py
+@@ -27,6 +27,7 @@
+ """
+ 
+ import argparse
++import glob as globlib
+ import importlib.util
+ import json
+ import os
+@@ -115,7 +116,11 @@
+         if p.is_dir():
+             files.extend(sorted(p.glob("*.output")))
+         elif any(ch in str(item) for ch in "*?["):
+-            files.extend(sorted(Path().glob(str(item))))
++            pattern = str(item)
++            if p.is_absolute():
++                files.extend(Path(m) for m in sorted(globlib.glob(pattern)))
++            else:
++                files.extend(sorted(Path().glob(pattern)))
+         elif p.exists():
+             files.append(p)
+     out, seen = [], set()
+@@ -135,11 +140,54 @@
+             "cost": 0.0, "msgs": 0}
+ 
+ 
++def _normal_usage(raw):
++    """Return a sanitized usage bucket dict, or None for malformed/zero records."""
++    clean = {}
++    for fld in ("input", "output", "cache_read", "cache_write"):
++        value = raw.get(fld, 0)
++        if value is None:
++            value = 0
++        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
++            return None
++        clean[fld] = value
++    return clean if any(clean.values()) else None
++
++
++def _model_label(model):
++    return str(model)
++
++
++def _match_model(model, pricing):
++    try:
++        return cr.match_model(model, pricing)
++    except AttributeError:
++        return None
++
++
++def count_task_outputs(task_dirs):
++    """Count unique existing task-dir *.output files for source reporting only."""
++    seen = set()
++    for d in task_dirs:
++        for f in sorted(Path(d).glob("*.output")):
++            try:
++                rp = f.resolve()
++            except OSError:
++                rp = f
++            if f.is_file():
++                seen.add(rp)
++    return len(seen)
++
++
+ def collect(files, pricing):
+-    """Stream every transcript file, dedupe records by message id GLOBALLY (so a
+-    message recorded in both the main transcript and a subagent file counts
+-    once), and accumulate per-model token totals + priced cost + grand totals."""
++    """Stream every transcript file, dedupe accepted priced records by message id
++    GLOBALLY, and accumulate per-model token totals + priced cost + grand totals.
++
++    Malformed usage, unknown models, placeholders, and zero-usage records do not
++    reserve message ids; ``unique_messages`` is the accepted priced-message count
++    after deduplication, including accepted id-less records.
++    """
+     seen_ids = set()
++    priced_messages = 0
+     by_model = defaultdict(_new_bucket)
+     grand = {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0}
+     unpriced = defaultdict(int)
+@@ -164,16 +212,20 @@
+                 rec = cr.extract_record(obj)
+                 if rec is None:
+                     continue
+-                model, u, msg_id, _tool_uses = rec
+-                if msg_id:
++                model, raw_usage, msg_id, _tool_uses = rec
++                u = _normal_usage(raw_usage)
++                if u is None:
++                    continue
++                key = _match_model(model, pricing)
++                if key is None:
++                    label = _model_label(model)
++                    if not label.startswith("<"):
++                        unpriced[label] += sum(u.values())
++                    continue
++                if isinstance(msg_id, str) and msg_id:
+                     if msg_id in seen_ids:
+                         continue
+                     seen_ids.add(msg_id)
+-                key = cr.match_model(model, pricing)
+-                if key is None:
+-                    if not str(model).startswith("<"):
+-                        unpriced[model] += sum(u.values())
+-                    continue
+                 when = cr.parse_timestamp(obj.get("timestamp"))
+                 cost = cr.price(key, u, when, pricing)
+                 b = by_model[key]
+@@ -182,13 +234,14 @@
+                     grand[fld] += u[fld]
+                 b["cost"] += cost
+                 b["msgs"] += 1
++                priced_messages += 1
+     return {
+         "by_model": dict(by_model),
+         "grand": grand,
+         "unpriced": dict(unpriced),
+         "read_errors": read_errors,
+         "files_read": files_read,
+-        "unique_messages": len(seen_ids),
++        "unique_messages": priced_messages,
+     }
+ 
+ 
+@@ -348,7 +401,7 @@
+         task_dirs = ([Path(d) for d in args.tasks_dir]
+                      or discover_task_dirs(session_id))
+     files = gather_files(main_transcript, task_dirs, args.include)
+-    subagent_count = max(0, len(files) - 1)
++    subagent_count = count_task_outputs(task_dirs)
+ 
+     data = collect(files, pricing)
+     try:

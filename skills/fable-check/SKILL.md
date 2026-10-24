@@ -1,6 +1,6 @@
 ---
 name: fable-check
-description: Decide whether a task is worth running on Fable 5.1 (vs Opus 5.5 / Sonnet 5) and how to run it optimally — effort level and task spec. Use when the user asks "should this run on Fable", "is Fable worth it", or how to get the most out of Fable.
+description: Decide whether a task is worth running on Fable 5.1 (vs Opus 5.5 / Sonnet 5.5) and how to run it optimally — effort level and task spec. Use when the user asks "should this run on Fable", "is Fable worth it", or how to get the most out of Fable.
 ---
 
 # Fable 5.1 usage check
@@ -16,7 +16,7 @@ Fable 5.1's gains are on work *above* what the other current models can do. Rout
 - **Deep research / hardest reasoning** — multi-source synthesis, ambiguous problems needing judgment
 - **Heavy parallel sub-agent orchestration** — Fable reliably sustains long-running sub-agent coordination
 
-Do NOT route to Fable for: routine coding, tasks with well-known solutions, or anything Sonnet 5 or Opus 5.5 can handle at the needed effort.
+Do NOT route to Fable for: routine coding, tasks with well-known solutions, or anything Sonnet 5.5 or Opus 5.5 can handle at the needed effort.
 
 ## Caveats to surface every time Fable is recommended
 

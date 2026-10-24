@@ -130,11 +130,11 @@ hardcodes no price or model id. Three recipes:
 python3 bin/aesop_bridge.py tiers --json
 ```
 
-Example output (Claude registry snapshot cached 2026-09-24 — run the command for current values):
+Example output (Claude registry snapshot cached 2026-10-07 — run the command for current values):
 
 ```json
 { "frontier": "claude-fable-5-1", "strong": "claude-opus-5-5",
-  "mid": "claude-sonnet-5", "cheap": "claude-haiku-4-5" }
+  "mid": "claude-sonnet-5-5", "cheap": "claude-haiku-4-5" }
 ```
 
 ```bash

@@ -1,0 +1,31 @@
+{
+  "version": "polytropos.route-experiment.extension/1",
+  "arm": "A41",
+  "added": "2026-10-06",
+  "reason": "Pipeline-improvement variant (spec-tests). Twin of A7 whose test author works from the task text alone, never the plan, testing the hypothesis that plan-derived tests lock the implementer into the planner's misreading. Post hoc; never judged (adding a candidate would replace the preregistered judgments).",
+  "definition": {
+    "label": "Sol 6 plans -> Luna 6 (max) tests FROM THE TASK/builds/verifies, no reviewer",
+    "shape": "pipeline",
+    "stages": {
+      "planner": {
+        "model": "gpt-6-sol",
+        "effort": "high"
+      },
+      "test_author": {
+        "model": "gpt-6-luna",
+        "effort": "max"
+      },
+      "implementer": {
+        "model": "gpt-6-luna",
+        "effort": "max"
+      },
+      "verifier": {
+        "model": "gpt-6-luna",
+        "effort": "max"
+      }
+    },
+    "variant": {
+      "test_author_input": "spec"
+    }
+  }
+}

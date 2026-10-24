@@ -1,0 +1,16 @@
+{
+  "version": "polytropos.route-experiment.extension/1",
+  "arm": "A15",
+  "added": "2026-10-04",
+  "reason": "Requested during the v2 run: an effort sweep of one-shots, so each model is measured at medium, high and max (Opus 5.5, Sol 6, Sol 6.1) and Luna 6 at high and max. Post hoc; never judged (adding a candidate would replace the preregistered judgments).",
+  "definition": {
+    "label": "Opus 5.5 one-shot (high)",
+    "shape": "one-shot",
+    "stages": {
+      "solo": {
+        "model": "claude-opus-5.5",
+        "effort": "high"
+      }
+    }
+  }
+}

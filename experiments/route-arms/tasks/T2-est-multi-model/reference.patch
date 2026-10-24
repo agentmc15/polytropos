@@ -1,0 +1,110 @@
+diff --git a/bin/copilot_pricing.py b/bin/copilot_pricing.py
+index 4018339..29497d2 100644
+--- a/bin/copilot_pricing.py
++++ b/bin/copilot_pricing.py
+@@ -241,32 +241,76 @@ def cmd_models(args, pricing):
+         print(line)
+ 
+ 
++def parse_model_ids(raw):
++    """Split `est`'s MODEL_ID argument on commas -> list of ids, in the order given.
++
++    Raises `ValueError` for an empty segment or a repeated id.
++    """
++    ids = [part.strip() for part in raw.split(",")]
++    if any(not model_id for model_id in ids):
++        raise ValueError(f"empty model id in {raw!r}")
++    repeated = sorted({model_id for model_id in ids if ids.count(model_id) > 1})
++    if repeated:
++        raise ValueError(f"duplicate model id(s): {', '.join(repeated)}")
++    return ids
++
++
++def _est_json(args, model_id, result):
++    return {
++        "profile": args.profile,
++        "model_id": model_id,
++        "cache_hit": args.cache_hit,
++        "usd": round(result["usd"], 4),
++        "aic": round(result["aic"], 4),
++        "rates_used": result["rates_used"],
++        "warnings": result["warnings"],
++    }
++
++
++def _print_est(args, model_id, result):
++    print(f"profile {args.profile} on {model_id}, cache_hit={args.cache_hit}")
++    print(f"  usd:   ${result['usd']:.4f}")
++    print(f"  aic:   {result['aic']:.1f}")
++    print(f"  rates: {result['rates_used']}")
++    for w in result["warnings"]:
++        print(f"  warning: {w}")
++
++
+ def cmd_est(args, pricing):
+     try:
+-        result = est_cost(pricing, args.profile, args.model_id, cache_hit=args.cache_hit)
+-    except KeyError as e:
++        model_ids = parse_model_ids(args.model_id)
++    except ValueError as e:
+         print(str(e), file=sys.stderr)
+         sys.exit(2)
++    unknown = [model_id for model_id in model_ids if model_id not in pricing["models"]]
++    if unknown and len(model_ids) > 1:
++        print(
++            f"unknown model id(s): {', '.join(unknown)}; valid choices: {sorted(pricing['models'])}",
++            file=sys.stderr,
++        )
++        sys.exit(2)
++
++    results = []
++    for model_id in model_ids:
++        try:
++            results.append((model_id, est_cost(pricing, args.profile, model_id,
++                                               cache_hit=args.cache_hit)))
++        except KeyError as e:
++            print(str(e), file=sys.stderr)
++            sys.exit(2)
+ 
+     if args.json:
+-        out = {
+-            "profile": args.profile,
+-            "model_id": args.model_id,
+-            "cache_hit": args.cache_hit,
+-            "usd": round(result["usd"], 4),
+-            "aic": round(result["aic"], 4),
+-            "rates_used": result["rates_used"],
+-            "warnings": result["warnings"],
+-        }
+-        print(json.dumps(out, indent=2))
++        rows = [_est_json(args, model_id, result) for model_id, result in results]
++        print(json.dumps(rows[0] if len(rows) == 1 else rows, indent=2))
+         return
+ 
+-    print(f"profile {args.profile} on {args.model_id}, cache_hit={args.cache_hit}")
+-    print(f"  usd:   ${result['usd']:.4f}")
+-    print(f"  aic:   {result['aic']:.1f}")
+-    print(f"  rates: {result['rates_used']}")
+-    for w in result["warnings"]:
+-        print(f"  warning: {w}")
++    for index, (model_id, result) in enumerate(results):
++        if index:
++            print()
++        _print_est(args, model_id, result)
++    if len(results) > 1:
++        cheapest_id, cheapest = min(results, key=lambda pair: pair[1]["aic"])
++        print(f"cheapest: {cheapest_id} ({cheapest['aic']:.1f} AIC)")
+ 
+ 
+ def cmd_runway(args, pricing):
+@@ -424,7 +468,9 @@ def build_parser():
+ 
+     p_est = sub.add_parser("est", help="estimated USD + AIC cost of one task")
+     p_est.add_argument("profile", help="task profile key, e.g. XS, S, M, L, XL")
+-    p_est.add_argument("model_id", help="model id from pricing.copilot.json")
++    p_est.add_argument("model_id",
++                       help="model id from pricing.copilot.json, or a comma-separated list "
++                            "to compare several")
+     p_est.add_argument("--cache-hit", type=float, default=0.8)
+     p_est.add_argument("--json", action="store_true", help="machine-readable output")
+     p_est.set_defaults(func=cmd_est)

@@ -1,0 +1,92 @@
+--- a/bin/routing_policy.py
++++ b/bin/routing_policy.py
+@@ -160,11 +160,39 @@
+     return tiers.index(tier) if tier in tiers else None
+ 
+ 
++def _catalog_by_id(catalog):
++    """Catalog rows keyed by model id, preserving the row objects."""
++    return {entry["id"]: entry for entry in catalog}
++
++
++def _candidate_filter_reason(entry, floor, request, rules, excludes, explicit_effort, budget):
++    """The first hard-filter reason for one catalog row, or None when eligible."""
++    if not entry["routable"]:
++        return "not-routable"
++    if entry["availability"] == "unavailable":
++        return "unavailable"
++    if floor["pinned"] and entry["id"] != floor["pinned"]:
++        return "pinned-elsewhere"
++    if entry["id"] in excludes:
++        return "excluded"
++    if entry["reserved"] and not rules["reserved_model_implements"] \
++            and request.get("role", "implementer") == "implementer":
++        return "reserved"
++    if explicit_effort and entry["efforts"] is not None \
++            and explicit_effort not in entry["efforts"]:
++        return "effort-unsupported"
++    if entry["rank"] < floor["rank"]:
++        return "below-floor"
++    if budget is not None and not budget.get("ok", True):
++        return "over-budget"
++    return None
++
++
+ def _floor(request, catalog, tiers, policy):
+     """The lowest rank the task may run at, and the signals that put it there."""
+     basis = []
+     planned = request.get("planned")
+-    by_id = {e["id"]: e for e in catalog}
++    by_id = _catalog_by_id(catalog)
+     pinned = None
+     if planned is None:
+         default_tier = request.get("default_tier")
+@@ -299,32 +327,17 @@
+     # ---- hard filters, in order; the first that applies is the one reported ----
+     candidates = []
+     for entry in catalog:
+-        reasons = []
+-        if not entry["routable"]:
+-            reasons.append("not-routable")
+-        elif entry["availability"] == "unavailable":
+-            reasons.append("unavailable")
+-        elif floor["pinned"] and entry["id"] != floor["pinned"]:
+-            reasons.append("pinned-elsewhere")
+-        elif entry["id"] in excludes:
+-            reasons.append("excluded")
+-        elif entry["reserved"] and not rules["reserved_model_implements"] \
+-                and request.get("role", "implementer") == "implementer":
+-            reasons.append("reserved")
+-        elif explicit_effort and entry["efforts"] is not None \
+-                and explicit_effort not in entry["efforts"]:
+-            reasons.append("effort-unsupported")
+-        elif entry["rank"] < floor["rank"]:
+-            reasons.append("below-floor")
+-        elif budget is not None and not budget.get("ok", True):
+-            reasons.append("over-budget")
+-        candidates.append({**entry, "eligible": not reasons, "reasons": reasons})
+-
++        reason = _candidate_filter_reason(entry, floor, request, rules, excludes,
++                                          explicit_effort, budget)
++        reasons = [reason] if reason else []
++        candidates.append({**entry, "eligible": reason is None, "reasons": reasons})
++
++    by_id = _catalog_by_id(candidates)
+     eligible = [c for c in candidates if c["eligible"]]
+     refusal = None
+     pick = None
+     if chosen is not None:
+-        pick = next((c for c in candidates if c["id"] == chosen), None)
++        pick = by_id.get(chosen)
+         if pick is None:
+             raise RoutingError(f"chosen model {chosen!r} is not in the catalog")
+     elif budget is not None and not budget.get("ok", True):
+@@ -438,7 +451,7 @@
+     """
+     if pick is None:
+         return None
+-    by_id = {e["id"]: e for e in catalog}
++    by_id = _catalog_by_id(catalog)
+     stages = []
+ 
+     def stage(name, model_id):

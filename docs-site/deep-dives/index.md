@@ -26,6 +26,8 @@
 | [Graph-Engineering Properties in polytropos](graph-engineering.md) |
 | [polytropos — complete guide & cookbook](guide.md) |
 | [How polytropos works](how-it-works.md) |
+| [Jev access and conformance contract — Release 2 J01](jev-access-contract.md) |
+| [Jev as an outcome judge — preregistered, offline study](jev-judge-study.md) |
 | [The kit scheduler](kit-scheduler.md) |
 | [Memory skill](memory-skill.md) |
 | [Next-day runbook](next-day-runbook.md) |
@@ -35,7 +37,9 @@
 | [Polytropos reference](reference.md) |
 | [Release gate — the supported matrix, and what "supported" is allowed to mean](release.md) |
 | [The role experiment — does adding roles pay?](role-experiment.md) |
+| [The route experiment — which Copilot route is best?](route-experiment.md) |
 | [Routing history — the cross-kit per-tier track record](routing-history.md) |
 | [Routing trends — cross-repo history and the snapshot time series](routing-trends.md) |
+| [Spec-driven development, the polytropos way](spec-driven.md) |
 | [Training-data collection readiness](training-data-readiness.md) |
 | [Workflow evaluation](workflow-eval.md) |

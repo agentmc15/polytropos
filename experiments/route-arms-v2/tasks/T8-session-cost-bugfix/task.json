@@ -1,0 +1,31 @@
+{
+  "id": "T8-session-cost-bugfix",
+  "title": "Harden session_cost transcript edge cases without changing valid reports",
+  "kind": "bugfix",
+  "source_files": ["bin/session_cost.py"],
+  "allowed_paths": ["bin/session_cost.py", "tests/"],
+  "allowed_generated": [],
+  "regression": ["test_session_cost.py"],
+  "guardrails": [
+    {"kind": "subprocess", "regex": "\\bimport subprocess\\b|\\bsubprocess\\.(run|Popen|call|check_output)\\b"},
+    {"kind": "shell-true", "regex": "shell\\s*=\\s*True"},
+    {"kind": "os-system", "regex": "\\bos\\.system\\("},
+    {"kind": "home-dir", "regex": "Path\\.home\\(|expanduser\\("},
+    {"kind": "debug-print", "regex": "^\\s*(breakpoint\\(\\)|import pdb|pdb\\.set_trace)"},
+    {"kind": "hardcoded-model-id", "regex": "[\\\"'](claude|gpt|gemini|grok|kimi|mai)-[A-Za-z0-9.\\-]+[\\\"']"}
+  ],
+  "rubric": [
+    "Malformed token counts are handled per the prompt: missing/None means zero, positive integer counts are accepted, and strings, booleans, floats, negatives, or other non-integers skip the whole record without crashing.",
+    "Unknown model accounting is robust for non-string model values, ignores placeholder labels beginning with <, and never lets unknown or malformed records reserve a duplicate message id.",
+    "Message-id deduplication is applied only to accepted priced records, with first accepted priced record winning and id-less or non-string-id priced records counted independently.",
+    "The public unique_messages value means unique accepted priced messages, including accepted priced records without string ids and excluding unpriced, placeholder, malformed, zero-usage, and duplicate-priced records.",
+    "Absolute --include glob patterns are expanded deterministically, missing globs do not crash, and existing relative include, directory include, and path de-duplication behaviour remains intact.",
+    "sources.subagent_transcripts and markdown source text count only unique task-dir .output files, never arbitrary --include files, while files_scanned still includes every scanned file.",
+    "All price and counterfactual expectations continue to be computed from data/pricing.json at run time, with no hardcoded prices, model ids, or pricing dates.",
+    "Existing valid transcript pricing, markdown/JSON shape, --no-subagents behaviour, read-error handling, and test_session_cost.py regressions remain green."
+  ],
+  "prompt": "prompt.md",
+  "oracle": "oracle.py",
+  "reference": "reference.patch",
+  "naive": "naive.patch"
+}

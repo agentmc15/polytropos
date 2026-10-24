@@ -95,8 +95,9 @@ The table below is a **snapshot of `data/pricing.copilot.json`, cached `2026-09-
 as a labeled point-in-time reference, not a live source; the file itself is authoritative. Prices
 are USD per million tokens (MTok).
 
-**29 rows, every cell refreshed from GitHub's models-and-pricing page at `cached_date`
-2026-09-24.** The account's Copilot CLI `/model` picker also confirmed the displayed names of
+**31 rows. 29 were refreshed from GitHub's models-and-pricing page at `cached_date`
+2026-09-24; `gpt-6.1-sol` (strong, behind the GPT-6 Sol default) and `claude-sonnet-5.5`
+(mid, after Claude Sonnet 5) were added from the same page on 2026-10-04.** The account's Copilot CLI `/model` picker also confirmed the displayed names of
 Claude Fable 5.1, Claude Opus 5.5, GPT-6 Astra/Sol/Luna, Gemini 3.8 Flash,
 MAI-Code-1.1-Flash, Grok 4.7, and Kimi K3 without sending a model prompt.
 
@@ -117,6 +118,7 @@ MAI-Code-1.1-Flash, Grok 4.7, and Kimi K3 without sending a model prompt.
 | frontier | `claude-fable-5.1` | anthropic | $10.00 | $0.25 | $50.00 | retention caveat |
 | frontier | `claude-fable-5` | anthropic | $10.00 | $1.00 | $50.00 | retention caveat |
 | strong | `gpt-6-sol` | openai | $2.00 | $0.20 | $10.00 | long-ctx >272K; default |
+| strong | `gpt-6.1-sol` | openai | $2.00 | $0.10 | $10.00 | long-ctx >272K |
 | strong | `claude-opus-5.5` | anthropic | $4.00 | $0.20 | $20.00 | — |
 | strong | `kimi-k3` | moonshot | $3.00 | $0.30 | $15.00 | — |
 | strong | `claude-opus-4.8-fast` | anthropic | $10.00 | $1.00 | $50.00 | — |
@@ -132,6 +134,7 @@ MAI-Code-1.1-Flash, Grok 4.7, and Kimi K3 without sending a model prompt.
 | mid | `gpt-5.4` | openai | $2.50 | $0.25 | $15.00 | long-ctx >272K |
 | mid | `gpt-5.6-terra` | openai | $2.00 | $0.20 | $12.00 | long-ctx >272K |
 | mid | `claude-sonnet-5` | anthropic | $2.00 | $0.20 | $10.00 | — |
+| mid | `claude-sonnet-5.5` | anthropic | $2.00 | $0.20 | $10.00 | — |
 | mid | `gemini-3.5-flash` | google | $1.50 | $0.15 | $9.00 | retires 2026-10-02 |
 | mid | `gemini-3.6-flash` | google | $0.75 | $0.075 | $3.75 | promo→2026-12-31; retires 2026-10-02 |
 | mid | `kimi-k2.7-code` | moonshot | $0.95 | $0.19 | $4.00 | retires 2026-10-02 |

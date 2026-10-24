@@ -1,6 +1,6 @@
 # AIC Report
 
-Snapshot: `data/pricing.copilot.json` (cached_date 2026-09-24) — pricing sha256 `f29eb145cfcdd05fb649caff9b02acda832bdb20e880342d7e3c0fa3308ba6b4`, roster sha256 `51b4cbb450cc300e151098004ff738ff651882c40bddd867a5a90295ad7465c2`.
+Snapshot: `data/pricing.copilot.json` (cached_date 2026-09-24) — pricing sha256 `80df97c4c954bf1fc9be1f92f78c006eb25a4eb0d6357ba033d2117df9bbc612`, roster sha256 `a99041c2aacc42d4b0224c7e5915221b0e27bc2027ec7e0c002517d06faff91b`.
 
 Prefs source: `(none — defaults)`
 
@@ -16,8 +16,8 @@ Prefs source: `(none — defaults)`
 | `skills.html` | html | estimated | 26945 | 0.0000 | 0.0000 | HTML is a deterministic render of its Markdown source — zero cost |
 | `AGENTS.md` | markdown | estimated | 16454 | 11.3790 | 0.1138 | Prospective estimate: assumes the manifest's declared input-token convention and treats this document's own measured lexeme count as a stand-in for model output tokens — not a historical usage measurement. |
 | `agents.html` | html | estimated | 20746 | 0.0000 | 0.0000 | HTML is a deterministic render of its Markdown source — zero cost |
-| `MODELS.md` | markdown | estimated | 15810 | 9.9770 | 0.0998 | Prospective estimate: assumes the manifest's declared input-token convention and treats this document's own measured lexeme count as a stand-in for model output tokens — not a historical usage measurement. |
-| `models.html` | html | estimated | 19828 | 0.0000 | 0.0000 | HTML is a deterministic render of its Markdown source — zero cost |
+| `MODELS.md` | markdown | estimated | 16561 | 9.9770 | 0.0998 | Prospective estimate: assumes the manifest's declared input-token convention and treats this document's own measured lexeme count as a stand-in for model output tokens — not a historical usage measurement. |
+| `models.html` | html | estimated | 20746 | 0.0000 | 0.0000 | HTML is a deterministic render of its Markdown source — zero cost |
 | `COSTS.md` | markdown | estimated | 8430 | 10.2810 | 0.1028 | Prospective estimate: assumes the manifest's declared input-token convention and treats this document's own measured lexeme count as a stand-in for model output tokens — not a historical usage measurement. |
 | `costs.html` | html | estimated | 10368 | 0.0000 | 0.0000 | HTML is a deterministic render of its Markdown source — zero cost |
 | `WORKFLOWS.md` | markdown | estimated | 12380 | 4.1674 | 0.0417 | Prospective estimate: assumes the manifest's declared input-token convention and treats this document's own measured lexeme count as a stand-in for model output tokens — not a historical usage measurement. |

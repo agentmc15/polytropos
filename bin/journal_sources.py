@@ -189,7 +189,7 @@ def collect_claude(ctx):
                 b = report["models"].setdefault(key, _model_bucket())
                 _add_tokens(b, report["totals"], u)
                 b["messages"] += 1
-                b["usd"] = (b["usd"] or 0.0) + cr.price(key, u, when, pricing)
+                b["usd"] = (b["usd"] or 0.0) + cr.price(key, u, when, pricing, per_request=True)
             else:
                 b = report["models"].setdefault(model, _model_bucket())
                 _add_tokens(b, report["totals"], u)
