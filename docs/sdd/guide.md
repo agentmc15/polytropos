@@ -370,7 +370,7 @@ every kit. When this guide was written, on 2026-10-24, the most frequent kinds w
 acceptance, stale plan decisions, stale pins (references to files or lines that had moved) and
 unspecified paths. Most were caught mid-run, after dispatches had already been spent. The same
 card showed several kinds outside the sanctioned vocabulary, coined mid-run, which splits
-recurring problems across synonyms. `python3 bin/routing_scorecard.py --roles` showed `red-team`
+recurring problems across synonyms. As of this kit the vocabulary is nine sanctioned kinds with definitions (`stale-pin`, `tautological-verify`, `unrunnable-verify`, `missing-helper`, `unspecified-path`, `contradictory-acceptance`, `stale-plan-decision`, `false-zero-spec`, `underivable-requirement`), coined kinds are folded or flagged `unsanctioned` on the card, and nothing in a committed NOTES.md was rewritten. `python3 bin/routing_scorecard.py --roles` showed `red-team`
 and `test-author` with the highest rate of catches no earlier check made, on small samples.
 Re-run both commands before acting on any of this.
 

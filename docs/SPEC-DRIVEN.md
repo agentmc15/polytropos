@@ -98,8 +98,10 @@ on. `refresh` re-runs a stale task's verify command and dispatches nothing.
 
 The architect's own briefs are audited. When execute confirms a brief defect against the real
 repo during a run, it records a `defect: <task-id> kind=<token>` line rather than widening the
-task to make it pass (`skills/execute/references/ledger.md`). The kinds include `stale-pin`,
-`tautological-verify`, `unspecified-path` and `contradictory-acceptance`.
+task to make it pass (`skills/execute/references/ledger.md`). The kinds are the nine sanctioned in
+`skills/execute/references/ledger.md`: `stale-pin`, `tautological-verify`, `unrunnable-verify`, `missing-helper`, `unspecified-path`, `contradictory-acceptance`, `stale-plan-decision`, `false-zero-spec`, `underivable-requirement`.
+Coined synonyms are folded at read time by `bin/routing_scorecard.py` and shown as folded or
+unsanctioned on the card.
 `bin/routing_scorecard.py --history` totals them on its Role quality card as the architect's
 brief-defect floor. `skills/architect/references/routing-evidence.md` tells the next architect
 to read them "as evidence about YOUR OWN briefs". This is the strongest spec-driven claim the

@@ -181,12 +181,18 @@ def discover_kits(kits_dir):
     )
 
 
-def collect_defect_evidence(kits_dir, parse_defects):
+def collect_defect_evidence(kits_dir, parse_defects, canonical=None):
     """Scan every kit's NOTES.md for ``defect:`` lines -> ``(evidence, notes)``.
 
     ``evidence``: list of ``{"kit", "task", "kind"}`` dicts, one per defect event, in
     kit-name order then file order. ``notes``: parser notes prefixed with the owning kit name
     so a malformed line is never silently dropped.
+
+    ``canonical`` (optional, ``scorecard.canonical_defect_kind``): when given, each event's
+    kind is mapped through it so this consumer clusters identically to the scorecard —
+    excluded kinds are dropped and a fold is noted as ``<kit>: defect <task> <raw> folded
+    into <canonical>``. A fold table is an exact map, not a similarity, so the "exact
+    tokens, no fuzzy matching" rule stands.
     """
     evidence = []
     notes = []
@@ -194,7 +200,16 @@ def collect_defect_evidence(kits_dir, parse_defects):
         text = (kit_dir / "NOTES.md").read_text(encoding="utf-8")
         events, kit_notes = parse_defects(text)
         for ev in events:
-            evidence.append({"kit": kit_dir.name, "task": ev["task"], "kind": ev["kind"]})
+            kind = ev["kind"]
+            if canonical is not None:
+                mapped, note = canonical(kind)
+                if note == "excluded":
+                    continue
+                if note == "folded":
+                    notes.append(f"{kit_dir.name}: defect {ev['task']} {kind} "
+                                 f"folded into {mapped}")
+                kind = mapped
+            evidence.append({"kit": kit_dir.name, "task": ev["task"], "kind": kind})
         for n in kit_notes:
             notes.append(f"{kit_dir.name}: {n}")
     return evidence, notes
@@ -485,7 +500,8 @@ def main(argv=None):
         return 2
 
     scorecard = _load_scorecard_module()
-    defect_evidence, defect_notes = collect_defect_evidence(args.kits_dir, scorecard.parse_defects)
+    defect_evidence, defect_notes = collect_defect_evidence(
+        args.kits_dir, scorecard.parse_defects, scorecard.canonical_defect_kind)
     candidates, residue = cluster_defects(defect_evidence)
     lessons, lesson_notes = load_lessons(args.lessons_file)
     notes = defect_notes + lesson_notes
