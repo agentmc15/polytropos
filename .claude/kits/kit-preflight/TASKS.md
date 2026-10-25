@@ -214,7 +214,7 @@ test "$(git branch --show-current)" = feat/route-experiment && git log -1 --form
 ### T4 — `kit_contract.py analyze`: paths, verify parseability and runnability, without running anything
 - id: T4
 - title: Implement analyze_kit and the analyze subcommand with the D3 heuristics and their tests
-- status: pending
+- status: done
 - model: opus
 - depends: T3
 - evidence: red-green
@@ -236,11 +236,15 @@ Add to `bin/kit_contract.py`, in a new section after the freshness section (befo
   helper that re-splits the TASKS.md text into `{id: block_text}` the same way `parse_tasks`
   does (heading to heading), without changing `parse_tasks` or its output shape (the
   `test_the_dialect_parses_with_no_field_dropped` test pins it). Upstream is transitive over
-  `depends`; "self" counts for verify paths, not for brief paths.
+  `depends`; the task itself counts as a creator for brief paths and verify paths alike, as D3
+  says (corrected during T4: this sentence first said self counted only for verify paths, which
+  contradicted D3 and case 11b).
 - The result dict: `{"v": CONTRACT_VERSION, "kit": <dir name>, "strict": bool, "exit": 0|3,
   "findings": [{"task", "kind", "detail"}], "paths": {task: [{"path", "state", "by"}]},
   "verify": {task: {"parseable": bool, "hint": str|None, "executables": [{"word","state"}],
-  "paths": [{"path","state","by"}]}}}`. Exit 3 when any finding's kind is one of the first three,
+  "paths": [{"path","state","by"}]}}}`. Exit 3 (as amended by D3's fourth amendment) when any finding's kind is `verify-unparseable`
+  or `verify-missing-executable`; under `strict`, a `verify-missing-path` or `brief-missing-path`
+  also gives exit 3. The original wording was: exit 3 when any finding's kind is one of the first three,
   or `strict` and any `brief-missing-path`.
 - `render_analyze(result)` → text: one line per finding `analyze: <task> <kind> -- <detail>`,
   then per-task path summaries for non-`exists` states (`analyze: <task> path <p> created-by
@@ -269,9 +273,13 @@ kit under `<tmp>/.claude/kits/fx/TASKS.md` with files created under `<tmp>` so `
 resolves to `<tmp>`. (Fixture-only paths below are written without backticks on purpose, so
 this kit's own `analyze` does not list them.) Cases: (1) sound kit → exit 0, no findings,
 every path `exists`; (2) a verify naming a script absent from the temp root (say
-bin/missing.py) → `verify-missing-path`, exit 3; (3) a verify whose first word is
-no-such-binary-xyz → `verify-missing-executable`; (4) a `Verify:` + bare-fence block →
-`verify-unparseable` with the hint; (5) T2's verify names tests/test_new.py, which T1's brief
+bin/missing.py) → `verify-missing-path`, exit 0 non-strict and 3 with `strict=True` (D3's fourth
+amendment); (3) a verify whose first word is
+no-such-binary-xyz → `verify-missing-executable`; (4) a block that `kit_verify_hook` reads
+but `_extract_verify` does not (a `**Verify:**` marker + a fence, or a `- Verify:` line
+carrying an inline backticked command) →
+`verify-unparseable` with the hint, and a plain `Verify:` line + bare fence →
+`verify-unparseable` without it (corrected during T4; see R4); (5) T2's verify names tests/test_new.py, which T1's brief
 says it creates ("new " before the backticked path in the FIXTURE), and T2 depends on T1 →
 state `created-by` with `by == "T1"`, exit 0; (6) a brief naming docs/nowhere.md →
 `brief-missing-path`, exit 0 non-strict and 3 with `strict=True`; (7) heredoc body and `$(…)`
@@ -279,18 +287,122 @@ content are not tokenized (a verify with `python3 - <<'PY'` whose body mentions 
 and `cd "$(git rev-parse --show-toplevel)"`, both sound); (8) `-m unittest tests.test_x` maps
 to tests/test_x.py; `discover -s tests -p 'test_x.py'` maps to the same; (9) a task's own verify naming
 the file its own brief says it creates is `created-by` self; (10) mutation: delete the file
-from case 1 → exit flips to 3 (`verify-missing-path`); (11) the never-runs assertion above;
+from case 1 → a `verify-missing-path` finding appears, and the exit flips to 3 under `strict=True`; (11) the never-runs assertion above;
 (11a) the D3 amendment: a verify `git log -1 --format=%s | grep -qE '^(feat|fix|docs)\(x\): y$'`
 and a verify `test "$(git branch --show-current)" = feat/some-branch` are both sound (no
 missing executable for the quoted alternatives, no path check on `test` operands), while an
-unquoted `foo | no-such-binary-xyz` still yields `verify-missing-executable`;
+unquoted `foo | no-such-binary-xyz` still yields `verify-missing-executable`; (11b) PLAN D17(a),
+exploration-shaped: a three-task spike kit whose verifies are `true`, `python3 -c "print(1)"`
+and `test -n "$(ls)"`, and whose briefs say "new" before the backticked files they create
+(spike/notes.md and similar, absent from the temp root), → exit 0 with no finding, and the
+same holds when a fourth spike task's verify is `python3 -c "open('spike/x.json').read()"`
+with spike/x.json named by no brief; (11c) D3's second amendment, in a temp root with only
+README.md: `grep -q '/dashboard/' README.md`, `git show HEAD:docs/x.md`,
+`env MODE=a/b true`, `[[ -f spike/a.md ]] && : && true`, `source /dev/null`, and
+`mkdir -p build && echo hi > build/r.txt && cat build/r.txt` each give no finding. Negative
+control: an unquoted `python3 bin/missing.py` stays flagged as in case (2) (the old control
+`cat docs/nowhere.md` is advisory after the third amendment; see (11d));
+(11d) D3's third amendment. Each of these is exit 0 in a temp root holding README.md, x.py and
+sub/run.sh:
+  - `git diff --stat origin/main`
+  - `sed -i s/a/b/ README.md`
+  - `python3 x.py --out build/report.json`
+  - `rm -rf /tmp/zz-nothing`
+  - `T=$(mktemp -d); trap 'rm -rf "$T"' EXIT; true`
+  - a multi-line `case "$X" in` … `esac` block
+  - a function defined and then called
+  - `[[ -f README.md && -d /tmp ]]`
+  - `cd sub && ./run.sh`
+
+  `cat docs/nowhere.md` is also exit 0, with a `path … missing` summary line. A spike brief
+"Implement" before a backticked spike/run.py, with verify `python3 spike/run.py`, is exit 0.
+These still give a `verify-missing-path` finding (exit 3 under `strict=True`; a warning with exit 0
+non-strict since D3's fourth amendment):
+  - the fixture command word ./bin/nope.sh (absent)
+  - `cd /path/to/nowhere && true`
+  - `python3 zz.py` when zz.py is absent
+  - `python3 -m unittest tests.test_nope` when tests/ exists
+  - a verify `git add nothere/x.py && python3 nothere/x.py` whose brief names nothing (the
+    verify's own words never create)
+
+  Where an existing test, the test-author's included, asserts a finding the third amendment
+removes, change that assertion to the amended behaviour and list each change in the report. Do
+not delete the test. Case (10)'s deleted file must be in a blocking position;
+(11e) D3's fourth amendment. Each of these gives exit 0 and no refusing `verify-missing-executable`.
+Since the fifth amendment, the `source`, `pip install` lines give it as a warning:
+  - `exec 2>&1; true`
+  - `exec 3<README.md`
+  - `2>/dev/null true`
+  - `arr=(a b c); echo ${arr[@]}`
+  - `source /dev/null && myfunc`
+  - `pip install foo && foo`
+  - `cc -o build/app x.c && build/app` (a `verify-missing-path` warning, exit 0)
+  - `cd nodir 2>/dev/null || true` (a warning, exit 0)
+  - a spike brief "Prototype" before a backticked spike/run.py with verify
+    `python3 spike/run.py` (warnings, exit 0)
+
+`no-such-binary-xyz` and `x | no-such-binary-xyz` still give exit 3. A one-line verify of
+3,000,000 characters completes within 10 seconds, and so does the same line inside an
+unterminated single quote. `exit_if_unsound_kit` returns without exiting on a kit whose only
+findings are `verify-missing-path`, and prints them. Since the seventh amendment, it also
+returns when the only findings are `verify-missing-executable`, or when a `verify-unparseable`
+is on a `done` or `blocked` task. Where an existing test asserts exit 3 for a
+`verify-missing-path`, change it to assert the finding plus exit 0 non-strict and exit 3 strict,
+and list each change;
+(11f) D3's fifth amendment. Each of these gives a `verify-missing-executable` WARNING with
+exit 0 non-strict and exit 3 under `strict=True`:
+  - a function `main()` with its brace on the next line, calling a helper defined later
+  - `if true; then g() { :; }; fi; g`
+  - `foo ( ) { echo; }` then `foo`
+  - `f() { case $1 in a) return 0;; *) return 1;; esac; }` then `f a`
+  - `x='a;b'; echo ${x%%;*}`
+  - a `$(cat <<EOF …)` substitution
+  - `export PATH="$PWD/bin:$PATH"` then `mytool --help`
+  - `npm i -g typescript && tsc --version`
+
+  A verify with no such feature still refuses: `no-such-binary-xyz`, `true && no-such-binary-xyz`,
+`x | no-such-binary-xyz`, and a two-line `cd sub` / `no-such-binary-xyz` all give exit 3.
+`V=3; python${V} -c 'print(1)'` and `python$(echo 3) -c 'print(1)'` give no finding at all. A
+verify of 100,000 nested `{ ` groups completes within 10 seconds, and so does a TASKS.md of 3,000
+unparseable tasks. Where an existing test asserts exit 3 for a missing executable in a verify
+that uses one of these features, change it to the warning behaviour and list each change;
+(11g) D3's sixth amendment.
+  - Exit 0 non-strict:
+    - `exec {fd}>"$TMPDIR/x"` then `true`, and `exec {fd}>&-`;
+    - a two-line `[[ -n "$HOME" &&` / `-d . ]] && true`;
+    - a two-line `(( 1 +` / `2 )) && true`;
+    - `for ((i=0;` / `i<2; i++)); do :; done`;
+    - `command -v nosuchzz >/dev/null && nosuchzz --version` (a warning);
+    - `nosuchzz 2>/dev/null || true` (a warning).
+  - An empty `**Verify.**` fence gives `verify-unparseable`.
+  - `exit_if_unsound_kit` returns on a kit whose only refusing finding is on a `done` task, and
+    still prints it. The same finding on a `pending` or `blocked` task exits 3.
+  - A simple `no-such-binary-xyz` still gives exit 3. This was written before the seventh
+    amendment; see (11h).
+(11h) D3's seventh amendment.
+  - A simple `no-such-binary-xyz`, `true && no-such-binary-xyz`,
+    `[ -n "$GITHUB_ACTIONS" ] && nosuchtool_q annotate; true`, and `true; exit 0; nosuchtool_q`
+    each give a `verify-missing-executable` finding, with exit 0 non-strict and exit 3 under
+    `strict=True`.
+  - `shopt -s extglob` then `echo @(a|b); true` gives no finding.
+  - An empty fence still gives exit 3.
+  - `exit_if_unsound_kit` exits 3 only for a `verify-unparseable` on a `pending` or
+    `in-progress` task.
+  - A 1,000-task `depends:` chain, each brief creating and reading the previous task's file,
+    completes within 10 seconds.
+  - `analyze --json` on a kit whose JSON exceeds 64 KB, with its stdout closed early, exits
+    with no traceback on stderr.
+  - Every existing assertion of a non-strict exit 3 for a `verify-missing-executable` flips to
+    the finding plus exit 0 non-strict and exit 3 strict. Change each one, list each change,
+    and delete none.
 (12) the kit dir's bytes and `os.listdir` are unchanged after every call; (13) CLI: `--json`
 parses and `exit` matches the process return; an invalid graph returns 2 before any analysis.
 
 **Acceptance.** `python3 bin/kit_contract.py analyze --kit .claude/kits/kit-preflight` exits 0
 on this kit (R8: if it does not, report the finding verbatim and stop — the brief that caused it
 is a kit defect to record, not a heuristic to loosen); `analyze --kit .claude/kits/
-sdd-docs-refresh` exits 3 with `verify-unparseable` and the dialect hint on every task;
+sdd-docs-refresh` exits 3 with `verify-unparseable` on every task and no dialect hint (no
+parser reads its plain `Verify:` line; R4 as corrected during T4);
 `python3 bin/kit_contract.py --help` lists `analyze`; `tests/test_kit_analyze.py` is red before
 (no `analyze_kit`) and green after; `tests/test_kit_contract.py` and `tests/test_kit_graph.py`
 stay green; `git status --porcelain` shows only `bin/kit_contract.py` and the new test file.
@@ -303,7 +415,7 @@ python3 -m unittest discover -s tests -p 'test_kit_analyze.py' -q && python3 -m 
 ### T5 — Every headless driver runs `analyze` before its first dispatch and fails closed
 - id: T5
 - title: Call exit_if_unsound_kit after roster_for_run in the four drivers, with fixture-safe tests
-- status: pending
+- status: done
 - model: sonnet
 - depends: T4
 - evidence: red-green
@@ -316,28 +428,41 @@ T4) with a `DriverPreflightTests` class.
    `exit_if_unsound_kit = _CONTRACT.exit_if_unsound_kit`.
 2. In each driver's `cmd_run`, immediately after the `roster_for_run(...)` call (claude
    ~line 879, copilot ~1035, codex ~1435, cursor ~208 — anchors, re-grep for
-   `roster_for_run(plan_text`), insert `exit_if_unsound_kit(kit, tasks)` — before any
+   `roster_for_run(plan_text`), insert `exit_if_unsound_kit(kit, tasks, selected=args.task)`
+   (PLAN D5's amendment during T5; first written `exit_if_unsound_kit(kit, tasks)`) — before any
    `--dry-run` branch, claim, preamble, or ledger open. Codex's `cmd_run` has already selected
    `task` by then; that is fine — the check is kit-wide and still precedes dispatch. Add a
-   three-line comment stating PLAN D5: static, free, fail closed, no opt-out, brief-path
-   findings never fail a run.
+   three-line comment stating PLAN D5: static, free, fail closed, no opt-out, and only an
+   unparseable verify on a task still to run fails a run (D3's seventh amendment).
 3. `tests/test_kit_analyze.py::DriverPreflightTests`: for each of the four drivers, build a
-   fixture kit in a temp dir whose single pending task's verify names a missing script, and run
+   fixture kit in a temp dir whose single pending task's `**Verify.**` fence is empty (D3's
+   seventh amendment: only an unparseable verify refuses), and run
    the driver's `run` entry with `--dry-run` (every driver spawns nothing under it) in a
    subprocess with a temp HOME and temp `--attempt-store` where the driver accepts one (read
    each driver's `--help`; copy the invocation shape from that driver's own test file, e.g.
-   `tests/test_claude_execute.py`); assert return code 3 and `verify-missing-path` in stderr,
+   `tests/test_claude_execute.py`); assert return code 3 and `verify-unparseable` in stderr,
    and that no file under the kit dir changed. Add the positive twin: the same fixture with the
-   script present under the temp root returns the driver's normal dry-run code.
-4. R1: run the four driver test files. A failure whose message is `verify-missing-path` or
-   `verify-missing-executable` means a FIXTURE names a path it never created: fix the fixture
-   (create the file under the temp root, or use a path-free command such as `true`) — never
-   the heuristic. If more than five fixtures need it, stop and report with the list.
+   verify `true` returns the driver's normal dry-run code. Add the warning twins: a verify
+   `no-such-binary-xyz` and a verify `python3 bin/missing.py` each return the normal dry-run
+   code, with `verify-missing-executable` or `verify-missing-path` in stderr.
+4. R1: run the four driver test files. A failure whose message is `verify-unparseable` means
+   a FIXTURE's verify cannot be read: fix the fixture, never the heuristic. If more than five fixtures need it, stop and report with the list.
 
 Gotcha: `tests/test_kit_contract.py::test_no_driver_redefines_a_name_the_contract_owns` — the
-re-export is an assignment, not a `def`; do not define a local function.
+re-export is an assignment, not a `def`; do not define a local function. Second gotcha
+(D3's sixth amendment): `exit_if_unsound_kit` decides the refusal itself. It returns without
+exiting when the only refusing finding is on a `done` or `blocked` task (seventh amendment),
+even though `result["exit"]` is 3 then. Call it for its effect and never branch on its returned `exit`.
 
-**Acceptance.** `grep -n "exit_if_unsound_kit(kit, tasks)" bin/claude_execute.py
+Amendment during T5 (PLAN D5): add `selected=None` to `exit_if_unsound_kit` in
+`bin/kit_contract.py`. It refuses a `verify-unparseable` on the task whose id is `selected`,
+whatever that task's status, as well as on every `pending`/`in-progress` task. `DriverPreflight*`
+tests gain three cases for each driver:
+  - `--task T1 --rerun` on a `done` T1 with an empty fence exits 3;
+  - `--task T1` on a `blocked` T1 with an empty fence exits 3;
+  - a plain run of a pending T2 beside that `done` T1 still exits 0.
+
+**Acceptance.** `grep -n "exit_if_unsound_kit(kit, tasks, selected=args.task)" bin/claude_execute.py
 bin/copilot_execute.py bin/codex_execute.py bin/cursor_execute.py` shows exactly one hit per
 driver, each within 12 lines after `roster_for_run(`; the new tests are red before (the drivers
 dry-run successfully on an unsound kit) and green after; all four driver test files pass;
@@ -347,13 +472,13 @@ report).
 
 **Verify.**
 ```bash
-python3 -m unittest discover -s tests -p 'test_kit_analyze.py' -q && python3 -m unittest discover -s tests -p 'test_kit_contract.py' -q && python3 -m unittest discover -s tests -p 'test_claude_execute.py' -q && python3 -m unittest discover -s tests -p 'test_copilot_execute.py' -q && python3 -m unittest discover -s tests -p 'test_codex_execute.py' -q && python3 -m unittest discover -s tests -p 'test_cursor_execute.py' -q && test "$(grep -l 'exit_if_unsound_kit(kit, tasks)' bin/claude_execute.py bin/copilot_execute.py bin/codex_execute.py bin/cursor_execute.py | wc -l | tr -d ' ')" = 4
+python3 -m unittest discover -s tests -p 'test_kit_analyze.py' -q && python3 -m unittest discover -s tests -p 'test_kit_contract.py' -q && python3 -m unittest discover -s tests -p 'test_claude_execute.py' -q && python3 -m unittest discover -s tests -p 'test_copilot_execute.py' -q && python3 -m unittest discover -s tests -p 'test_codex_execute.py' -q && python3 -m unittest discover -s tests -p 'test_cursor_execute.py' -q && test "$(grep -l 'exit_if_unsound_kit(kit, tasks, selected=args.task)' bin/claude_execute.py bin/copilot_execute.py bin/codex_execute.py bin/cursor_execute.py | wc -l | tr -d ' ')" = 4
 ```
 
 ### T6 — Commit Phase 2 at a green boundary
 - id: T6
 - title: Commit analyze and the driver preflight on feat/route-experiment
-- status: pending
+- status: done
 - model: haiku
 - depends: T5
 - evidence: red-green
@@ -368,9 +493,22 @@ kit agents, never `git add -A`, branch `feat/route-experiment`, never push. Subj
 the convention: why (the ledger's most frequent kinds were caught after dispatches were spent;
 cite that `python3 bin/routing_scorecard.py --history` prints the current kinds — never type
 counts), what proves it (`tests/test_kit_analyze.py`: the never-runs assertion, the mutation
-flip, the driver fail-closed cases), and the deliberate limits (brief paths are advice unless
-`--strict`; line anchors are not checked; the other verify dialect is reported, not read). End
+flip, the driver fail-closed cases), and the deliberate limits (every finding but an
+unparseable verify is advice unless `--strict`, by D3's seventh amendment, which this body
+names; line anchors are not checked; the other verify dialect is reported, not read). End
 with the mandated trailer.
+
+Carried from the Phase 1 review (finding 3; the orchestrator added this before T6). The body
+must also correct commit 6613705 by name, saying what its body overclaimed. Three claims were
+wrong:
+  - `--roles` never calls `role_quality_stats` and never renders defect kinds;
+  - no test compares `lessons_promote`'s fold with the scorecard aggregate;
+  - the write guard re-imports `routing_scorecard`, not `lessons_promote`.
+
+State each correction plainly. Do not write a test or code change for them. The body also
+names the user-approved amendments made during this phase: D3's seven dated amendments, and
+D5's amendment during T5 (the `selected=args.task` gate). It also says that codex's older
+empty-verify guard refuses a selected task with exit 2 before the gate runs.
 
 **Acceptance.** As T3: subject in convention, prose body, sources clean after the commit,
 branch `feat/route-experiment`, nothing pushed.
@@ -430,6 +568,20 @@ test "$(git branch --show-current)" = feat/route-experiment && git log -1 --form
 Gotcha: `TaskRun.__init__` defaults `workspace` to `Path.cwd()`; always pass the repo root.
 `recorded_outcome_result` may return something other than a bare string — read it.
 
+Carried from the Phase 2 review (the orchestrator added this before T7). Both changes are in
+`bin/kit_contract.py`, which this task edits anyway:
+  - Finding 4: `exit_if_unsound_kit` returns at once, without analysing, when
+    `validate_graph(tasks)` reports findings. The driver's own graph check then gives its exit
+    2. Today claude and cursor run the gate before their graph check, so a duplicate id plus an
+    empty fence exits 3 with no graph finding. Add a test for both drivers' `--dry-run`: a
+    duplicate id plus an empty fence must exit 2.
+  - Finding 6: correct the stale text. The analyze section's header comment (around
+    `bin/kit_contract.py:2372-2382`) says "amended four times" and that missing executables give
+    exit 3. The `--strict` help names missing paths only, but strict also fails on a missing
+    executable. `tests/test_kit_analyze.py:13` says "three verify findings fail", and `:1357`
+    says "40 characters".
+  - Neither change alters the analyze findings.
+
 **Acceptance.** `python3 bin/kit_contract.py --help` lists `accept`; the test file is red
 before (no `accept_task`) and green after; `tests/test_kit_contract.py`,
 `tests/test_attempt_ledger.py` pass; `git status --porcelain` shows only `bin/kit_contract.py`
@@ -457,7 +609,10 @@ python3 -m unittest discover -s tests -p 'test_kit_evidence.py' -q && python3 -m
    run_id=None, record=True, confinement=None) -> dict` implementing D7 exactly: done tasks
    only; the static verify check from `analyze_kit` first (reuse its per-task `verify` entry —
    call `analyze_kit` once and read `result["verify"][tid]`; do not re-implement the
-   heuristics) → `unrunnable` when unparseable or any executable/path is `missing`; otherwise
+   heuristics) → `unrunnable` only when the task has a `verify-unparseable` finding in
+   `result["findings"]`. That is D7 as amended after the Phase 2 review; never read it from the
+   `verify` entry states, which record non-blocking arguments as `missing`. Each of the task's
+   `verify-missing-*` findings rides along in its report as `warnings`; otherwise
    run the stripped verify text through `runner(cmd) -> (rc, output)` ONCE per distinct text
    (dict keyed by the stripped text; later tasks get `shared_with`); `holds`/`drifted` by rc;
    `acceptance` from the ledger's latest acceptance `acceptance_ref` (use
@@ -484,8 +639,10 @@ python3 -m unittest discover -s tests -p 'test_kit_evidence.py' -q && python3 -m
 4. Tests (`DriftTests`, injected runner, temp kit + temp store, same git-initialised temp root
    as T7's tests): (1) three done tasks, two sharing one verify text, runner returns rc 0 →
    every `holds`, runner called exactly twice, `shared_with` set on the second; (2) runner
-   returns rc 1 for one text → that task `drifted`, exit 3; (3) a done task whose verify names
-   a missing script → `unrunnable`, runner never called for it; (4) a pending task is absent
+   returns rc 1 for one text → that task `drifted`, exit 3; (3) a done task whose verify fence
+   is empty → `unrunnable`, runner never called for it. A done task whose verify names a missing
+   script IS run, and its `warnings` list the `verify-missing-path` (D7 as amended). A done
+   task whose verify is `git diff --stat origin/main` is run, not `unrunnable`; (4) a pending task is absent
    from `tasks`; (5) acceptance: after an `accept`, `unchanged`; edit the fixture TASKS.md's
    acceptance text (in the temp kit — it is a fixture) and re-run → `changed`; with no
    acceptance recorded → `unknown`; (6) the ledger holds one `evidence.drift` event per
@@ -533,6 +690,17 @@ never-1 exit, the no-status-write grep, the no-backfill flag refusals), and the 
 limits (`drift` reports; the operator decides what is superseded; finished kits stay
 `unknown` by design). End with the mandated trailer.
 
+Carried from the Phase 2 review (finding 5). The body also corrects commit 1d23d03 by name, on
+two points:
+  - (a) Its "the mutation test … asserts the exit moves from 0 to 3" holds only under
+    `--strict`. Without it, the deletion adds a `verify-missing-path` warning and the exit stays
+    0.
+  - (b) Its "the other verify dialect … is reported as unparseable with a hint" holds only for
+    the dialects `kit_verify_hook` reads. A plain `Verify:` line plus a fence, the dialect of
+    sdd-docs-refresh among others, gets `verify-unparseable` with no hint.
+
+It also names D7's amendment after the Phase 2 review: `unrunnable` means only unparseable.
+
 **Acceptance.** As T3.
 
 **Verify.**
@@ -557,20 +725,25 @@ test "$(git branch --show-current)" = feat/route-experiment && git log -1 --form
 1. `skills/execute/SKILL.md`, section "The loop", the paragraph that begins "Before the first
    dispatch, run `python3 ${CLAUDE_PLUGIN_ROOT}/bin/kit_contract.py graph …`": after the roster
    sentence, append (≤ 120 words): run `python3 ${CLAUDE_PLUGIN_ROOT}/bin/kit_contract.py
-   analyze --kit .claude/kits/<slug>`; exit 3 names a verify command that cannot run or a path
-   no task creates — fix TASKS.md, or record the `defect:` (with `when=pre-run`) and stop; exit
-   0 may still list brief paths it could not find — read them. Then, when NOTES.md holds no
-   `reviewer: P0` line yet, dispatch the spec review per `references/spec-review.md` and
-   adjudicate it before step 1 of the first task. Keep every existing sentence of that
+   analyze --kit .claude/kits/<slug>`; exit 3 names a verify the drivers cannot read — fix
+   TASKS.md, or record the `defect:` (with `when=pre-run`) and stop; exit 0
+   may still list missing tools and paths — the spec review adjudicates them. Then, unless `roster` reported
+   `workflow=direct` (PLAN D17(b): that kit opted out of independent review), and when NOTES.md
+   holds no `reviewer: P0` line yet, dispatch the spec review per `references/spec-review.md`
+   and adjudicate it before step 1 of the first task. Keep every existing sentence of that
    paragraph verbatim (test-pinned; `grep -rF` before touching any line).
 2. New `skills/execute/references/spec-review.md` — the whole of D4 made operational, for the
    orchestrator: when it runs (once per kit, before the first dispatch, only when no
-   `reviewer: P0` line exists); who runs it (the kit's `<slug>-reviewer` agent, model opus,
+   `reviewer: P0` line exists, and never under `workflow=direct` — then the loop writes one
+   NOTES.md prose line saying the P0 review was skipped because the kit declared `direct`); who runs it (the kit's `<slug>-reviewer` agent, model opus,
    read-only tools; fall back to the Agent tool on opus when the kit has none, and say so);
    the prompt to pass VERBATIM (a fenced block: read PLAN.md's Goal/"done" and Constraints,
-   GUARDRAILS.md, and every TASKS.md task's acceptance and verify; return only findings of two
+   GUARDRAILS.md, every TASKS.md task's acceptance and verify, and the `analyze` text output
+   the orchestrator pastes in below the prompt; return only findings of three
    sorts — acceptance clauses that cannot all hold, across a task or between a task and a fence
-   or between a verify and its acceptance; and "done" items no task's acceptance covers — each
+   or between a verify and its acceptance; "done" items no task's acceptance covers; and
+   `analyze` warnings the reviewer judges real defects (PLAN D4 as amended after the Phase 2
+   review) — each
    with file:line and the defect kind from `ledger.md`'s sanctioned list; no style remarks, no
    design opinions; count findings as distinct claims); adjudication (confirmed only when it
    produces a TASKS.md/PLAN.md edit or a stop-and-report); recording (`reviewer: P0 model=opus
@@ -580,7 +753,9 @@ test "$(git branch --show-current)" = feat/route-experiment && git log -1 --form
    else stop and report to the user before any dispatch). Also state how `analyze`'s own
    findings become ledger lines: a confirmed `verify-missing-path`/`verify-missing-executable`/
    `verify-unparseable` is `kind=unrunnable-verify when=pre-run`; a confirmed
-   `brief-missing-path` is `kind=unspecified-path when=pre-run`.
+   `brief-missing-path` is `kind=unspecified-path when=pre-run`. State plainly that only the
+   interactive loop adjudicates `analyze`'s warnings. The headless drivers and
+   `workflow: direct` kits print them, and nothing judges them (PLAN D4 as amended).
 3. "References — read when" list: add `- references/spec-review.md — read when a kit has no
    reviewer: P0 line yet: the pre-dispatch spec review's prompt, adjudication, and recording.`
    (the test requires the literal words "read when" on the line).
@@ -591,8 +766,13 @@ test "$(git branch --show-current)" = feat/route-experiment && git log -1 --form
    each task in order"; (b) it names `references/spec-review.md` with "read when"; (c) it
    mentions `reviewer: P0`; (d) the reference exists, contains a fenced prompt, names
    `PLAN.md`, `TASKS.md`, `contradictory-acceptance`, `when=pre-run`, and the two `analyze`
-   mappings above; (e) the reference does not mention `docs-site`. Do not pre-write T11's
-   `accept` assertion — T11 adds it.
+   mappings above; (e) the reference does not mention `docs-site`; (f) SKILL.md or the
+   reference states the `workflow=direct` skip (D17(b)); (g) PLAN A4, carried from the Phase 1
+   review: a fixture NOTES.md text holding a `reviewer: P0 model=opus findings=2 confirmed=1`
+   line and one `defect: T1 kind=stale-pin when=pre-run` line, run through
+   `bin/routing_scorecard.py`'s own parsing and aggregation functions (load it by file path as
+   the sibling tests do), counts the P0 line as a review event and reports `pre_run == 1`. Do
+   not pre-write T11's `accept` assertion — T11 adds it.
 6. `python3 bin/docs_build.py build`; stage sources and generated pages together.
 
 **Acceptance.** The new test is red before (no reference file) and green after;
@@ -700,6 +880,30 @@ its byte ceiling).
    if it reports drift, stop and report — do not build).
 6. One test assertion: `docs/sdd/guide.md` no longer contains "None is built." and does contain
    "kit-preflight".
+7. PLAN D17(c), exploration: in `docs/sdd/guide.md` Part 1, section "When not to use it", add
+   one vendor-neutral sentence (Part 1 names no polytropos feature): when the outcome is not
+   known yet, explore first and write the spec from what the exploration found. In Part 2,
+   section "The failure modes, answered", add one paragraph after the table, "Exploring before
+   a kit": a single exploratory task needs no kit (`/polytropos:route`); try-cheap-with-a-check
+   is `/polytropos:escalate`; a kit can declare a `scout`; a low-ceremony kit declares
+   `workflow: direct`, which skips independent review and the P0 spec review; `analyze` refuses
+   only a verify the drivers cannot read (D3's seventh amendment), and every other finding is
+   a printed warning, so spike checks like `true` or `python3 spike/run.py` pass; and a finished spike
+   becomes the input to `/polytropos:architect`. No new heading. State nothing the skills do not
+   (read `skills/route/SKILL.md` and `skills/escalate/SKILL.md` before writing their clauses).
+   Then `python3 docs/sdd/render.py build`.
+8. Carried from the Phase 1 review (finding 9): `docs/SPEC-DRIVEN.md`'s sentence that "coined
+   synonyms are folded" overstates — only the three named synonyms fold, and any other coined
+   kind is flagged `unsanctioned`; and `skills/execute/references/ledger.md`'s folds sentence
+   names the folds without their targets — add each target (`incomplete-acceptance →
+   underivable-requirement`, `process-guardrail → stale-plan-decision`, `unsafe-parallel-marking
+   → contradictory-acceptance`). Additive in ledger.md; `grep -rF` the sentence across `tests/`
+   first, and keep `tests/test_defect_vocabulary.py` green.
+9. Added by the user's request mid-run: `docs/sdd/pipelines.html` (hand-written, two flow
+   diagrams) marks `analyze`, the P0 spec review, `accept` and `drift` with a "being built"
+   badge. Once T4–T11 have landed them, remove each of those badges and their legend entry
+   (keep the boxes and wording; adjust "being built now" in the comparison table to say the
+   steps exist). `tests/test_sdd_docs.py::PipelinesPageTests` must stay green.
 
 **Acceptance.** The six docs state only what the code does (every command named exists in
 `python3 bin/kit_contract.py --help`); `docs_build.py check`, `release_gate.py check`,

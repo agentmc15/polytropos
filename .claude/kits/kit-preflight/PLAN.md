@@ -26,7 +26,9 @@ A — pre-run spec check
   executes a verify command, never spawns a CLI, never writes** — proven by a test whose
   injected runner asserts it was never called and whose fixture kit is byte-identical afterwards
   (`git status --porcelain` empty, TASKS.md bytes unchanged). Exit 0 = sound, 3 = findings, 2 =
-  invalid graph (reusing `graph`'s verdict, never a second validator).
+  invalid graph (reusing `graph`'s verdict, never a second validator). *Amended 2026-10-24
+  (D3's seventh amendment, user-approved during T4): non-strict exit 3 means a
+  `verify-unparseable`; every other finding gives exit 3 only under `--strict`.*
 - A2. For every task it reports, machine-readably (`--json`) and as text: (i) each
   repo-relative path the brief names in backticks, classified `exists | created-by-<task-id> |
   missing` — "created-by" is a disclosed resolution, never a silent pass; (ii) the verify
@@ -36,7 +38,9 @@ A — pre-run spec check
   `tests/test_y.py`, `-m unittest tests.test_y` → `tests/test_y.py`) exists or is created by a
   task this kit declares before it in dependency order. Proven red→green on a temp fixture kit
   with one missing script, one unparseable verify, one verify naming a file a later task
-  creates; mutation-proven: deleting the fixture file flips exit 0 → 3.
+  creates; mutation-proven: deleting the fixture file flips exit 0 → 3. *Amended 2026-10-24
+  (D3's seventh amendment): the flip holds under `--strict`; without it, the deletion adds a
+  `verify-missing-path` warning and the exit stays 0.*
 - A3. The interactive execute skill (`skills/execute/SKILL.md`) runs `analyze` right after
   `graph` and `roster`, before the first dispatch, and then dispatches ONE fresh-context **spec
   review** — PLAN.md against TASKS.md for contradictory acceptance and goals no task covers —
@@ -131,7 +135,9 @@ task's status through `kit_verify_hook.py` is corrected to what the skill actual
   `routing_scorecard.py` for C) and is re-exported, never duplicated into a driver. Headless
   drivers pick up only what the shared CLI gives them: per the approved decision on Q4, all
   four call the static `analyze` through one shared helper before their first dispatch and fail
-  closed on exit 3; none runs the P0 review.
+  closed on exit 3; none runs the P0 review. *Amended 2026-10-24: the gate fails closed only for
+  a `verify-unparseable` on a task still to run or on the `--task` target (D3's seventh
+  amendment, D5's amendment during T5).*
 - **Non-Claude bundles (`copilot/`, `codex/`, `cursor/`) are not edited by hand**; only
   generators' regenerated mirrors may change. Capability rows in
   `primitives/harness-capabilities.json` are not flipped from `unknown` by this kit.
@@ -208,6 +214,200 @@ regex, and `test … = feat/route-experiment`) report missing executables and a 
 T4's own acceptance could not hold. The amendment makes the reading quote-aware and exempts
 `test`/`[` operands. It does not narrow what counts as a missing script, executable or path.
 
+*D3 amended a second time 2026-10-24, during T4, by the user's decision on the implementer's
+survey.* Read against every committed kit, D3 still refused ordinary verifies. Under D5 a
+refusal has no opt-out, and D17(a) promises that a spike passes, so five more rules apply.
+(1) `[[`, `source`, `.` and `:` join the builtin first words, and the operands of `[[` are
+values, like those of `test` and `[`. (2) An argument written with quotes in the verify source
+is a value and is never path-checked. This covers grep patterns such as `'/dashboard/'` and the
+code after `python3 -c`. The `-m` and `-p` mappings above still read quoted values. (3) An
+argument word with `=` before any `/` (`MODE=a/b`) is a value, by the same rule as a first-word
+assignment. (4) A token with `:` before its first `/` (`HEAD:docs/x.md`) is a git object name,
+not a path. (5) A path that an earlier simple command in the same verify writes counts as
+`created-by` the task itself. "Writes" means the target of a `>` or `>>`, or an operand of
+`tee`, `touch` or `mkdir`. This amendment does narrow D3: a script path passed in quotes
+(`python3 "bin/x.py"`) is no longer checked. The first word, unquoted arguments, and the
+`-m`/`-p` mappings still are. The user chose this trade. A false refusal blocks every driver
+with no way around it, while a missed quoted path still fails when the verify runs.
+
+*D3 amended a third time 2026-10-24, during T4, by the user's decision on the red-team's
+findings ("block only on what can't start").* Even after the second amendment, the generic rule
+"any argument containing `/` must exist" refused runnable verifies: git refs (`origin/main`),
+`sed s/a/b/`, output and fixture-dir arguments, relative paths after `cd`, `trap`, `case`, and
+the commonest spike shape, "Implement `spike/run.py`" with `python3 spike/run.py`. A refusal has
+no opt-out under D5, so a path finding now blocks only where a missing path stops the verify
+from starting.
+(1) **Blocking positions.** `verify-missing-path` and `verify-missing-executable` arise only in
+these places:
+  - the command word of a simple command (a missing tool, or a missing path such as `./bin/x.sh`);
+  - the script operand of an interpreter (`python`, `python3`, `bash`, `sh`, `zsh`, `node`, `ruby`,
+    `perl`). This is the first argument not starting with `-`, unless `-c`, `-m` or `-` comes
+    first. It is checked when it contains `/` or ends in `.py .sh .js .mjs .rb .pl`;
+  - the `-m` and `discover -s/-p` test mappings. A dotted module maps only when its first segment
+    is a directory under the repo root, so stdlib modules such as `json.tool` are never mapped;
+  - the operand of a literal `cd`.
+
+  Every other argument is still resolved and recorded in `verify.paths` with its state. A
+  `missing` one prints a path summary line and is never a finding.
+(2) **Builtins.** Every bash builtin and reserved word counts as a builtin first word (`trap`,
+`exec`, `eval`, `local`, `declare`, `return`, `shift`, `unset`, `case`, `esac`, `function`,
+`select`, `time`, `pushd`, `popd` and the rest of bash's list). A `((…))` command is not
+checked. Lines from `case` through `esac` are not checked. A function the verify defines
+(`f() {` or `function f`) is defined for later command words.
+(3) **Inside `[[ … ]]`.** `&&`, `||`, `<` and `>` are test operators, not separators or
+redirects. Nothing inside the brackets is checked.
+(4) **Paths after `cd`.** After a literal `cd D`, later relative paths resolve against `D`. After
+a dynamic `cd` (one carrying `$` or a substitution) or a bare `cd`/`cd -`, relative paths are not
+checked for the rest of the verify. More writers count for rule 5 of the second amendment: the
+last operand of `cp`, `mv`, `ln` and `install`, and the directory operand of `git init`,
+`git clone` and `git worktree add`.
+(5) **Creation claims.** A creation claim is read from the task block before its `**Verify.**`
+marker only, meaning the brief and the acceptance. The verify's own words never claim to create
+a path. The creation words are `new`, `create`, `add`, `write`, `implement`, `build`, `make`,
+`generate`, `scaffold`, `author`, `draft`, `introduce`, `produce`, `save`, `emit`, `output`,
+`put`, `extract`, `move`, `rename` and `split`, each with its `-s`/`-ed`/`-ing` forms and the
+irregular `built`, `made` and `written`. The word must end within 80 characters before the path.
+
+This amendment narrows D3 a great deal. A data argument such as `cat docs/nowhere.md` no longer
+blocks, while a missing script, tool or `cd` target still does. It also tightens D3 in two
+places: an interpreter's bare script name (`python3 zz.py`) is now checked, and the verify's own
+words no longer clear a path.
+
+*D3 and D5 amended a fourth time 2026-10-24, during T4, by the user's decision after the second
+red-team round ("only sure things block").* The second round still found refusals of verifies
+that start fine: `make && ./app`, a guarded `cd x || true`, spike briefs that say "Prototype",
+`exec 2>&1`, and `arr=(a b c)`. Each red-team round over a static shell reader finds more, and
+under D5 each one would refuse a kit. So exit 3 now means only what `analyze` knows for sure.
+(1) **What blocks.** Non-strict exit 3 comes only from `verify-unparseable` (the drivers cannot
+read the verify) and `verify-missing-executable` (a bare command word that is not on `PATH`,
+not a builtin or reserved word, and not a function the verify defines). An unknown bare word does
+not block after `source`, `.` or `eval` in the same verify, since the sourced text may define it.
+It also does not block after an earlier command in the same verify carrying the word `install`,
+since that step may put it on `PATH`.
+(2) **What warns.** `verify-missing-path` keeps every position and rule above. Like
+`brief-missing-path`, it is printed, it is never a driver refusal, and it gives exit 3 only
+under `--strict`. The execute skill's P0 spec review (D4) reads these warnings and adjudicates
+them, so a human or a reviewing model with judgement decides whether a missing script is a
+defect.
+(3) **Bugs fixed in the same pass.** These fall short of the plan text, so they are not
+amendments:
+  - a digit right before a redirect operator (`2>&1`, `3<file`) is a file-descriptor number, not
+    a word;
+  - a command made only of redirections is skipped;
+  - `NAME=(…)` is an array assignment;
+  - analysis time grows linearly with the verify's size.
+
+What this gives up: a missing script, `cd` target or test module no longer stops a driver.
+The 72 `cd /path/to/polytropos` placeholders in older kits become warnings, and so does
+`python3 bin/missing.py`. They still fail when the verify runs. They now reach the P0 review
+and the author's `--strict` run instead of a hard refusal.
+
+*D3 amended a fifth time 2026-10-24, during T4, by the user's decision after the third red-team
+round ("block only on simple verifies").* Once only `verify-missing-executable` could refuse a
+kit, the third round's false refusals all came from one guess: is this word really an
+undefined command? Functions defined inside `if`, nested, or with the brace on the next line;
+`${x%%;*}`; a heredoc or `case` inside `$(…)`; and a verify that puts its own tool on PATH each
+broke that guess.
+(1) **Simple verifies.** A `verify-missing-executable` refuses only in a verify that uses none
+of the following features, anywhere in its fence:
+  - a function definition: the reserved word `function`, or a word followed by `(` `)`;
+  - the reserved word `case`;
+  - an unquoted `${`;
+  - a command substitution (`$(…)` or backticks) that spans lines or contains `<<` or `case`;
+  - an assignment to `PATH`, whether a prefix, plain, or `export`;
+  - `source`, `.` or `eval`;
+  - an install step: a command carrying the word `install`, or any command whose first word
+    is a package manager (`npm`, `pnpm`, `yarn`, `bun`, `pip`, `pip3`, `uv`, `cargo`, `gem`,
+    `brew`, `go`).
+
+  This replaces the fourth amendment's narrower "after `source`/`.`/`eval`/`install`" scope.
+  In a verify that uses any of these, the same finding is printed as a warning. It still gives
+  exit 3 under `--strict`, and the P0 spec review still sees it.
+(2) **Conformance fixes in the same pass.** These bring the code up to the plan text and are
+not amendments:
+  - a command word with `$` anywhere in it is dynamic and is not checked;
+  - analysis stays linear in the size of the verify and of TASKS.md, including nested `{`
+    groups and the per-task dialect hint.
+
+What this gives up: a missing tool in a verify that defines functions, uses `case`, edits PATH
+and so on warns instead of refusing. The verify still fails when it runs. False refusals are now
+bounded by construction instead of by patching: the gate refuses only where the reader models
+every construct in the verify.
+
+*D3 and D5 amended a sixth time 2026-10-24, during T4, by the user's decision after the fourth
+red-team round ("fix and close, with a stop rule").* About 560 verifies turned up two parse
+bugs and one gap.
+(1) **Tool guards.** Two more cases are not refusals:
+  - A tool probe makes the verify non-simple. A tool probe is a command whose word is
+    `command` (with `-v` or `-V`), `type`, `hash` or `which`.
+  - An unknown command word that is the left operand of `||` is a warning. The author expects
+    it may fail, and `x || exit 1` then warns instead of refusing.
+(2) **The drivers check only what they will run.** `exit_if_unsound_kit` exits 3 only for a
+refusing finding on a task whose status is not `done`. Findings on `done` tasks are still
+printed. `analyze` itself still reports every task. So a finished task whose tool is now missing
+never refuses a run of other pending tasks.
+(3) **An empty verify.** A `**Verify.**` fence that is empty or only whitespace is
+`verify-unparseable`. There is nothing to run, and `bin/codex_execute.py` already rejects it.
+This tightens D3, and it is a sure thing.
+(4) **Conformance fixes, not amendments.** `exec {fd}>file` and the other `{name}` redirections
+are redirections, not command words. `[[ … ]]` and `(( … ))` keep their mode across newlines.
+(5) **Stop rule for T4.** One last red-team pass runs. Only a traceback, a hang over 10 seconds,
+an execution or write, or a non-strict exit 3 on a simple verify that bash would run reopens
+T4. Every other finding is recorded in NOTES.md as a follow-up for a later kit, never as
+another round.
+(6) **Silent-case readings accepted under this amendment** (orchestrator, 2026-10-24). Each one
+moves only toward warning. They are written here so the text matches the code:
+  - heredoc delimiters are read as bash reads them;
+  - `alias` and `enable` make a verify non-simple;
+  - a bare `PATH` operand (`read PATH`, `printf -v PATH`) and an assignment to a computed name
+    count as a PATH change;
+  - any word containing `install` or `bootstrap` counts as an install step;
+  - a tool probe inside a command substitution counts as a probe;
+  - every command inside a group (`{ … }`, `( … )`, `if … fi`, a loop) that is the left operand
+    of `||` counts as a left operand.
+
+  The `install`/`bootstrap` reading is wider than the words "carrying the word `install`". It
+  can turn a refusal into a warning in a verify that merely names such a file, and it was
+  accepted knowing that.
+
+*D3 and D5 amended a seventh time 2026-10-24, during T4, by the user's decision after the
+final red-team pass reopened T4 ("only unparseable blocks").* Even a missing tool in a simple
+verify is not a sure failure. Bash may never reach the word: `[ -n "$CI" ] && tool`, code
+after `exit`, the right of `||`. Static reading cannot settle reachability, so this amendment
+stops trying.
+(1) **What blocks.** Non-strict exit 3, and with it every driver refusal, comes only from
+`verify-unparseable`: `_extract_verify` returns None, or the fence is empty or whitespace.
+That needs no guess, because the drivers cannot run what they cannot read.
+(2) **What warns.** `verify-missing-executable` keeps every rule above, including the
+simple-verify guard, whose features stay named in the finding's detail. Like
+`verify-missing-path` and `brief-missing-path`, it is now printed, judged by the P0 spec review,
+and gives exit 3 only under `--strict`.
+(3) **The drivers' gate checks only what they will run.** `exit_if_unsound_kit` exits 3 only
+for a `verify-unparseable` on a task whose status is `pending` or `in-progress`. `done` and
+`blocked` tasks never refuse a run. Their findings are still printed.
+(4) **Fixes in the same pass:**
+  - created-by resolution is linear over a long `depends:` chain;
+  - when the verify runs `shopt -s extglob`, `@(…)`, `+(…)`, `?(…)`, `*(…)` and `!(…)` are each
+    one word, so a `|` inside one is not a pipe;
+  - `analyze` exits quietly with its own code when stdout closes early (`| head`), with no
+    traceback.
+
+What this gives up: a missing tool no longer stops a driver before its first dispatch. The run
+spends that task's dispatch and then fails its verify through the drivers' existing failure
+path, and the P0 review and `--strict` see the warning first. The stop rule of the sixth
+amendment carries over unchanged to the one red-team pass that follows.
+
+*D5 amended 2026-10-24, during T5, by the user's decision on T5's red-team finding ("also check
+the `--task` target").* The seventh amendment's status filter assumed that `done` and `blocked`
+tasks never run. Two driver flags run them on purpose: `--task X --rerun` re-dispatches a `done`
+task, and `--task X` is the drivers' sanctioned retry of a `blocked` one. With the filter, either
+flag dispatched a task whose verify cannot be read. The fix keeps the sixth amendment's principle,
+"the drivers check only what they will run", and checks what will actually run:
+`exit_if_unsound_kit(kit_dir, tasks, out=None, selected=None)` exits 3 for a `verify-unparseable`
+on any `pending` or `in-progress` task, and on the task whose id is `selected`, whatever that
+task's status. Every driver calls it as `exit_if_unsound_kit(kit, tasks, selected=args.task)`.
+Old `done` tasks still never refuse a normal run.
+
 **D4 — The spec review is a `P0` phase review, not a role.** Adding a roster token is a
 contract change in three places; a phase review with token `P0` is already in grammar
 (`parse_reviewers` takes a free-form phase label). The interactive loop dispatches the kit's
@@ -219,7 +419,13 @@ clauses that cannot all hold (across a task, between a task and the fences, betw
 and its acceptance) and "done" items no task's acceptance covers — each cited to file:line, in
 the defect vocabulary. The orchestrator adjudicates, appends `reviewer: P0 model=opus
 findings=<n> confirmed=<n> result=…` and one `defect: <id> kind=<kind> when=pre-run` per
-confirmed defect, and fixes TASKS.md (or stops and reports) before dispatching. Opus because the
+confirmed defect, and fixes TASKS.md (or stops and reports) before dispatching. *Amended
+2026-10-24, after the Phase 2 review, by the user's decision ("feed them to the review").* The
+orchestrator passes `analyze`'s text output into the P0 prompt. The reviewer gets a third sort
+of finding: an `analyze` warning it judges a real defect, recorded as `kind=unrunnable-verify`
+or `kind=unspecified-path` with `when=pre-run`. Only the interactive loop has this adjudicator.
+The headless drivers and `workflow: direct` kits print the warnings, and nothing judges them.
+The plan and the docs say so plainly. Opus because the
 card's reviewer precision on opus is the highest measured of any role (read `python3
 bin/routing_scorecard.py --history`; do not type the number into any file).
 
@@ -231,7 +437,9 @@ existing call). Each of `bin/claude_execute.py`, `bin/copilot_execute.py`,
 `roster_for_run(...)` line — before any `--dry-run` branch, any claim, any preamble — so a
 preview refuses the same way a run would. No opt-out flag: the check is static and free, and a
 kit whose verify cannot run is a kit no dispatch can prove. Brief-path findings are printed and
-never fail a driver run.
+never fail a driver run. Since D3's fourth amendment, the same holds for verify-path findings,
+and since its seventh amendment for missing executables too. Only a `verify-unparseable` on a
+`pending` or `in-progress` task fails a driver run.
 
 **D6 — `accept` is a projection, not an attempt.** `accept_task(kit_dir, task, run_id,
 actor="interactive", store=None, workspace=None, note="")`: requires `task["status"] == "done"`;
@@ -265,6 +473,15 @@ walks every `<kits-dir>/*/TASKS.md` (default `.claude/kits`), one section per ki
 whose TASKS.md fails to parse is reported as `kit: <slug> unparseable -- <reason>` and skipped.
 Nothing in `drift` calls `project_status`, `set_status`, `append_run_note`, or writes under the
 kit dir; the test asserts the kit dir's bytes and `git status --porcelain` are unchanged.
+
+*D7 amended 2026-10-24, after the Phase 2 review, by the user's decision ("only
+unparseable").* `unrunnable` means only that the task has a `verify-unparseable` finding, and
+then nothing is run. Every other done task's verify is run and judged by its rc. Its
+`verify-missing-*` findings ride along in that task's report as `warnings`, so a `drifted`
+result caused by a missing tool is labelled as such. The state is never read from the
+`verify.paths`/`executables` entry states, because those record non-blocking arguments
+(`origin/main`, `s/a/b/`, an `--out` target) as `missing` without any finding. Running the
+check is the ground truth, as in D3's seventh amendment.
 
 **D8 — Why `refresh` stays as is.** `refresh` re-binds ONE stale task's evidence and projects
 `blocked` on failure — it mutates kit state on purpose, under an operator's explicit task
@@ -365,14 +582,26 @@ not dispatched on a task is simply a task without that `agent:` line. Agents
 `.claude/agents/kit-preflight-test-author.md` and `kit-preflight-red-team.md` are instantiated
 from the templates unchanged in model and tools.
 
+**D17 — Exploration stays cheap and unblocked** (added 2026-10-24 before T4, by the user's
+decision: "make sure polytropos can still handle exploration well"). Three consequences, each
+pinned in the task that owns it. (a) T4 proves that an exploration-shaped kit — verify commands
+like `true` or `python3 -c …`, briefs that name files their tasks will create — passes
+`analyze` with exit 0, so the drivers' fail-closed call (D5) cannot block a spike for being a
+spike; D5's no-opt-out stance stands. (b) The P0 spec review (D4) is skipped when `kit_contract.py
+roster` reports `workflow=direct`: that kit already opted out of independent review, and the
+loop records that the P0 review was skipped and why. (c) The guide says how to explore before
+writing a spec: Part 1 gains a vendor-neutral "explore first, then specify" sentence, and Part 2
+names the polytropos paths for it (`/polytropos:route`, `/polytropos:escalate`, a `scout`,
+`workflow: direct`) and how a finished spike becomes a spec.
+
 ## Risks and tripwires
 
 - **R1 — Driver fixtures that `analyze` now refuses.** `tests/test_{claude,copilot,codex,
   cursor}_execute.py` build temp kits whose verify commands may name files that do not exist
-  in the temp tree. After T5, run those four files; a failure whose message is
-  `verify-missing-path`/`verify-missing-executable` is a fixture naming a path it never
-  created — fix the FIXTURE (create the file, or make the command path-free such as `true`),
-  never the heuristic. If more than five fixtures need this, stop and report: the heuristic
+  in the temp tree. After T5, run those four files. Since D3's seventh amendment, only a
+  `verify-unparseable` on a pending or in-progress task fails a driver run. Such a failure is a
+  fixture whose verify the drivers cannot read or whose fence is empty. Fix the FIXTURE, never
+  the heuristic. Every other finding is a printed warning and fails no fixture. If more than five fixtures need this, stop and report: the heuristic
   may be broader than D3 states.
 - **R2 — Word ceiling.** After T10 and T11 run `python3 -m unittest discover -s tests -p
   'test_docs_skill_dispositions.py' -q`; if red, move words into `spec-review.md`, never
@@ -382,7 +611,10 @@ from the templates unchanged in model and tools.
   parse as its own raw kind (it becomes `unsanctioned` at read time, which is the point).
 - **R4 — The other verify dialect.** Many committed kits (e.g. `sdd-docs-refresh`) use
   `Verify:` + a bare fence, which `_extract_verify` cannot read. `analyze` on them exits 3 with
-  `verify-unparseable` and the hint; `drift --all` reports their tasks `unrunnable` and goes on.
+  `verify-unparseable` on every task and no hint: D3 fires the hint only when
+  `kit_verify_hook._task_verify_cmd` would parse the block, and that parser reads neither a plain
+  `Verify:` line nor a bare fence (corrected 2026-10-24 during T4, by the user's decision; the
+  first wording promised the hint). `drift --all` reports their tasks `unrunnable` and goes on.
   That is correct and expected — do not widen `_extract_verify` (the drivers execute what it
   returns; widening it is a different kit).
 - **R5 — `CLAUDE.md` is at its 16000-byte ceiling** (`tests/test_guardrails_layout.py`). Do
