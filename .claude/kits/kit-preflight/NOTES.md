@@ -246,3 +246,108 @@ outcome: T6 model=haiku attempts=1 result=pass review=none run=2026-10-24-93ee
 - Finding 5 → T9's body: 1d23d03 overclaims. (a) Case (10) flips to 3 only under strict; (b) "the other verify dialect … with a hint" is true only for the hook-read dialects, and seven kits use plain `Verify:`, which gets none. (c) The 6613705 correction was confirmed accurate. The PolicyError → exit 2 claim was also confirmed. No history rewrite.
 - Finding 6 → T7: stale text in `bin/kit_contract.py:2372-2382` ("amended four times"), the `--strict` help, `tests/test_kit_analyze.py:13` and `:1357`.
 - Finding 7 → now: the D3 amendments 2–7 and the D5 amendment exist only in the uncommitted kit files. The orchestrator commits kit state before Phase 3.
+
+## Phase 3
+
+- Phase 3 start: re-read GUARDRAILS.md and PLAN.md's constraints/out-of-scope from disk (the phase-start guarantee), including the dated notes added at the Phase 2 review.
+- T7 pre-work: `tests/test_kit_evidence.py` does not exist (NO TESTS RAN, exit 5), and `accept` is not a subcommand (exit 2) — red. T7's acceptance now names `tests/test_kit_analyze.py` for the carried Phase 2 findings 4 and 6, and asks that it pass beside the verify. Budget: 20 of 40 dispatches before T7 (T1 2, T2 2, T3 1, T4 11, T5 3, T6 1), 0 consults.
+agent: T7 id=ab7f62a25042003dc role=implementer model=sonnet
+- T7 implementer reported done; red first (exit 5 and exit 2). Orchestrator re-ran each verify step unpiped: test_kit_evidence 0, test_kit_contract 0, test_attempt_ledger 0, `--help` lists accept 0, kits clause 0 — VERIFY EXIT 0. test_kit_analyze also exits 0. Implementer's full suite OK (skipped=2).
+  - Adaptations: argparse accepted `--at` as an abbreviation of `--attempt-store`, so the accept subparser sets `allow_abbrev=False`. Item (8) asserts `unknown` only on tasks with upstream, as the brief says; no-upstream tasks read `fresh -- no upstream task`.
+  - Weakness, sent to the verifier: item (8) uses an empty temp `--attempt-store` (GUARDRAILS forbids the real store in tests), so it shows only that no records means unknown. The finding-4 driver test was never run against the old code; the test-author is asked for a red-proof.
+agent: T7 id=aa7d5ae52a42b00b7 role=test-author model=sonnet
+- T7 test-author: 11 brief-derived tests in `AcceptTestAuthorTests`, all passing; no gap. They cover: no claim is left and a driver can still claim; re-accept replaces the old acceptance; nothing under `<tmp>` changes except the store; every abbreviation of a forbidden flag exits 2; quoted outcome lines refuse; the latest line wins; a later blocked line refuses; the run-id shape is exact; upstream comes from the ledger, never prose. It also red-proved finding 4: with `validate_graph` patched to `[]`, `exit_if_unsound_kit` exits 3 on the fixture, and with the guard it returns. Orchestrator re-ran test_kit_evidence: exit 0.
+agent: T7 id=aa7d5ae52a42b00b7 role=test-author model=sonnet findings=0 confirmed=0 marginal=0
+agent: T7 id=a5654f2145d9ba98d role=verifier model=sonnet
+- T7 verifier: PASS, 4 non-blocking findings, all confirmed by reading. It checked: no claim; no tree write; no forbidden flag or abbreviation; upstream from the ledger only; the invalid-graph guard hides no real refusal; parsers unchanged; the real data root's mtimes identical before and after, with no `attempts` dir created.
+  - (3) `accept --note` persists user free text unredacted, against CLAUDE.md's always-on invariant that every free-text field goes through `bin/redact.py`. The invariant wins over the brief, so this goes back to the implementer (2nd T7 dispatch); confirmed.
+  - (2) Item (8)'s comment overstates what an empty temp store proves. Reworded in the same dispatch; confirmed.
+  - (1) Follow-up, fail-safe: `recorded_outcome_result` (shared with the budget gate) refuses `* outcome:` lines that the scorecard's `OUTCOME_RE` accepts, and accepts lines without `model=` that the scorecard skips.
+  - (4) The `--run` check runs before the TASKS.md read; fine.
+agent: T7 id=a5654f2145d9ba98d role=verifier model=sonnet findings=4 confirmed=2 result=revised
+- T7 redaction fix (2nd T7 dispatch): red first, then green. `--note` goes through `bin/redact.py` (default bound) before `TaskRun.project`; stderr reports kinds and counts only, via `redact.describe`. Tests: a GitHub-token-shaped note leaves no raw token in the store, and a 5000-char note is stored cut. Item (8)'s comment is reworded. Orchestrator re-ran each verify step unpiped: all 0 — VERIFY EXIT 0. Implementer's full suite OK (skipped=2).
+agent: T7 id=aa2316c95a9a60e2d role=red-team model=sonnet
+- T7 red-team: 10 items. No forge, secret leak through the ids, claim leak, or false-fresh path beyond D6's design.
+  - Confirmed crashes, so a failed check: (1) a NOTES.md that is a directory, (2) a read-only store parent, (3) a store path that is a file. Each gives an `OSError` traceback and exit 1, not exit 2; nothing is written.
+  - Tightening: (5) `--run` checks shape only (`2026-13-45-0000` is accepted as a label; the event `ts` is still the true clock).
+  - Design limit, follow-up for T11/T12's docs: (4) `accept` binds the tree as it is when accept runs, not the tree the outcome line was written against, and the outcome line text is not authenticated (D6 by design). That is why the loop must run `accept` right after it writes the outcome line. The fenced-code outcome reading is the shared helper's grammar.
+  - Limit of `bin/redact.py`, reported only: (6) a zero-width-split `pass​word=` escapes the redaction shape.
+  - (7) `--attempt-store` inside the tree writes there: the caller's explicit seam.
+  - (8)–(10) no break.
+- T7 retry (3rd T7 dispatch, the one retry after a failed check): the CLI catches `OSError` and exits 2 with a message, and `--run` must carry a real calendar date.
+- T7 red-team adjudication: findings 1–7 are claims (8–10 report no break). Findings 1, 2, 3 and 5 produce the retry fix and tests, so 4 confirmed; no earlier layer raised any of them, so 4 marginal. Findings 4, 6 and 7 change nothing (design limit, redact limit, caller seam).
+agent: T7 id=aa2316c95a9a60e2d role=red-team model=sonnet findings=7 confirmed=4 marginal=4 result=revised
+- T7 retry (3rd T7 dispatch): red first (8 failures), then green. Orchestrator re-ran each verify step unpiped: all 0 — VERIFY EXIT 0. Orchestrator probes in a temp git fixture: NOTES.md as a directory → exit 2 `accept: [Errno 21] …`; store path that is a file → exit 2; `2026-13-45-abcd` → exit 2; a valid accept → exit 0 with `artifact=<12 hex> upstream=none`. No traceback in any stderr. The red-team's crash and date findings are closed by these probes, and no further red-team round was run. Implementer's full suite: 6355 OK (skipped=2).
+- T7 done.
+outcome: T7 model=sonnet attempts=3 result=retry-pass review=revised run=2026-10-24-93ee
+- T8 pre-work: `drift` is not a subcommand (exit 2), and `--help | grep -q drift` exits 1, so T8's verify is red. Budget: 23 of 40 dispatches before T8 (T7 took 3), 0 consults.
+agent: T8 id=a52ac0dc2391cdf66 role=implementer model=opus
+- T8 implementer reported done; red first (`drift` invalid choice, exit 2; `DriftTests` red on a stripped copy, including the invalid-graph test after it was made to assert the `duplicate-id` text). Orchestrator re-ran each verify step unpiped: test_kit_evidence 0, test_kit_contract 0, test_attempt_history 0, test_attempt_ledger 0, test_exec_policy 0, `--help` lists drift 0, kits clause 0 — VERIFY EXIT 0. Implementer's full suite OK (skipped=2).
+  - Discrepancy (brief vs repo): `_parse_block` never carries `acceptance`, so `acceptance_identity` is None for every parsed task. No CLI `accept` or driver projection ever recorded an `acceptance_ref`, and `drift` could only print `acceptance=unknown`. The implementer worked around brief test (5) by passing `acceptance` on the task dicts. User decision: parse acceptance now. PLAN D7/B1 amended and T8 brief step 6 added; 2nd T8 dispatch.
+  - Adaptations kept: confinement may be a zero-argument callable, because `on_result` reports it only after a run; `shared_with` names the one task whose run is reused, so the line stays under `MAX_LINE_BYTES`; a runner `OSError` is rc 126, as in `refresh_task`; warnings go to stderr; acceptances are read once before any append (3000 tasks: 28 s → 1.06 s).
+agent: T8 id=a52ac0dc2391cdf66 role=implementer model=opus
+- T8 2nd dispatch (warm, same agent): parse acceptance per step 6. Budget: 25 of 40 counting it (T8 attempts 2 so far), 0 consults.
+- T8 2nd dispatch reported done; red first (every new parser and TASKS.md-acceptance case failed; the pre-change-record guard passes both ways by design). `_extract_acceptance` is new, beside an unchanged `_extract_brief`. Orchestrator re-ran each verify step unpiped: evidence 0 (67), kit_contract 0, attempt_history 0, attempt_ledger 0, exec_policy 0, `--help` lists drift 0, kits clause 0 — VERIFY EXIT 0. Implementer's full suite OK (skipped=2).
+  - Committed kits, read-only, empty temp store: `graph`/`freshness` text and `--json` identical before and after on sdd-docs-refresh, observability-dashboard, graph-convergence. Only kits using the `**Acceptance.**` marker gain an identity (observability-dashboard 11/11; the other two 0).
+  - Consequence (the amendment's own): driver `attempt.started`/`task.projected` events now carry `acceptance_ref`, and drivers' `status --json` task dicts gain `acceptance`. Nothing pinned either.
+  - Follow-ups: `drift`'s per-task `latest_acceptance` scan is now the usual cost (3000 tasks over 6000 events: 22 s), the same scaling as `kit_freshness`; a fix needs a new `attempt_ledger` method. `plan_drift`'s `PLAN_FIELDS` still leaves out `acceptance`.
+agent: T8 id=a7cf78c3837dae079 role=test-author model=sonnet
+- T8 test-author: 13 tests in `DriftTestAuthorTests`, all pass; orchestrator re-ran test_kit_evidence unpiped: exit 0 (81 tests). Ambiguities raised, as observed behaviour:
+  - (1) An unclosed quote is not `verify-unparseable`. The orchestrator's prompt was wrong here; PLAN D3's seventh amendment is right, and drift runs it.
+  - (2) A `**Acceptance.**` quoted in backticks inside a brief starts the acceptance there. It also cuts the brief, through the unchanged `_extract_brief`.
+  - (3) A `**Verify.**` inside an acceptance fence cuts the acceptance short, so a later edit would not read `changed`.
+  - (4) and (5) are consistent with the rule.
+  - Orchestrator probe of (2)/(3) over committed kits: every non-line-leading marker is a quotation. Affected: codex-harness T9, copilot-workflow T3 and T4, and kit-preflight T8, whose step 6 quotes both markers. Those tasks parse an acceptance that starts mid-sentence. Every real heading is line-leading, so the T8 retry anchors `_extract_acceptance`'s markers to a line start.
+  - Follow-up, out of T8 scope: `_extract_brief` cuts the dispatched brief at a quoted marker for the same four tasks. Pre-existing, and it changes what headless drivers send.
+agent: T8 id=a52ac0dc2391cdf66 role=implementer model=opus
+- T8 3rd dispatch (warm): anchor `_extract_acceptance` markers to a line start and skip fenced ones; rewrite the ambiguity (2)/(3) tests to the anchored rule. Budget: 26 of 40 counting it, 0 consults.
+- T8 3rd dispatch reported done; red first (7 failures, re-proved with the old function patched in). Markers count only at a line start and outside a fence. Across 391 committed tasks, only the four named tasks' acceptance changed. `graph`/`freshness` are identical on three committed kits (read-only, empty temp store). Orchestrator re-ran each verify step unpiped: evidence 0 (83), kit_contract 0, attempt_history 0, attempt_ledger 0, exec_policy 0, `--help` lists drift 0, kits clause 0 — VERIFY EXIT 0. Implementer's full suite OK (skipped=2).
+- T8 test-author adjudication: ambiguities (2) and (3) are claims about the deliverable. Both produced the anchoring fix and tests, so 2 confirmed, and no earlier layer raised them, so 2 marginal. (1) was the orchestrator's prompt error; (4) and (5) were consistent.
+agent: T8 id=a7cf78c3837dae079 role=test-author model=sonnet findings=2 confirmed=2 marginal=2 result=revised
+agent: T8 id=ac65c2167a86ad4eb role=verifier model=sonnet
+- T8 verifier: PASS. It found AST-identical `_extract_brief`/`_extract_verify` versus HEAD, an event carrying exactly D7's keys, and no backfill path. Its tail-piped re-run hid the unittest exits; the orchestrator's unpiped re-run above is the evidence. 2 non-blocking findings, both already in the implementer's report, so no change: (1) `shared_with` holds one id; (2) a read-only `freshness` test reads a committed kit against a temp store.
+agent: T8 id=ac65c2167a86ad4eb role=verifier model=sonnet findings=2 confirmed=0 result=pass
+agent: T8 id=a86511b0edfb4a272 role=red-team model=sonnet
+- T8 red-team: 10 items, all on temp fixtures, with no committed kit and no repo file touched.
+  - (1) Confirmed break, so the check failed: `drift --all` exits 0 when every kit is skipped (unparseable, invalid graph or refused slug), though the kit is reported on stdout. The plan's wording allowed it, and D7's own rule (a check that cannot run is not a hold) argues against it. User decision: a skipped kit gives 3. PLAN D7 amended a third time; T8 brief step 7 added.
+  - (2) Tightening: the acceptance fence walk knows only backtick fences, so a quoted marker inside `~~~` still counts. Taken in the retry.
+  - (3) Design limit: an unclosed fence in the acceptance swallows the verify heading. No false result, because the identity already includes the verify text.
+  - (4) Design limit, follow-up: `--all` follows a symlinked kit dir, so the same kit is reported twice under two ledger namespaces.
+  - (5)–(9) No break: odd runner rc values never give CLI 1; dedupe is on stripped text; hostile TASKS.md and store paths exit 2 without a traceback; a garbage ledger never gives a false `unchanged`; the trusted-host first line is honest.
+  - (10) Not tested: an enforced-backend run, a multi-MB acceptance, a store symlinked into the tree, a closed stdout.
+agent: T8 id=a52ac0dc2391cdf66 role=implementer model=opus
+- T8 4th dispatch (warm; the one retry after the failed check): step 7 plus `~~~` fences. Budget: 27 of 40 counting it, 0 consults.
+- T8 retry (4th T8 dispatch, the one retry after the failed check): red first (9 failures), then green. Orchestrator re-ran each verify step unpiped: evidence 0 (89), kit_contract 0, attempt_history 0, attempt_ledger 0, exec_policy 0, `--help` lists drift 0, kits clause 0 — VERIFY EXIT 0; test_kit_analyze also 0. Orchestrator probe, as a real process in a temp dir: the red-team's all-skipped repro exits 3 with no traceback; an empty kits dir exits 0. Implementer's full suite OK (skipped=2).
+- T8 red-team adjudication: items 1–4 are claims; 5–9 report no break and 10 is untested. Items 1 and 2 produced the retry fix and tests, so 2 confirmed; no earlier layer raised either, so 2 marginal. Items 3 and 4 change nothing (design limits).
+- T8 done.
+agent: T8 id=a86511b0edfb4a272 role=red-team model=sonnet findings=4 confirmed=2 marginal=2 result=revised
+outcome: T8 model=opus attempts=4 result=retry-pass review=revised run=2026-10-24-93ee
+- T9 pre-work: verify red, since `git diff --quiet -- bin tests …` exits 1 (bin/kit_contract.py and tests/test_kit_analyze.py are modified; tests/test_kit_evidence.py is untracked). Brief amended with the T7/T8 carries. Budget: 27 of 40 before T9, 0 consults.
+agent: T9 id=ae776c8b08b2764dd role=implementer model=haiku
+- T9 implementer reported 45e6bc8 (not pushed). Orchestrator re-ran T9's verify unpiped: branch 0, subject 0, sources clean 0 — VERIFY EXIT 0. Implementer's full suite OK (skipped=2); `docs_build.py check` 0. Staged by name: bin/kit_contract.py, tests/test_kit_analyze.py, tests/test_kit_evidence.py.
+  - Orchestrator read the body and found three inaccurate claims: the freshness flip was misdescribed; "never a committed kit" ignored the read-only TASKS.md parse tests; and "not by a deliberate break" denied the red-first runs reported in T7 and T8. 2nd T9 dispatch (warm): amend the message only, since the commit is unpushed.
+agent: T9 id=ae776c8b08b2764dd role=implementer model=haiku
+- T9 2nd dispatch: amended the message in place, 45e6bc8 → 0a920bf. Orchestrator checks: `git diff 45e6bc8 0a920bf` is empty, so the tree is identical; no body line exceeds 80 columns; T9's verify re-run unpiped gives branch 0, subject 0, sources clean 0 — VERIFY EXIT 0. origin/main and origin/feat/route-experiment are both still 1cd9e62, so nothing was pushed.
+- T9 done.
+outcome: T9 model=haiku attempts=2 result=retry-pass review=revised run=2026-10-24-93ee
+
+## Phase 3 review (opus): FIX-FIRST, carried into T11–T13
+
+- The reviewer ran these itself: the full suite (OK, skipped=2, exit 0); docs_build, release_gate and copilot_docs checks (all 0); `analyze` on this kit (0, with warnings); `accept`/`drift` probes on temp fixtures with a temp store, enforced first line `confinement=sandbox-exec`; call chains traced by reading. D1, D6, D7 and its amendments, D8, R9 and R10 hold.
+- Finding 1 (blocking before T11): `accept` backfilled a copied sdd-docs-refresh with no flag (11 exits 0, `freshness` unknown → fresh). The cause: it takes the latest passing outcome line from any run. User decision: guard on run and date. PLAN D6/B1 amended; carried into T11 steps 5–7, with the code and tests landing in T13's commit.
+- Finding 2 (blocking before T13): T13's verify nests a `drift` that the macOS sandbox refuses, so T13 would read `drifted` in every later self-drift. User decision: move drift to a step. PLAN R6 amended; T13 verify changed and carried.
+- Finding 3 → T13 step 4: `exec_policy.py check` only finds the binary. An already-sandboxed shell gives rc 71 on every verify, so a harmless temp-fixture `drift` probe comes first.
+- Finding 4 → T11 step 6 and T12 step 10: drift's help text says "changing nothing in the tree", but the verifies it runs can write it, and `trusted-host` confines nothing.
+- Finding 5 → T12 step 10: on this repo `drift --all` exits 3 every time (skipped kits with an invalid graph, and unrunnable old-dialect tasks), so exit 3 alone is not drift. `acceptance=` reads `unknown` without an `**Acceptance.**` heading.
+- Finding 6 → T11 step 7: the step-4 sentence says when `accept` refuses, that it runs right after the outcome line (D6), and that stdout is one line.
+- Finding 7 → T13 step 5: the body corrects 0a920bf by sha on five points.
+- Finding 8: the T8 verifier line carried `result=pass`, which is outside `AGENT_RESULTS`. An enriched line with `result=accepted` is appended below; the last line wins.
+- Finding 9: the Phase 2 reviewer line at NOTES.md:240 (committed in 107833f) is wrapped in backticks, so `REVIEWER_RE` never read it. The committed line is untouched. A bare copy of that same adjudication is appended below, captured late from the still-existing record, with nothing changed.
+- Finding 10 → T11 step 6, plus a follow-up: `recorded_outcome_result`'s "Its ONE caller" docstring is corrected in T11. Follow-up: a runner raising `TypeError` gives a traceback and exit 1; `verify_runner` cannot raise it.
+- Item 11 was no change: the parser adds no grammar, no consumer misreads the field, SECURITY.md is still true, and the execute body is under its ceiling.
+- Adjudication: items 1–10 are the verdict's claims; 11 is not a defect. All 10 produced an artifact (a plan amendment, a brief carry, a defect line or a ledger line), so 10 confirmed. The verdict stood as delivered.
+- Follow-ups for a later kit: `_extract_brief` cuts a dispatched brief at a quoted marker (four committed tasks); `--all` follows symlinked kit dirs; `drift` scans `latest_acceptance` per task; `plan_drift` does not watch `acceptance`; the `TypeError` runner traceback; whether T1–T12's verifies all pass under drift's sandbox stays unknown until T13.
+reviewer: P3 model=opus findings=10 confirmed=10 result=accepted
+reviewer: P2 model=opus findings=7 confirmed=7 result=accepted
+- Finding 2 is a second `contradictory-acceptance` on T13. Its `defect:` line is not repeated, because the scorecard keeps one per task and kind, and the Phase 1 line at NOTES.md:36 already records it.
+agent: T8 id=ac65c2167a86ad4eb role=verifier model=sonnet findings=2 confirmed=0 result=accepted

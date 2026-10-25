@@ -454,6 +454,18 @@ is deliberately no `--artifact`, `--upstream`, `--at`, or `--from-notes` argumen
 asserts the parser rejects each. Exit 0 with one line `accept: <id> artifact=<12 hex> upstream=
 <dep>:<12 hex|unknown>,…`; exit 2 on refusal with the reason.
 
+*D6 and B1 amended 2026-10-24, after the Phase 3 review, by the user's decision ("guard on run
+and date").* The Phase 3 reviewer copied sdd-docs-refresh into a temp dir and ran `accept` on
+its 11 done tasks. Each exited 0, and `freshness` went from `unknown` to `fresh`. That was
+backfill with no flag at all, because `accept_task` took the task's latest passing `outcome:`
+line from any run. `accept` now refuses unless that line carries `run=` equal to `--run`, and
+the run id's date is today or yesterday in UTC, read from the clock when `accept` runs. Under
+that rule, an old kit's lines cannot be accepted even by passing their old run id. A line
+without `run=` is refused. The loop's order is unchanged: the outcome line first, then `accept`
+with the same run id. What remains is a hand-authored outcome line carrying a fresh run id.
+That is a fabricated record, which CLAUDE.md already forbids, and no tool can tell it from a
+real one.
+
 **D7 — `drift` semantics.** `drift_kit(kit_dir, tasks, runner, store=None, workspace=None,
 run_id=None, record=True, confinement=None)` considers only `done` tasks. For each: the static
 verify check from D3 first — `verify-unparseable` / `verify-missing-*` → state `unrunnable`,
@@ -482,6 +494,25 @@ result caused by a missing tool is labelled as such. The state is never read fro
 `verify.paths`/`executables` entry states, because those record non-blocking arguments
 (`origin/main`, `s/a/b/`, an `--out` target) as `missing` without any finding. Running the
 check is the ground truth, as in D3's seventh amendment.
+
+*D7 and B1 amended 2026-10-24, during T8, by the user's decision ("parse acceptance now").*
+T8's implementer found that `_parse_block` never reads a task's `**Acceptance.**` paragraph.
+`_extract_brief` stops there, and the returned dict has no `acceptance` key, so
+`acceptance_identity(task)` is None for every task parsed from TASKS.md. As a result no
+`accept` and no driver projection ever recorded an `acceptance_ref`, and `drift` could only
+report `acceptance=unknown`. The parser now carries `acceptance`: the text between
+`**Acceptance.**` and `**Verify.**`, stripped, or `""` when the paragraph is absent. This is
+no new field and no new grammar. Acceptance is already a named task field (CLAUDE.md's shared
+contract, `TASK_FIELDS`, `to_contract`); the parser had been dropping it. One consequence:
+every driver's `TaskRun.project` and `accept` now record an `acceptance_ref`, which is what
+`acceptance_identity` was written for. Records written before this have none and read
+`unknown`, and nothing is backfilled (B's forward-only rule).
+
+*D7 amended again 2026-10-24, after T8's red-team, by the user's decision ("a skipped kit gives
+3").* Under `--all`, a kit that is reported but not checked makes the exit 3. That covers a
+TASKS.md that fails to parse, an invalid graph, and a slug the ledger refuses. The reasoning is
+the same as for an `unrunnable` task one level down: a check that cannot run is not a hold.
+`--kit` keeps its exit-2 refusals, and an empty kits dir still exits 0 with `no kit under`.
 
 **D8 — Why `refresh` stays as is.** `refresh` re-binds ONE stale task's evidence and projects
 `blocked` on failure — it mutates kit state on purpose, under an operator's explicit task
@@ -622,6 +653,13 @@ names the polytropos paths for it (`/polytropos:route`, `/polytropos:escalate`, 
 - **R6 — Sandbox availability.** `enforced` mode needs `sandbox-exec` (Darwin). Tests inject
   the runner and never call `exec_policy.run_confined`; only T13's self-check runs `drift`
   for real, and `python3 bin/exec_policy.py check` must exit 0 on that host first.
+  *Amended 2026-10-24, after the Phase 3 review, by the user's decision ("move drift to a
+  step").* `exec_policy.py check` only finds the binary. In a shell that is already sandboxed,
+  every confined verify returns rc 71 (`sandbox_apply: Operation not permitted`) and reads
+  `drifted`. So T13 first runs `drift` on a harmless temp fixture and reads `--json` for rc
+  71. The self-drift is no longer part of T13's verify, where it would nest a second `drift`
+  inside the sandbox, which the macOS sandbox refuses to allow, and leave T13 `drifted` in every
+  later self-drift. It is a numbered step instead, with its output recorded in NOTES.md.
 - **R7 — Generated mirrors.** Any edit under `skills/` or `docs/*.md` changes `docs-site/`;
   run `python3 bin/docs_build.py build` in the same task and stage both. `release_gate.py
   check` and `copilot_docs.py check` likewise.

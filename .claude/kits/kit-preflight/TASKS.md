@@ -523,7 +523,7 @@ test "$(git branch --show-current)" = feat/route-experiment && git log -1 --form
 ### T7 — `kit_contract.py accept`: the interactive loop's acceptance projection
 - id: T7
 - title: Implement accept_task over TaskRun.project with its ordering rule, refusals and tests
-- status: pending
+- status: done
 - model: sonnet
 - depends: T6
 - evidence: red-green
@@ -585,7 +585,9 @@ Carried from the Phase 2 review (the orchestrator added this before T7). Both ch
 **Acceptance.** `python3 bin/kit_contract.py --help` lists `accept`; the test file is red
 before (no `accept_task`) and green after; `tests/test_kit_contract.py`,
 `tests/test_attempt_ledger.py` pass; `git status --porcelain` shows only `bin/kit_contract.py`
-and the new test file; nothing under the real data root (`python3 bin/runtime_data.py where`)
+and the new test file, plus `tests/test_kit_analyze.py` for the carried Phase 2 findings 4 and
+6. That file must also pass: run `python3 -m unittest discover -s tests -p
+'test_kit_analyze.py' -q` beside the verify. Nothing under the real data root (`python3 bin/runtime_data.py where`)
 changed — do not run `accept` against any committed kit.
 
 **Verify.**
@@ -596,7 +598,7 @@ python3 -m unittest discover -s tests -p 'test_kit_evidence.py' -q && python3 -m
 ### T8 — `kit_contract.py drift`: re-run finished kits' checks read-only and report drift, not failure
 - id: T8
 - title: Implement drift_kit with the D7 states, dedupe, criteria comparison, ledger event and tests
-- status: pending
+- status: done
 - model: opus
 - depends: T7
 - evidence: red-green
@@ -659,6 +661,22 @@ python3 -m unittest discover -s tests -p 'test_kit_evidence.py' -q && python3 -m
    otherwise record in your report that you ran its test file).
 5. Do not run `drift` against any committed kit in this task (that is T13's self-check, on the
    finished tree, under a host where `python3 bin/exec_policy.py check` exits 0).
+6. *Added 2026-10-24 by the user's decision during T8 (PLAN D7/B1 amendment, "parse acceptance
+   now").* `_parse_block` returns an `acceptance` key: the text between `**Acceptance.**` and
+   `**Verify.**` (or the block's end), stripped, `""` when absent. Use a sibling of
+   `_extract_brief` and do not change `_extract_brief`. Every reader of `acceptance_ref` and
+   every parse-shape assertion must still pass: `latest_acceptance`, `kit_freshness`, `graph`'s
+   stale-evidence check, `kit_scheduler`, `workflow_eval`, and the four drivers' tests. A
+   record written before this change has no ref and must still read `unknown`, never `changed`
+   or `stale`. Test (5) runs through TASKS.md as first briefed: `accept` via the CLI records a
+   ref, editing the fixture's `**Acceptance.**` text flips `drift` to `changed`, and the CLI
+   path prints `acceptance=unchanged` before the edit. Add a parser test, in
+   `tests/test_kit_evidence.py`, for a block with and without the paragraph, and for a block
+   whose acceptance text holds a fenced block.
+7. *Added 2026-10-24 by the user's decision after T8's red-team (PLAN D7's third amendment, "a
+   skipped kit gives 3").* Under `--all`, a kit reported but not checked (unparseable, invalid
+   graph, refused slug) makes the CLI return 3, and `--json`'s top-level `exit` agrees. `--kit`
+   refusals stay 2. An empty kits dir stays 0. Correct `_drift_cli`'s docstring to match.
 
 **Acceptance.** `--help` lists `drift`; `DriftTests` red before (no `drift_kit`) and green
 after; the grep-the-body test proves no status-writing helper is referenced; `tests/
@@ -674,7 +692,7 @@ python3 -m unittest discover -s tests -p 'test_kit_evidence.py' -q && python3 -m
 ### T9 — Commit Phase 3 at a green boundary
 - id: T9
 - title: Commit accept and drift on feat/route-experiment
-- status: pending
+- status: done
 - model: haiku
 - depends: T8
 - evidence: red-green
@@ -700,6 +718,37 @@ two points:
     sdd-docs-refresh among others, gets `verify-unparseable` with no hint.
 
 It also names D7's amendment after the Phase 2 review: `unrunnable` means only unparseable.
+
+Carried from T7 and T8 (the orchestrator added this before T9, 2026-10-24):
+  - Stage `tests/test_kit_analyze.py` too. T7 carried Phase 2 findings 4 and 6 into it:
+    `UnsoundGateGraphOrderTests` and two stale comments. The matching code change is in
+    `bin/kit_contract.py`: `exit_if_unsound_kit` returns at once on an invalid graph, so a
+    duplicate id plus an empty fence makes the claude and cursor `--dry-run` exit 2, not 3.
+    The analyze header comment and the `--strict` help are corrected. The body says so.
+  - The parser now carries `acceptance` (PLAN D7/B1 amendment, by the user's decision during
+    T8). `_extract_acceptance` counts its markers only at a line start and outside backtick or
+    tilde fences. This IS on a production path: every driver's `parse_tasks` → `TaskRun` now
+    records an `acceptance_ref` for tasks that have an `**Acceptance.**` heading. Before this
+    commit none did, and the body says that plainly as the old state's defect.
+  - D7's third amendment, by the user's decision after T8's red-team: under `--all`, a kit
+    reported but not checked makes the exit 3.
+  - The `accept` hardening from T7's verifier and red-team: `--note` goes through
+    `bin/redact.py`, which reports kinds and counts; `OSError` becomes exit 2 with a one-line
+    message; `--run` must carry a real calendar date; `allow_abbrev=False`.
+  - Production path, per the honesty rule. `accept` is called by nothing yet; T11 wires it
+    into `skills/execute/SKILL.md`. `drift` is an operator CLI that nothing invokes
+    automatically. Say both.
+  - Deliberately unfinished, named in the body:
+    - `_extract_brief` still cuts a brief at a quoted marker. Four committed tasks are hit
+      (codex-harness T9, copilot-workflow T3 and T4, kit-preflight T8), so headless drivers
+      send those a shortened brief. This was already true before this commit and is left
+      out of scope.
+    - `--all` follows a symlinked kit dir.
+    - An unclosed fence in an acceptance runs to the block's end.
+    - `drift` scans `latest_acceptance` once per done task.
+    - `plan_drift` does not watch `acceptance`.
+    - `accept` binds the tree as it is when it runs (D6).
+  - No test counts in the body.
 
 **Acceptance.** As T3.
 
@@ -811,6 +860,43 @@ python3 -m unittest discover -s tests -p 'test_execute_preflight.py' -q && pytho
    clause within step 4's text.
 4. Re-measure the body ≤ 3200 words; `python3 bin/docs_build.py build`; stage together.
 
+Carried from the Phase 3 review (the orchestrator added this before T11, 2026-10-24, with the
+user's decision "guard on run and date"; PLAN D6/B1's dated amendment after the Phase 3
+review). This task makes `accept` routine, so the guard lands here. It adds
+`bin/kit_contract.py` and `tests/test_kit_evidence.py` to the files:
+  5. `accept_task` refuses unless the task's latest passing `outcome:` line carries `run=`
+     equal to `run_id`, and `run_id`'s date is today or yesterday in UTC, from the clock when
+     `accept` runs. A line without `run=` is refused. Read the date with `datetime.strptime`
+     as `_valid_run_id` does, and let the clock be injected (a `now=` parameter or a
+     module-level seam) so tests pin it. Never call the real clock in a test. The refusals are
+     `ValueError`s with the reason, so the CLI exits 2:
+       - the line's run differs from `--run`: name both ids;
+       - the run is older than yesterday: name its date and today's;
+       - the line has no `run=`.
+     Red first, in a new class at the end of `tests/test_kit_evidence.py`:
+       - matching run and today's date: exit 0;
+       - mismatched run: 2;
+       - a matching run dated two days ago: 2;
+       - yesterday's date: 0;
+       - a line without `run=`: 2;
+       - the reviewer's repro: a copied finished kit whose outcome lines carry an old run id,
+         refused for every task with `freshness` still `unknown`.
+     Update every existing `accept` test that relied on an unrelated run id. Do not loosen
+     any of them.
+  6. Help text: `drift`'s subparser description (around `bin/kit_contract.py:4673`) says
+     "changing nothing in the tree". Make it say that `drift` itself writes nothing in the
+     tree or the kit dir, but that the verifies it runs may, because the workspace is writable
+     under the policy, and `trusted-host` confines nothing. `recorded_outcome_result`'s
+     docstring says "Its ONE caller" (around `:1512`). Correct that to name its callers.
+  7. The step-4 sentence (step 1 above) says when `accept` refuses: a missing line, a line from
+     another run, or a run more than a day old. It also says to call `accept` right after the
+     status flip and the outcome line, because `accept` binds the tree as it is when it runs
+     (D6). "Keep only its one output line" means stdout; a redacted `--note` adds one stderr
+     line.
+  Also run, beside the verify, from the repo root with exits read unpiped:
+  `python3 -m unittest discover -s tests -p 'test_kit_evidence.py' -q`, `-p 'test_kit_contract.py'`
+  and `-p 'test_attempt_ledger.py'`. All must exit 0. The orchestrator re-runs them.
+
 **Acceptance.** The added assertions are red before and green after; `tests/
 test_skill_entrypoints.py` and `tests/test_docs_skill_dispositions.py` pass; `docs_build.py
 check` exits 0; the skill's pinned sentences are unchanged (`python3 -m unittest discover -s
@@ -904,6 +990,21 @@ its byte ceiling).
    badge. Once T4–T11 have landed them, remove each of those badges and their legend entry
    (keep the boxes and wording; adjust "being built now" in the comparison table to say the
    steps exist). `tests/test_sdd_docs.py::PipelinesPageTests` must stay green.
+10. Carried from T8 and the Phase 3 review (the orchestrator added this before T12,
+    2026-10-24). Wherever steps 2–4 describe `accept` or `drift`, they also say each of the
+    following, no stronger than the code:
+    - `drift` itself writes nothing in the tree or the kit dir. The verifies it runs may
+      write, because the workspace is writable under the policy, and `trusted-host` confines
+      nothing.
+    - `drift --all`'s exit 3 is not evidence of drift alone. An unrunnable task or a skipped
+      kit (unparseable, invalid graph, refused slug) also gives 3. So read the report, and
+      don't present `--all` as a cheap check.
+    - `drift`'s `acceptance=` reads `unknown` for a task without an `**Acceptance.**` heading,
+      and for any record written before the parser carried acceptance.
+    - `accept` binds the tree as it is when it runs (D6). It refuses an outcome line from
+      another run, or a run more than a day old (D6's amendment after the Phase 3 review).
+      Kits finished earlier stay `unknown`, because no backfill exists.
+    Typed no number that rots.
 
 **Acceptance.** The six docs state only what the code does (every command named exists in
 `python3 bin/kit_contract.py --help`); `docs_build.py check`, `release_gate.py check`,
@@ -951,6 +1052,37 @@ root, reading real exit statuses (never through a pipe):
    task reads `drifted` or `unrunnable`, report which and why; do not re-run the task.
 7. Report the output tails of steps 1–6 faithfully.
 
+Carried from the Phase 3 review (the orchestrator added this before T13, 2026-10-24, with the
+user's decision "move drift to a step"; PLAN R6's dated amendment). The self-drift is no
+longer part of the verify, because once T13 is `done` it would nest a second `drift` inside
+the sandbox. It stays step 6, and the orchestrator records its output in NOTES.md.
+  - Step 4 also probes the boundary. After `exec_policy.py check` exits 0, build a temp kit
+    under `mktemp -d` with one done task whose verify is `true`, plus a temp
+    `--attempt-store`. Run `python3 bin/kit_contract.py drift --kit <tmp kit> --attempt-store
+    <tmp store> --json` and read the task's `rc`. 71 (`sandbox_apply: Operation not
+    permitted`, an already-sandboxed shell) or any other non-zero means stop and report: the
+    self-drift would read every task `drifted`.
+  - Step 5 stages every source file T10–T12 and the Phase 3 carries changed, by name, as
+    `git status --porcelain -- bin tests skills docs docs-site` lists them. That includes
+    `bin/kit_contract.py` and `tests/test_kit_evidence.py` (T11's carried guard and help
+    text), `skills/execute/references/ledger.md` (T12 step 8), `docs/sdd/pipelines.html` and
+    whatever `docs/sdd/render.py build` regenerated.
+  - Step 5's body also states the `accept` run-and-date guard and why it was needed. It
+    corrects 0a920bf by sha:
+    - `UnsoundGateGraphOrderTests` lives in `tests/test_kit_evidence.py`, and 0a920bf's
+      change to `tests/test_kit_analyze.py` is comments only.
+    - "a store path that is … a directory" should read "a NOTES.md that is a directory".
+    - "no backfill exists" was false until the guard.
+    - Correction (b) of 1d23d03 dropped 1d23d03's own qualifier, "the one the verify hook
+      reads".
+    - The production-path paragraph left out that `kit_scheduler`, `workflow_eval` and
+      `refresh` now record `acceptance_ref` too.
+    It also says the self-drift moved out of T13's verify, and why.
+  - Step 6: if a task reads `drifted` because its verify needs a nested sandbox or a resource
+    the sandbox denies, report it as an R6 limit with the task id and rc, not as a regression.
+    Do not re-run the task. `acceptance=` reads `unknown` for every task, because this run
+    records no acceptance for its own kit (GUARDRAILS).
+
 **Acceptance.** Steps 1–6 all succeeded in your own run with the outputs pasted; the commit
 exists on `feat/route-experiment` with sources clean; the self-drift's last line reads `drift:
 <n> hold, 0 drifted, 0 unrunnable` with `confinement=` naming an OS backend, not
@@ -958,5 +1090,5 @@ exists on `feat/route-experiment` with sources clean; the self-drift's last line
 
 **Verify.**
 ```bash
-python3 -m unittest discover -s tests -q && python3 bin/docs_build.py check && python3 bin/copilot_docs.py check && python3 bin/release_gate.py check && python3 bin/kit_contract.py analyze --kit .claude/kits/kit-preflight && git diff --quiet -- bin tests skills docs docs-site && python3 bin/kit_contract.py drift --kit .claude/kits/kit-preflight | grep -qE 'drift: [0-9]+ hold, 0 drifted, 0 unrunnable'
+python3 -m unittest discover -s tests -q && python3 bin/docs_build.py check && python3 bin/copilot_docs.py check && python3 bin/release_gate.py check && python3 bin/kit_contract.py analyze --kit .claude/kits/kit-preflight && git diff --quiet -- bin tests skills docs docs-site
 ```
