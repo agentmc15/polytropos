@@ -111,6 +111,11 @@ Whole-kit "done": `python3 -m unittest discover -s tests -v` green from the repo
 --kit .claude/kits/kit-preflight` reports every task `holds` on the finishing tree. Also in
 scope by approval: `docs/GRAPH-ENGINEERING.md`'s claim that `skills/execute/SKILL.md` flips a
 task's status through `kit_verify_hook.py` is corrected to what the skill actually does (T12).
+*Amended 2026-10-25, after T13's self-drift, by the user's decision ("accept it as an R6
+limit").* "Reports every task `holds`" now reads: every done task holds, except those whose
+`drifted` result is diagnosed as R6's nested-sandbox limit, each named with its cause in
+NOTES.md. On this host that is T4, T5, T7 and T8, whose verifies run the drivers' end-to-end
+tests (see R6's second amendment).
 
 ## Constraints and out of scope
 
@@ -660,6 +665,15 @@ names the polytropos paths for it (`/polytropos:route`, `/polytropos:escalate`, 
   71. The self-drift is no longer part of T13's verify, where it would nest a second `drift`
   inside the sandbox, which the macOS sandbox refuses to allow, and leave T13 `drifted` in every
   later self-drift. It is a numbered step instead, with its output recorded in NOTES.md.
+  *Amended again 2026-10-25, after T13's self-drift, by the user's decision ("accept it as an R6
+  limit").* R6 assumed every finished task's verify can be re-run under `enforced`. It cannot
+  when the verify runs tests that start their own sandbox. The drivers' end-to-end tests
+  (`tests/test_kit_graph.py`, `tests/test_claude_execute.py`, `tests/test_attempt_ledger.py`)
+  wrap each fixture verify in `sandbox-exec`. Inside drift's sandbox that nested call is refused
+  (rc 71), the fixture tasks block, and the test fails. So T4, T5, T7 and T8 read `drifted` in
+  every enforced self-drift on this host, and `drift` cannot yet tell that apart from real
+  drift. Follow-up for a later kit: report a nested-sandbox refusal as its own state, or make
+  those tests independent of the host's sandbox.
 - **R7 — Generated mirrors.** Any edit under `skills/` or `docs/*.md` changes `docs-site/`;
   run `python3 bin/docs_build.py build` in the same task and stage both. `release_gate.py
   check` and `copilot_docs.py check` likewise.

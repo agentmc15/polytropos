@@ -351,3 +351,98 @@ reviewer: P3 model=opus findings=10 confirmed=10 result=accepted
 reviewer: P2 model=opus findings=7 confirmed=7 result=accepted
 - Finding 2 is a second `contradictory-acceptance` on T13. Its `defect:` line is not repeated, because the scorecard keeps one per task and kind, and the Phase 1 line at NOTES.md:36 already records it.
 agent: T8 id=ac65c2167a86ad4eb role=verifier model=sonnet findings=2 confirmed=0 result=accepted
+
+## Phase 4
+
+- Phase 4 start: fences re-read from disk (GUARDRAILS.md in full; PLAN.md Constraints and out of scope). Kit state committed as 006a379 after a green full suite (OK, skipped=2, exit 0).
+- T10 pre-work: verify red (test_execute_preflight finds no test file, exit 5; spec-review.md absent, exit 1). Budget: 29 of 40 before T10, 0 consults.
+agent: T10 id=ad714c457a6c9e25e role=implementer model=opus
+- T10 implementer reported done; red first (exit 5, no tests; a scratch copy against HEAD's SKILL.md failed 14 of 16, and the 2 that passed are A4's scorecard cases, which Phase 1 already made true). Six scratch mutations each tripped the test. Orchestrator re-ran each verify step unpiped: execute_preflight 0 (16), skill_entrypoints 0, docs_skill_dispositions 0, docs_build check 0, reference exists 0, no `docs-site` 0 — VERIFY EXIT 0. docs_build tests, role_ledger and reroute_live also 0; no other kit has a diff. Implementer's full suite OK (skipped=2). The SKILL.md body is under its ceiling with room for T11 (measure with `skill_inventory()`).
+  - Departures from the brief's wording, kept:
+    - exit 3 always records a `defect:` line, whether TASKS.md is fixed or the run stops (ledger.md's log-even-easy-fixes rule);
+    - the PLAN citation is dropped from runtime skill text;
+    - the prompt points at ledger.md's sanctioned list instead of copying it;
+    - the grammar lines are shown bare in an indented block, because a backtick-led line copied into NOTES.md would not parse.
+  - Open for the architect, recorded as a follow-up: no sanctioned defect kind fits an uncovered "done" item. The prompt tells the reviewer to say so rather than invent one.
+  - Follow-up, flaky under load: `test_kit_analyze.py`'s `test_case11e_analysis_time_is_linear_in_the_verify_size` has a 10 s wall-clock limit, and it failed twice at host load 26–32. It passed in the full suite and alone.
+agent: T10 id=a77f59f51a5b04e36 role=verifier model=sonnet
+- T10 verifier: PASS. Its own scratch-copy mutations tripped six tests; it found no Codex mirror drift, and copilot_docs and release_gate both exit 0. Four non-blocking observations, no change: the stricter exit-3 wording, the reference's length (read-when gated), prose-pinned tests, and an honest test header.
+- T10 done.
+agent: T10 id=a77f59f51a5b04e36 role=verifier model=sonnet findings=4 confirmed=0 result=accepted
+outcome: T10 model=opus attempts=1 result=pass review=clean run=2026-10-24-93ee
+- T11 pre-work: verify red (`grep -q 'kit_contract.py accept' skills/execute/SKILL.md` exits 1). Budget: 30 of 40 before T11, 0 consults.
+agent: T11 id=a86f70b67ef3cdb86 role=implementer model=sonnet
+- T11 dispatch adds one orchestrator clarification: the injectable clock is in-process only, never reachable from the CLI, an environment variable or a flag, since a settable clock would be a backfill door; CLI-process tests use `generate_run_id()`.
+- T11 implementer reported done; red first (`AcceptStepTests` 1 fail and 3 errors; `AcceptRunGuardTests` 7 failures and 8 errors, the reviewer's repro included). Orchestrator re-ran each verify step unpiped: execute_preflight 0 (21), skill_entrypoints 0, docs_skill_dispositions 0, role_ledger 0, reroute_live 0, docs_build check 0, the accept grep 0 — VERIFY EXIT 0. Beside it: kit_evidence 0 (102), kit_contract 0, attempt_ledger 0. `accept --help` offers no clock flag. Implementer's full suite OK (skipped=2).
+  - The guard: `accept_task(..., now=None)` refuses a line with no `run=`, a mismatched run, or a run dated neither today nor yesterday in UTC (a future date included). New helpers are `_last_outcome_line` and `recorded_outcome_run`, and `recorded_outcome_result` now goes through the first. The test run ids come from `generate_run_id()`, and re-accept tests append a fresh outcome line, as the loop would.
+agent: T11 id=a86b55572a2a72026 role=verifier model=sonnet
+- T11 verifier: PASS. Every guard probe was a CLI process on temp fixtures. A mismatched older line, a later `blocked` line, quoted or backticked lines, a `run=` with junk, future dates and dates three days old all exit 2; today and yesterday exit 0. The reviewer's repro, run over temp copies of all the committed non-preflight kits with a fresh run id, refused every task and created no store. There is no clock flag or env read, and `allow_abbrev=False` holds.
+  - (1) The `recorded_outcome_result` docstring calls the three original drivers' gate sites "inline copies". They call the re-exported helper (`claude_execute.py:222`, `copilot_execute.py:176`, `codex_execute.py:210`), and the duplicate guard is green. Wording only, no change.
+  - (2) A line carrying two `run=` pairs: the first wins. The date window still applies, so there is no backdoor. Follow-up: check that the scorecard's reader agrees on which `run=` counts.
+- T11 done.
+agent: T11 id=a86b55572a2a72026 role=verifier model=sonnet findings=2 confirmed=0 result=accepted
+outcome: T11 model=sonnet attempts=1 result=pass review=clean run=2026-10-24-93ee
+- T12 pre-work: verify red (`docs/sdd/guide.md` still contains "None is built.", so the negated grep fails). Budget: 31 of 40 before T12, 0 consults.
+agent: T12 id=ab22d51436f021855 role=implementer model=sonnet
+- T12 implementer reported done; red first (the new `GuideTests.test_roadmap_says_what_was_built` failed on "None is built."). Orchestrator re-ran each verify step unpiped: sdd_docs 0, execute_preflight 0, kit_verify_hook 0, docs_build tests 0, docs_build check 0, release_gate check 0, copilot_docs check 0, the "None is built." grep absent, kit-preflight present — VERIFY EXIT 0. spec_driven_pitch and defect_vocabulary also 0. The rot grep over the added lines is empty, and the kit_verify_hook.py change is module-docstring text only (it still parses). Implementer's full suite OK (skipped=2).
+  - Discrepancy (brief vs repo): step 1 quotes a `docs/GRAPH-ENGINEERING.md` sentence ("Edit is how this repo's own…") that lives only in `bin/kit_verify_hook.py`'s docstring. The implementer fixed the docstring and added one paragraph to the doc instead of rewording a line that does not exist. Recorded as a `stale-pin` defect below.
+  - Judgement calls, kept:
+    - REFERENCE.md is untouched, since its row lists no subcommands.
+    - The guide's failure-modes "Drift" row and its "Where polytropos stands" sentence were corrected too, since both still said nothing re-checks a kit.
+    - pipelines.html's two boxes move from `node new` to `node plain`, so no dashed styling is left without a legend entry.
+defect: T12 kind=stale-pin
+agent: T12 id=a908a89fa540592db role=verifier model=sonnet
+- T12 verifier: PASS. It checked every added claim against `--help` and the code, found `docs/sdd/render.py check` and the other generator checks at 0, `DEFECT_FOLDS` matching ledger.md, and the protected trees unchanged. Two non-blocking findings, no change: "Strong" in the P8 cell leans generous but is the brief's own wording, and three added paragraphs leave an extra blank line.
+- T12 done.
+agent: T12 id=a908a89fa540592db role=verifier model=sonnet findings=2 confirmed=0 result=accepted
+outcome: T12 model=sonnet attempts=1 result=pass review=clean run=2026-10-24-93ee
+- T13 pre-work: the clean-tree clause `git diff --quiet -- bin tests skills docs docs-site` exited 0 before any commit. It compares the worktree to the index, and T10–T12's implementers had staged their files. So T13's verify was tautological. The orchestrator tightened it to `git diff --quiet HEAD --` (exit 1 before the commit, so red), with the acceptance unchanged ("the commit exists … with sources clean").
+- T13 pre-work: verify red. Budget: 32 of 40 before T13, 0 consults.
+defect: T13 kind=tautological-verify
+agent: T13 id=a9d81ea17b66b1bb1 role=implementer model=sonnet
+- T13 implementer reported:
+  - Steps 1–5 pass: suite OK (skipped=2); docs_build, copilot_docs and release_gate checks 0; `analyze` 0 with 8 brief-only warnings; `exec_policy check` 0; the temp-fixture boundary probe gave rc 0 with `confinement=sandbox-exec`, no rc 71.
+  - Commit 7d53c11, not pushed: origin/main and origin/feat/route-experiment are both still 1cd9e62.
+  - Step 6 self-drift exit 3: `drift: 8 hold, 4 drifted, 0 unrunnable`. T4, T5, T7 and T8 are drifted with rc 1; `acceptance=unknown` for all, as expected. T13's acceptance ("0 drifted") is not met. The implementer did not re-run any task.
+  - A scout is diagnosing the four rc-1 verifies by calling `exec_policy.verify_runner` directly (no ledger write). The orchestrator is re-running T13's verify after the commit.
+- Orchestrator re-ran T13's verify after 7d53c11, each part unpiped: suite 0 (OK, skipped=2), docs_build 0, copilot_docs 0, release_gate 0, analyze 0, `git diff --quiet HEAD -- …` 0 — VERIFY EXIT 0.
+- Self-drift diagnosis (scout; each verify run once through `exec_policy.verify_runner` in-process, with no ledger write and no tree change):
+  - T4: `test_kit_graph.py` `DiamondThroughTheDriverTests`.
+  - T5: `test_claude_execute.py` (5 errors and 1 failure).
+  - T7 and T8: `test_attempt_ledger.py` (`ClaimAtTheDriverTests`, `CrashAfterDispatchTests`, `StoreLocationTests`).
+  - Common cause: each calls a driver's real `run`, which defaults to `--exec-mode enforced` and wraps the fixture verify in a second `sandbox-exec`. The nested call is refused (verify_rc=71), the fixture task blocks, and the driver exits 1. The `test_kit_contract.py` suspicion is refuted. This is an R6 environment limit, not a regression: unconfined, the suite passes.
+  - User decision: accept it as an R6 limit. T13's acceptance and PLAN R6 are amended (dated), and a kit-level `stale-plan-decision` defect is recorded below.
+- 7d53c11's message needs amending: its subject is far over the convention's ~80 characters (it copied the brief's own example); "describe the roadmap as built" overclaims, since only A–C are built; and "committed after this commit by the user" should say the orchestrator. The amend also adds the self-drift result. This is the 2nd T13 dispatch.
+defect: - kind=stale-plan-decision
+agent: T13 id=a9d81ea17b66b1bb1 role=implementer model=sonnet
+- T13 2nd dispatch (warm): amend the message only. Budget: 34 of 40 counting it, 0 consults.
+- T13 2nd dispatch: amended 7d53c11 → 16306ef with the message only. Orchestrator checks: `git diff 7d53c11 HEAD` is empty, so the tree is identical; the subject is 72 characters; no body line exceeds 80 columns; branch 0; clean-vs-HEAD 0. origin/main and origin/feat/route-experiment are both still 1cd9e62.
+- T13 self-drift result, as amended into the acceptance: 8 hold; 4 drifted (T4, T5, T7, T8), each diagnosed as the R6 nested-sandbox limit; 0 unrunnable; confinement=sandbox-exec. The `evidence.drift` events are in the real attempts store, as intended.
+- T13 done.
+outcome: T13 model=sonnet attempts=3 result=retry-pass review=revised run=2026-10-24-93ee
+
+## Phase 4 review (opus): FIX-FIRST, folded into T13's unpushed commit
+
+- The reviewer ran these itself: the full suite (OK, skipped=2, exit 0); the docs_build, release_gate, copilot_docs and `docs/sdd/render.py` checks (all 0); `analyze` on this kit (0) and `graph` (complete); accept-guard CLI probes on temp fixtures (every refusal exits 2 with an accurate reason; no store created); `analyze` with every spawn seam raising; `drift` with an injected runner. A3, A4, B2, C3, D4's loop half, D6/B1, D7, D12, D15, D17(b)(c) and the shared kit contract hold.
+- Finding 1 (blocking): the docs still overstate `drift`. The guide's P8 row says "read-only", pipelines.html says "a read-only re-run", the guide carries none of T12 step 10's caveats, and "Strong for detection" outruns the only live run (4 of 12 tasks false-drifted under R6) → 3rd T13 dispatch.
+- Finding 2 (blocking): the kit's own done check still read "every task holds" (PLAN.md Whole-kit done) and "0 drifted" (T13 acceptance). The orchestrator added dated R6-limit notes to both.
+- Finding 3: GRAPH-ENGINEERING and the hook docstring say "only the drivers do" call `record`/`precheck`, while only `bin/claude_execute.py` does (the error came from the brief); D4's docs half is unstated in the guide; SPEC-DRIVEN claims `--help` states the caveats → 3rd T13 dispatch.
+- Finding 4: 16306ef's message says four docs describe the roadmap as built (only the guide has one), omits pipelines.html, puts the trusted-host clause in `drift --help` (it is top-level), and never says nothing is live until merge, version bump and install → corrected in the same amend.
+- Finding 5: "kits finished earlier stay `unknown` by design" is too absolute, because `refresh --force` re-verifies a kit on the current tree and reads `fresh` → wording fix in the same dispatch.
+- Finding 6: SKILL.md never says what to do when `accept` exits 2, so an orchestrator might add `run=` to a line, fabricating a record. The step-4 exit-2 clause plus one test assertion go in the same dispatch. Follow-ups:
+  - the run id is minted only in the budget-stop text, and `run=` is optional in ledger.md;
+  - a session that runs past yesterday's date has every later `accept` refused (read from the code, not run);
+  - a resumed kit gets its P0 review mid-kit, and those defects would count as pre-run.
+- Finding 7 (follow-up): all 8 `analyze` warnings on this kit are noise under D3: slash commands, a `:line-range`, and bare repo file names.
+- Finding 8 (follow-up): the P0 review has never run live. This kit predates it, so the card reads `caught pre-run: 0`.
+- Finding 9 (minor, no change): a future-dated refusal message's tail; "read-only tools" for a Bash-pinned reviewer; a `PipelinesPageTests` docstring that promises more than it asserts.
+- Kit card per the reviewer: 13/13 done, first-try and review-survival figures on the card (run `python3 bin/routing_scorecard.py kit-preflight`), no session dollars yet.
+- Adjudication: 9 findings as presented. Items 1–6 produce an artifact (doc and skill fixes, kit-state notes, message corrections), so 6 confirmed; 7–9 are follow-ups or no change. The verdict stood as delivered.
+- T13 3rd dispatch (warm): the doc and skill fixes from findings 1, 3, 5 and 6 plus the message corrections, amended into 16306ef. Budget: 35 of 40 counting it, 0 consults.
+reviewer: P4 model=opus findings=9 confirmed=6 result=accepted
+agent: T13 id=a9d81ea17b66b1bb1 role=implementer model=sonnet
+- T13 3rd dispatch: amended 16306ef → af31f31 with the docs, the hook docstring, the step-4 exit-2 clause and its assertion, regenerated pages, and a corrected message. The subject is unchanged. Orchestrator re-ran these unpiped: sdd_docs, execute_preflight, kit_verify_hook, docs_build tests, spec_driven_pitch, skill_entrypoints, docs_skill_dispositions, role_ledger and reroute_live all 0; the docs_build, release_gate, copilot_docs and render.py checks 0; analyze 0; clean-vs-HEAD 0. No "read-only" claim about `drift` is left in the guide or pipelines.html. No body line exceeds 80 columns. Implementer's full suite OK (skipped=2). origin is still 1cd9e62.
+- T13's `outcome:` line was written this session after its 2nd dispatch and was still uncommitted. It is updated in place to `attempts=3`, so the budget sum counts each dispatch once. The verdict is unchanged.
+- Run budget at the end: 35 of 40 dispatches by `outcome:` attempts, 0 escalations, 0 consults.
+- Session id: resolved by write recency (`ls -t "$HOME/.claude/projects"/*/*.jsonl`). The top file was written seconds before the lookup, is about 18 MB, and is the transcript the compaction summary names for this session. The next candidate is a different project's session, so the id is not a guess.
+session: 164ceb17-fa7d-4c0f-9227-4953db2eb5fe

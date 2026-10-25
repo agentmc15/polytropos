@@ -762,7 +762,7 @@ test "$(git branch --show-current)" = feat/route-experiment && git log -1 --form
 ### T10 — The execute skill runs `analyze` and a P0 spec review before the first dispatch
 - id: T10
 - title: Add the pre-dispatch analyze step and the spec-review reference to the execute skill, with a skill-text test
-- status: pending
+- status: done
 - model: opus
 - depends: T9
 - evidence: red-green
@@ -838,7 +838,7 @@ python3 -m unittest discover -s tests -p 'test_execute_preflight.py' -q && pytho
 ### T11 — The execute skill records each acceptance with `accept` after the outcome line
 - id: T11
 - title: Add the one-call accept step to step 4 of the loop, pinned by test
-- status: pending
+- status: done
 - model: sonnet
 - depends: T10
 - evidence: red-green
@@ -911,7 +911,7 @@ python3 -m unittest discover -s tests -p 'test_execute_preflight.py' -q && pytho
 ### T12 — Documents tell the truth about the loop: GRAPH-ENGINEERING, the guide, SPEC-DRIVEN, the command lists
 - id: T12
 - title: Correct the kit_verify_hook claim, update the guide's roadmap and P8 row, add the three subcommands to the docs, rebuild mirrors
-- status: pending
+- status: done
 - model: sonnet
 - depends: T11
 - evidence: red-green
@@ -1020,7 +1020,7 @@ python3 -m unittest discover -s tests -p 'test_sdd_docs.py' -q && python3 -m uni
 ### T13 — Closeout: the whole-kit done check, self-analyze, commit, self-drift
 - id: T13
 - title: Run the kit's own done check end to end, commit Phase 4, and survey this kit for drift
-- status: pending
+- status: done
 - model: sonnet
 - depends: T12
 - evidence: red-green
@@ -1078,17 +1078,31 @@ the sandbox. It stays step 6, and the orchestrator records its output in NOTES.m
     - The production-path paragraph left out that `kit_scheduler`, `workflow_eval` and
       `refresh` now record `acceptance_ref` too.
     It also says the self-drift moved out of T13's verify, and why.
+  - Verify tightened by the orchestrator before T13, 2026-10-24, with the acceptance unchanged.
+    T10–T12's implementers staged their files, and `git diff --quiet` compares the worktree to
+    the index, so the clean-tree clause passed before any commit: a tautological verify. It
+    now reads `git diff --quiet HEAD --`, which fails until the commit exists.
   - Step 6: if a task reads `drifted` because its verify needs a nested sandbox or a resource
     the sandbox denies, report it as an R6 limit with the task id and rc, not as a regression.
     Do not re-run the task. `acceptance=` reads `unknown` for every task, because this run
     records no acceptance for its own kit (GUARDRAILS).
 
+  - Acceptance amended 2026-10-25, after T13's self-drift, by the user's decision ("accept it
+    as an R6 limit"). The self-drift read 8 hold, 4 drifted. T4, T5, T7 and T8 drifted because
+    their verifies run the drivers' end-to-end tests, which wrap each fixture verify in a
+    sandbox of their own, and the macOS sandbox refuses to nest one (fixture verify rc 71).
+    Run directly, the same tests pass. Step 6's "0 drifted" now reads: every done task holds
+    except those whose `drifted` result is diagnosed as that nested-sandbox limit, each named
+    with its cause in NOTES.md.
+
 **Acceptance.** Steps 1–6 all succeeded in your own run with the outputs pasted; the commit
 exists on `feat/route-experiment` with sources clean; the self-drift's last line reads `drift:
 <n> hold, 0 drifted, 0 unrunnable` with `confinement=` naming an OS backend, not
-`trusted-host`.
+`trusted-host`. *Amended 2026-10-25 by the user's decision ("accept it as an R6 limit"; the carry
+bullet above and PLAN R6's second amendment): "0 drifted" excludes a task whose `drifted`
+result is diagnosed as the nested-sandbox limit and named with its cause in NOTES.md.*
 
 **Verify.**
 ```bash
-python3 -m unittest discover -s tests -q && python3 bin/docs_build.py check && python3 bin/copilot_docs.py check && python3 bin/release_gate.py check && python3 bin/kit_contract.py analyze --kit .claude/kits/kit-preflight && git diff --quiet -- bin tests skills docs docs-site
+python3 -m unittest discover -s tests -q && python3 bin/docs_build.py check && python3 bin/copilot_docs.py check && python3 bin/release_gate.py check && python3 bin/kit_contract.py analyze --kit .claude/kits/kit-preflight && git diff --quiet HEAD -- bin tests skills docs docs-site
 ```
