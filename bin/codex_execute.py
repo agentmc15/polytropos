@@ -197,6 +197,7 @@ combined_usage = _CONTRACT.combined_usage
 append_block = _CONTRACT.append_block
 project_status = _CONTRACT.project_status
 roster_for_run = _CONTRACT.roster_for_run
+exit_if_unsound_kit = _CONTRACT.exit_if_unsound_kit
 record_roster = _CONTRACT.record_roster
 GAP_MODES = _CONTRACT.GAP_MODES
 default_verify_runner = _CONTRACT.default_verify_runner
@@ -1433,6 +1434,10 @@ def cmd_run(args):
     # ROSTER (step 20): a declared role this driver cannot sequence stops the run or is
     # disclosed before the preview or the claim; it is never skipped in silence.
     roster, roster_support = roster_for_run(plan_text, "codex", args.roster_gap, slug=slug)
+    # PLAN D5: static, free, fail closed, no opt-out, before any preview, claim, or ledger.
+    # Only an unparseable verify on a task still to run fails a run (D3's seventh amendment);
+    # every other finding prints and the run goes on -- except the task `--task` selected.
+    exit_if_unsound_kit(kit, tasks, selected=args.task)
 
     extra_args = tuple(args.extra_arg or ())
     preamble = load_preamble(args.role, REPO_ROOT)

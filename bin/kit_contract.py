@@ -27,12 +27,15 @@ means the same thing whoever wrote it. Adding a parallel budget check or a secon
 elsewhere would recreate the problem this file exists to end.
 """
 
+import bisect
+import functools
 import hashlib
 import json
 import os
 import re
 import secrets
 import shlex
+import shutil
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -2353,6 +2356,1856 @@ def refresh_task(kit_dir, task, run_id, verify_runner, actor, store=None, worksp
     return result
 
 
+# ---- the static pre-run check: `analyze` (kit-preflight T4) -------------------------------------
+#
+# WHAT WAS WRONG. The brief-defect ledger's most frequent kinds -- a verify command naming a
+# script no task writes, a verify block in a dialect the drivers never read, a brief anchored on
+# a path that is not there -- were each found AFTER a dispatch had been paid for. Every one of
+# them is visible from TASKS.md's text plus a stat of the tree, so that is all this reads.
+#
+# STATIC BY CONSTRUCTION, NOT BY DISCIPLINE (PLAN D2). `analyze_kit` has no runner parameter.
+# Nothing in this section calls `_pr`, `_ep`, `subprocess`, or any CLI; its only contact with
+# the world is `Path.exists` (a stat) and `shutil.which` (a PATH lookup). The one module it
+# loads, `kit_verify_hook`, is asked to PARSE text, never to run it. `tests/test_kit_analyze.py`
+# makes every spawning seam raise and calls it anyway.
+#
+# THE RULES ARE PLAN D3's, as amended four times: before T4 (quote-aware splitting; `test`/`[`
+# operands are values); during T4 after a survey of every committed kit (`[[`, `source`, `.`,
+# `:` are builtins; a quoted argument, a `NAME=value` word and a `rev:path` git object are
+# values; a path an earlier command of the same verify writes is created by the task); during
+# T4 on the red-team's findings, "block only on what can't start" (a verify path is a finding
+# only in the four positions where a missing one stops the verify from starting -- the command
+# word, an interpreter's script, the `-m`/`discover` test mappings, a literal `cd` -- and every
+# other path argument is resolved and reported); and after the second red-team round, "only
+# sure things block": exit 3 comes only from `verify-unparseable` and `verify-missing-executable`,
+# while `verify-missing-path`, like `brief-missing-path`, is a printed warning that fails only
+# under `strict`. Where D3 is silent the code does the conservative thing -- it does not check
+# the token -- and says so at the line that does it.
+
+ANALYZE_FINDINGS = ("verify-unparseable", "verify-missing-executable", "verify-missing-path",
+                    "brief-missing-path")
+#: The one finding that fails a kit (D3's seventh amendment, "only unparseable blocks"): the
+#: drivers cannot read the verify, or its fence is empty. `verify-missing-executable` (whose
+#: refusing-vs-warned reading now only shapes its detail), `verify-missing-path` and
+#: `brief-missing-path` are printed warnings that fail only under `strict`.
+_FAILING_FINDINGS = ("verify-unparseable",)
+_WARNING_FINDINGS = ("verify-missing-executable", "verify-missing-path", "brief-missing-path")
+
+PATH_STATES = ("exists", "created-by", "missing")
+
+VERIFY_UNPARSEABLE_HINT = ("uses a dialect (`Verify:` or a bare fence) that `kit_contract` "
+                           "does not read")
+
+_BRIEF_PATH_EXTS = (".py", ".md", ".json", ".toml", ".yml", ".yaml", ".txt", ".html", ".sh",
+                    ".css", ".js")
+_BRIEF_SKIP_PREFIXES = ("-", "$", "~", "<", "{", "http")
+_BRIEF_SKIP_PARTS = ("*", "?", "[", "]", "{", "}", "(", ")", "<", ">", "::")
+_LINE_SUFFIX_RE = re.compile(r":\d+$")
+
+#: D3's third amendment, rule 5: the creation words, each with its `-s`/`-ed`/`-ing` forms and
+#: the irregular `built`, `made`, `written`. The forms are generated generously (`emitted`,
+#: `splitting`, `created`; also harmless non-words such as `newed`): a spare form can only add a
+#: disclosed `created-by`, never a finding.
+_CREATION_BASES = ("new", "create", "add", "write", "implement", "build", "make", "generate",
+                   "scaffold", "author", "draft", "introduce", "produce", "save", "emit",
+                   "output", "put", "extract", "move", "rename", "split")
+
+
+def _creation_forms(bases):
+    forms = {"built", "made", "written"}
+    for w in bases:
+        forms.update((w, w + "s", w + "ed", w + "ing"))
+        if w.endswith("e"):
+            forms.update((w + "d", w[:-1] + "ing"))
+        if len(w) >= 3 and w[-1] not in "aeiouwy" and w[-2] in "aeiou" and w[-3] not in "aeiou":
+            forms.update((w + w[-1] + "ed", w + w[-1] + "ing"))  # emitted, putting, splitting
+    return forms
+
+
+_CREATION_WORD_RE = re.compile(
+    r"\b(?:" + "|".join(sorted(_creation_forms(_CREATION_BASES), key=len, reverse=True)) + r")\b",
+    re.IGNORECASE)
+#: The creation word must END within this many characters before the path (third amendment).
+_CREATION_WINDOW = 80
+
+#: Every bash builtin and reserved word (third amendment, rule 2; D3's own list, the second
+#: amendment's `[[`/`source`/`.`/`:` among them). A first word in it is not looked up on PATH,
+#: and what follows it is argument, never a blocking position.
+VERIFY_BUILTINS = frozenset((
+    # builtins (bash 5)
+    ":", ".", "[", "alias", "bg", "bind", "break", "builtin", "caller", "cd", "command",
+    "compgen", "complete", "compopt", "continue", "declare", "dirs", "disown", "echo", "enable",
+    "eval", "exec", "exit", "export", "false", "fc", "fg", "getopts", "hash", "help", "history",
+    "jobs", "kill", "let", "local", "logout", "mapfile", "popd", "printf", "pushd", "pwd",
+    "read", "readarray", "readonly", "return", "set", "shift", "shopt", "source", "suspend",
+    "test", "times", "trap", "true", "type", "typeset", "ulimit", "umask", "unalias", "unset",
+    "wait",
+    # reserved words
+    "!", "case", "coproc", "do", "done", "elif", "else", "esac", "fi", "for", "function", "if",
+    "in", "select", "then", "time", "until", "while", "{", "}", "[[", "]]",
+))
+#: Their operands are values being compared, not files being read (D3's amendments: `test` and
+#: `[` first, `[[` second).
+_TEST_COMMANDS = frozenset(("test", "[", "[["))
+#: Commands every operand of which a verify WRITES (second amendment, rule 5). A later simple
+#: command in the same verify reading one of those paths finds it `created-by` the task itself.
+_WRITING_COMMANDS = frozenset(("tee", "touch", "mkdir"))
+#: Commands whose LAST operand is written (third amendment, rule 4); their others are read.
+_LAST_OPERAND_WRITERS = frozenset(("cp", "mv", "ln", "install"))
+#: Interpreters whose script operand is a blocking position (third amendment, rule 1), and the
+#: endings that make a bare script name checkable there.
+_INTERPRETERS = frozenset(("python", "python3", "bash", "sh", "zsh", "node", "ruby", "perl"))
+_SCRIPT_EXTS = (".py", ".sh", ".js", ".mjs", ".rb", ".pl")
+#: Words after which bash's grammar puts the COMMAND WORD again (third amendment, rule 1): the
+#: reserved words `if then else elif while until do ! {`, `time` (it introduces a pipeline) and
+#: the builtin `exec` (it runs its operand as the command). `_command_targets` skips them and any
+#: assignment words after them and takes the next word as the command word -- a blocking
+#: position, and the `test`/`[`/`[[` exemption when it is one of those. `verify_tokens` also
+#: consults them to find a `[[`/`((`/`case` that starts a command.
+_PREFIX_KEYWORDS = frozenset(("!", "if", "then", "else", "elif", "while", "until", "do", "time",
+                              "{", "exec"))
+#: Operators, longest first, that an unquoted run of operator characters splits into.
+_OPERATORS = ("&>>", "<<<", ";;&", "&&", "||", ";;", ";&", "((", "))", "()", ">>", "<<", "&>",
+              ">&", "<&", ">|", "|&", "<>", ";", "|", "&", "(", ")", "<", ">")
+#: The ones that end a simple command (D3: `&&`, `||`, `;`, `|`; the rest are their `case` and
+#: `|&` spellings). A lone `&` is not in D3's list: the word after it is read as an argument.
+_SEPARATORS = frozenset(("&&", "||", ";", "|", "|&", ";;", ";&", ";;&"))
+
+_SHELL_OPS = "();<>|&"
+#: An operator character inside quotes, or escaped, is a word character to the shell. shlex's
+#: token list cannot say which a lone `;` was, so those are swapped for private-use stand-ins
+#: before tokenizing and swapped back after.
+_OP_STANDIN = {c: chr(0xE000 + i) for i, c in enumerate(_SHELL_OPS)}
+_OP_RESTORE = str.maketrans({v: k for k, v in _OP_STANDIN.items()})
+_STANDIN_TABLE = str.maketrans(_OP_STANDIN)
+#: Runs the sanitizer copies whole: inside double quotes, nothing that ends or escapes the quote
+#: or substitutes; unquoted, nothing that quotes, escapes, substitutes, redirects, separates or
+#: ends a line. Taking them whole keeps analysis linear in the verify's size (fourth amendment).
+_DQUOTED_RUN_RE = re.compile(r'[^"\\$`]+')
+_UNQUOTED_RUN_RE = re.compile(r"[^ \t\r\n\\'\"`$<>()|&;]+")
+_BLANK_RUN_RE = re.compile(r"[ \t\r]+")
+#: Fourth amendment (3): digits right before a redirect operator are a file-descriptor number.
+_FD_NUMBER_RE = re.compile(r"[0-9]+(?=[<>])")
+#: Sixth amendment (4): `{name}` right before a redirect operator names an fd to allocate.
+_FD_NAME_RE = re.compile(r"\{[A-Za-z_][A-Za-z0-9_]*\}(?=[<>])")
+#: Fourth amendment (3): `NAME=(...)` / `NAME+=(...)` is an array assignment.
+_ARRAY_ASSIGN_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\+?=\(")
+#: D3's fifth amendment: the features that make a verify non-simple, matched on words.
+_CASE_WORD_RE = re.compile(r"\bcase\b")
+_INSTALL_WORD_RE = re.compile(r"\binstall\b")
+_PATH_ASSIGN_RE = re.compile(r"PATH\+?=")
+_PROBE_FLAG_RE = re.compile(r"-[A-Za-z]*[vV]")  # `command -v`, `-V`, `-pv`: a tool probe
+_PROBE_IN_TEXT_RE = re.compile(r"\bcommand\s+(?:-[A-Za-z]+\s+)*-[A-Za-z]*[vV]\b|\b(?:type|hash|which)\b")
+_PACKAGE_MANAGERS = frozenset(("npm", "pnpm", "yarn", "bun", "pip", "pip3", "uv", "cargo", "gem",
+                               "brew", "go"))
+#: Planted inside every quoted or backslash-escaped stretch before tokenizing, so a token can
+#: still say afterwards that it was written with quotes (D3's second amendment, rule 2) once
+#: shlex has removed them. A backslash counts as quoting: POSIX lists it as one of the three.
+_QUOTED_MARK = chr(0xE010)
+#: What a dropped `$(...)`, backtick or `<(...)` substitution leaves behind. It reads as a `$`
+#: token, which every rule below already skips, so `"$(git rev-parse --show-toplevel)/bin/x"`
+#: is not misread as the absolute path `/bin/x`.
+_SUBSTITUTED = "$_"
+#: Glob characters, plus brace expansion (D3 silent; a `{a,b}` token names no single file).
+_GLOB_CHARS = "*?[]{}"
+_ARG_SKIP_PREFIXES = ("-", "$", "~", "http")
+_DOTTED_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)+$")
+_PYTHON_RE = re.compile(r"^(?:python|pypy)[0-9.]*$")
+
+
+_WORD_CHARS_RE = re.compile(r"\w*")       # matched with fullmatch: one pass, no backtracking
+_WORD_OR_DASH_RE = re.compile(r"[\w-]+")
+_SHOPT_RE = re.compile(r"\bshopt(?=\s)")
+_TOKEN_RE = re.compile(r"\S+")
+
+
+def _is_dynamic_name_assignment(word):
+    """Exactly `re.match(r"[^=/\\s]*\\$[^=/\\s]*\\+?=", word)`, in one pass: an assignment whose
+    name holds a `$` (`export $VAR=bin`), the name -- everything before the first `=` -- having
+    no `/` and no whitespace. The regex form backtracked quadratically on one long word full of
+    `$` and no `=` (the last red-team pass's `${${${...` hang), so it is computed instead."""
+    eq = word.find("=")
+    if eq <= 0:
+        return False
+    name = word[:eq]
+    return "$" in name and "/" not in name and not any(c.isspace() for c in name)
+
+
+def _extglob_on(text):
+    """Exactly `re.search(r"\\bshopt\\s+(?:-\\w+\\s+)*-\\w*s\\w*\\s+(?:[\\w-]+\\s+)*extglob\\b", text)`,
+    computed over whitespace-separated tokens in linear time (the regex's ambiguous `\\w*s\\w*`
+    is quadratic on a long `-sss...` word). After a `shopt` that ends a word: a run of `-\\w+`
+    flags of which one holds an `s`, then `[\\w-]+` words, then a token starting `extglob` and
+    not followed by a word character."""
+    toks = [(m.start(), m.group()) for m in _TOKEN_RE.finditer(text)]
+    if not toks:
+        return False
+    starts = [t[0] for t in toks]
+    n = len(toks)
+    # reach[k]: from token k on, `[\w-]+` tokens lead to one starting `extglob` + boundary.
+    reach = [False] * (n + 1)
+    for k in range(n - 1, -1, -1):
+        tok = toks[k][1]
+        ext = tok.startswith("extglob") and (len(tok) == 7 or not _WORD_CHARS_RE.fullmatch(tok[7]))
+        reach[k] = ext or (bool(_WORD_OR_DASH_RE.fullmatch(tok)) and reach[k + 1])
+    for m in _SHOPT_RE.finditer(text):
+        k = bisect.bisect_left(starts, m.end())  # the first token after the whitespace
+        flag_seen = False
+        while k < n:
+            tok = toks[k][1]
+            if not (len(tok) >= 2 and tok[0] == "-" and _WORD_CHARS_RE.fullmatch(tok[1:])):
+                break
+            flag_seen = flag_seen or "s" in tok[1:]
+            if flag_seen and reach[k + 1]:
+                return True
+            k += 1
+    return False
+
+
+def _strip_line_suffix(path):
+    """Exactly the old loop -- strip trailing `.,:;` and a `:<digits>` line suffix, again until
+    nothing changes -- with an end index instead of a new string per round, so a span with many
+    `:12` suffixes is linear, not quadratic. (A path with a newline, which a brief path never
+    has, keeps the regex loop: there `re`'s `$` also matches before a final newline.)"""
+    if "\n" in path:
+        while True:
+            stripped = _LINE_SUFFIX_RE.sub("", path.rstrip(".,:;"))
+            if stripped == path:
+                return path
+            path = stripped
+    end = len(path)
+    while True:
+        e = end
+        while e > 0 and path[e - 1] in ".,:;":
+            e -= 1
+        d = e
+        while d > 0 and path[d - 1].isdecimal():
+            d -= 1
+        if d < e and d > 0 and path[d - 1] == ":":
+            e = d - 1
+        if e == end:
+            return path[:end]
+        end = e
+
+
+class _Op(str):
+    """An unquoted shell operator token (`>`, `2>&`, `<<`, `&`) -- never a word."""
+
+
+class _Quoted(str):
+    """A word written with quotes (or a backslash) somewhere in the verify source. As an
+    argument it is a value, never path-checked; the first word and the `-m`/`-p` mappings
+    still read it (D3's second amendment, rule 2)."""
+
+
+_KIT_VERIFY_HOOK = None
+
+
+def _kvh():
+    """Lazy-load bin/kit_verify_hook.py for its PARSER only (`_task_verify_cmd`). Cached."""
+    global _KIT_VERIFY_HOOK
+    if _KIT_VERIFY_HOOK is None:
+        import importlib.util
+        path = Path(__file__).resolve().parent / "kit_verify_hook.py"
+        spec = importlib.util.spec_from_file_location("kit_verify_hook", path)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        _KIT_VERIFY_HOOK = mod
+    return _KIT_VERIFY_HOOK
+
+
+def _task_blocks(text):
+    """TASKS.md text -> `{id: block_text}`, split heading to heading exactly as `parse_tasks`
+    splits it (a `### ` heading without the spaced em dash bounds a block but is not one). The
+    first block wins on a duplicate id; a duplicate is an invalid graph, refused before this."""
+    lines = text.splitlines()
+    heading_idxs = [i for i, ln in enumerate(lines) if ln.startswith("### ")]
+    blocks = {}
+    for pos, start in enumerate(heading_idxs):
+        heading = lines[start][len("### "):].strip()
+        if EM_DASH not in heading:
+            continue
+        end = heading_idxs[pos + 1] if pos + 1 < len(heading_idxs) else len(lines)
+        blocks.setdefault(heading.split()[0], "\n".join(lines[start:end]))
+    return blocks
+
+
+def _code_spans(text):
+    """Every single-backticked span in `text`, in order. A run of N backticks closes only at the
+    next run of exactly N (CommonMark), so a ``double`` span and a fenced block are skipped
+    whole and the single backticks inside them are never paired with each other. The runs are
+    found once and each opener looks up the next run of its own length by bisection, so a text
+    full of unmatched backticks is not quadratic."""
+    runs = [(m.start(), m.end() - m.start()) for m in _BACKTICK_RUN_RE.finditer(text)]
+    by_len = {}
+    for idx, (_start, length) in enumerate(runs):
+        by_len.setdefault(length, []).append(idx)
+    spans, r = [], 0
+    while r < len(runs):
+        start, length = runs[r]
+        same = by_len[length]
+        pos = bisect.bisect_right(same, r)
+        if pos == len(same):
+            r += 1  # an unmatched opener is literal backticks
+            continue
+        close = same[pos]
+        if length == 1:
+            spans.append(text[start + 1:runs[close][0]])
+        r = close + 1
+    return spans
+
+
+def brief_paths(task_block_text):
+    """The repo paths a task block names in single backticks before `**Verify.**` (PLAN D3).
+
+    A span qualifies when it has no whitespace and contains `/` or ends with one of the listed
+    extensions; it is skipped when it starts with `-`, `$`, `~`, `<`, `{`, `http` or contains
+    any of `* ? [ ] { } ( ) < > ::`; then trailing `.,:;` and a `:<digits>` line suffix are
+    stripped (`bin/x.py:42` -> `bin/x.py`). Ordered, deduplicated. With no `**Verify.**` marker
+    (the other dialect) the whole block is read; its fenced verify is skipped as a fence.
+    """
+    text = task_block_text or ""
+    cut = text.find("**Verify.**")
+    if cut != -1:
+        text = text[:cut]
+    out, seen = [], set()
+    for span in _code_spans(text):
+        if not span or any(ch.isspace() for ch in span):
+            continue
+        if "/" not in span and not span.endswith(_BRIEF_PATH_EXTS):
+            continue
+        if span.startswith(_BRIEF_SKIP_PREFIXES) or any(p in span for p in _BRIEF_SKIP_PARTS):
+            continue
+        path = _strip_line_suffix(span)
+        if path and path not in seen:
+            seen.add(path)
+            out.append(path)
+    return out
+
+
+_BACKTICK_RUN_RE = re.compile(r"`+")
+
+
+@functools.lru_cache(maxsize=256)
+def _creation_word_ends(text):
+    """The sorted end offsets of every creation word in `text`: computed once per text, so
+    classifying many paths against one brief is not quadratic."""
+    return tuple(m.end() for m in _CREATION_WORD_RE.finditer(text))
+
+
+def _claims_creation(path, text):
+    """Whether `text` names `path` with a creation word (`_CREATION_WORD_RE`: whole word, any
+    case) ending within the 80 characters before it (PLAN D3, third amendment rule 5). The
+    caller passes only the block before `**Verify.**`: a verify's own words never claim.
+
+    "The same path" means the same path: an occurrence inside a longer one (`old/bin/x.py`,
+    `bin/x.py.bak`) does not count, though sentence punctuation after it does."""
+    if not path or not text:
+        return False
+    ends = _creation_word_ends(text)
+    if not ends:
+        return False
+    needles = [path] + ([path[2:]] if path.startswith("./") and len(path) > 2 else [])
+    for needle in needles:
+        start = text.find(needle)
+        while start != -1:
+            end = start + len(needle)
+            before = text[start - 1] if start else ""
+            if before == "/" and text[start - 2:start] == "./":
+                # `./spike/run.py` in the brief is the same path as `spike/run.py` in the verify
+                before = text[start - 3] if start >= 3 else ""
+            after = text[end] if end < len(text) else ""
+            after2 = text[end + 1] if end + 1 < len(text) else ""
+            # The start and the end of the text are boundaries: `"" in "_-/"` is True in
+            # Python, so an empty neighbour is tested explicitly, not by membership.
+            bounded = (not (before and (before.isalnum() or before in "_-./~$"))
+                       and not (after and (after.isalnum() or after in "_-/"))
+                       and not (after == "." and (after2.isalnum() or after2 == "_")))
+            if bounded:
+                k = bisect.bisect_left(ends, start - _CREATION_WINDOW)
+                if k < len(ends) and ends[k] <= start:
+                    return True
+            start = text.find(needle, start + 1)
+    return False
+
+
+def _is_path_char(c):
+    """A character `_claims_creation` treats as part of a path, before or after it."""
+    return c.isalnum() or c in "_-./~$"
+
+
+#: Runs longer than this enumerate only themselves as claimable candidates: a path that long
+#: is not a real path, and enumerating its internal end points would make a pathological
+#: brief quadratic. A missed claim there only leaves a path `missing` -- a warning.
+_CLAIM_RUN_CAP = 4096
+
+
+def _claim_candidates(text):
+    """Every path string `_claims_creation` would say `text` claims to create -> a set.
+
+    Equivalent by construction for paths made only of path characters: an occurrence passes
+    `_claims_creation`'s boundary test exactly when it starts where a maximal run of path
+    characters starts (or two in, after a leading `./`) and ends at the run's end or before an
+    internal `~`, `$`, or a `.` that is not followed by a letter, digit or `_`; and it claims
+    when a creation word ends within the window before that start. Computed once per text."""
+    ends = _creation_word_ends(text)
+    out = set()
+    if not ends:
+        return out
+    n, i = len(text), 0
+    while i < n:
+        if not _is_path_char(text[i]):
+            i += 1
+            continue
+        j = i
+        while j < n and _is_path_char(text[j]):
+            j += 1
+        starts = [i] + ([i + 2] if text.startswith("./", i) and j - i > 2 else [])
+        for s in starts:
+            k = bisect.bisect_left(ends, s - _CREATION_WINDOW)
+            if not (k < len(ends) and ends[k] <= s):
+                continue
+            out.add(text[s:j])
+            if j - s > _CLAIM_RUN_CAP:
+                continue
+            for e in range(s + 1, j):
+                c = text[e]
+                if c in "~$" or (c == "." and not (e + 1 < n and (text[e + 1].isalnum()
+                                                                  or text[e + 1] == "_"))):
+                    out.add(text[s:e])
+        i = j
+    return out
+
+
+class _Creators:
+    """The created-by question answered by index, for `analyze_kit` (D3, seventh amendment's
+    linear-chain fix). `classify_path` given a `{id: text}` dict scans every eligible creator
+    per path, and a long `depends:` chain made that roughly cubic. This builds, once per kit,
+    a map from every path a task's claim text claims to the tasks claiming it (file order), and
+    each task's upstream set as an integer bitset; `claimant` then reads both. Same answer as
+    the scan: the first claiming task upstream in file order, else the task itself. A path with
+    a character outside `_is_path_char` (a quoted `my dir/x`) falls back to the scan."""
+
+    def __init__(self, order, claim_of, depends_of):
+        self.order = list(dict.fromkeys(order))
+        self.index_of = {tid: k for k, tid in enumerate(self.order)}
+        self.claim_of = claim_of
+        self.claims = {}
+        for tid in self.order:
+            for cand in _claim_candidates(claim_of.get(tid, "")):
+                self.claims.setdefault(cand, []).append(tid)
+        self.up = self._upstream_bits(depends_of)
+
+    def _upstream_bits(self, depends_of):
+        """Each task's transitive upstream as a bitset over `self.order`. One post-order pass
+        when the graph is acyclic (every valid kit); a cycle -- an invalid graph, which the CLI
+        refuses before analysing but a direct caller may still pass -- falls back to an exact
+        closure per task, so the answer always matches the plain transitive closure."""
+        bits, state, cyclic = {}, {}, False
+        for root in self.order:
+            if root in state:
+                continue
+            stack = [root]
+            while stack:
+                t = stack[-1]
+                if t not in state:
+                    state[t] = 0  # visiting
+                    for d in depends_of.get(t, ()):
+                        if d not in self.index_of or d == t:
+                            continue
+                        if d not in state:
+                            stack.append(d)
+                        elif state[d] == 0:
+                            cyclic = True
+                    continue
+                stack.pop()
+                if state[t] == 1:
+                    continue
+                b = 0
+                for d in depends_of.get(t, ()):
+                    if d in self.index_of and d != t:
+                        b |= (1 << self.index_of[d]) | bits.get(d, 0)
+                bits[t] = b
+                state[t] = 1
+        if not cyclic:
+            return bits
+        for t in self.order:  # exact, quadratic only on an invalid (cyclic) graph
+            seen, stack = set(), list(depends_of.get(t, ()))
+            while stack:
+                d = stack.pop()
+                if d in seen or d == t or d not in self.index_of:
+                    continue
+                seen.add(d)
+                stack.extend(depends_of.get(d, ()))
+            bits[t] = sum(1 << self.index_of[d] for d in seen)
+        return bits
+
+    def is_upstream(self, task_id, other):
+        k = self.index_of.get(other)
+        return k is not None and other != task_id and bool((self.up.get(task_id, 0) >> k) & 1)
+
+    def claimant(self, path, task_id):
+        if not path:
+            return None
+        if not all(_is_path_char(c) for c in path):
+            for u in self.order:  # rare: fall back to the scan, over the same eligible set
+                if self.is_upstream(task_id, u) and _claims_creation(path, self.claim_of[u]):
+                    return u
+            mine = self.claim_of.get(task_id)
+            return task_id if mine is not None and _claims_creation(path, mine) else None
+        names = list(self.claims.get(path, ()))
+        if path.startswith("./") and len(path) > 2:
+            names += self.claims.get(path[2:], ())
+        best = None
+        for u in names:
+            if self.is_upstream(task_id, u) and (best is None
+                                                 or self.index_of[u] < self.index_of[best]):
+                best = u
+        if best is not None:
+            return best
+        return task_id if task_id in names else None
+
+
+def classify_path(path, repo_root, task_id, creators):
+    """`path` -> `{"path", "state", "by"}` with state `exists | created-by | missing`.
+
+    `exists` when the path, absolute or relative to `repo_root`, exists now. Otherwise
+    `created-by` when a task in `creators` (`{id: block_text}`, the caller's eligible set: the
+    tasks upstream of `task_id`, transitively, and `task_id` itself) names it after a creation
+    word -- upstream tasks first, in their given order, then `task_id`, because the earliest
+    writer is the one that creates it. Otherwise `missing`. A stat and a text search: nothing
+    is opened or run.
+    """
+    p = Path(path)
+    full = p if p.is_absolute() else Path(repo_root) / p
+    try:
+        exists = full.exists()
+    except (OSError, ValueError):
+        exists = False
+    if exists:
+        return {"path": path, "state": "exists", "by": None}
+    if isinstance(creators, _Creators):
+        by = creators.claimant(path, task_id)  # the same answer, by index (linear, amendment 7)
+        if by is not None:
+            return {"path": path, "state": "created-by", "by": by}
+        return {"path": path, "state": "missing", "by": None}
+    creators = creators or {}
+    order = [tid for tid in creators if tid != task_id]
+    if task_id in creators:
+        order.append(task_id)
+    for tid in order:
+        if _claims_creation(path, creators[tid]):
+            return {"path": path, "state": "created-by", "by": tid}
+    return {"path": path, "state": "missing", "by": None}
+
+
+def _skip_substitution(text, i):
+    """`text[i]` opens `$(`, `<(`, `>(` or a backtick -> the index just past its close.
+
+    Nested parentheses, quotes and backslashes inside are honored; an unclosed one runs to the
+    end (everything after it is then unread, the conservative outcome)."""
+    n = len(text)
+    if text[i] == "`":
+        j = i + 1
+        while j < n:
+            if text[j] == "\\":
+                j += 2
+                continue
+            if text[j] == "`":
+                return j + 1
+            j += 1
+        return n
+    j, depth = i + 2, 1
+    while j < n:
+        c = text[j]
+        if c == "\\":
+            j += 2
+            continue
+        if c == "'":
+            k = text.find("'", j + 1)
+            j = n if k == -1 else k + 1
+            continue
+        if c == '"':
+            j += 1
+            while j < n and text[j] != '"':
+                j += 2 if text[j] == "\\" else 1
+            j += 1
+            continue
+        if c == "`":
+            j = _skip_substitution(text, j)
+            continue
+        if c == "(":
+            depth += 1
+        elif c == ")":
+            depth -= 1
+            if depth == 0:
+                return j + 1
+        j += 1
+    return n
+
+
+def _heredoc_tag(text, i):
+    """`text[i:]` starts with `<<` (not `<<<`) -> `(tag, strip_tabs, end, quoted)` or None.
+
+    The delimiter is read as bash reads it: one word up to a blank or an operator, its quotes
+    and backslashes removed (`E"O"F` is `EOF`), and `quoted` when any part was quoted -- which
+    decides whether a backslash-newline in the body joins lines (sixth-round conformance)."""
+    n = len(text)
+    j = i + 2
+    dash = text.startswith("-", j)
+    if dash:
+        j += 1
+    while j < n and text[j] in " \t":
+        j += 1
+    parts, quoted, start = [], False, j
+    while j < n and text[j] not in " \t\r\n;&|<>()":
+        c = text[j]
+        if c == "'":
+            k = text.find("'", j + 1)
+            if k == -1:
+                return None
+            parts.append(text[j + 1:k])
+            quoted, j = True, k + 1
+        elif c == '"':
+            k = j + 1
+            while k < n and text[k] != '"':
+                k += 2 if text[k] == "\\" else 1
+            if k >= n:
+                return None
+            parts.append(re.sub(r'\\([$`"\\\n])', r"\1", text[j + 1:k]))
+            quoted, j = True, k + 1
+        elif c == "\\" and j + 1 < n:
+            parts.append(text[j + 1])
+            quoted, j = True, j + 2
+        else:
+            parts.append(c)
+            j += 1
+    if j == start:
+        return None
+    return "".join(parts), dash, j, quoted
+
+
+def _skip_heredoc_body(text, i, tag, strip_tabs, quoted=False):
+    """Index just past the heredoc body starting at `i`: through the line that is exactly
+    `tag` (leading tabs removed for `<<-`), or to the end when it never comes. With an
+    unquoted delimiter a backslash-newline joins two body lines first, as in bash, so the line
+    after `line \\` is never the terminator."""
+    n = len(text)
+    while i < n:
+        logical = ""
+        while True:
+            j = text.find("\n", i)
+            line = text[i:n if j == -1 else j].rstrip("\r")
+            if strip_tabs:
+                line = line.lstrip("\t")
+            i = n if j == -1 else j + 1
+            trailing = len(line) - len(line.rstrip("\\"))
+            if not quoted and trailing % 2 == 1 and i < n:
+                logical += line[:-1]  # an unquoted body: backslash-newline continues the line
+                continue
+            logical += line
+            break
+        if logical == tag:
+            break
+    return i
+
+
+def _substitution_features(body, features):
+    """D3's fifth amendment: what a skipped command substitution's text makes non-simple -- it
+    spans lines, or holds a heredoc (`<<`) or a `case` -- plus, read generously where the
+    amendment is silent (the body is not lexed, so this is the ambiguous, non-blocking reading),
+    an `install` word inside it."""
+    if features is None:
+        return
+    if "\n" in body or "<<" in body or _CASE_WORD_RE.search(body):
+        features.add("a command substitution spanning lines or holding `<<` or `case`")
+    if _INSTALL_WORD_RE.search(body):
+        features.add("an install step")
+    if _PROBE_IN_TEXT_RE.search(body):
+        # Sixth amendment (6): a tool probe inside a substitution (`x="$(command -v t)"`) is a
+        # probe; read on the unlexed body, as generously as `install` above.
+        features.add("a tool probe")
+
+
+def _shell_lines(text, features=None):
+    """Verify text -> its logical command lines, with what must not be tokenized removed.
+
+    PLAN D3's first steps, done in one quote-aware pass so a quote decides everything at once:
+    heredoc bodies are dropped (the `<<TAG` line itself stays and is read); `$(...)`, backtick
+    and `<(...)` substitutions become `$_`; operator characters inside quotes or after a
+    backslash become stand-ins; a backslash-newline joins two lines (D3 silent -- one command);
+    a `#` that begins a word starts a comment (bash's rule, D3 silent); and an unquoted newline
+    ends a line, so a quoted string spanning lines stays one command (D3 splits on newlines;
+    the amendment's point is that a separator inside quotes is not one).
+
+    `features`, when given, collects the fifth amendment's non-simple features this pass alone
+    can see: a `${` outside single quotes, and a command substitution's own text.
+    """
+    lines, cur, pending = [], [], []
+    # A NUL byte is dropped: bash discards NUL bytes from its input, and no argv can carry one,
+    # so a word with one in it is not a sure missing command (D3 silent; the conservative read).
+    text = text.replace("\x00", "")
+    # Seventh amendment (4): once the verify runs `shopt -s extglob`, `@(...)`, `+(...)`,
+    # `?(...)`, `*(...)` and `!(...)` are one word each. Turned on for the whole verify when the
+    # `shopt` appears anywhere in it (bash needs it a line earlier; reading it everywhere is
+    # the generous side, and an extglob word never refuses).
+    extglob = _extglob_on(text)
+    state, i, n = None, 0, len(text)
+    while i < n:
+        c = text[i]
+        if state == "'":
+            j = text.find("'", i)  # the whole quoted stretch at once (linear time)
+            end = n if j == -1 else j
+            if end > i:
+                cur.append(text[i:end].translate(_STANDIN_TABLE))
+            if j == -1:
+                i = n
+                continue
+            cur.append("'")
+            state = None
+            i = j + 1
+            continue
+        if state == '"':
+            m = _DQUOTED_RUN_RE.match(text, i)
+            if m:
+                cur.append(m.group().translate(_STANDIN_TABLE))
+                i = m.end()
+                continue
+            if c == "\\" and i + 1 < n:
+                nxt = text[i + 1]
+                if nxt == "\n":
+                    i += 2
+                    continue
+                if nxt in '"\\$`':
+                    cur.append(c + nxt)
+                    i += 2
+                    continue
+            if c == '"':
+                state = None
+                cur.append(c)
+                i += 1
+                continue
+            if c == "`" or text.startswith("$(", i):
+                end = _skip_substitution(text, i)
+                _substitution_features(text[i:end], features)
+                i = end
+                cur.append(_SUBSTITUTED)
+                continue
+            if features is not None and text.startswith("${", i):
+                # Fifth amendment: `${`. Counted inside double quotes too, where the amendment
+                # says "unquoted": a `${...}` there may nest quotes this reader does not model,
+                # so it is ambiguous, and the non-blocking reading is taken.
+                features.add("`${`")
+            cur.append(_OP_STANDIN.get(c, c))
+            i += 1
+            continue
+        # unquoted
+        if c == "\\":
+            if i + 1 >= n:
+                i += 1  # a trailing lone backslash escapes nothing
+                continue
+            nxt = text[i + 1]
+            if nxt != "\n":
+                cur.append(_QUOTED_MARK + (_OP_STANDIN[nxt] if nxt in _OP_STANDIN else c + nxt))
+            i += 2
+            continue
+        if c in "'\"":
+            state = c
+            cur.append(c + _QUOTED_MARK)
+            i += 1
+            continue
+        if c in " \t\r":
+            m = _BLANK_RUN_RE.match(text, i)  # blanks taken whole (linear time)
+            cur.append(m.group())
+            i = m.end()
+            continue
+        prev = cur[-1][-1:] if cur else ""
+        word_start = prev == "" or prev in " \t\r" or prev in _SHELL_OPS
+        if c == "#" and word_start:
+            j = text.find("\n", i)
+            i = n if j == -1 else j
+            continue
+        if word_start and c.isdigit():
+            m = _FD_NUMBER_RE.match(text, i)
+            if m:
+                i = m.end()  # fourth amendment (3): `2>&1`, `3<file` -- an fd number, not a word
+                continue
+        if word_start and c == "{":
+            m = _FD_NAME_RE.match(text, i)
+            if m:
+                i = m.end()  # sixth amendment (4): `exec {fd}>file`, `{fd}<x`: a redirection
+                continue
+        if word_start and (c.isalpha() or c == "_"):
+            m = _ARRAY_ASSIGN_RE.match(text, i)
+            if m:
+                # Fourth amendment (3): `NAME=(a b c)` is an array assignment; its elements are
+                # values, never command words. It reads as the assignment `NAME=$_`.
+                eq = m.end() - 2
+                cur.append(text[i:eq + 1] + _SUBSTITUTED)
+                i = _skip_substitution(text, eq)
+                continue
+        if c == "`" or (c in "$<>" and text.startswith("(", i + 1)):
+            end = _skip_substitution(text, i)
+            _substitution_features(text[i:end], features)  # `<(...)` read the same way (silent)
+            i = end
+            cur.append(_SUBSTITUTED)
+            continue
+        if features is not None and text.startswith("${", i):
+            features.add("`${`")  # fifth amendment: an unquoted `${`
+        if text.startswith("<<<", i):
+            cur.append("<<<")
+            i += 3
+            continue
+        if text.startswith("<<", i):
+            found = _heredoc_tag(text, i)
+            if found:
+                tag, strip_tabs, end, quoted = found
+                pending.append((tag, strip_tabs, quoted))
+                cur.append(text[i:end])
+                i = end
+                continue
+        if c == "\n":
+            lines.append("".join(cur))
+            cur = []
+            i += 1
+            for tag, strip_tabs, quoted in pending:
+                i = _skip_heredoc_body(text, i, tag, strip_tabs, quoted)
+            pending = []
+            continue
+        if extglob and c == "(" and i > 0 and text[i - 1] in "@+?*!":
+            end = _skip_substitution(text, i - 1)  # the `(` at i, matched with nesting
+            cur.append(text[i:end].translate(_STANDIN_TABLE))  # `|` inside is not a pipe
+            i = end
+            continue
+        m = _UNQUOTED_RUN_RE.match(text, i)
+        if m:  # a run with nothing special in it, taken whole (linear time, fourth amendment)
+            cur.append(m.group())
+            i = m.end()
+            continue
+        cur.append(c)
+        i += 1
+    lines.append("".join(cur))
+    return [ln for ln in lines if ln.strip()]
+
+
+def _split_operators(run):
+    """An unquoted run of operator characters -> its operators, longest match first."""
+    out, i = [], 0
+    while i < len(run):
+        for op in _OPERATORS:
+            if run.startswith(op, i):
+                out.append(op)
+                i += len(op)
+                break
+        else:  # pragma: no cover - every operator character is itself in _OPERATORS
+            out.append(run[i])
+            i += 1
+    return out
+
+
+_LEX_SPACE_RE = re.compile(r"[ \t\r\n]+")
+_LEX_OPS_RE = re.compile(r"[();<>|&]+")
+_LEX_PLAIN_RE = re.compile(r"[^ \t\r\n();<>|&'\"\\]+")
+_LEX_DQ_STOP_RE = re.compile(r'["\\]')
+
+
+def _lex(line):
+    """One logical line -> `(tokens, fallback)`: D3's reading, `shlex.shlex(line, posix=True,
+    punctuation_chars=True)` with `whitespace_split=True` (and `commenters=""`: comments were
+    removed in `_shell_lines` by bash's word-start rule), with `ValueError` falling back to a
+    whitespace split.
+
+    Implemented here rather than by calling shlex, because shlex grows each token one character
+    at a time (`self.token = self.token + nextchar`), which is quadratic in a token's length: a
+    3 MB verify word took minutes, and the fourth amendment requires linear time. The reading is
+    shlex's exactly -- runs of `();<>|&` are one token, whitespace is ` \\t\\r\\n`, single quotes
+    are literal, a backslash in double quotes escapes only `"` and itself, an unquoted backslash
+    escapes any character, an unclosed quote or a trailing backslash raises -- and
+    `tests/test_kit_analyze.py` checks it against shlex token for token."""
+    tokens, buf, in_word = [], [], False
+    i, n = 0, len(line)
+    try:
+        while i < n:
+            c = line[i]
+            if c in " \t\r\n":
+                if in_word:
+                    tokens.append("".join(buf))
+                    buf, in_word = [], False
+                i = _LEX_SPACE_RE.match(line, i).end()
+            elif c in _SHELL_OPS:
+                if in_word:
+                    tokens.append("".join(buf))
+                    buf, in_word = [], False
+                m = _LEX_OPS_RE.match(line, i)
+                tokens.append(m.group())
+                i = m.end()
+            elif c == "'":
+                j = line.find("'", i + 1)
+                if j == -1:
+                    raise ValueError("No closing quotation")
+                buf.append(line[i + 1:j])
+                in_word, i = True, j + 1
+            elif c == '"':
+                j, parts = i + 1, []
+                while True:
+                    m = _LEX_DQ_STOP_RE.search(line, j)
+                    if m is None:
+                        raise ValueError("No closing quotation")
+                    k = m.start()
+                    parts.append(line[j:k])
+                    if line[k] == '"':
+                        break
+                    if k + 1 >= n:
+                        raise ValueError("No closing quotation")
+                    nxt = line[k + 1]
+                    parts.append(nxt if nxt in '"\\' else "\\" + nxt)
+                    j = k + 2
+                buf.append("".join(parts))
+                in_word, i = True, k + 1
+            elif c == "\\":
+                if i + 1 >= n:
+                    raise ValueError("No escaped character")
+                buf.append(line[i + 1])
+                in_word, i = True, i + 2
+            else:
+                m = _LEX_PLAIN_RE.match(line, i)
+                buf.append(m.group())
+                in_word, i = True, m.end()
+        if in_word:
+            tokens.append("".join(buf))
+        return tokens, False
+    except ValueError:
+        return line.split(), True
+
+
+def verify_tokens(verify_text, features=None, seps=None):
+    """Verify text -> its simple commands, each a list of tokens (PLAN D3).
+
+    Tokenized per line with `shlex.shlex(line, posix=True, punctuation_chars=True)` and
+    `whitespace_split=True`, so `&&`, `||`, `;` and `|` split commands only where they stand
+    outside quotes. Words are `str`, or `_Quoted` (a `str` subclass) when any part was written
+    with quotes or a backslash; other unquoted operators are `_Op` (`>`, `<<`, `&`, a subshell's
+    `(`/`)`, a function's `()`, an arithmetic `((`). Third amendment, rules 2 and 3: inside
+    `[[ ... ]]`, `&&`/`||`/`<`/`>` are test operators and stay in the command as plain words;
+    a `((...))` command keeps only its `((` marker; and every line from one whose command word is
+    `case` through the line holding `esac` is dropped. On `ValueError` (an unterminated quote)
+    the line falls back to a whitespace split, and a fallback token still carrying a quote
+    character is read as `$_` (unreadable, so unchecked).
+
+    `features`, when given, collects D3's fifth-amendment features seen in the lexed text: a
+    function definition (`function`, or a word followed by `(` `)`, spaced or not), the reserved
+    word `case`, a `PATH` assignment, and the word `install` -- plus, through `_shell_lines`, a
+    `${` and a non-simple command substitution. Quoted text and heredoc bodies are never
+    lexed as words here, so a `case` in them is not the feature.
+
+    `seps`, when given, receives one entry per returned command: the separator that ended it
+    (`&&`, `||`, `|`, `|&`, `;`, `;;`, a newline, or "" at the end) -- what the sixth
+    amendment's `||` rule reads. Inside `[[ ... ]]` and `(( ... ))` a newline is not a
+    separator: those keep their mode across lines (sixth amendment, (4)).
+    """
+    commands, in_case = [], False
+    cmd, mode = [], None  # mode: None | "test" (in [[ ]]) | "arith" (in (( ))), across lines
+    # Whether the next token is in command-word position: nothing yet but `(`, reserved
+    # prefixes (`if`, `!`, `{`, ...) and assignments. Kept incrementally, so a long run of
+    # words costs linear time (fourth amendment).
+    at_cmd = True
+    out_seps = []
+    for line in _shell_lines(verify_text or "", features):
+        raw, fallback = _lex(line)
+        line_cmds = []  # (command, the separator that ended it)
+        saw_case = saw_esac = False
+        for tok in raw:
+            if tok and all(ch in _SHELL_OPS for ch in tok):
+                for op in _split_operators(tok):
+                    if mode == "arith":
+                        if op == "))":
+                            mode = None
+                        continue
+                    if mode == "test":
+                        cmd.append(op)  # a test operator inside [[ ]], not a separator (rule 3)
+                        continue
+                    if op == "((" and (at_cmd or cmd[-1:] == ["for"]):
+                        mode = "arith"
+                        cmd.append(_Op("(("))
+                        at_cmd = False
+                    elif op in _SEPARATORS:
+                        if cmd:
+                            line_cmds.append((cmd, op))
+                        cmd, at_cmd = [], True
+                    elif op in ("((", "))"):
+                        cmd.extend((_Op(op[0]), _Op(op[0])))  # two subshell parens, not arithmetic
+                        at_cmd = at_cmd and op == "(("
+                    else:
+                        defines = ((op == "()" and cmd and _is_word(cmd[-1]))
+                                   or (op == ")" and len(cmd) >= 2 and isinstance(cmd[-1], _Op)
+                                       and cmd[-1] == "(" and _is_word(cmd[-2])))
+                        if defines and features is not None:
+                            features.add("a function definition")  # `f()`, `f ()`, `f ( )`
+                        cmd.append(_Op(op))
+                        # After a function's `()` its body starts: command position again, so
+                        # `f() { case ...` sees its `case` (and drops the case line).
+                        at_cmd = defines or (at_cmd and op == "(")
+                continue
+            if mode == "arith":
+                continue
+            quoted = _QUOTED_MARK in tok
+            word = tok.replace(_QUOTED_MARK, "").translate(_OP_RESTORE)
+            if fallback and ("'" in word or '"' in word):
+                word, quoted = _SUBSTITUTED, False
+            if mode == "test":
+                cmd.append(word)
+                if word == "]]" and not quoted:
+                    mode = None
+                continue
+            if not quoted:
+                if word == "esac":
+                    saw_esac = True
+                if at_cmd:
+                    if word == "[[":
+                        mode = "test"
+                    elif word == "case":
+                        saw_case = True
+            if features is not None and not quoted:
+                # `case` and `function` count wherever they stand unquoted, not only where this
+                # reader tracks command position: a missed position would wrongly make the verify
+                # simple, and counting a stray word errs toward present (the non-blocking side).
+                if word == "case":
+                    features.add("`case`")
+                elif word == "function":
+                    features.add("a function definition")
+            if features is not None:
+                if _PATH_ASSIGN_RE.match(word) or word == "PATH" or _is_dynamic_name_assignment(word):
+                    # A prefix, plain, or `export` assignment -- and, read generously because
+                    # bash has more ways than `PATH=`: `printf -v PATH`, `read PATH`, and an
+                    # assignment whose name is computed (`export $VAR=bin`).
+                    features.add("a PATH assignment")
+                elif "install" in word.lower() or "bootstrap" in word.lower():
+                    # `install` quoted or not, and inside a word (`./install.sh`,
+                    # `scripts/bootstrap.sh`): a script by that name may put tools on PATH, so
+                    # the ambiguous, non-blocking reading is taken.
+                    features.add("an install step")
+            cmd.append(_Quoted(word) if quoted else word)
+            at_cmd = (at_cmd and not quoted
+                      and (word in _PREFIX_KEYWORDS or _is_assignment(word)))
+        if cmd and mode is None:
+            line_cmds.append((cmd, "\n"))  # an unquoted newline ends a command
+            cmd, at_cmd = [], True
+        if in_case or saw_case:
+            # Rule 2: the lines from `case` through `esac` are not checked, whole lines.
+            in_case = not saw_esac
+            continue
+        for c, sep in line_cmds:
+            commands.append(c)
+            out_seps.append(sep)
+    if cmd and not in_case:
+        commands.append(cmd)  # an unclosed `[[` or `((` runs to the end (bash: a syntax error)
+        out_seps.append("")
+    if seps is not None:
+        seps.extend(out_seps)
+    return commands
+
+
+def _is_assignment(tok):
+    """D3: a token containing `=` before any `/` is an assignment, skipped as a first word."""
+    eq = tok.find("=")
+    slash = tok.find("/")
+    return eq != -1 and (slash == -1 or eq < slash)
+
+
+def _is_dynamic(tok):
+    """A token whose value the shell computes: it starts with `$`, or a `/`-component does."""
+    return tok.startswith("$") or any(part.startswith("$") for part in tok.split("/"))
+
+
+def _is_object_name(tok):
+    """D3's second amendment, rule 4: a `:` before the first `/` (`HEAD:docs/x.md`) is a git
+    object name, not a path. (It also leaves `user@host:dir/x` and `ftp://...` unread.)"""
+    colon, slash = tok.find(":"), tok.find("/")
+    return colon != -1 and slash != -1 and colon < slash
+
+
+def _path_shaped(tok):
+    """D3's path shape: contains `/`, no glob characters, does not start with `-`, `$`, `~` or
+    `http`, no component starts with `$`, and it is not a git object name."""
+    return ("/" in tok and not any(ch in _GLOB_CHARS for ch in tok)
+            and not tok.startswith(_ARG_SKIP_PREFIXES) and not _is_dynamic(tok)
+            and not _is_object_name(tok))
+
+
+def _arg_is_path(tok):
+    """Whether an ARGUMENT is checked for existence: path-shaped, written without quotes
+    (second amendment, rule 2), and not a `NAME=value` word (rule 3)."""
+    return (not isinstance(tok, (_Quoted, _Op)) and _path_shaped(tok)
+            and not _is_assignment(tok))
+
+
+def _redirect_targets(cmd, j):
+    """`("write", target)` for every `>`/`>>` from `cmd[j]` on. Everything after the first one is
+    output and is not checked (D3); its targets are what the verify writes (second amendment,
+    rule 5). Any operator holding `>` counts (`&>`, `>|`, `2>`): D3 names `>`/`>>` only, and
+    recording a write can only clear a later finding, never raise one. A `>&2` target is an fd
+    number, recorded harmlessly."""
+    out = []
+    while j < len(cmd):
+        if isinstance(cmd[j], _Op) and ">" in cmd[j] and j + 1 < len(cmd) \
+                and not isinstance(cmd[j + 1], _Op):
+            out.append(("write", cmd[j + 1]))
+            j += 2
+            continue
+        j += 1
+    return out
+
+
+def _is_python(tok):
+    """Whether `tok` names a Python interpreter (`python3`, `python3.12`, `.venv/bin/python`)."""
+    return bool(_PYTHON_RE.match(tok.rsplit("/", 1)[-1]))
+
+
+def _module_candidates(tok, repo_root):
+    """`-m`'s dotted module -> the files it may name, longest first; [] when not under the repo.
+
+    D3 maps `tests.test_x` to `tests/test_x.py`. Two places D3 is silent, read conservatively:
+    a module whose first segment is not a directory under the repo root (`json.tool`,
+    `http.server`) is not checked -- `analyze` cannot tell a stdlib or installed module from a
+    missing one without importing it, and importing is execution; and a trailing class or
+    method (`tests.test_x.Case.test_y`) is allowed by accepting the longest prefix that
+    resolves, as a `.py` file or a package directory."""
+    if repo_root is None:
+        return []  # relative checks have stopped (a dynamic `cd`): nothing to resolve against
+    parts = tok.split(".")
+    try:
+        under_repo = (Path(repo_root) / parts[0]).is_dir()
+    except (OSError, ValueError):
+        under_repo = False
+    if not under_repo:
+        return []
+    out = []
+    for k in range(len(parts), 1, -1):
+        stem = "/".join(parts[:k])
+        out.extend((stem + ".py", stem))
+    return out
+
+
+def _is_word(tok):
+    return not isinstance(tok, _Op)
+
+
+def _script_checkable(tok):
+    """An interpreter's script operand is checked when it contains `/` or ends in a script
+    extension (third amendment, rule 1) -- written without quotes (the second amendment's
+    trade stands: `python3 "bin/x.py"` is not checked), and not computed, a home path, a glob,
+    a URL or a git object."""
+    return (not isinstance(tok, (_Quoted, _Op)) and bool(tok)
+            and ("/" in tok or tok.endswith(_SCRIPT_EXTS))
+            and not tok.startswith(_ARG_SKIP_PREFIXES) and not _is_dynamic(tok)
+            and not any(ch in _GLOB_CHARS for ch in tok) and not _is_object_name(tok)
+            and not _is_assignment(tok))
+
+
+def _cd_targets(args):
+    """`cd`'s operand -> `[("cd", D, True)]` for a literal one, else `[("cd-unknown", ...)]`.
+
+    Third amendment, rule 4: a bare `cd`, `cd -`, or a dynamic operand (`$`, a substitution)
+    stops relative checks. Read the same way where the amendment is silent: an operand written
+    with quotes (the second amendment makes it a value, never checked), one starting with `~`
+    (home, which `analyze` never stats), or a glob."""
+    words = [t for t in args if _is_word(t)]
+    operand = next((t for t in words if t == "-" or not t.startswith("-")), None)
+    if (operand is None or operand == "-" or isinstance(operand, _Quoted) or "$" in operand
+            or operand.startswith("~") or any(ch in _GLOB_CHARS for ch in operand)):
+        return [("cd-unknown", None, False)]
+    return [("cd", str(operand), True)]
+
+
+def _git_writes(args):
+    """The directory operands `git init`, `git clone` and `git worktree add` write (third
+    amendment, rule 4) -> `(writes, consumed_indices)`. Where the amendment is silent the read is
+    generous: every non-option operand after `init` or `worktree add` (an option's value such as
+    `-b main` is recorded too -- a spare write can only clear a later finding); `clone`'s last
+    operand, or the directory git derives from a lone repository argument."""
+    words = [(k, t) for k, t in enumerate(args) if _is_word(t)]
+    names = [str(t) for _k, t in words]
+    writes, consumed = [], set()
+
+    def operands_after(pos):
+        return [(k, t) for k, t in words[pos + 1:] if not t.startswith("-")]
+
+    if "init" in names:
+        for k, t in operands_after(names.index("init")):
+            writes.append(str(t))
+            consumed.add(k)
+    if "worktree" in names:
+        w = names.index("worktree")
+        if w + 1 < len(names) and names[w + 1] == "add":
+            for k, t in operands_after(w + 1):
+                writes.append(str(t))
+                consumed.add(k)
+    if "clone" in names:
+        ops = operands_after(names.index("clone"))
+        if len(ops) >= 2:
+            k, t = ops[-1]
+            writes.append(str(t))
+            consumed.add(k)
+        elif len(ops) == 1:
+            derived = str(ops[0][1]).rstrip("/").rsplit("/", 1)[-1].rsplit(":", 1)[-1]
+            if derived.endswith(".git"):
+                derived = derived[:-4]
+            if derived:
+                writes.append(derived)
+    return writes, consumed
+
+
+def _command_targets(cmd, repo_root, defined=()):
+    """One simple command -> what it asks of the tree, in order, as `(kind, value, blocking)`:
+
+    - `("exec", word, True)`: a command word looked up on PATH;
+    - `("path", p, blocking)`: a path. Blocking -- a missing one is a finding -- only in the
+      third amendment's positions: the command word, an interpreter's script operand, the
+      `-m`/`discover -s/-p` mappings. Every other path-shaped argument is non-blocking:
+      resolved and reported, never failed;
+    - `("module", [candidate, ...], True)`: a dotted `-m` module;
+    - `("cd", D, True)` / `("cd-unknown", None, False)`: a literal `cd` (its operand blocking)
+      or one that stops relative checks;
+    - `("write", p, False)`: a path this command writes (a `>`/`>>` target; a `tee`/`touch`/
+      `mkdir` operand; the last operand of `cp`/`mv`/`ln`/`install`; what `git init`/`clone`/
+      `worktree add` creates), which the caller applies to LATER simple commands only;
+    - `("define", name, False)`: a shell function this command defines.
+
+    `repo_root` is the directory relative names resolve against for the `-m` first-segment rule
+    (the repo root, or a literal `cd`'s target); None when relative checks have stopped.
+    `defined` names the verify's functions so far: as command words they are not looked up."""
+    out, cmd = [], list(cmd)
+    own = None  # the function this command defines (`defined` itself is never copied: linear)
+    # Rule 2: `f() {` or `function f` defines `f`; what follows on the line is a command.
+    if len(cmd) >= 2 and _is_word(cmd[0]) and not isinstance(cmd[0], _Quoted) \
+            and isinstance(cmd[1], _Op) and cmd[1] == "()":
+        own = str(cmd[0])
+        out.append(("define", own, False))
+        cmd = cmd[2:]
+    elif len(cmd) >= 2 and cmd[0] == "function" and not isinstance(cmd[0], _Quoted) \
+            and _is_word(cmd[1]):
+        name = str(cmd[1])
+        own = name[:-2] if name.endswith("()") else name
+        out.append(("define", own, False))
+        cmd = cmd[2:]
+        if cmd and isinstance(cmd[0], _Op) and cmd[0] == "()":
+            cmd = cmd[1:]
+
+    n, i, word = len(cmd), 0, None
+
+    def is_word(k):
+        return k < n and _is_word(cmd[k])
+
+    while i < n:
+        tok = cmd[i]
+        if isinstance(tok, _Op):
+            if tok == "((":
+                return out  # rule 2: an arithmetic `((...))` command is not checked
+            if ">" in tok:
+                return out + [(kind, value, False) for kind, value in _redirect_targets(cmd, i)]
+            if tok == "<" and is_word(i + 1):
+                if _arg_is_path(cmd[i + 1]):
+                    out.append(("path", cmd[i + 1], False))  # an input file: an argument
+                i += 2
+            elif "<" in tok:
+                i += 2  # `<<TAG`, `<<<word`, `<&N`: a value, not a file (D3 silent)
+            else:
+                i += 1  # `(`/`)` (a subshell; the caller tracks its `cd`), `&`
+            continue
+        if _is_assignment(tok):
+            i += 1
+            continue
+        word = tok
+        i += 1
+        break
+    if word is None:
+        return out
+    # Rule 1: after `if then else elif while until do ! {`, `time` and `exec`, bash's grammar
+    # puts the command word again. Skip assignment words (and a subshell's `(`) and take the
+    # next word as the command word. A quoted `"if"` is not a reserved word and is not walked.
+    while word in _PREFIX_KEYWORDS and not isinstance(word, _Quoted):
+        j = i
+        while j < n and ((isinstance(cmd[j], _Op) and cmd[j] == "(")
+                         or (_is_word(cmd[j]) and _is_assignment(cmd[j]))):
+            j += 1
+        if word == "time" and j < n and _is_word(cmd[j]) and cmd[j] == "-p":
+            j += 1  # POSIX `time -p cmd`
+        if j >= n or not _is_word(cmd[j]):
+            break  # nothing follows (`then` at a line end) or a redirect (`exec >log 2>&1`)
+        if word == "exec" and cmd[j].startswith("-"):
+            break  # `exec -a name cmd`: an option that takes a value -- not read (D3 silent)
+        word = cmd[j]
+        i = j + 1
+    args = cmd[i:]
+    out.append(("command", str(word), False))  # the caller notes `source`/`.`/`eval` (amendment 4)
+
+    if word == "cd":
+        return out + _cd_targets(args)
+    if word in ("pushd", "popd"):
+        # Third amendment silent; they move the directory like `cd`, so read them as a dynamic
+        # one: relative checks stop.
+        return out + [("cd-unknown", None, False)]
+
+    exempt = word in _TEST_COMMANDS  # also after a walked prefix: `if [[ ... ]]`, `! [ ... ]`
+    if word in VERIFY_BUILTINS or word in defined or word == own:
+        pass  # a builtin, reserved word or the verify's own function: never looked up on PATH
+    elif "$" in word:
+        pass  # fifth amendment (2): `$` anywhere (`python${V}`, `python$(echo 3)`) is dynamic
+    elif "/" in word:
+        if _path_shaped(word):
+            # Rule 1: a command word with `/` is a path that must exist -- quoted or not; the
+            # second amendment exempts quoted ARGUMENTS only.
+            out.append(("path", str(word), True))
+        # else (`~/x`, a glob, `a:b/c`): not checked, applied conservatively
+    else:
+        out.append(("exec", str(word), True))
+    if exempt:
+        return out  # D3's amendments: `test`/`[`/`[[` operands are values, not files
+
+    base = str(word).rsplit("/", 1)[-1]
+    if word in VERIFY_BUILTINS:
+        base = None  # `command python3 x.py`, `eval bash y.sh`: a builtin's words stay arguments
+    # Rule 1: an interpreter's script operand is the first argument not starting with `-`,
+    # unless `-c`, `-m` or `-` comes first.
+    script_at = None
+    if base in _INTERPRETERS:
+        k = 0
+        while k < len(args):
+            tok = args[k]
+            if isinstance(tok, _Op):
+                if ">" in tok:
+                    break
+                k += 2 if "<" in tok else 1  # an input file or heredoc tag is not the script
+                continue
+            if tok in ("-c", "-m", "-"):
+                break
+            if not tok.startswith("-"):
+                script_at = k
+                break
+            k += 1
+    last_operand = None
+    if base in _LAST_OPERAND_WRITERS:
+        operands = [k for k, t in enumerate(args) if _is_word(t) and not t.startswith("-")]
+        last_operand = operands[-1] if len(operands) >= 2 else None
+    git_written, git_consumed = _git_writes(args) if base == "git" else ([], set())
+    out.extend(("write", w, False) for w in git_written)
+
+    # D3's `-m` rule is python's `-m`. Which tokens after it name modules, D3 leaves to its
+    # example (`-m unittest tests.test_x`); read conservatively: the module right after a
+    # python `-m`, and `unittest`'s positional test names -- not `git commit -m msg.txt`, and
+    # not `python3 -m json.tool data.json`'s file argument.
+    s_value = None
+    for k, tok in enumerate(args):
+        if isinstance(tok, _Op) and ">" in tok:
+            break
+        if tok == "-s" and not isinstance(tok, _Op) and k + 1 < len(args) \
+                and _is_word(args[k + 1]):
+            s_value = args[k + 1]
+            break
+    python_seen = _is_python(word)
+    module = None
+    expect_module = False
+    seen_discover = False
+    prev = None
+    k = 0
+    while k < len(args):
+        tok = args[k]
+        if isinstance(tok, _Op):
+            if ">" in tok:
+                out.extend((kind, value, False) for kind, value in _redirect_targets(args, k))
+                break  # D3: everything after it is output
+            expect_module = False
+            prev = None
+            k += 2 if (tok != "<" and "<" in tok) else 1
+            continue
+        if k == script_at:
+            if _script_checkable(tok):
+                out.append(("path", str(tok), True))
+        elif k in git_consumed:
+            pass  # written by git, recorded above
+        elif base in _WRITING_COMMANDS:
+            if not tok.startswith("-"):
+                out.append(("write", str(tok), False))
+        elif k == last_operand:
+            out.append(("write", str(tok), False))
+        elif expect_module:
+            expect_module = False
+            module = tok
+            if _DOTTED_RE.match(tok):
+                candidates = _module_candidates(tok, repo_root)
+                if candidates:
+                    out.append(("module", candidates, True))
+            elif _arg_is_path(tok):
+                out.append(("path", str(tok), False))
+        elif tok == "-m" and python_seen and module is None:
+            expect_module = True
+        elif tok == "discover":
+            seen_discover = True
+        elif tok == "-p" and seen_discover and k + 1 < len(args) and _is_word(args[k + 1]):
+            pattern = args[k + 1]
+            k += 2
+            prev = pattern
+            # D3: after `-p` following a `discover`, a glob-free pattern maps to
+            # `<-s value or tests>/<pattern>` -- a blocking position (third amendment).
+            if pattern and not any(ch in _GLOB_CHARS for ch in pattern) \
+                    and not pattern.startswith(_ARG_SKIP_PREFIXES) and not _is_dynamic(pattern):
+                base_dir = s_value if s_value and not _is_dynamic(s_value) else "tests"
+                out.append(("path", base_dir.rstrip("/") + "/" + pattern, True))
+            continue
+        elif module == "unittest" and prev != "-k" and _DOTTED_RE.match(tok) \
+                and not tok.endswith(".py"):
+            candidates = _module_candidates(tok, repo_root)
+            if candidates:
+                out.append(("module", candidates, True))
+        elif _arg_is_path(tok):
+            out.append(("path", str(tok), False))  # rule 1: resolved and reported, never failed
+        elif not python_seen and _is_python(tok):
+            python_seen = True  # `uv run python -m ...`, `env X=1 python3 -m ...`
+        prev = tok
+        k += 1
+    return out
+
+
+def _norm_written(path):
+    """A written path in the one spelling compared (`os.path.normpath`; the root as "")."""
+    if not path:
+        return ""
+    norm = os.path.normpath(path)
+    return "" if norm == "." else norm
+
+
+def _written_earlier(path, written):
+    """Whether an earlier simple command of the same verify wrote exactly `path` (second
+    amendment, rule 5), compared without a leading `./` or trailing `/`. A file BENEATH a
+    `mkdir` operand is not one: the amendment defines "writes" as the operand itself, and
+    widening it would clear `mkdir -p bin && python3 bin/missing.py`."""
+    norm = _norm_written(path)
+    return bool(norm) and norm in written
+
+
+_VERIFY_MARKER_LINE_RE = re.compile(r"^[ \t]*(?:\*\*Verify[.:]\*\*|-?[ \t]*Verify:)",
+                                    re.MULTILINE)
+
+
+def _claim_text(block_text):
+    """The part of a task block that may claim to create a path: everything before its verify
+    (third amendment, rule 5: the brief and the acceptance; a verify's own words never claim).
+    The cut is at `**Verify.**`, or -- for the dialects `kit_contract` does not read, where the
+    amendment is silent -- at their own verify marker line, so that rule holds for them too."""
+    text = block_text or ""
+    cut = text.find("**Verify.**")
+    if cut == -1:
+        m = _VERIFY_MARKER_LINE_RE.search(text)
+        cut = m.start() if m else -1
+    return text if cut == -1 else text[:cut]
+
+
+def _defines(cmd):
+    """The function a simple command defines (`f() ...` or `function f ...`), or None."""
+    if len(cmd) >= 2 and _is_word(cmd[0]) and not isinstance(cmd[0], _Quoted) \
+            and isinstance(cmd[1], _Op) and cmd[1] == "()":
+        return str(cmd[0])
+    if len(cmd) >= 2 and cmd[0] == "function" and not isinstance(cmd[0], _Quoted) \
+            and _is_word(cmd[1]):
+        name = str(cmd[1])
+        return name[:-2] if name.endswith("()") else name
+    return None
+
+
+_GROUP_OPENERS = frozenset(("{", "if", "while", "until", "for", "select"))
+_GROUP_CLOSERS = frozenset(("}", "fi", "done"))
+
+
+def _group_events(cmd):
+    """One simple command -> its group opens and closes, in order: `(kind, True)` for `{`,
+    `(` and a leading `if`/`while`/`until`/`for`/`select`, `(kind, False)` for `}`, `)`,
+    `fi` and `done`. Reserved words count only where they are reserved -- the leading words of
+    the command (after `(`, prefixes such as `!`/`then`/`do`, and assignments); a `)` counts
+    anywhere, since a subshell closes at the end of the command it is in."""
+    events = []
+    leading = True
+    for t in cmd:
+        if isinstance(t, _Op):
+            if t == "(":
+                events.append(("(", True))
+            elif t == ")":
+                events.append((")", False))
+            continue
+        if not leading or isinstance(t, _Quoted):
+            leading = False
+            continue
+        if t in _GROUP_OPENERS:
+            events.append((str(t), True))
+            if t in ("for", "select"):
+                leading = False  # what follows is a variable and a word list, not a command
+            continue
+        if t in _GROUP_CLOSERS:
+            events.append((str(t), False))
+            continue
+        if t in _PREFIX_KEYWORDS or _is_assignment(t):
+            continue
+        leading = False
+    return events
+
+
+def _check_verify(cmd, root, tid, creators):
+    """One parseable verify -> `(executables, paths, findings)` (PLAN D3, as amended).
+
+    Walks the simple commands in order, carrying what the verify itself changes: the directory
+    a literal `cd` moved to (rule 4; a dynamic or bare one stops relative checks for the rest of
+    the verify), a subshell's `(`...`)` undoing a literal `cd` made inside it, the functions it
+    has defined (rule 2), and the paths an earlier command wrote (second amendment rule 5; third
+    amendment rule 4). Every path is resolved and recorded with its state; only a missing one in
+    a blocking position is a finding (third amendment, rule 1), and since the fourth amendment
+    that finding is a warning -- only `verify-missing-executable` fails a run.
+
+    D3's fifth amendment bounds that one too: it refuses only in a SIMPLE verify, one whose
+    fence uses none of the features this reader does not model (a function definition, `case`,
+    `${`, a multi-line or heredoc or `case` command substitution, a PATH assignment, `source`,
+    `.` or `eval`, an install step). In any other verify every `verify-missing-executable` is
+    marked `_warn` (the caller strips the mark and does not let it refuse) and its detail names
+    the features."""
+    executables, paths, findings = [], [], []
+    recorded, failed = set(), set()
+    exec_state, exec_finding = {}, {}  # word -> "exists"/"missing"; word -> its finding
+    written, defined = set(), set()
+    features = set()  # fifth amendment: the non-simple features this verify uses
+    exec_findings = []
+    cache = {}  # path -> classify_path result: a repeated path is stat'ed once (linear time)
+    cwd, stack = "", []  # "" = the repo root; a repo-relative or absolute dir; None = unknown
+
+    def effective(p):
+        if os.path.isabs(p):
+            return os.path.normpath(p)
+        if cwd is None:
+            return None  # rule 4: relative paths are not checked after a dynamic or bare `cd`
+        return os.path.normpath(os.path.join(cwd, p)) if cwd else p
+
+    def resolve(p):
+        r = cache.get(p)
+        if r is None:
+            r = cache[p] = classify_path(p, root, tid, creators)
+        if r["state"] == "missing" and _written_earlier(p, written):
+            r = {"path": p, "state": "created-by", "by": tid}  # written by an earlier command
+        return r
+
+    def record(r, blocking):
+        key = (r["path"], r["state"], r["by"])
+        if key not in recorded:
+            recorded.add(key)
+            paths.append(r)
+        if blocking and r["state"] == "missing" and r["path"] not in failed:
+            failed.add(r["path"])
+            findings.append({"task": tid, "kind": "verify-missing-path",
+                             "detail": f"`{r['path']}` does not exist and no task at or upstream "
+                                       f"of {tid} says it creates it"})
+
+    seps = []
+    commands = verify_tokens(cmd, features, seps)
+    # Sixth amendment (1): a command word in the LEFT operand of `||` is expected to fail. And-or
+    # lists bind left to right, so every pipeline before a `||` in the same list is inside its
+    # left operand (`a && b || c`: both `a` and `b`). Computed backwards: `||` sets it, `&&` and
+    # `|` carry it from the right, and `;`, a newline or the end start a new list.
+    or_left = [False] * len(commands)
+    following = False
+    for k in range(len(commands) - 1, -1, -1):
+        sep = seps[k] if k < len(seps) else ""
+        following = sep == "||" or (sep in ("&&", "|", "|&") and following)
+        or_left[k] = following
+    # Sixth amendment (6): a GROUP that is the left operand of `||` -- `{ ... }`, `( ... )`,
+    # `if ... fi`, a `while`/`until`/`for`/`select ... done` loop -- makes every command in it
+    # a left operand. The group's place in its and-or list is that of the command that closes
+    # it, so when that command is a left operand the whole span is. (`case ... esac` lines are
+    # dropped unread.) One pass with a stack: linear.
+    open_groups, marked_spans = [], []
+    for k, simple in enumerate(commands):
+        for kind, opens in _group_events(simple):
+            if opens:
+                open_groups.append(k)
+            elif open_groups:
+                start = open_groups.pop()
+                if or_left[k]:
+                    marked_spans.append((start, k))
+    # Fill the spans with a difference array, so nested spans cost linear time, not their sum.
+    if marked_spans:
+        delta = [0] * (len(commands) + 1)
+        for start, end in marked_spans:
+            delta[start] += 1
+            delta[end + 1] -= 1
+        depth = 0
+        for j in range(len(commands)):
+            depth += delta[j]
+            if depth > 0:
+                or_left[j] = True
+        # And a command joined by `&&`/`|` to a marked group's first command is in the same
+        # left operand (`x && { b; } || c`): carry the marks back once more.
+        for k in range(len(commands) - 2, -1, -1):
+            sep = seps[k] if k < len(seps) else ""
+            if sep in ("&&", "|", "|&") and or_left[k + 1]:
+                or_left[k] = True
+    # A command word inside a function BODY is resolved when the function is called, not where
+    # its text stands, so there every function the verify defines anywhere counts (`main() {
+    # helper; }` before `helper() {...}`). At top level only an earlier definition counts: a call
+    # before its definition is a sure failure. (Rule 2 says "later command words"; bodies are
+    # where the amendment is silent, and this is the reading that refuses only sure things.)
+    all_defined = {name for c in commands for name in [_defines(c)] if name}
+    frames = []  # open `{` groups: "body" for a function's, "group" otherwise
+    bodies = 0  # how many "body" frames are open: counted, not scanned (linear time)
+
+    for idx, simple in enumerate(commands):
+        opens = sum(1 for t in simple if isinstance(t, _Op) and t == "(")
+        closes = sum(1 for t in simple if isinstance(t, _Op) and t == ")")
+        stack.extend([cwd] * opens)
+        body_open = _defines(simple) is not None
+        for t in simple:
+            if _is_word(t) and not isinstance(t, _Quoted) and t == "{":
+                frames.append("body" if body_open else "group")
+                bodies += body_open
+                body_open = False
+        in_body = bodies > 0
+        base_dir = None if cwd is None else (Path(cwd) if os.path.isabs(cwd) else root / cwd)
+        # all_defined holds every name `defined` will ever hold, so no union is needed
+        targets = _command_targets(simple, base_dir, all_defined if in_body else defined)
+        for t in simple:
+            if _is_word(t) and not isinstance(t, _Quoted) and t == "}" and frames:
+                bodies -= frames.pop() == "body"
+        for kind, value, blocking in targets:
+            if kind == "define":
+                defined.add(value)
+            elif kind == "exec":
+                if value not in exec_state:
+                    exec_state[value] = "exists" if shutil.which(value) else "missing"
+                    executables.append({"word": value, "state": exec_state[value]})
+                if exec_state[value] != "missing":
+                    continue
+                prior = exec_finding.get(value)
+                if prior is None:
+                    finding = {"task": tid, "kind": "verify-missing-executable",
+                               "detail": f"`{value}` is not on PATH"}
+                    if or_left[idx]:
+                        finding["_or"] = True
+                    findings.append(finding)
+                    exec_findings.append(finding)
+                    exec_finding[value] = finding
+                elif not or_left[idx]:
+                    prior.pop("_or", None)  # also used outside a `||` guard: that use refuses
+            elif kind == "path":
+                eff = effective(value)
+                if eff is not None:
+                    record(resolve(eff), blocking)
+            elif kind == "module":
+                effs = [effective(c) for c in value]
+                if all(e is not None for e in effs):
+                    results = [resolve(e) for e in effs]
+                    record(next((r for r in results if r["state"] != "missing"), results[0]),
+                           True)
+            elif kind == "cd":
+                eff = effective(value)
+                if eff is None:
+                    continue
+                r = resolve(eff)
+                record(r, True)
+                target = Path(eff) if os.path.isabs(eff) else root / eff
+                try:
+                    is_dir = r["state"] == "exists" and target.is_dir()
+                except (OSError, ValueError):
+                    is_dir = False
+                # A `cd` into what the tree lacks -- missing (already a finding) or made by the
+                # verify itself -- stops relative checks: nothing under it can be read statically
+                # (rule 4 is silent here; this is the conservative read).
+                cwd = _norm_written(eff) if is_dir else None
+            elif kind == "cd-unknown":
+                cwd = None
+        for kind, value, _blocking in targets:
+            if kind == "write":
+                eff = effective(value)
+                if eff:
+                    norm = _norm_written(eff)
+                    if norm:
+                        written.add(norm)
+            elif kind == "command":
+                if value in ("source", ".", "eval"):
+                    features.add(f"`{value}`")
+                elif value.rsplit("/", 1)[-1] in _PACKAGE_MANAGERS:
+                    features.add("an install step")  # a package manager as the command word
+                elif value in ("alias", "enable"):
+                    # An alias (with `expand_aliases`) or a builtin loaded by `enable -f` defines
+                    # a command word this reader cannot see (sixth-round conformance).
+                    features.add("an alias or a loaded builtin")
+                elif value in ("type", "hash", "which") or (
+                        value == "command" and any(_is_word(t) and _PROBE_FLAG_RE.match(t)
+                                                   for t in simple)):
+                    features.add("a tool probe")  # sixth amendment (1): `command -v`, `type`, ...
+        for _ in range(closes):
+            restored = stack.pop() if stack else cwd
+            # The subshell's literal `cd` ends with it; a stop stays a stop ("for the rest of
+            # the verify", rule 4).
+            cwd = None if cwd is None or restored is None else restored
+    why = ", ".join(sorted(features))
+    for finding in exec_findings:
+        guarded = finding.pop("_or", False)
+        if features:
+            finding["_warn"] = True
+            finding["detail"] += (f" -- a warning, not a refusal: this verify uses {why}, which "
+                                  f"analyze does not model (D3, fifth amendment)")
+        elif guarded:
+            finding["_warn"] = True
+            finding["detail"] += (" -- a warning, not a refusal: it is the left operand of `||`, "
+                                  "so the verify expects it may fail (D3, sixth amendment)")
+    return executables, paths, findings
+
+
+def analyze_kit(kit_dir, tasks, strict=False, repo_root=None):
+    """The kit checked against itself and the tree, without running anything -> the result.
+
+    Every task is reported, whatever its status (sixth amendment, (2): the status filter lives
+    in the drivers' gate, `exit_if_unsound_kit`)."""
+    return _analyze_kit(kit_dir, tasks, strict=strict, repo_root=repo_root)[0]
+
+
+def _analyze_kit(kit_dir, tasks, strict=False, repo_root=None):
+    """`analyze_kit`'s work -> `(result, refusing)`, `refusing` the ids of the tasks holding a
+    finding that refuses -- since D3's seventh amendment only a `verify-unparseable`. Kept apart
+    so the result's shape stays exactly the briefed one.
+
+    `{"v", "kit", "strict", "exit": 0|3, "findings": [{"task", "kind", "detail"}],
+    "paths": {task: [{"path", "state", "by"}]}, "verify": {task: {"parseable", "hint",
+    "executables": [{"word", "state"}], "paths": [{"path", "state", "by"}]}}}`.
+
+    Per task: the paths its brief names (`brief_paths`), and its verify command's parseability
+    and runnability -- every first word on PATH, every path-shaped argument present or created
+    by this task or one upstream of it (PLAN D3). `exit` is 3 when a `verify-unparseable` occurs
+    (an empty fence included) -- the only finding that refuses since D3's seventh amendment --
+    or, under `strict`, when there is any finding at all; otherwise 0, with every warning
+    listed. A `verify-missing-executable` still says in its detail whether the verify was simple
+    and unguarded, but it is a warning either way. The repo root defaults to the checkout that holds the kit
+    (`attempt_ledger.kit_repo_root`), so a fixture kit resolves against its own temp tree.
+    Validating the graph is `exit_if_invalid_graph`'s job, done by every caller first.
+    """
+    kit_dir = Path(kit_dir)
+    root = Path(repo_root) if repo_root is not None else _al().kit_repo_root(kit_dir)
+    try:
+        tasks_text = (kit_dir / "TASKS.md").read_text()
+    except (OSError, UnicodeDecodeError):
+        tasks_text = ""
+    blocks = _task_blocks(tasks_text)
+    order = [t["id"] for t in tasks]
+    text_of = {t["id"]: blocks.get(t["id"], t.get("brief") or "") for t in tasks}
+    depends_of = {t["id"]: list(t.get("depends") or []) for t in tasks}
+
+    # Third amendment, rule 5: a creation claim is read from the block before its verify only.
+    claim_of = {tid: _claim_text(text) for tid, text in text_of.items()}
+    index = _Creators(order, claim_of, depends_of)  # built once: linear over a long chain
+
+    findings, paths, verify = [], {}, {}
+    refusing_tasks = set()
+    warned_exec = False
+    for t in tasks:
+        tid = t["id"]
+        creators = index  # upstream (transitively) and "self" alike, for brief and verify (D3)
+
+        entries = [classify_path(p, root, tid, creators) for p in brief_paths(text_of[tid])]
+        paths[tid] = entries
+        for e in entries:
+            if e["state"] == "missing":
+                findings.append({"task": tid, "kind": "brief-missing-path",
+                                 "detail": f"`{e['path']}` does not exist and no task at or "
+                                           f"upstream of {tid} says it creates it"})
+
+        cmd = t.get("verify")
+        entry = {"parseable": bool(cmd and cmd.strip()), "hint": None, "executables": [],
+                 "paths": []}
+        verify[tid] = entry
+        if cmd is not None and not cmd.strip():
+            # Sixth amendment (3): a `**Verify.**` fence that is empty or only whitespace has
+            # nothing to run (`_extract_verify` returns "" for it, not None).
+            findings.append({"task": tid, "kind": "verify-unparseable",
+                             "detail": "the **Verify.** fence is empty: there is nothing to run"})
+            refusing_tasks.add(tid)
+            continue
+        if cmd is None:
+            try:
+                # The task's own block, not the whole TASKS.md: `_task_verify_cmd` reads only the
+                # block under the task's heading anyway, and handing it the full text made this
+                # quadratic over a kit of many unparseable tasks (fifth amendment, (2)).
+                block = blocks.get(tid)
+                other = _kvh()._task_verify_cmd(block, tid) if block else None
+            except Exception:  # the hint is advice; failing to compute it changes no finding
+                other = None
+            if other is not None:
+                entry["hint"] = VERIFY_UNPARSEABLE_HINT
+            detail = "no **Verify.** marker followed by a ```bash fence"
+            if entry["hint"]:
+                detail += f"; {entry['hint']}"
+            findings.append({"task": tid, "kind": "verify-unparseable", "detail": detail})
+            refusing_tasks.add(tid)
+            continue
+
+        executables, vpaths, vfindings = _check_verify(cmd, root, tid, creators)
+        entry["executables"].extend(executables)
+        entry["paths"].extend(vpaths)
+        for f in vfindings:
+            if f.pop("_warn", False):
+                warned_exec = True  # fifth/sixth amendment: not a simple verify, or `||`-guarded
+            elif f["kind"] in _FAILING_FINDINGS:
+                refusing_tasks.add(tid)
+        findings.extend(vfindings)
+
+    warned = warned_exec or any(f["kind"] in _WARNING_FINDINGS for f in findings)
+    result = {
+        "v": CONTRACT_VERSION, "kit": kit_dir.resolve().name, "strict": bool(strict),
+        "exit": 3 if refusing_tasks or (strict and warned) else 0,
+        "findings": findings, "paths": paths, "verify": verify,
+    }
+    return result, refusing_tasks
+
+
+def render_analyze(result):
+    """`analyze_kit`'s result as terse text an executor can paste into its context: one line
+    per finding, one per path not found in the tree (`created-by <id>` or `missing`), then
+    `analyze: sound` or `analyze: <n> finding(s)`."""
+    lines = [f"analyze: {f['task']} {f['kind']} -- {f['detail']}" for f in result["findings"]]
+    seen = set()
+    for tid, entries in result["paths"].items():
+        for e in entries + result["verify"].get(tid, {}).get("paths", []):
+            if e["state"] == "exists":
+                continue
+            line = f"analyze: {tid} path {e['path']} {e['state']}"
+            if e.get("by"):
+                line += f" {e['by']}"
+            if line not in seen:
+                seen.add(line)
+                lines.append(line)
+    n = len(result["findings"])
+    lines.append("analyze: sound" if n == 0 else f"analyze: {n} finding(s)")
+    return "\n".join(lines)
+
+
+def exit_if_unsound_kit(kit_dir, tasks, out=None, selected=None):
+    """The drivers' pre-dispatch seat for `analyze` (PLAN D5): print the report to `out`
+    (default: `sys.stderr` as it is at call time) and exit 3 when the drivers cannot read a
+    verify (or its fence is empty), so no dispatch could prove the task; otherwise return the
+    result. Static and free, so there is no opt-out; every other finding -- missing paths and
+    missing executables alike -- is printed and never fails a run (D5, as amended with D3's
+    fourth and seventh amendments).
+
+    It checks only what the run will run (D3/D5 sixth and seventh amendments): only a task whose
+    status is `pending` or `in-progress` can refuse; a `done` or `blocked` task's findings are
+    printed but never exit. The one exception (PLAN D5, amended during T5): the task whose id is
+    `selected` -- the one the run was told to run (`--task`, which may be a `done` task under
+    `--rerun` or a `blocked` retry) -- refuses whatever its status. An invalid graph is
+    `exit_if_invalid_graph`'s, called before this."""
+    result, refusing = _analyze_kit(kit_dir, tasks, strict=False)
+    print(render_analyze(result), file=out if out is not None else sys.stderr)
+    status = {t["id"]: t.get("status") for t in tasks}
+    # Seventh amendment (3): only a task the run may dispatch can refuse it -- `pending` or
+    # `in-progress`; `done` and `blocked` never do.
+    if any(status.get(tid) in ("pending", "in-progress") or (selected is not None and tid == selected)
+           for tid in refusing):
+        sys.exit(3)
+    return result
+
+
 # ---- command line: the graph, and a demo of it --------------------------------------------------
 
 def _demo_task(task_id, status="pending", depends=()):
@@ -2445,7 +4298,9 @@ def _cli(argv=None):
     parser = argparse.ArgumentParser(
         prog="kit_contract.py",
         description="The one kit contract. `graph` validates a kit's execution DAG and reports "
-                    "its ready frontier; `demo` walks synthetic graphs and spends nothing.",
+                    "its ready frontier; `analyze` checks a kit's brief paths and verify "
+                    "commands statically, before any dispatch, running nothing; `demo` walks "
+                    "synthetic graphs and spends nothing.",
     )
     sub = parser.add_subparsers(dest="cmd", required=True)
     p_graph = sub.add_parser("graph", help="validate TASKS.md's DAG; exit 2 when invalid")
@@ -2453,6 +4308,15 @@ def _cli(argv=None):
     p_graph.add_argument("--json", action="store_true", help="the graph_state dict as JSON")
     p_graph.add_argument("--attempt-store", default=None,
                          help="ledger root for artifact bindings (default: the data root)")
+    p_analyze = sub.add_parser("analyze", help="static pre-run check: paths a brief names, "
+                                               "verify parseability and runnability; runs and "
+                                               "writes nothing; exit 3 only on a verify the "
+                                               "drivers cannot read (or an empty one), 2 on an "
+                                               "invalid graph")
+    p_analyze.add_argument("--kit", required=True, help="kit directory holding TASKS.md")
+    p_analyze.add_argument("--strict", action="store_true",
+                           help="a missing path, in a brief or a verify, also fails (exit 3)")
+    p_analyze.add_argument("--json", action="store_true", help="the analyze result as JSON")
     p_fresh = sub.add_parser("freshness", help="each done task's acceptance against its "
                                                "upstream artifact versions (step 24)")
     p_fresh.add_argument("--kit", required=True)
@@ -2480,6 +4344,31 @@ def _cli(argv=None):
     if args.cmd == "demo":
         _demo()
         return 0
+    if args.cmd == "analyze":
+        try:
+            tasks = parse_tasks(_read_tasks_text(args.kit))
+        except (OSError, ValueError) as exc:
+            print(f"analyze: {exc}", file=sys.stderr)
+            return 2
+        exit_if_invalid_graph(tasks, Path(args.kit) / "TASKS.md")
+        result = analyze_kit(args.kit, tasks, strict=args.strict)
+        try:
+            if args.json:
+                print(json.dumps(result, indent=2, sort_keys=True))
+            else:
+                print(render_analyze(result))
+            sys.stdout.flush()
+        except BrokenPipeError:
+            # Seventh amendment (4): stdout closed early (`| head`). Exit quietly with
+            # analyze's own code; pointing stdout at /dev/null stops the interpreter's final
+            # flush from printing "Exception ignored" on the way out.
+            try:
+                devnull = os.open(os.devnull, os.O_WRONLY)
+                os.dup2(devnull, sys.stdout.fileno())
+                os.close(devnull)
+            except (OSError, ValueError):
+                pass
+        return result["exit"]
     if args.cmd == "freshness":
         tasks = parse_tasks(_read_tasks_text(args.kit))
         fresh = kit_freshness(args.kit, tasks, store=args.attempt_store)
