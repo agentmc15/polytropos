@@ -114,7 +114,7 @@ def parse_tasks(text):
     Task blocks start at `### <id>{em dash}<title>` headings (the spaced em dash ` — ` is
     required; the id is the first whitespace-free token). A `### ` heading without the spaced
     em dash is not a task and is skipped, but it still bounds the preceding block. Each dict
-    carries: id, title, status, model, depends, independent, brief, verify.
+    carries: id, title, status, model, depends, independent, evidence, brief, acceptance, verify.
     """
     lines = text.splitlines()
     heading_idxs = [i for i, ln in enumerate(lines) if ln.startswith("### ")]
@@ -172,6 +172,7 @@ def _parse_block(task_id, title, block):
         "independent": independent,
         "evidence": evidence,
         "brief": _extract_brief(block),
+        "acceptance": _extract_acceptance(block),
         "verify": _extract_verify(block),
     }
 
@@ -187,6 +188,49 @@ def _extract_brief(block):
         if j != -1:
             return rest[:j].strip()
     return rest.strip()
+
+_FENCE_OPEN_RE = re.compile(r"`{3,}|~{3,}")
+
+
+def _extract_acceptance(block):
+    """Text from the `**Acceptance.**` heading to the next `**Verify.**` heading (or the block's
+    end), stripped; `""` when the block has no such heading.
+
+    Acceptance was always a named task field (`TASK_FIELDS`, `to_contract`), but nothing read it,
+    so `acceptance_identity` was None for every task parsed from TASKS.md and no acceptance ever
+    recorded which criteria it was reached against (PLAN D7/B1, amended during kit-preflight T8).
+    Records written before this carry no reference and read as unknown; nothing is backfilled.
+
+    A marker counts only as a heading: at the start of a line (leading whitespace allowed, text
+    may follow it on that line) and outside a fenced block. Every committed kit that names a
+    marker anywhere else is quoting it -- in a brief, in prose, in a fence -- and an unanchored
+    search started those tasks' acceptance mid-sentence. A fence opens on a line beginning with
+    three or more backticks or tildes, and closes only on a line holding nothing but a run of
+    the SAME character at least as long, so a ```` fence may hold a ``` line and a ~~~ fence a
+    ``` one. An unclosed fence runs to the block's end, as in Markdown (a recorded design limit,
+    PLAN D7). `_extract_verify` needs no such walk: it reads the first ```bash fence after its
+    marker. `_extract_brief` and `_extract_verify` are unchanged.
+    """
+    marker, end = "**Acceptance.**", "**Verify.**"
+    fence = ""       # the open fence's run (e.g. "````" or "~~~"), or "" outside a fence
+    taken = None     # the acceptance's lines once its heading is found
+    for line in block.splitlines():
+        s = line.lstrip()
+        if fence:
+            if s.startswith(fence) and not s.strip(fence[0]).strip():
+                fence = ""
+        elif taken is None and s.startswith(marker):
+            taken = [s[len(marker):]]
+            continue
+        elif taken is not None and s.startswith(end):
+            break
+        else:
+            m = _FENCE_OPEN_RE.match(s)
+            if m:
+                fence = m.group()
+        if taken is not None:
+            taken.append(line)
+    return "\n".join(taken).strip() if taken is not None else ""
 
 def _extract_verify(block):
     """Contents of the first ```bash fence after `**Verify.**`, stripped; None if absent."""
@@ -2356,6 +2400,74 @@ def refresh_task(kit_dir, task, run_id, verify_runner, actor, store=None, worksp
     return result
 
 
+RUN_ID_RE = re.compile(r"\d{4}-\d{2}-\d{2}-[0-9a-f]{4}")
+
+
+def _valid_run_id(run_id):
+    """`<UTC-date>-<4 hex>` with a real calendar date (the one date rule; nothing else)."""
+    if not RUN_ID_RE.fullmatch(run_id):
+        return False
+    try:
+        datetime.strptime(run_id[:10], "%Y-%m-%d")
+    except ValueError:
+        return False
+    return True
+
+
+_PASS_RESULTS = ("pass", "retry-pass", "escalated-pass")
+
+
+def accept_task(kit_dir, task, run_id, actor="interactive", store=None, workspace=None,
+                note=""):
+    """Record the acceptance a kit's `outcome:` line already states -> a summary dict (PLAN D6).
+
+    A projection, not an attempt: no `begin()` (no claim is taken) and no `end()`. It writes
+    only the ledger, outside the tree, through the same `TaskRun.project` the headless drivers
+    use, so the artifact, upstream versions and `acceptance_ref` come from the tree and the
+    ledger as they are now. Nothing is supplied by the caller and nothing is reconstructed:
+    it refuses a task that is not `done`, and one whose NOTES.md carries no passing `outcome:`
+    line, so there is no backfill path. NOTES.md and TASKS.md are read, never written.
+    """
+    kit_dir = Path(kit_dir)
+    if task["status"] != "done":
+        raise ValueError(f"task {task['id']} is {task['status']}, not done; accept records an "
+                         f"acceptance and there is none")
+    notes_path = kit_dir / "NOTES.md"
+    try:
+        notes_text = notes_path.read_text() if notes_path.exists() else ""
+    except UnicodeDecodeError:
+        raise ValueError("NOTES.md is not UTF-8 text") from None
+    result = recorded_outcome_result(notes_text, task["id"])
+    if result not in _PASS_RESULTS:
+        raise ValueError(f"no passing outcome: line for {task['id']} in NOTES.md; write the "
+                         f"outcome line first \u2014 accept records what the ledger already states")
+    workspace = Path(workspace) if workspace else _al().kit_repo_root(kit_dir)
+    ledger = open_ledger(kit_dir, store=store)
+    # The note is user free text: redacted and bounded (bin/redact.py) before it is persisted.
+    clean = _al()._rd().redact(note or "")
+    lifecycle = TaskRun(ledger, run_id, task, workspace=workspace, actor=actor)
+    lifecycle.project("done", result=result, outcome_line=True, note=clean["text"])
+    acc = ledger.latest_acceptance(task["id"]) or {}
+    return {
+        "id": task["id"],
+        "artifact": ledger.latest_artifact(task["id"]),
+        "upstream": {dep: ledger.latest_artifact(dep) for dep in (task.get("depends") or [])},
+        "acceptance_ref": acc.get("acceptance_ref"),
+        "result": result,
+        "note_report": {"redactions": clean["redactions"],
+                        "truncated": 1 if clean["truncated"] else 0},
+    }
+
+
+def render_accept(summary):
+    def short(v):
+        return str(v)[:12] if v else "unknown"
+    up = summary["upstream"]
+    ups = ",".join(f"{d}:{short(v)}" for d, v in up.items()) if up else "none"
+    return (f"accept: {summary['id']} result={summary['result']} "
+            f"artifact={short(summary['artifact'])} upstream={ups}")
+
+
 # ---- the static pre-run check: `analyze` (kit-preflight T4) -------------------------------------
 #
 # WHAT WAS WRONG. The brief-defect ledger's most frequent kinds -- a verify command naming a
@@ -2369,7 +2481,7 @@ def refresh_task(kit_dir, task, run_id, verify_runner, actor, store=None, worksp
 # loads, `kit_verify_hook`, is asked to PARSE text, never to run it. `tests/test_kit_analyze.py`
 # makes every spawning seam raise and calls it anyway.
 #
-# THE RULES ARE PLAN D3's, as amended four times: before T4 (quote-aware splitting; `test`/`[`
+# THE RULES ARE PLAN D3's, as amended seven times (PLAN.md lists each): before T4 (quote-aware splitting; `test`/`[`
 # operands are values); during T4 after a survey of every committed kit (`[[`, `source`, `.`,
 # `:` are builtins; a quoted argument, a `NAME=value` word and a `rev:path` git object are
 # values; a path an earlier command of the same verify writes is created by the task); during
@@ -2377,9 +2489,9 @@ def refresh_task(kit_dir, task, run_id, verify_runner, actor, store=None, worksp
 # only in the four positions where a missing one stops the verify from starting -- the command
 # word, an interpreter's script, the `-m`/`discover` test mappings, a literal `cd` -- and every
 # other path argument is resolved and reported); and after the second red-team round, "only
-# sure things block": exit 3 comes only from `verify-unparseable` and `verify-missing-executable`,
-# while `verify-missing-path`, like `brief-missing-path`, is a printed warning that fails only
-# under `strict`. Where D3 is silent the code does the conservative thing -- it does not check
+# sure things block", then the seventh amendment ("only unparseable blocks"): a plain run exits 3
+# only on `verify-unparseable`; `verify-missing-executable`, `verify-missing-path` and
+# `brief-missing-path` are printed warnings that fail only under `strict`. Where D3 is silent the code does the conservative thing -- it does not check
 # the token -- and says so at the line that does it.
 
 ANALYZE_FINDINGS = ("verify-unparseable", "verify-missing-executable", "verify-missing-path",
@@ -4195,6 +4307,11 @@ def exit_if_unsound_kit(kit_dir, tasks, out=None, selected=None):
     `selected` -- the one the run was told to run (`--task`, which may be a `done` task under
     `--rerun` or a `blocked` retry) -- refuses whatever its status. An invalid graph is
     `exit_if_invalid_graph`'s, called before this."""
+    if validate_graph(tasks):
+        # An invalid graph is `exit_if_invalid_graph`'s to refuse (exit 2) and the driver's own
+        # graph check comes after this call in some drivers: analysing a graph with a duplicate
+        # id would only misattribute findings, and could exit 3 before that exit 2 is reached.
+        return None
     result, refusing = _analyze_kit(kit_dir, tasks, strict=False)
     print(render_analyze(result), file=out if out is not None else sys.stderr)
     status = {t["id"]: t.get("status") for t in tasks}
@@ -4204,6 +4321,258 @@ def exit_if_unsound_kit(kit_dir, tasks, out=None, selected=None):
            for tid in refusing):
         sys.exit(3)
     return result
+
+
+# ---- re-checking finished work against today's tree: `drift` (kit-preflight T8) -----------------
+#
+# WHAT WAS MISSING. A `done` task stayed done whatever happened to the tree after it was accepted,
+# and the one operation that re-ran a finished task's check, `refresh`, re-binds ONE task's
+# evidence and moves it to `blocked` on failure -- it changes kit state on purpose, under an
+# operator's explicit task argument (PLAN D8). Nothing could ask "which finished tasks still hold
+# today?" without changing the answer's subject. `drift` is that survey.
+#
+# A REPORT, NOT A VERDICT (PLAN B3, D7). It runs each done task's verify through the runner it is
+# handed -- on the command line, `exec_policy.verify_runner`, `enforced` unless the operator names
+# `trusted-host`, and the report's first line says which -- and it changes no status, writes
+# nothing in TASKS.md or NOTES.md, dispatches nothing, and writes nothing under the kit dir. Its
+# one write is an `evidence.drift` event per checked task in the attempt ledger, outside the tree,
+# carrying the state, exit code and digests and never the verify's output, which may hold paths.
+# `tests/test_kit_evidence.py` reads this function's source for every status-writing helper's name.
+#
+# `unrunnable` MEANS ONE THING (D7 as amended after the Phase 2 review): the drivers cannot read
+# the verify (`verify-unparseable`, an empty fence included). Every other done task is run and
+# judged by its exit code; its `verify-missing-*` warnings ride along so a `drifted` caused by a
+# missing tool says so. The state is never read from `analyze`'s per-path entry states, which
+# record non-blocking arguments (`origin/main`, `s/a/b/`, an `--out` target) as `missing`.
+
+#: Per checked task: its verify passed now, failed now, or cannot be read and was not run.
+DRIFT_STATES = ("holds", "drifted", "unrunnable")
+#: The task's acceptance identity now against the one its latest recorded acceptance carried.
+ACCEPTANCE_STATES = ("unchanged", "changed", "unknown")
+
+
+def drift_kit(kit_dir, tasks, runner, store=None, workspace=None, run_id=None, record=True,
+              confinement=None):
+    """Each done task's verify, re-run against the tree as it is now -> the report (PLAN D7).
+
+    `runner(cmd) -> (rc, output)` is the only way anything executes; the output is discarded.
+    `analyze_kit` is called once first: a task holding a `verify-unparseable` finding is
+    `unrunnable` and is not run. Every other done task's stripped verify text runs once per
+    distinct text -- a later task with the same text reuses that exit code and names the task
+    whose run it is in `shared_with` -- and reads `holds` on exit 0, `drifted` otherwise (a
+    runner that cannot start the process counts as 126, as in `refresh`). `acceptance` compares
+    the latest recorded acceptance's `acceptance_ref` with `acceptance_identity(task)` now:
+    `unknown` when either side is missing. Tasks in any other status are absent from the report.
+
+    `workspace` is the root the static check resolves paths against (default: the checkout that
+    holds the kit). `confinement` labels the boundary the runner applies, as a value or as a
+    zero-argument callable read after each run (the command line passes what
+    `exec_policy.verify_runner`'s `on_result` reported). When `record`, one `evidence.drift`
+    event per checked task is appended to the kit's ledger with exactly `run`, `task`, `state`,
+    `rc`, `acceptance`, `verify_sha`, `confinement` and `shared_with`; a `run_id` of None then
+    gets a fresh content-free one so the events still correlate.
+
+    Returns `{"v", "kit", "confinement", "tasks": {id: {"state", "rc", "acceptance",
+    "verify_sha", "shared_with", "warnings"[, "reason"]}}, "exit": 0|3}`, `exit` 3 when any task
+    is `drifted` or `unrunnable`.
+    """
+    al = _al()
+    kit_dir = Path(kit_dir)
+    root = Path(workspace) if workspace is not None else al.kit_repo_root(kit_dir)
+    static = analyze_kit(kit_dir, tasks, repo_root=root)
+    findings_of = {}
+    for f in static["findings"]:
+        findings_of.setdefault(f["task"], []).append(f)
+    ledger = open_ledger(kit_dir, store=store)
+    if record and run_id is None:
+        run_id = generate_run_id()
+    done = [t for t in tasks if t.get("status") == "done"]
+    # Acceptances are read before this run appends anything, so its own events never lengthen
+    # the reads (each `latest_acceptance` scans the whole stream), and only for a task with an
+    # identity now: without one the answer is `unknown` whatever the ledger holds.
+    accepted = {t["id"]: ledger.latest_acceptance(t["id"]) for t in done
+                if acceptance_identity(t) is not None}
+
+    ran = {}  # stripped verify text -> {"rc": the one run's exit code, "by": the task that ran it}
+    report = {}
+    for t in done:
+        tid = t["id"]
+        mine = findings_of.get(tid, [])
+        cmd = (t.get("verify") or "").strip()
+        unparseable = [f for f in mine if f["kind"] == "verify-unparseable"]
+        shared_with = []
+        if unparseable:
+            state, rc = "unrunnable", None
+        else:
+            if cmd in ran:
+                # The task whose run this result is. One id, not every earlier sharer, so the
+                # event stays bounded however many tasks repeat one verify text.
+                shared_with = [ran[cmd]["by"]]
+            else:
+                try:
+                    rc = runner(cmd)[0]  # the output is discarded: never stored, never reported
+                except OSError:
+                    rc = 126  # could not start: a failed check, as `refresh` records it
+                ran[cmd] = {"rc": rc, "by": tid}
+            rc = ran[cmd]["rc"]
+            state = "holds" if rc == 0 else "drifted"
+
+        then = al.read_ref((accepted.get(tid) or {}).get("acceptance_ref"))
+        now = acceptance_identity(t)
+        if not (then and now and then.get("sha") and now.get("sha")):
+            acceptance = "unknown"
+        else:
+            acceptance = "unchanged" if then["sha"] == now["sha"] else "changed"
+
+        verify_sha = al._sha(cmd) if cmd else None
+        entry = {"state": state, "rc": rc, "acceptance": acceptance, "verify_sha": verify_sha,
+                 "shared_with": shared_with,
+                 "warnings": [{"kind": f["kind"], "detail": f["detail"]} for f in mine
+                              if f["kind"].startswith("verify-missing-")]}
+        if unparseable:
+            entry["reason"] = unparseable[0]["detail"]
+        report[tid] = entry
+        if record:
+            label = confinement() if callable(confinement) else confinement
+            ledger.append("evidence.drift", run=run_id, task=tid, state=state, rc=rc,
+                          acceptance=acceptance, verify_sha=verify_sha, confinement=label,
+                          shared_with=shared_with)
+
+    return {
+        "v": CONTRACT_VERSION,
+        "kit": kit_dir.resolve().name,
+        "confinement": confinement() if callable(confinement) else confinement,
+        "tasks": report,
+        "exit": 3 if any(e["state"] in ("drifted", "unrunnable") for e in report.values()) else 0,
+    }
+
+
+def render_drift(result):
+    """`drift_kit`'s report as text: the boundary first, so a `trusted-host` run never reads as
+    enforced; one line per checked task; the tally last."""
+    lines = [f"drift: {result['kit']} confinement={result.get('confinement') or 'unknown'}"]
+    counts = {state: 0 for state in DRIFT_STATES}
+    for tid, entry in result["tasks"].items():
+        counts[entry["state"]] = counts.get(entry["state"], 0) + 1
+        line = f"drift: {tid} {entry['state']} acceptance={entry['acceptance']}"
+        if entry.get("shared_with"):
+            line += f" shared-with {','.join(entry['shared_with'])}"
+        lines.append(line)
+    lines.append(f"drift: {counts['holds']} hold, {counts['drifted']} drifted, "
+                 f"{counts['unrunnable']} unrunnable")
+    return "\n".join(lines)
+
+
+def _drift_cli(args):
+    """`drift`'s command line -> its exit code, never 1: drift is a report, not a failure
+    (PLAN B3).
+
+    - 0: every kit was checked and every checked task holds, or `--all` found no kit at all
+      (`drift: no kit under <dir>`).
+    - 3: any checked task drifted or cannot be read, or, under `--all`, any kit was reported but
+      not checked -- a TASKS.md that fails to parse, an invalid graph, a slug the ledger refuses
+      (PLAN D7, amended after T8's red-team: a check that cannot run is not a hold).
+    - 2: a refusal before or instead of the report -- under `--kit`, an unreadable TASKS.md, an
+      invalid graph or a slug the ledger refuses; under either, a missing `--kits-dir`, no
+      boundary in `enforced` mode, or a ledger that cannot be written (which stops the run).
+
+    `--json`'s top-level `exit` under `--all` is this same code."""
+    if args.all:
+        kits_dir = Path(args.kits_dir)
+        if not kits_dir.is_dir():
+            print(f"drift: no kits dir at {kits_dir}", file=sys.stderr)
+            return 2
+        kits = sorted({p.parent for p in kits_dir.glob("*/TASKS.md")}, key=lambda p: p.name)
+    else:
+        kits = [Path(args.kit)]
+    run_id = generate_run_id()
+    fallback = "trusted-host" if args.exec_mode == "trusted-host" else None
+    ep = _ep()
+    sections, payload, worst = [], [], 0
+    refusal = None
+    skipped = 0  # kits reported but not checked under --all: each makes the exit 3
+    for kit in kits:
+        try:
+            tasks = parse_tasks(_read_tasks_text(kit))
+        except (OSError, ValueError) as exc:
+            reason = " ".join(str(exc).split())
+            if not args.all:
+                print(f"drift: {reason}", file=sys.stderr)
+                return 2
+            sections.append(f"kit: {kit.name} unparseable -- {reason}")
+            payload.append({"kit": kit.name, "unparseable": reason})
+            skipped += 1
+            continue
+        if not args.all:
+            exit_if_invalid_graph(tasks, kit / "TASKS.md")
+        else:
+            graph_findings = validate_graph(tasks)
+            if graph_findings:
+                reason = " ".join(render_findings(graph_findings).split())
+                sections.append(f"kit: {kit.name} invalid graph -- {reason}")
+                payload.append({"kit": kit.name, "invalid": reason})
+                skipped += 1
+                continue
+        box = {}
+        repo_root = _al().kit_repo_root(kit)
+        try:
+            runner = ep.verify_runner(
+                repo_root, mode=args.exec_mode,
+                on_result=lambda r, box=box: box.update(
+                    confinement=r.get("confinement") if isinstance(r, dict) else None))
+            result = drift_kit(kit, tasks, runner, store=args.attempt_store,
+                               workspace=repo_root, run_id=run_id, record=not args.no_record,
+                               confinement=lambda box=box: box.get("confinement") or fallback)
+        except ValueError as exc:
+            # A name the ledger refuses as a namespace (a dot-prefixed kit dir, say) is this
+            # kit's problem: under --all it is reported and skipped like an unparseable one.
+            reason = " ".join(str(exc).split())
+            if not args.all:
+                refusal = f"drift: {kit.name} -- {reason}"
+                break
+            sections.append(f"kit: {kit.name} skipped -- {reason}")
+            payload.append({"kit": kit.name, "skipped": reason})
+            skipped += 1
+            continue
+        except (OSError, RuntimeError) as exc:
+            # `SandboxUnavailable` (no boundary in `enforced` mode) and `LedgerError` are both
+            # RuntimeErrors; with an unwritable store they hold for every kit, so the run stops.
+            refusal = f"drift: {kit.name} -- {' '.join(str(exc).split())}"
+            break
+        for tid, entry in result["tasks"].items():
+            # D7 as amended: a `drifted` caused by a missing tool is labelled as such. On stderr,
+            # so the report's own lines keep the briefed shape.
+            if entry.get("reason"):
+                print(f"drift: {result['kit']} {tid} unrunnable -- {entry['reason']}",
+                      file=sys.stderr)
+            for w in entry["warnings"]:
+                print(f"drift: {result['kit']} {tid} warning {w['kind']} -- {w['detail']}",
+                      file=sys.stderr)
+        sections.append(render_drift(result))
+        payload.append(result)
+        worst = max(worst, result["exit"])
+    rc = 2 if refusal else (3 if worst or skipped else 0)
+    try:
+        if args.json:
+            body = payload[0] if (not args.all and payload) else {
+                "v": CONTRACT_VERSION, "kits": payload, "exit": rc}
+            print(json.dumps(body, indent=2, sort_keys=True))
+        elif sections:
+            print("\n\n".join(sections))
+        elif args.all and not refusal:
+            print(f"drift: no kit under {args.kits_dir}")
+        sys.stdout.flush()
+    except BrokenPipeError:
+        # stdout closed early (`| head`): exit quietly with drift's own code, as `analyze` does.
+        try:
+            devnull = os.open(os.devnull, os.O_WRONLY)
+            os.dup2(devnull, sys.stdout.fileno())
+            os.close(devnull)
+        except (OSError, ValueError):
+            pass
+    if refusal:
+        print(refusal, file=sys.stderr)
+    return rc
 
 
 # ---- command line: the graph, and a demo of it --------------------------------------------------
@@ -4299,8 +4668,10 @@ def _cli(argv=None):
         prog="kit_contract.py",
         description="The one kit contract. `graph` validates a kit's execution DAG and reports "
                     "its ready frontier; `analyze` checks a kit's brief paths and verify "
-                    "commands statically, before any dispatch, running nothing; `demo` walks "
-                    "synthetic graphs and spends nothing.",
+                    "commands statically, before any dispatch, running nothing; `drift` re-runs "
+                    "done tasks' verify commands inside the execution boundary and reports, "
+                    "changing nothing in the tree; `demo` walks synthetic graphs and spends "
+                    "nothing.",
     )
     sub = parser.add_subparsers(dest="cmd", required=True)
     p_graph = sub.add_parser("graph", help="validate TASKS.md's DAG; exit 2 when invalid")
@@ -4315,7 +4686,7 @@ def _cli(argv=None):
                                                "invalid graph")
     p_analyze.add_argument("--kit", required=True, help="kit directory holding TASKS.md")
     p_analyze.add_argument("--strict", action="store_true",
-                           help="a missing path, in a brief or a verify, also fails (exit 3)")
+                           help="a missing path or executable, in a brief or a verify, also fails (exit 3)")
     p_analyze.add_argument("--json", action="store_true", help="the analyze result as JSON")
     p_fresh = sub.add_parser("freshness", help="each done task's acceptance against its "
                                                "upstream artifact versions (step 24)")
@@ -4338,6 +4709,35 @@ def _cli(argv=None):
                           help="who would run it (default: the interactive execute skill)")
     p_roster.add_argument("--json", action="store_true",
                           help="roster, support, and every role's contract as JSON")
+    p_accept = sub.add_parser("accept", help="record the acceptance a done task's outcome: line "
+                                              "already states, in the ledger outside the tree; "
+                                              "exit 2 on refusal",
+                              allow_abbrev=False)  # `--at` must not resolve to --attempt-store
+    p_accept.add_argument("--kit", required=True)
+    p_accept.add_argument("--task", required=True)
+    p_accept.add_argument("--run", required=True, help="run id, <UTC-date>-<4 hex>")
+    p_accept.add_argument("--attempt-store", default=None)
+    p_accept.add_argument("--note", default="")
+    p_drift = sub.add_parser("drift", help="re-run each done task's verify against the tree as "
+                                            "it is now, inside the execution boundary; changes "
+                                            "no status, writes nothing in the tree; exit 3 when "
+                                            "a task drifted or cannot be read, never 1",
+                             allow_abbrev=False)
+    p_drift_which = p_drift.add_mutually_exclusive_group(required=True)
+    p_drift_which.add_argument("--kit", help="kit directory holding TASKS.md")
+    p_drift_which.add_argument("--all", action="store_true",
+                               help="every <kits-dir>/*/TASKS.md, one section per kit")
+    p_drift.add_argument("--kits-dir", default=".claude/kits",
+                         help="where --all looks (default: .claude/kits)")
+    p_drift.add_argument("--attempt-store", default=None,
+                         help="ledger root for acceptances and evidence.drift (default: the "
+                              "data root)")
+    p_drift.add_argument("--exec-mode", choices=("enforced", "trusted-host"), default="enforced",
+                         help="enforced (default) needs an OS boundary; trusted-host runs with "
+                              "none and the report's first line says so")
+    p_drift.add_argument("--json", action="store_true", help="the drift report as JSON")
+    p_drift.add_argument("--no-record", action="store_true",
+                         help="append no evidence.drift event to the ledger")
     sub.add_parser("demo", help="a diamond DAG walked to completion, invalid graphs, rosters")
     args = parser.parse_args(argv)
 
@@ -4402,6 +4802,31 @@ def _cli(argv=None):
         print(f"task {args.task}: {result['status']} (verify_rc={result['verify_rc']}; "
               f"nothing dispatched)")
         return 0 if result["status"] == "done" else 1
+    if args.cmd == "accept":
+        if not _valid_run_id(args.run):
+            print(f"accept: --run {args.run!r} is not a run id (<UTC-date>-<4 hex>)",
+                  file=sys.stderr)
+            return 2
+        tasks = parse_tasks(_read_tasks_text(args.kit))
+        exit_if_invalid_graph(tasks, Path(args.kit) / "TASKS.md")
+        task = next((t for t in tasks if t["id"] == args.task), None)
+        if task is None:
+            print(f"no task with id {args.task!r} in this kit", file=sys.stderr)
+            return 2
+        try:
+            summary = accept_task(args.kit, task, args.run, store=args.attempt_store,
+                                  note=args.note)
+        except (ValueError, OSError) as exc:
+            reason = " ".join(str(exc).split())
+            print(f"accept: {reason}", file=sys.stderr)
+            return 2
+        print(render_accept(summary))
+        caught = _al()._rd().describe(summary["note_report"])
+        if caught:
+            print(f"accept: note {caught}", file=sys.stderr)
+        return 0
+    if args.cmd == "drift":
+        return _drift_cli(args)
     if args.cmd == "roster":
         try:
             roster = resolve_roster(_plan_text(args.kit))

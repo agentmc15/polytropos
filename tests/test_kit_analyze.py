@@ -10,7 +10,8 @@ WHAT THESE TESTS PIN, against PLAN D2/D3 (D3 as amended before T4) and D17(a):
 
   - static by construction: `analyze_kit` has no runner parameter, and it still returns when
     `_pr`, `_ep`, `subprocess` and the `os` spawn family all raise;
-  - the three verify findings fail (exit 3); a brief path is advice (exit 0) unless `strict`;
+  - only `verify-unparseable` fails (exit 3); a missing executable or path, in a brief or a
+    verify, is a printed warning (exit 0) unless `strict`;
   - a path a task (or one upstream of it) says it creates is `created-by`, disclosed, never a
     silent pass, and a downstream task's claim does not count;
   - heredoc bodies and `$(...)` are not tokenized; `&&`/`||`/`;`/`|` split commands only
@@ -1354,7 +1355,7 @@ class StaticByConstructionTests(_KitFixture):
 
 class RenderAndHelperTests(_KitFixture):
     def test_render_is_terse_and_names_every_finding_and_resolution(self):
-        # The absent path comes FIRST: a creation word up to 40 characters before a path makes
+        # The absent path comes FIRST: a creation word within the creation window before a path makes
         # it created-by (D3), so "add new `a`; see `b`" would resolve `b` too.
         tasks = self.write_kit(
             _block("T1", "See `docs/nowhere.md` for context. Then add new `tests/test_new.py`.",
