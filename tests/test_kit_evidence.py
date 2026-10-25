@@ -25,7 +25,28 @@ from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 KC = ROOT / "bin" / "kit_contract.py"
-RUN1, RUN2, RUN3 = "2026-10-24-aaaa", "2026-10-24-bbbb", "2026-10-24-cccc"
+
+
+def _fresh_run_ids(n):
+    """Distinct ids from the production `generate_run_id()`, as the loop would stamp them.
+
+    The CLI cannot be handed a clock (a settable clock in production would be a backfill
+    door), so every test that drives `accept` as a process uses ids dated now; the guard's
+    today-or-yesterday window absorbs a run that crosses UTC midnight.
+    """
+    sys.path.insert(0, str(ROOT / "bin"))
+    try:
+        import kit_contract as _kc
+    finally:
+        sys.path.pop(0)
+    ids = set()
+    while len(ids) < n:
+        ids.add(_kc.generate_run_id())
+    return sorted(ids)
+
+
+RUN1, RUN2, RUN3, RUN4 = _fresh_run_ids(4)
+_TASK_RUN = {"T1": RUN1, "T2": RUN2}
 
 
 def _block(tid, status="done", depends=()):
@@ -35,8 +56,13 @@ def _block(tid, status="done", depends=()):
             f"**Acceptance.** {tid} holds.\n\n**Verify.**\n\n```bash\ntrue\n```\n")
 
 
-def _outcome(tid, result="pass"):
-    return f"- outcome: {tid} model=haiku attempts=1 result={result} review=none\n"
+def _outcome(tid, result="pass", run=None):
+    """An outcome line stamped with a run id: T1 -> RUN1, T2 -> RUN2 unless `run` is given.
+
+    `run=False` leaves the pair out, the shape of a line written before `run=` existed."""
+    run = _TASK_RUN.get(tid, RUN1) if run is None else run
+    tail = f" run={run}" if run else ""
+    return f"- outcome: {tid} model=haiku attempts=1 result={result} review=none{tail}\n"
 
 
 class AcceptTests(unittest.TestCase):
@@ -85,6 +111,10 @@ class AcceptTests(unittest.TestCase):
     def both_outcomes(self):
         self.write_kit(notes=_outcome("T1") + _outcome("T2"))
 
+    def append_notes(self, text):
+        with open(self.kit / "NOTES.md", "a") as fh:
+            fh.write(text)
+
     def test_accepting_both_reads_fresh_and_prints_one_line(self):
         self.both_outcomes()
         p1 = self.accept("T1", RUN1)
@@ -106,6 +136,7 @@ class AcceptTests(unittest.TestCase):
         (self.root / "new.txt").write_text("changed\n")
         self.git("add", "new.txt")
         self.git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "more")
+        self.append_notes(_outcome("T1", run=RUN3))  # the loop stamps a fresh line per run
         again = self.accept("T1", RUN3)
         self.assertEqual(again.returncode, 0, again.stderr)
         f = self.freshness()
@@ -250,7 +281,16 @@ class AcceptTests(unittest.TestCase):
             with self.subTest(run=bad):
                 self.assertEqual(self.accept("T1", bad).returncode, 2)
         self.assertFalse(self.store.exists())
-        self.assertEqual(self.accept("T1", "2026-02-28-abcd").returncode, 0)
+        # a real calendar date passes the shape rule; an old one then fails the window rule,
+        # with the window's reason rather than the shape's
+        self.write_kit(notes=_outcome("T1", run="2026-02-28-abcd"))
+        old = self.accept("T1", "2026-02-28-abcd")
+        self.assertEqual(old.returncode, 2, old.stdout + old.stderr)
+        self.assertNotIn("is not a run id", old.stderr)
+        self.assertIn("2026-02-28", old.stderr)
+        self.assertFalse(self.store.exists())
+        self.both_outcomes()
+        self.assertEqual(self.accept("T1", RUN1).returncode, 0)
 
 
 class UnsoundGateGraphOrderTests(unittest.TestCase):
@@ -317,6 +357,10 @@ class AcceptTestAuthorTests(unittest.TestCase):
         return self.run_kc("accept", "--kit", str(self.kit), "--task", task, "--run", run,
                            "--attempt-store", str(self.store), *extra)
 
+    def append_notes(self, text):
+        with open(self.kit / "NOTES.md", "a") as fh:
+            fh.write(text)
+
     def events(self):
         out = []
         for f in sorted(self.store.rglob("*.jsonl")):
@@ -363,6 +407,7 @@ class AcceptTestAuthorTests(unittest.TestCase):
         (self.root / "new.txt").write_text("x\n")
         self.git("add", "new.txt")
         self.git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "more")
+        self.append_notes(_outcome("T1", run=RUN3))
         self.assertEqual(self.accept("T1", RUN3).returncode, 0)
         done = [e for e in self.events() if e["task"] == "T1" and e["kind"] == "task.projected"]
         self.assertEqual([e["run"] for e in done], [RUN1, RUN3])
@@ -370,7 +415,8 @@ class AcceptTestAuthorTests(unittest.TestCase):
         f = self.run_kc("freshness", "--kit", str(self.kit), "--attempt-store", str(self.store))
         self.assertIn("T2 stale", f.stdout)
         # accepting the dependant again on the same tree restores fresh: latest wins, no stacking
-        self.assertEqual(self.accept("T2", "2026-10-24-eeee").returncode, 0)
+        self.append_notes(_outcome("T2", run=RUN4))
+        self.assertEqual(self.accept("T2", RUN4).returncode, 0)
         f = self.run_kc("freshness", "--kit", str(self.kit), "--attempt-store", str(self.store))
         self.assertIn("T2 fresh", f.stdout, f.stdout)
         self.assertNotEqual(first["artifact"], done[1]["artifact"])
@@ -378,7 +424,7 @@ class AcceptTestAuthorTests(unittest.TestCase):
     # -- writes nothing in the tree ----------------------------------------------------------
 
     def test_nothing_under_tmp_changes_except_the_store(self):
-        self.write_kit(_outcome("T1") + _outcome("T2"))
+        self.write_kit(_outcome("T1") + _outcome("T2") + _outcome("T1", run=RUN3))
         before = self.snapshot(skip={".git", "store"})
         for args in (("T1", RUN1), ("T2", RUN2), ("T1", RUN3), ("T1", "bad"), ("T9", RUN1)):
             self.accept(*args)
@@ -471,7 +517,9 @@ class AcceptTestAuthorTests(unittest.TestCase):
         # once T1 is accepted for real, T2's re-accept carries T1's ledger artifact
         self.assertEqual(self.accept("T1", RUN1).returncode, 0)
         t1 = [e for e in self.events() if e["task"] == "T1"][-1]["artifact"]
+        self.append_notes(_outcome("T2", run=RUN3))
         p = self.accept("T2", RUN3)
+        self.assertEqual(p.returncode, 0, p.stderr)
         self.assertIn(f"upstream=T1:{t1[:12]}", p.stdout)
 
     # -- finding 4 red-proof -------------------------------------------------------------------
@@ -806,7 +854,9 @@ class DriftTests(unittest.TestCase):
         self.edit_tasks("```bash\ntrue\n```", "```bash\ntrue && true\n```")
         self.assertIn("drift: T1 holds acceptance=changed", self.drift_lines())
         # re-accepting against the edited block makes it current again: the latest wins
-        self.assertEqual(self.accept_cli("T1", RUN2).returncode, 0)
+        with open(self.kit / "NOTES.md", "a") as fh:
+            fh.write(_outcome("T1", run=RUN3))  # the loop stamps a fresh line per run
+        self.assertEqual(self.accept_cli("T1", RUN3).returncode, 0)
         self.assertIn("drift: T1 holds acceptance=unchanged", self.drift_lines())
 
     def test_a_task_without_an_acceptance_paragraph_records_no_ref_and_reads_unknown(self):
@@ -1506,6 +1556,188 @@ class DriftTestAuthorTests(unittest.TestCase):
         rc, out, err, _ep = self.cli("--kit", str(self.kit), "--no-record",
                                      "--attempt-store", str(self.store), ep=ep)
         self.assertEqual(out.splitlines()[0], "drift: fx confinement=sandbox-exec")
+
+
+class AcceptRunGuardTests(unittest.TestCase):
+    """`accept` refuses unless the task's latest passing `outcome:` line carries `run=` equal to
+    `--run` and that run's date is today or yesterday in UTC (PLAN D6/B1, amended 2026-10-24
+    after the Phase 3 review, which copied a finished kit and accepted all 11 of its tasks).
+
+    The window is pinned IN-PROCESS through `accept_task(now=...)`, a seam that exists only for
+    unit tests and is not reachable from the command line. Tests that drive the real process
+    use ids from the production `generate_run_id()`. No test here reads the real clock to
+    decide a date-window case, and no committed kit is touched."""
+
+    NOW = None  # set in setUpClass: a pinned UTC instant
+
+    @classmethod
+    def setUpClass(cls):
+        from datetime import datetime, timezone
+        cls.NOW = datetime(2026, 10, 24, 12, 0, tzinfo=timezone.utc)
+        sys.path.insert(0, str(ROOT / "bin"))
+        try:
+            import kit_contract as kc
+        finally:
+            sys.path.pop(0)
+        cls.kc = kc
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory(prefix="polytropos-accept-guard-")
+        self.root = Path(self._tmp.name).resolve()
+        self.kit = self.root / ".claude" / "kits" / "fx"
+        self.kit.mkdir(parents=True)
+        self.store = self.root / "store"
+        self.home = self.root / "home"
+        self.home.mkdir()
+        self.git("init", "-q")
+        (self.root / "seed.txt").write_text("seed\n")
+        self.git("add", "seed.txt")
+        self.git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "seed")
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def git(self, *args):
+        subprocess.run(["git", *args], cwd=self.root, check=True, capture_output=True)
+
+    def write_kit(self, notes, tasks=("T1", "T2"), chain=False):
+        body = "".join(_block(t, "done", depends=(tasks[i - 1],) if chain and i else ()) + "\n"
+                       for i, t in enumerate(tasks))
+        (self.kit / "TASKS.md").write_text("# fx — tasks\n\n## Phase 1 — fixtures\n\n" + body)
+        (self.kit / "NOTES.md").write_text("# notes\n" + notes)
+
+    def run_kc(self, *args):
+        return subprocess.run(
+            [sys.executable, str(KC), *args], capture_output=True, text=True,
+            env=dict(os.environ, HOME=str(self.home)), cwd=str(self.root), timeout=120)
+
+    def cli_accept(self, task, run, kit=None):
+        return self.run_kc("accept", "--kit", str(kit or self.kit), "--task", task, "--run", run,
+                           "--attempt-store", str(self.store))
+
+    def accept_at(self, run, now, task="T1"):
+        tasks = self.kc.parse_tasks((self.kit / "TASKS.md").read_text())
+        t = next(x for x in tasks if x["id"] == task)
+        return self.kc.accept_task(self.kit, t, run, store=str(self.store), now=now)
+
+    def refusal(self, run, now, task="T1"):
+        with self.assertRaises(ValueError) as cm:
+            self.accept_at(run, now, task)
+        self.assertFalse(self.store.exists(), "a refusal must write nothing")
+        return str(cm.exception)
+
+    # -- the process, with a fresh id from the production generator ---------------------------
+
+    def test_a_matching_fresh_run_exits_0(self):
+        self.write_kit(_outcome("T1", run=RUN1))
+        p = self.cli_accept("T1", RUN1)
+        self.assertEqual(p.returncode, 0, p.stderr)
+
+    def test_a_mismatched_run_exits_2_and_names_both_ids(self):
+        self.write_kit(_outcome("T1", run=RUN1))
+        p = self.cli_accept("T1", RUN2)
+        self.assertEqual(p.returncode, 2, p.stdout + p.stderr)
+        self.assertIn(RUN1, p.stderr)
+        self.assertIn(RUN2, p.stderr)
+        self.assertFalse(self.store.exists())
+
+    def test_a_line_without_run_exits_2(self):
+        self.write_kit(_outcome("T1", run=False))
+        p = self.cli_accept("T1", RUN1)
+        self.assertEqual(p.returncode, 2, p.stdout + p.stderr)
+        self.assertIn("run=", p.stderr)
+        self.assertFalse(self.store.exists())
+
+    def test_the_clock_is_not_reachable_from_the_command_line(self):
+        self.write_kit(_outcome("T1", run=RUN1))
+        for extra in (["--now", "2026-10-24T00:00:00"], ["--today", "2026-10-24"]):
+            with self.subTest(extra=extra):
+                p = self.run_kc("accept", "--kit", str(self.kit), "--task", "T1", "--run", RUN1,
+                                "--attempt-store", str(self.store), *extra)
+                self.assertEqual(p.returncode, 2, p.stdout + p.stderr)
+                self.assertIn("unrecognized arguments", p.stderr)
+        old = "2026-01-05-abcd"
+        self.write_kit(_outcome("T1", run=old))
+        p = self.run_kc("accept", "--kit", str(self.kit), "--task", "T1", "--run", old,
+                        "--attempt-store", str(self.store))
+        self.assertEqual(p.returncode, 2, p.stdout + p.stderr)
+        for var in ("POLYTROPOS_NOW", "KIT_CONTRACT_NOW", "NOW", "FAKETIME"):
+            q = subprocess.run(
+                [sys.executable, str(KC), "accept", "--kit", str(self.kit), "--task", "T1",
+                 "--run", old, "--attempt-store", str(self.store)], capture_output=True,
+                text=True, cwd=str(self.root), timeout=120,
+                env=dict(os.environ, HOME=str(self.home), **{var: "2026-01-05T00:00:00"}))
+            self.assertEqual(q.returncode, 2, f"{var}: {q.stdout}{q.stderr}")
+        self.assertFalse(self.store.exists())
+
+    def test_the_reviewers_repro_a_copied_finished_kit_is_refused_for_every_task(self):
+        # The Phase 3 review copied a finished kit into a temp dir and accepted its done tasks.
+        # Its lines carry the run ids of the day they were written, long past the window.
+        old = ["2026-03-02-1a2b", "2026-03-02-3c4d", "2026-03-03-5e6f"]
+        self.write_kit("".join(_outcome(t, run=r) for t, r in zip(("T1", "T2", "T3"), old)),
+                       tasks=("T1", "T2", "T3"), chain=True)
+        for tid, run in zip(("T1", "T2", "T3"), old):
+            with self.subTest(task=tid):
+                p = self.cli_accept(tid, run)
+                self.assertEqual(p.returncode, 2, p.stdout + p.stderr)
+                self.assertTrue(p.stderr.startswith("accept: "), p.stderr)
+                self.assertIn("2026-03-0", p.stderr)  # names the run's date
+        self.assertFalse(self.store.exists())
+        f = self.run_kc("freshness", "--kit", str(self.kit), "--attempt-store", str(self.store))
+        self.assertIn("T2 unknown", f.stdout)
+        self.assertIn("T3 unknown", f.stdout)
+        self.assertNotIn("T2 fresh", f.stdout)
+        self.assertNotIn("T3 fresh", f.stdout)
+        # a freshly stamped line for the same task is what makes it acceptable
+        (self.kit / "NOTES.md").write_text(
+            (self.kit / "NOTES.md").read_text() + _outcome("T1", run=RUN1))
+        self.assertEqual(self.cli_accept("T1", RUN1).returncode, 0)
+
+    # -- the date window, in-process with a pinned clock --------------------------------------
+
+    def test_todays_run_is_accepted(self):
+        self.write_kit(_outcome("T1", run="2026-10-24-aaaa"))
+        out = self.accept_at("2026-10-24-aaaa", self.NOW)
+        self.assertEqual(out["id"], "T1")
+
+    def test_yesterdays_run_is_accepted(self):
+        self.write_kit(_outcome("T1", run="2026-10-23-aaaa"))
+        out = self.accept_at("2026-10-23-aaaa", self.NOW)
+        self.assertEqual(out["id"], "T1")
+
+    def test_a_matching_run_dated_two_days_ago_is_refused_naming_both_dates(self):
+        self.write_kit(_outcome("T1", run="2026-10-22-aaaa"))
+        msg = self.refusal("2026-10-22-aaaa", self.NOW)
+        self.assertIn("2026-10-22", msg)
+        self.assertIn("2026-10-24", msg)
+
+    def test_a_run_dated_in_the_future_is_refused(self):
+        self.write_kit(_outcome("T1", run="2026-10-26-aaaa"))
+        msg = self.refusal("2026-10-26-aaaa", self.NOW)
+        self.assertIn("2026-10-26", msg)
+
+    def test_the_window_follows_the_injected_clock_not_the_real_one(self):
+        from datetime import datetime, timezone
+        self.write_kit(_outcome("T1", run="2026-10-22-aaaa"))
+        out = self.accept_at("2026-10-22-aaaa", datetime(2026, 10, 23, 0, 5, tzinfo=timezone.utc))
+        self.assertEqual(out["id"], "T1")
+
+    def test_a_mismatched_run_is_refused_in_process_naming_both_ids(self):
+        self.write_kit(_outcome("T1", run="2026-10-24-aaaa"))
+        msg = self.refusal("2026-10-24-bbbb", self.NOW)
+        self.assertIn("2026-10-24-aaaa", msg)
+        self.assertIn("2026-10-24-bbbb", msg)
+
+    def test_a_line_without_run_is_refused_in_process(self):
+        self.write_kit(_outcome("T1", run=False))
+        self.assertIn("run=", self.refusal("2026-10-24-aaaa", self.NOW))
+
+    def test_the_latest_passing_line_is_the_one_whose_run_counts(self):
+        self.write_kit(_outcome("T1", run="2026-10-24-aaaa")
+                       + _outcome("T1", "retry-pass", run="2026-10-24-bbbb"))
+        self.assertIn("2026-10-24-bbbb", self.refusal("2026-10-24-aaaa", self.NOW))
+        self.assertEqual(self.accept_at("2026-10-24-bbbb", self.NOW)["result"], "retry-pass")
+
 
 
 if __name__ == "__main__":

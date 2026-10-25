@@ -96,12 +96,30 @@ compares each done task's acceptance against the versions of the upstream artifa
 on. `refresh` re-runs a stale task's verify command and dispatches nothing.
 `python3 bin/kit_contract.py demo` walks all of these on synthetic graphs.
 
+Three more subcommands cover the loop before and after a run. `analyze` is the static pre-run
+check: it reads the paths a brief names and each task's verify command, runs nothing and writes
+nothing, and exits 3 only on a verify the drivers cannot read (or an empty one), 2 on an invalid
+graph, and 0 otherwise; every other finding is printed as a warning unless `--strict` is passed.
+`accept` is the interactive loop's acceptance record: it writes to the ledger outside the tree, and
+only what a done task's own `outcome:` line already states. It binds the tree as it is when it
+runs, refuses an outcome line from another run or from a run more than a day old, and has no
+backfill flag, so kits finished earlier stay `unknown` in `freshness` unless `refresh` re-verifies them on the current tree, and nothing backfills an acceptance from NOTES.md prose. `drift` re-runs
+each done task's verify against the tree as it is now, inside the execution boundary, and
+reports drift, not failure: it changes no status and itself writes nothing in the tree or the kit
+directory, though the verifies it runs may, because the workspace is writable under the policy and
+`trusted-host` confines nothing. It appends an `evidence.drift` event to the ledger, exits 3 when a
+task drifted or cannot be read, and never exits 1. Under `--all`, exit 3 is not evidence of drift
+alone, since a skipped kit (unparseable, an invalid graph, a refused slug) also gives 3, so read the
+report; `--all` runs every finished kit's checks and is not a cheap check. Its `acceptance=` field
+reads `unknown` for a task with no `**Acceptance.**` heading and for any record written before the
+parser carried acceptance.
+
 The architect's own briefs are audited. When execute confirms a brief defect against the real
 repo during a run, it records a `defect: <task-id> kind=<token>` line rather than widening the
 task to make it pass (`skills/execute/references/ledger.md`). The kinds are the nine sanctioned in
 `skills/execute/references/ledger.md`: `stale-pin`, `tautological-verify`, `unrunnable-verify`, `missing-helper`, `unspecified-path`, `contradictory-acceptance`, `stale-plan-decision`, `false-zero-spec`, `underivable-requirement`.
-Coined synonyms are folded at read time by `bin/routing_scorecard.py` and shown as folded or
-unsanctioned on the card.
+Three historical synonyms are folded at read time by `bin/routing_scorecard.py` and shown as
+folded on the card; any other coined kind is flagged `unsanctioned` there, not folded.
 `bin/routing_scorecard.py --history` totals them on its Role quality card as the architect's
 brief-defect floor. `skills/architect/references/routing-evidence.md` tells the next architect
 to read them "as evidence about YOUR OWN briefs". This is the strongest spec-driven claim the

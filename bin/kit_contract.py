@@ -1502,19 +1502,12 @@ def outcome_result(status, escalations, parent):
         return "escalated-pass"
     return "pass"
 
-def recorded_outcome_result(notes_text, task_id):
-    """The LAST `result=` already recorded for `task_id` in `notes_text`, or `None`.
+def _last_outcome_line(notes_text, task_id):
+    """The text of the LAST `outcome:` line for `task_id` that carries a `result=`, or `None`.
 
-    Read-only over the kit's NOTES.md, same minimal `outcome:` grammar as
-    `count_plan_budget_usage` above (optional `- ` bullet, id as the first token, `key=value`
-    pairs). Later lines win, mirroring `routing_scorecard.parse_outcomes`'s last-wins rule.
-
-    Its ONE caller is the budget gate below: a `budget-stop` is not a verdict, so writing one
-    for a task that ALREADY carries a real verdict would append a ledger line that supersedes
-    (or, once the reader's precedence rule drops it, contradicts) recorded evidence. Rejected
-    at the WRITER, before anything is written -- the same precedent as the self-`--parent`
-    guard in `cmd_run`, and the same reasoning as the Phase 1 review's F2 invariant: nothing
-    may write a line the reader has to ignore.
+    Read-only. The minimal `outcome:` grammar shared with `count_plan_budget_usage` above: an optional
+    `- ` bullet, the id as the first token, then `key=value` pairs. Later lines win,
+    mirroring `routing_scorecard.parse_outcomes`'s last-wins rule.
     """
     found = None
     for line in notes_text.splitlines():
@@ -1526,10 +1519,38 @@ def recorded_outcome_result(notes_text, task_id):
         parts = s[len("outcome:"):].split()
         if not parts or parts[0] != task_id:
             continue
-        m = re.search(r"(?:^|\s)result=(\S+)", s)
-        if m:
-            found = m.group(1)
+        if re.search(r"(?:^|\s)result=\S+", s):
+            found = s
     return found
+
+
+def recorded_outcome_result(notes_text, task_id):
+    """The LAST `result=` already recorded for `task_id` in `notes_text`, or `None`.
+
+    Read-only over the kit's NOTES.md, through `_last_outcome_line`. Its callers are the
+    budget gate (`budget_gate` below and the three original drivers' inline copies of it) and
+    `accept_task`: a `budget-stop` is not a verdict, so writing one
+    for a task that ALREADY carries a real verdict would append a ledger line that supersedes
+    (or, once the reader's precedence rule drops it, contradicts) recorded evidence. Rejected
+    at the WRITER, before anything is written -- the same precedent as the self-`--parent`
+    guard in `cmd_run`, and the same reasoning as the Phase 1 review's F2 invariant: nothing
+    may write a line the reader has to ignore. `accept_task` reads it to refuse any task whose
+    latest line is not a pass.
+    """
+    line = _last_outcome_line(notes_text, task_id)
+    if line is None:
+        return None
+    m = re.search(r"(?:^|\s)result=(\S+)", line)
+    return m.group(1) if m else None
+
+
+def recorded_outcome_run(notes_text, task_id):
+    """The `run=` id on the line `recorded_outcome_result` reads, or `None` when it has none."""
+    line = _last_outcome_line(notes_text, task_id)
+    if line is None:
+        return None
+    m = re.search(r"(?:^|\s)run=(\S+)", line)
+    return m.group(1) if m else None
 
 def build_outcome_line(task_id, model, attempts, result, review="none", run_id=None,
                         parent=None):
@@ -2418,7 +2439,7 @@ _PASS_RESULTS = ("pass", "retry-pass", "escalated-pass")
 
 
 def accept_task(kit_dir, task, run_id, actor="interactive", store=None, workspace=None,
-                note=""):
+                note="", now=None):
     """Record the acceptance a kit's `outcome:` line already states -> a summary dict (PLAN D6).
 
     A projection, not an attempt: no `begin()` (no claim is taken) and no `end()`. It writes
@@ -2427,6 +2448,13 @@ def accept_task(kit_dir, task, run_id, actor="interactive", store=None, workspac
     ledger as they are now. Nothing is supplied by the caller and nothing is reconstructed:
     it refuses a task that is not `done`, and one whose NOTES.md carries no passing `outcome:`
     line, so there is no backfill path. NOTES.md and TASKS.md are read, never written.
+
+    The guard (PLAN D6/B1, amended 2026-10-24 after the Phase 3 review): that line must carry
+    `run=` equal to `run_id`, and `run_id`'s date must be today or yesterday in UTC, so a
+    finished kit's old lines cannot be accepted even by quoting their old run id. `now` is the
+    clock, an aware UTC datetime; it exists so unit tests can pin the window, and the command
+    line deliberately offers no way to set it -- a settable clock in production would be a
+    backfill door. Every refusal is a `ValueError` carrying the reason.
     """
     kit_dir = Path(kit_dir)
     if task["status"] != "done":
@@ -2441,6 +2469,19 @@ def accept_task(kit_dir, task, run_id, actor="interactive", store=None, workspac
     if result not in _PASS_RESULTS:
         raise ValueError(f"no passing outcome: line for {task['id']} in NOTES.md; write the "
                          f"outcome line first \u2014 accept records what the ledger already states")
+    line_run = recorded_outcome_run(notes_text, task["id"])
+    if line_run is None:
+        raise ValueError(f"the outcome: line for {task['id']} carries no run=; accept records "
+                         f"only a line stamped with the run id you pass")
+    if line_run != run_id:
+        raise ValueError(f"the outcome: line for {task['id']} carries run={line_run}, not "
+                         f"--run {run_id}; accept records only the run that wrote the line")
+    today = (now or datetime.now(timezone.utc)).astimezone(timezone.utc).date()
+    run_date = datetime.strptime(run_id[:10], "%Y-%m-%d").date()
+    if (today - run_date).days not in (0, 1):
+        raise ValueError(f"run {run_id} is dated {run_date.isoformat()}, but today is "
+                         f"{today.isoformat()} (UTC); accept records only a run from today or "
+                         f"yesterday, never an older finished one")
     workspace = Path(workspace) if workspace else _al().kit_repo_root(kit_dir)
     ledger = open_ledger(kit_dir, store=store)
     # The note is user free text: redacted and bounded (bin/redact.py) before it is persisted.
@@ -4669,8 +4710,10 @@ def _cli(argv=None):
         description="The one kit contract. `graph` validates a kit's execution DAG and reports "
                     "its ready frontier; `analyze` checks a kit's brief paths and verify "
                     "commands statically, before any dispatch, running nothing; `drift` re-runs "
-                    "done tasks' verify commands inside the execution boundary and reports, "
-                    "changing nothing in the tree; `demo` walks synthetic graphs and spends "
+                    "done tasks' verify commands inside the execution boundary and reports. "
+                    "`drift` itself writes nothing in the tree or the kit dir, but the verifies "
+                    "it runs may, because the workspace is writable under the policy, and "
+                    "`trusted-host` confines nothing; `demo` walks synthetic graphs and spends "
                     "nothing.",
     )
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -4711,7 +4754,8 @@ def _cli(argv=None):
                           help="roster, support, and every role's contract as JSON")
     p_accept = sub.add_parser("accept", help="record the acceptance a done task's outcome: line "
                                               "already states, in the ledger outside the tree; "
-                                              "exit 2 on refusal",
+                                              "the line must carry run= equal to --run, a run "
+                                              "from today or yesterday (UTC); exit 2 on refusal",
                               allow_abbrev=False)  # `--at` must not resolve to --attempt-store
     p_accept.add_argument("--kit", required=True)
     p_accept.add_argument("--task", required=True)
@@ -4720,7 +4764,8 @@ def _cli(argv=None):
     p_accept.add_argument("--note", default="")
     p_drift = sub.add_parser("drift", help="re-run each done task's verify against the tree as "
                                             "it is now, inside the execution boundary; changes "
-                                            "no status, writes nothing in the tree; exit 3 when "
+                                            "no status, and itself writes nothing in the tree "
+                                            "(the verifies it runs may); exit 3 when "
                                             "a task drifted or cannot be read, never 1",
                              allow_abbrev=False)
     p_drift_which = p_drift.add_mutually_exclusive_group(required=True)

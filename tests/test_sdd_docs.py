@@ -189,6 +189,11 @@ class GuideTests(unittest.TestCase):
             cells = [c.strip() for c in row.strip().strip("|").split("|")]
             self.assertTrue(cells[2] and cells[2] != "—", f"roadmap item {cells[0]} has no evidence")
 
+    def test_roadmap_says_what_was_built(self):
+        md = _read(REPORT_MD)
+        self.assertNotIn("None is built.", md)
+        self.assertIn("kit-preflight", md)
+
     def test_principles_are_numbered_without_gaps(self):
         md = _read(REPORT_MD)
         stated = [int(n) for n in PRINCIPLE_BULLET.findall(md)]

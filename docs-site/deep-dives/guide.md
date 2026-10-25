@@ -192,6 +192,9 @@ python3 bin/kit_contract.py graph --kit .claude/kits/<slug>      # validate the 
 python3 bin/kit_contract.py roster --kit .claude/kits/<slug>     # workflow, roles, assurance
 python3 bin/kit_contract.py freshness --kit .claude/kits/<slug>  # acceptances vs upstream versions
 python3 bin/kit_contract.py refresh --kit .claude/kits/<slug> --task <id>   # re-verify stale evidence
+python3 bin/kit_contract.py analyze --kit .claude/kits/<slug>    # static pre-run check; runs nothing
+python3 bin/kit_contract.py accept --kit .claude/kits/<slug> --task <id> --run <run-id>   # record an interactive acceptance
+python3 bin/kit_contract.py drift --kit .claude/kits/<slug>      # re-run done tasks' verifies; reports drift, not failure
 python3 bin/kit_contract.py demo                                 # synthetic graphs; spends nothing
 ```
 
@@ -200,7 +203,7 @@ fix — fix `TASKS.md` and report the defect; never route around an invalid plan
 an out-of-grammar `roles:` or `workflow:` line and otherwise prints the roles to sequence and the
 assurance level the kit declares. `freshness` binds each `done` task's acceptance to the upstream
 artifact versions it rested on, so a re-accepted dependency makes downstream evidence stale rather
-than silently authoritative; `refresh` re-verifies one such task and dispatches nothing.
+than silently authoritative; `refresh` re-verifies one such task and dispatches nothing. `analyze` is static and runs nothing; it exits 3 only on a verify the drivers cannot read. `accept` records, outside the tree, only the acceptance a done task's own `outcome:` line already states; it binds the tree as it is when it runs, refuses an outcome line from another run or a run more than a day old, and has no backfill, so kits finished earlier stay `unknown` unless `refresh` re-verifies them on the current tree; nothing backfills an acceptance from NOTES.md prose. `drift` re-runs done tasks' verifies and reports drift, not failure; it changes no status and writes nothing in the tree or the kit directory itself, but the verifies it runs may, and `trusted-host` confines nothing. Under `--all` an exit of 3 is not drift alone (an unrunnable task or a skipped kit also gives 3), so read the report; it is not a cheap check. `acceptance=` reads `unknown` for a task with no `**Acceptance.**` heading and for any record written before the parser carried acceptance.
 
 **Every dispatch lands in `bin/attempt_ledger.py` before and after it runs.** `TASKS.md` status and
 the `NOTES.md` outcome line are *projections* of that ledger, not the record: an append-only JSONL

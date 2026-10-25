@@ -154,8 +154,9 @@ acceptance check have failed before the work began?
 ### When not to use it
 
 SDD fits work whose outcome can be stated before it starts. It fits exploration poorly, where the
-point is to find out what to build, and it costs more than it returns on changes small enough to
-check by reading the diff. Anthropic's version of the cost rule is about review rather than
+point is to find out what to build: when the outcome is not known yet, explore first and write
+the spec from what the exploration found. It also costs more than it returns on changes small
+enough to check by reading the diff. Anthropic's version of the cost rule is about review rather than
 specs, but it generalizes: an evaluator "is worth the cost when the task sits beyond what the
 current model does reliably solo."
 
@@ -214,7 +215,7 @@ practice onto that system.
 | *(gate)* | **The approval pause.** The architect shows the spec draft and writes nothing to disk until the user approves it. | Step 1 |
 | Plan | The design half of `PLAN.md`: decisions with rationale, risks with tripwires, and optional `autonomy:`, `budget:`, `roles:` and `workflow:` lines. | Step 1 |
 | Tasks | `TASKS.md`: per task an id, a pinned `model`, a self-contained brief, acceptance, a verify command, `evidence:` and `depends:`. | Step 2 |
-| Analyze | Structural only: `bin/kit_contract.py graph` rejects duplicate ids, unknown or self dependencies and cycles. Semantic consistency waits for the phase reviewer. | `bin/kit_contract.py` |
+| Analyze | `bin/kit_contract.py graph` rejects duplicate ids, unknown or self dependencies and cycles. `bin/kit_contract.py analyze` then checks, statically, the paths a brief names and whether each verify command can be read and run, and the P0 spec review looks for contradictory acceptance and uncovered goals, all before the first dispatch. The P0 review is interactive-only: headless drivers and `workflow: direct` kits print `analyze`'s warnings, and nothing judges them. | `bin/kit_contract.py`, `skills/execute/references/spec-review.md` |
 | Implement | Each task is dispatched to the implementer on its pinned tier. | `skills/execute/SKILL.md` |
 | Verify and converge | The orchestrator runs every verify command itself; a fresh-context verifier and a phase reviewer check the work; one retry, then a frontier consult. The kit converges when `kit_contract.py graph` reports every task done. | `skills/execute/SKILL.md` |
 | Feedback | `outcome:`, `agent:`, `reviewer:` and `defect:` lines in `NOTES.md`, read by `bin/routing_scorecard.py` and by the next architect. | `skills/execute/references/ledger.md` |
@@ -232,7 +233,7 @@ practice onto that system.
 | P5 | Design with reasons | Decisions carry rationale "so a cheaper model can make consistent micro-decisions later". | Strong |
 | P6 | Small, ordered, traceable tasks | Phased task blocks with machine-read `depends:`; the graph check before any dispatch. | Strong; no requirement ids |
 | P7 | Verified independently | "The implementer's claim of success is not evidence": orchestrator-run verify, a read-only verifier, an `opus` phase reviewer, and confirmation required before a finding counts. | Strongest in the field |
-| P8 | Spec and code stay in sync | Within a kit, `kit_contract.py freshness` marks a finished task stale when work it relied on is re-accepted, and `refresh` re-verifies it. After a kit ends, nothing re-checks it against later changes. | Partial |
+| P8 | Spec and code stay in sync | Within a kit, `kit_contract.py freshness` marks a finished task stale when work it relied on is re-accepted, and `refresh` re-verifies it. After a kit ends, `kit_contract.py accept` records interactive acceptances and `drift` re-runs a finished kit's verify commands inside the execution boundary and reports drift, not failure; `drift` itself writes nothing in the tree, but the verifies it runs may. Nothing updates a spec automatically. | Partial: detection exists, but a check that starts its own sandbox reads `drifted` under enforced confinement (PLAN R6), and nothing updates a spec automatically |
 | P9 | Changes specified as changes | One kit is one change, bounded by its fence; there is no delta format against a standing spec. | Partial |
 | P10 | Right-sized ceremony | `/polytropos:route` handles a single task without a kit; `workflow: direct` drops independent review for low-risk kits. No threshold says when a kit is needed. | Partial |
 | P11 | Spend judgment where it pays | The spec is written once on the frontier tier; each task is pinned to `sonnet`, `opus` or `haiku`; the frontier is reached again only when a task fails. | Strong, and rare in the field |
@@ -293,12 +294,19 @@ its default verifier from `haiku` to `sonnet`.
 |---|---|---|
 | Waterfall again | Specs per change; a spec that cannot hold goes back to the user, and an executor that hits a wrong brief stops and reports | No sanctioned re-plan mid-run |
 | Ceremony for small changes | `/polytropos:route` for single tasks; `workflow: direct`; optional roles off unless declared | No stated threshold for when a change needs a kit |
-| Drift | Phase-end drift review; fences re-read at every phase start; `freshness` within a kit | Nothing re-checks a finished kit later |
+| Drift | Phase-end drift review; fences re-read at every phase start; `freshness` within a kit; `drift` re-runs a finished kit's checks and reports | Nothing updates a spec automatically |
 | False confidence | The approval pause catches misread intent; `defect:` lines record specs that were wrong | "The checks cover what the architect thought to check" |
 | Spec bloat | Contracts pinned, implementation left open | No size limit on a kit |
 | Self-grading | The orchestrator runs every verify command; the implementer's report is not evidence | — |
 | Lenient evaluation | The red-green rule; a finding counts only once confirmed | Verifier prompts are not tuned from their own record |
 | Over-specification | Briefs pin interfaces and paths, not statements | — |
+
+**Exploring before a kit.** A single exploratory task needs no kit: `/polytropos:route` picks a
+model for it. Trying it cheap behind a check is `/polytropos:escalate`. A kit can declare a
+`scout` role, and a low-ceremony kit declares `workflow: direct`, which skips independent review
+and the P0 spec review. `analyze` refuses only a verify the drivers cannot read, and every other
+finding is a printed warning, so spike checks like `true` or `python3 spike/run.py` pass. A
+finished spike becomes the input to `/polytropos:architect`.
 
 <!-- page -->
 
@@ -319,6 +327,9 @@ its default verifier from `haiku` to `sonnet`.
 | `evidence:` field | `red-green` by default: the check must be able to fail first | Test-first (P4) |
 | `depends:` / `independent:` | A machine-read dependency graph | Task ordering; parallel markers |
 | `kit_contract.py graph` | Rejects an invalid task graph before any dispatch | Analyze, structural part |
+| `kit_contract.py analyze` | Static pre-run check of the paths a brief names and each verify command; runs nothing | Analyze, mechanical part |
+| `kit_contract.py accept` | Records an interactive acceptance in the ledger outside the tree, from the task's own `outcome:` line; binds the tree when it runs, and refuses a line from another run or a run more than a day old | Feedback; sync (P8) |
+| `kit_contract.py drift` | Re-runs finished tasks' verify commands inside the execution boundary and reports drift, not failure; the verifies it runs may write, `trusted-host` confines nothing, `--all`'s exit 3 is not evidence of drift on its own, and `acceptance=` reads `unknown` without an `**Acceptance.**` heading or for records written before the parser carried it | Drift detection after a change (P8) |
 | Kit agents in `.claude/agents/` | Implementer, read-only verifier, read-only reviewer | Role separation (P7) |
 | `/polytropos:execute` | Dispatches, verifies, retries, reviews | Implement and converge |
 | Orchestrator-run verify | The verify command run by the loop, never trusted from a report | Independent verification (P7) |
@@ -359,8 +370,9 @@ On the levels of Part 1, polytropos is **hybrid**: each kit is a spec for one ch
 and kept as a record but not maintained afterward. Within a run it behaves like spec-anchored,
 because every task is checked against the spec and stale evidence is detected. It is strongest
 where the field is weakest, in independent verification (P7), spending judgment where it pays
-(P11) and measuring the spec (P12). It is weakest at keeping specs in sync after a change ships
-(P8), at checking artifacts against each other before a run, and at right-sizing (P10).
+(P11) and measuring the spec (P12). Before kit `kit-preflight` it was weakest at keeping specs in sync
+after a change ships (P8) and at checking artifacts against each other before a run; those now have
+detection (`drift`, `analyze` and the P0 spec review), and right-sizing (P10) remains weak.
 
 ### What its own ledger says
 
@@ -374,21 +386,23 @@ recurring problems across synonyms. As of this kit the vocabulary is nine sancti
 and `test-author` with the highest rate of catches no earlier check made, on small samples.
 Re-run both commands before acting on any of this.
 
-The interactive execute loop does not record the file versions that `kit_contract.py freshness`
-compares, so `freshness` reports every task of an interactively run kit as `unknown`. The
-headless drivers record them.
+Since kit `kit-preflight`, the interactive execute loop records acceptances through
+`kit_contract.py accept`, which `freshness` compares. Kits finished earlier stay `unknown` unless
+`refresh` re-verifies them on the current tree, and nothing backfills an acceptance from
+NOTES.md prose. The headless drivers always recorded them.
 
 <!-- page -->
 
 ### Roadmap
 
-Each item would be its own kit, approved through the architect's approval pause. None is built.
+Each item would be its own kit, approved through the architect's approval pause. A, B and C were
+built together as kit `kit-preflight` (see `.claude/kits/kit-preflight/PLAN.md`); D–H are not built.
 
 | # | Improvement | Evidence | Principle | Size |
 |---|---|---|---|---|
-| **A** | **Check the spec before the run.** A read-only pass before the first dispatch: every path and script a brief names exists, every verify command can run, and a fresh-context review of `PLAN.md` against `TASKS.md` looks for contradictory acceptance and uncovered goals. | The most frequent defect kinds; Spec Kit's analyze | P6, P12 | Medium |
-| **B** | **Make freshness work interactively, then re-check finished kits.** The interactive loop records the versions `freshness` needs. A follow-on command re-runs finished kits' verify commands against the current tree and reports drift, not failure, since some checks are legitimately superseded. | Every task `unknown` on an interactive kit; IBM's CI-anchored level | P8 | Medium |
-| **C** | **Settle the defect vocabulary.** Sanction the coined kinds that recur, map the rest onto existing kinds. | Coined kinds in `--history` | P12 | Small |
+| **A** | **Check the spec before the run.** — built (`kit-preflight`). A read-only pass before the first dispatch: every path and script a brief names exists, every verify command can run, and a fresh-context review of `PLAN.md` against `TASKS.md` looks for contradictory acceptance and uncovered goals. | The most frequent defect kinds; Spec Kit's analyze | P6, P12 | Medium |
+| **B** | **Make freshness work interactively, then re-check finished kits.** — built (`kit-preflight`). The interactive loop records the versions `freshness` needs. A follow-on command re-runs finished kits' verify commands against the current tree and reports drift, not failure, since some checks are legitimately superseded. | Every task `unknown` on an interactive kit; IBM's CI-anchored level | P8 | Medium |
+| **C** | **Settle the defect vocabulary.** — built (`kit-preflight`). Sanction the coined kinds that recur, map the rest onto existing kinds. | Coined kinds in `--history` | P12 | Small |
 | **D** | **Close the calibration loop.** A report of each role's unconfirmed findings across kits, for the architect to read before writing that role's prompt. | Anthropic's log-reading; `findings` vs `confirmed` | P7 | Small |
 | **E** | **Recommend the roles that earn their place** for high-risk kits, as advice backed by `--roles`, not a mandate. | `--roles` | P7, P10 | Small |
 | F | **Requirement ids and coverage.** An optional id per goal and a `covers:` field per task. It makes A's coverage check exact, but changes the task contract shared by both skills and `bin/kit_contract.py`. | Spec Kit, Kiro | P6 | Large |
@@ -413,6 +427,9 @@ change deltas, which little of the evidence asks for.
 python3 bin/routing_scorecard.py --history  # the record across every kit
 python3 bin/routing_scorecard.py --roles    # what each review role has caught
 python3 bin/kit_contract.py freshness --kit .claude/kits/<slug>   # stale evidence
+python3 bin/kit_contract.py analyze --kit .claude/kits/<slug>     # static pre-run check
+python3 bin/kit_contract.py accept --kit .claude/kits/<slug> --task <id> --run <run-id>   # record an acceptance
+python3 bin/kit_contract.py drift --kit .claude/kits/<slug>       # re-run finished tasks' checks; reports drift
 ```
 
 ## Sources

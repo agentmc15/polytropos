@@ -165,7 +165,6 @@
   <span><i class="sw" style="background:var(--fable)"></i>frontier tier (<span class="t-fable">fable</span>)</span>
   <span><i class="sw" style="background:var(--opus)"></i><span class="t-opus">opus</span></span>
   <span><i class="sw" style="background:var(--sonnet)"></i><span class="t-sonnet">sonnet</span> / <span class="t-haiku">haiku</span></span>
-  <span><i class="sw" style="background:var(--new)"></i>being built now (kit <code>kit-preflight</code>)</span>
 </div>
 
 <div class="cols">
@@ -198,7 +197,7 @@
     <li><div class="node person"><span class="who">you <span class="badge person">gate</span></span><strong>Approval pause</strong>Nothing is written to disk until you approve the spec.</div></li>
     <li><div class="node fable"><span class="who"><span class="t-fable">fable</span> &middot; once</span><strong>Design and tasks</strong>Decisions with reasons, risks with tripwires, and per task a self-contained brief, acceptance, a verify command, an <code>evidence:</code> rule and a pinned model.
       <div class="note strong">every task names its proof and its price</div></div></li>
-    <li><div class="node new"><span class="who">before any dispatch <span class="badge new">being built</span></span><strong>Pre-run check</strong><code>kit_contract.py analyze</code> checks paths and verify commands without running anything; then one <span class="t-opus">opus</span> spec review for contradictions and uncovered goals, skipped for <code>workflow: direct</code> kits.</div></li>
+    <li><div class="node plain"><span class="who">before any dispatch</span><strong>Pre-run check</strong><code>kit_contract.py analyze</code> checks paths and verify commands without running anything; then one <span class="t-opus">opus</span> spec review for contradictions and uncovered goals, skipped for <code>workflow: direct</code> kits.</div></li>
     <li>
       <div class="loop">
         <p class="label">for each task</p>
@@ -214,8 +213,8 @@
       </div>
     </li>
     <li><div class="node opus"><span class="who"><span class="t-opus">opus</span> &middot; each phase end</span><strong>Phase review</strong>Checks the phase against <code>PLAN.md</code> for drift before the next phase starts.</div></li>
-    <li><div class="node plain"><span class="who">every outcome, dispatch and review</span><strong>Ledger</strong><code>NOTES.md</code> lines that record what passed, what each reviewer found, and which briefs were wrong (<code>defect:</code>). <span class="badge new">being built</span> <code>accept</code> also records each acceptance.</div></li>
-    <li><div class="node new"><span class="who">after the change <span class="badge new">being built</span></span><strong>Drift check</strong><code>kit_contract.py drift</code> re-runs a finished kit's checks against today's code and reports drift, without marking anything failed.</div></li>
+    <li><div class="node plain"><span class="who">every outcome, dispatch and review</span><strong>Ledger</strong><code>NOTES.md</code> lines that record what passed, what each reviewer found, and which briefs were wrong (<code>defect:</code>). <code>accept</code> also records each acceptance.</div></li>
+    <li><div class="node plain"><span class="who">after the change</span><strong>Drift check</strong><code>kit_contract.py drift</code> re-runs a finished kit's checks against today's code and reports drift, without marking anything failed.</div></li>
     <li><div class="node plain"><span class="who">across every kit</span><strong>Scorecard</strong><code>bin/routing_scorecard.py --history</code> grades the tiers, the review roles and the briefs.
       <div class="back">&#8634; read by the next architect before it writes the next spec</div></div></li>
   </ol>
@@ -233,8 +232,8 @@
       <tr><td>Who decides the work is done?</td><td>The agent that built it</td><td>The loop runs the check, and a fresh-context verifier and a phase reviewer judge it</td></tr>
       <tr><td>Can a check that proves nothing pass?</td><td>Yes</td><td>No: the red-green rule blocks a check that already passed before the work</td></tr>
       <tr><td>What if the spec is wrong?</td><td>The agent works around it</td><td>The task stops and reports, and the defect is recorded by kind</td></tr>
-      <tr><td>Is the spec checked before spending anything?</td><td>Some tools have an analyze step</td><td><code>analyze</code> and a spec review, being built now</td></tr>
-      <tr><td>Is it re-checked after the change ships?</td><td>Rarely</td><td><code>drift</code>, being built now</td></tr>
+      <tr><td>Is the spec checked before spending anything?</td><td>Some tools have an analyze step</td><td><code>analyze</code> and a spec review, both before the first dispatch</td></tr>
+      <tr><td>Is it re-checked after the change ships?</td><td>Rarely</td><td><code>drift</code>, a re-run of a finished kit's checks inside the execution boundary</td></tr>
       <tr><td>Does the next spec learn from this one?</td><td>No record</td><td>The scorecard's defect kinds and tier and role history feed the next architect</td></tr>
     </tbody>
   </table></div>

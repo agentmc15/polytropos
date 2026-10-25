@@ -134,7 +134,7 @@ stale PLAN decision, say). The sanctioned kinds are nine:
 - `false-zero-spec` — the brief asserts something is absent, zero or never the case that the tree shows is present.
 - `underivable-requirement` — an acceptance that cannot be derived from the brief plus the tree: no stated source, no measurable form, or a criterion left incomplete.
 
-Three historical synonyms are folded onto these at read time by `bin/routing_scorecard.py` (`incomplete-acceptance`, `process-guardrail`, `unsafe-parallel-marking`), and `verifier-destructive-restore` is a verifier incident, recorded in prose, never as a `defect:` line.
+Three historical synonyms are folded onto these at read time by `bin/routing_scorecard.py` (`incomplete-acceptance` → `underivable-requirement`, `process-guardrail` → `stale-plan-decision`, `unsafe-parallel-marking` → `contradictory-acceptance`), and `verifier-destructive-restore` is a verifier incident, recorded in prose, never as a `defect:` line.
 
 Reuse an existing kind
 whenever one fits and coin a new one ONLY when none does — the architect reads which kinds
