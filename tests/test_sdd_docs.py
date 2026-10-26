@@ -189,6 +189,11 @@ class GuideTests(unittest.TestCase):
             cells = [c.strip() for c in row.strip().strip("|").split("|")]
             self.assertTrue(cells[2] and cells[2] != "—", f"roadmap item {cells[0]} has no evidence")
 
+    def test_roadmap_says_what_was_built(self):
+        md = _read(REPORT_MD)
+        self.assertNotIn("None is built.", md)
+        self.assertIn("kit-preflight", md)
+
     def test_principles_are_numbered_without_gaps(self):
         md = _read(REPORT_MD)
         stated = [int(n) for n in PRINCIPLE_BULLET.findall(md)]
@@ -206,6 +211,56 @@ class GuideTests(unittest.TestCase):
         for path in (REPORT_MD, REPORT_HTML):
             with self.subTest(path=path.name):
                 pitch.check_truth(_read(path), REPO_ROOT)
+
+
+PIPELINES = SDD / "pipelines.html"
+PIPELINES_MD = SDD / "pipelines.md"
+TABLE_QUESTION = re.compile(r"<tr><td>(.*?)</td>")
+
+
+class PipelinesPageTests(unittest.TestCase):
+    """docs/sdd/pipelines.html: two flow diagrams, the typical AI SDD pipeline and polytropos's.
+
+    Hand-written, not rendered. It goes through the deck's truth checks, must stay
+    self-contained, and must keep both diagrams. A step the code does not have yet is shown
+    with a "being built" badge; when the step lands, the badge must go in the same change.
+
+    docs/sdd/pipelines.md is its hand-written Markdown twin: the same headings both ways, both
+    flow charts as Mermaid, every row of the comparison table, and the same truth checks.
+    """
+
+    def test_self_contained_and_truthful(self):
+        text = _read(PIPELINES)
+        low = text.lower()
+        for banned in ("<script", "<link", "@import", "<img"):
+            self.assertNotIn(banned, low)
+        self.assertIn("prefers-color-scheme: dark", text)
+        pitch.check_truth(text, REPO_ROOT)
+
+    def test_both_diagrams_present(self):
+        text = _read(PIPELINES)
+        self.assertIn('id="h-typical"', text)
+        self.assertIn('id="h-poly"', text)
+        self.assertGreaterEqual(text.count('class="node'), 12)
+
+    def test_markdown_twin_carries_the_same_headings(self):
+        check_headings_carried(_read(PIPELINES), _read(PIPELINES_MD), both_ways=True)
+
+    def test_twins_name_each_other(self):
+        self.assertIn("docs/sdd/pipelines.html", _read(PIPELINES_MD))
+        self.assertIn("docs/sdd/pipelines.md", _read(PIPELINES))
+
+    def test_markdown_carries_both_charts_and_every_comparison_row(self):
+        md = _read(PIPELINES_MD)
+        self.assertEqual(md.count("```mermaid"), 2)
+        questions = TABLE_QUESTION.findall(_read(PIPELINES))
+        self.assertTrue(questions, "the HTML comparison table has no rows")
+        for question in questions:
+            with self.subTest(question=question):
+                self.assertIn(f"| {html.unescape(question)} |", md)
+
+    def test_markdown_truth(self):
+        pitch.check_truth(_read(PIPELINES_MD), REPO_ROOT)
 
 
 class NegativeFixtureTests(unittest.TestCase):

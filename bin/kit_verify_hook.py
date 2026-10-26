@@ -48,10 +48,14 @@ Edit's `old_str`/`new_str` pair IS the diff already -- no separate diffing is re
 Edit path is fully supported below. Write's payload carries ONLY the new full-file content; it
 has no prior content at all, so a genuine before/after status flip cannot be established for a
 Write-based rewrite of a kit TASKS.md from the PostToolUse payload alone. This is a real, narrow
-payload gap (Write only), not a reason to skip the whole hook: Edit is how this repo's own
-`skills/execute/SKILL.md` and every driver actually flip a single `- status:` line (a targeted,
-minimal-diff change -- exactly what the Edit tool is for). `hook` below enforces the Edit path
-and is a silent no-op for a Write to a kit TASKS.md; this is documented, not invented.
+payload gap (Write only), not a reason to skip the whole hook: the Edit tool is the targeted,
+minimal-diff way to flip a single `- status:` line, and `skills/execute/SKILL.md` flips status
+that way. The skill does NOT call this module's `record` or `precheck`; of the drivers, only `bin/claude_execute.py` loads this module. Since
+kit `kit-preflight` the interactive loop's per-task CLI calls are `kit_contract.py analyze` (once,
+before dispatch) and `kit_contract.py accept` (per accepted task), and this hook stays unwired for
+interactive runs (installing it is a `~/.claude` settings change, out of scope). `hook` below
+enforces the Edit path and is a silent no-op for a Write to a kit TASKS.md; this is documented,
+not invented.
 
 FRESHNESS NOTE: the brief describes blocking a `done` flip "unless a marker newer than the
 task's `in-progress` flip exists." The kit TASKS.md grammar records no per-status timestamp, so

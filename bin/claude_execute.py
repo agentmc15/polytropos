@@ -223,6 +223,7 @@ recorded_outcome_result = _CONTRACT.recorded_outcome_result
 select_task = _CONTRACT.select_task
 exit_if_invalid_graph = _CONTRACT.exit_if_invalid_graph
 roster_for_run = _CONTRACT.roster_for_run
+exit_if_unsound_kit = _CONTRACT.exit_if_unsound_kit
 record_roster = _CONTRACT.record_roster
 GAP_MODES = _CONTRACT.GAP_MODES
 set_status = _CONTRACT.set_status
@@ -878,6 +879,10 @@ def cmd_run(args):
     plan_text = (kit / "PLAN.md").read_text() if (kit / "PLAN.md").exists() else ""
     roster, roster_support = roster_for_run(plan_text, "claude-code", args.roster_gap,
                                             slug=slug)
+    # PLAN D5: static, free, fail closed, no opt-out, before any preview, claim, or ledger.
+    # Only an unparseable verify on a task still to run fails a run (D3's seventh amendment);
+    # every other finding prints and the run goes on -- except the task `--task` selected.
+    exit_if_unsound_kit(kit, tasks, selected=args.task)
 
     if args.dry_run:
         # `--dry-run` with no `--task` previews EVERY pending task (not just the first

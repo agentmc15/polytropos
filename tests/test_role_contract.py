@@ -217,6 +217,7 @@ class GrammarTests(unittest.TestCase):
         with_roles = {slug: r["declared"] for slug, r in seen.items() if r["declared"]}
         self.assertEqual(with_roles, {"aesop-fold": ["test-author"],
                                       "docs-site": ["test-author", "docs-editor"],
+                                      "kit-preflight": ["test-author", "red-team"],
                                       "observability-dashboard": ["red-team",
                                                                   "security-auditor"]})
         for slug, roster in seen.items():

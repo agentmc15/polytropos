@@ -119,11 +119,24 @@ could never fail or that contradicts its own acceptance, a pinned anchor or line
 proven stale, a helper invoked that no task creates, an escalation consult forced to rewrite
 the brief. Append:
 
-`defect: <task-id> kind=<kebab-case-token>`
+`defect: <task-id> kind=<kebab-case-token> [when=pre-run]`
 
 for example `defect: T3 kind=stale-pin`. Use the task token `-` for kit-level defects (a
-stale PLAN decision, say). The kinds: `stale-pin`, `tautological-verify`, `missing-helper`,
-`unspecified-path`, `contradictory-acceptance`, `stale-plan-decision`. Reuse an existing kind
+stale PLAN decision, say). The sanctioned kinds are nine:
+
+- `stale-pin` — the brief anchors on a file, line, phrase or identifier that no longer exists where the brief says it does.
+- `tautological-verify` — the verify command passes before the work is done, so a later pass proves nothing.
+- `unrunnable-verify` — the verify command cannot execute as written: unparseable, a missing script or path, a wrong invocation form.
+- `missing-helper` — the brief relies on a helper, fixture or flag that no task in the kit creates and the tree does not have.
+- `unspecified-path` — the brief leaves a destination, file or location to the implementer's guess.
+- `contradictory-acceptance` — two acceptance clauses, or an acceptance and its verify or a fence, cannot all hold at once.
+- `stale-plan-decision` — a PLAN.md decision the tree already contradicts when the task runs (kit-level; task token `-`).
+- `false-zero-spec` — the brief asserts something is absent, zero or never the case that the tree shows is present.
+- `underivable-requirement` — an acceptance that cannot be derived from the brief plus the tree: no stated source, no measurable form, or a criterion left incomplete.
+
+Three historical synonyms are folded onto these at read time by `bin/routing_scorecard.py` (`incomplete-acceptance` → `underivable-requirement`, `process-guardrail` → `stale-plan-decision`, `unsafe-parallel-marking` → `contradictory-acceptance`), and `verifier-destructive-restore` is a verifier incident, recorded in prose, never as a `defect:` line.
+
+Reuse an existing kind
 whenever one fits and coin a new one ONLY when none does — the architect reads which kinds
 RECUR across tasks and kits, and a coined synonym never aggregates with its neighbour. For
 the same reason, a second defect of the same kind in the same task repeats that same kind
@@ -132,3 +145,9 @@ counts once per task, by design. Never suffix a kind (`stale-pin-2`) to force a 
 count — a suffix is a new key that hides the very recurrence it was meant to show. This
 ledger measures the ARCHITECT, and you, the executor,
 are its honest recorder: log the defect even when — especially when — the fix was easy.
+
+The optional `when=pre-run` pair: set it ONLY on a defect confirmed before the first
+dispatch — by the P0 spec review or by `analyze`'s findings. Absent means the defect was
+confirmed mid-run; any other value is noted and ignored. It is a NOTES.md line format inside
+the existing `defect:` family, not a task field, and `when=` is a pair on that family, not a
+seventh family.

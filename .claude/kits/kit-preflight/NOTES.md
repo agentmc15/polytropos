@@ -1,0 +1,448 @@
+# kit-preflight — execution notes
+
+Run `run=2026-10-24-93ee`, interactive (`/polytropos:execute kit-preflight`), plugin 0.6.10, branch `feat/route-experiment` at 98d1a67. Dials: autonomy advisory; budget max-dispatches=40 max-escalations=3 max-consults=3; roles test-author + red-team, dispatched on T4, T5, T7 and T8 only (PLAN D16) and on no docs, skill or commit task.
+
+Setup: `kit_contract.py graph` exit 0 (ready, frontier T1); `roster` exit 0 (workflow=extended). The installed execute skill predates this kit's A3, so this run has no P0 spec review; that loop step is what T10 builds.
+
+## Task notes
+
+- T1 pre-work: verify's first clause exit 5 (NO TESTS RAN; the test file does not exist) — red as required.
+agent: T1 id=af5875d465df3bef0 role=implementer model=sonnet
+- T1: the verify's last clause `git diff --quiet -- .claude/kits` cannot pass while the loop keeps this kit's TASKS.md current; the orchestrator judges it as `git diff --quiet -- .claude/kits ':!.claude/kits/kit-preflight'` (same intent: no other kit's committed files change). Every later task whose verify carries the clause is judged the same way.
+- T1: brief steps 4–5 (new architect keys always present; `caught pre-run` always rendered when defects > 0) conflict with the Gotcha's "existing tests stay green unchanged" — exact key-set and byte-exact golden tests. Implementer rendered the keys and line only when non-empty; acceptance (`caught pre-run: 0` on the committed card) still holds. Bounded adaptation.
+defect: T1 kind=contradictory-acceptance
+agent: T1 id=adabfb0bfde5d0646 role=verifier model=sonnet findings=5 confirmed=3 result=accepted
+outcome: T1 model=sonnet attempts=2 result=pass review=revised run=2026-10-24-93ee
+- T1 done: verify passed on the first dispatch; the second dispatch applied the verifier's two cosmetic fixes (comment path, duplicate test constant/dead helper). Card on committed kits: folded 3, excluded 1, no unsanctioned, `caught pre-run: 0`. Later tasks must not assume the `caught pre-run` line renders on a card with only sanctioned kinds.
+- T2 pre-work: the verify's last clause (`grep -q 'unrunnable-verify'` across the four docs) exit 1 — red as required.
+agent: T2 id=a345221e9560e719b role=implementer model=sonnet
+agent: T2 id=a79d53a7fc3362294 role=verifier model=sonnet findings=2 confirmed=2 result=accepted
+- T2: the brief mandates present-tense text in `skills/architect/references/routing-evidence.md` (execute "runs" `analyze` and a P0 review) and in ledger.md's `when=pre-run` paragraph, but T3 commits Phase 1 before T4 (`analyze`) and T10 (P0 review) exist. Kept the mandated wording (no scope change); T3's commit body must say that sentence is ahead of the code until T4 and T10 land. The plugin installs only from main, so no session reads it before the kit is merged.
+defect: T2 kind=contradictory-acceptance
+outcome: T2 model=sonnet attempts=2 result=pass review=revised run=2026-10-24-93ee
+- T2 done: verify passed on the first dispatch; the second moved the test file's `__main__` block below the parity tests (verifier finding).
+- T3 pre-work: `git diff --quiet -- bin tests skills docs docs-site` exit 1 (Phase 1 sources dirty) — red as required. The brief's staging list omits `docs/sdd/guide.html` (the guide's generated twin), without which the verify's `docs` clause cannot hold; added as an orchestrator note at dispatch.
+defect: T3 kind=unspecified-path
+agent: T3 id=a2914c79c58755a22 role=implementer model=haiku
+outcome: T3 model=haiku attempts=1 result=pass review=none run=2026-10-24-93ee
+- T3 done: Phase 1 committed as 6613705 (full suite and docs_build check green before staging; the body carries the "ahead of the code" note for routing-evidence.md). The user's commit-msg hook strips the trailer, as before.
+
+## Phase 1 review (opus) — FIX-FIRST, adjudicated
+
+reviewer: P1 model=opus findings=12 confirmed=5 result=accepted
+- Finding 1 (blocking before T4): D3 split on `|`/`&&`/`;` before honoring quotes and path-checked `test` operands, so this kit's own commit-task verifies (quoted `feat|fix|…` regex; `= feat/route-experiment`) would read as missing executables/path and T4's "analyze exits 0 on this kit" could not hold. The user chose to correct D3 (quote-aware `shlex` with `punctuation_chars`; `test`/`[` operands not path-checked); PLAN D3 carries a dated amendment note; T4 gains test case (11a) for it.
+defect: T4 kind=contradictory-acceptance
+- Finding 2: T1/T4/T7/T8 verify ended with the literal `git diff --quiet -- .claude/kits`, which T13's `drift` would re-run on a tree whose kit-preflight TASKS.md is dirty. All four now end with `test -z "$(git diff --name-only -- .claude/kits | grep -v '^.claude/kits/kit-preflight/')"` (user-approved; same intent; passes the amended D3 because `$(…)` is dropped before tokenizing). GUARDRAILS' sentence about the clause updated to match.
+defect: T13 kind=contradictory-acceptance
+- Finding 3 → T6: 6613705's body overclaims — `--roles` never calls `role_quality_stats` or renders defect kinds; the tests do not compare lessons_promote with the scorecard aggregate; the write guard re-imports routing_scorecard, not lessons_promote. T6's commit body corrects 6613705 by name.
+- Finding 9 → T12: `docs/SPEC-DRIVEN.md` "coined synonyms are folded" overstates (only three named synonyms fold; new ones are flagged unsanctioned), and ledger.md names the folds without their targets. T12 fixes both sentences.
+- Finding 11 → T10: no task adds A4's fixture test that a `reviewer: P0` line counts as a review event and `when=pre-run` defects count as caught pre-run. T10 adds one fixture-NOTES test.
+- Not acted on, carried as follow-ups for a later kit: (4) no test pins `lessons_promote.main()` passing the canonical hook; (7) fold + raw-kind dedupe can count one canonical kind twice in one task (no committed kit has such a pair); (8) lessons_promote docstring "Used ONLY for its parse_defects" is stale. Informational: (5) T1's conditional keys judged correct — so docs must not say `caught pre-run` always renders, and `--json` readers use `.get('pre_run', 0)`; (6) the ahead-of-code sentences become true only after T10, so the branch must not be merged before T10; (10) `by_kit` counts the excluded event by design; (12) T4: only a dotted module after `-m` maps to a path.
+- User decision before T4 ("make sure polytropos can still handle exploration well"): PLAN D17 added. T4 gains case (11b), an exploration-shaped spike kit that must pass `analyze` with exit 0; T10 skips the P0 spec review under `workflow=direct` and gains tests (f) for that skip and (g) for A4's `reviewer: P0` / `when=pre-run` fixture (carried from review finding 11); T12 gains step 7 (the guide's explore-first sentence in Part 1 and an "Exploring before a kit" paragraph in Part 2) and step 8 (review finding 9: SPEC-DRIVEN overstatement and ledger.md fold targets). The drivers' fail-closed `analyze` call (D5) keeps no opt-out flag.
+
+## Phase 2
+
+- Phase 2 start: re-read GUARDRAILS.md and PLAN.md's constraints/out-of-scope from disk (phase-start guarantee), including the D3 amendment and D17.
+- T4 pre-work: `test_kit_analyze.py` does not exist (NO TESTS RAN, exit 5) and `kit_contract.py analyze` is not a subcommand (exit 2) — red as required.
+agent: T4 id=a2d4ec257117d4a3a role=implementer model=opus
+- Outside the kit, by the user's request mid-run: new `docs/sdd/pipelines.html` (two flow diagrams, typical AI SDD vs polytropos; analyze/P0/accept/drift marked "being built") and a `PipelinesPageTests` class in `tests/test_sdd_docs.py`. Left uncommitted until the next green full suite (after T6), then committed on its own, never by a kit commit task. Verifiers: these two paths are expected in `git status` and are not a task's stray change. T12 gains step 9 to remove the "being built" badges once the steps exist.
+- T4 implementer reported done. Orchestrator ran the verify from the repo root: test_kit_analyze 40 OK, test_kit_contract 31 OK, test_kit_graph 55 OK, `analyze --kit .claude/kits/kit-preflight` exit 0 (9 advisory `brief-missing-path`: bare filenames and slash commands, as D3 reads them), scoped kits clause empty — VERIFY EXIT 0. `--help` lists `analyze`. Implementer's full suite: OK (skipped=2).
+- T4 acceptance clause that does not hold: `analyze --kit .claude/kits/sdd-docs-refresh` exits 3 with `verify-unparseable` on all 11 tasks but the dialect hint on none. D3 fires the hint only when `kit_verify_hook._task_verify_cmd` would parse the block, and that parser reads only `- Verify: \`cmd\`` and the bold `**Verify.**`/`**Verify:**` markers; sdd-docs-refresh uses a plain `Verify:` line. The acceptance and R4 contradict D3. Stopped for the user's call.
+defect: T4 kind=contradictory-acceptance
+- T4 brief vs D3: the brief says "self counts for verify paths, not for brief paths"; D3 says a brief path is created-by "this task or any task upstream", and case (11b) needs D3's reading. GUARDRAILS makes D3 the specification, so the implementer followed D3 (self counts for both). Brief sentence to be corrected with the user's answer.
+defect: T4 kind=contradictory-acceptance
+- T4 adaptation: `exit_if_unsound_kit(kit_dir, tasks, out=None)` — None resolves to the current `sys.stderr` at call time, so a test that redirects stderr captures it (a default bound at definition time would not). Same contract as D5's `out=sys.stderr`.
+- T4 survey (orchestrator, read-only `analyze --json` over every committed kit): 5 exit 0, 2 exit 2, 31 exit 3. Most blocking hits are genuine (72 `cd /path/to/polytropos` placeholders; prose that `_extract_verify` pulls in from a later fence). False-positive classes D3 leaves in: quoted values containing `/` are path-checked (grep patterns, `python3 -c` code, `git show HEAD:path`), `KEY=a/b` words, a file an earlier command in the same verify writes, and the builtins `[[`/`source`/`.`/`:` read as missing executables. Under D5 (no opt-out) these would refuse a new kit in every driver once T5 lands; a spike verify like `python3 -c "open('spike/x.json')"` is one of them, which collides with D17(a). Stopped for the user's call.
+- User decisions on the T4 stop (2026-10-24): (1) "Amend the acceptance" — T4's acceptance, case (4) and R4 now say sdd-docs-refresh exits 3 with `verify-unparseable` on every task and no hint; D3's hint rule is unchanged. The brief's "self counts for verify paths, not for brief paths" sentence is corrected to D3's reading. (2) "Narrow D3 now" — PLAN D3 carries a second dated amendment (builtins `[[`/`source`/`.`/`:`; quoted arguments, `KEY=a/b` words and `rev:path` tokens are values; a path written earlier in the same verify counts as created by the task). It does narrow D3: a quoted script path is no longer checked. T4 gains case (11c) and a fourth spike verify in (11b). T4 goes back to its implementer in the same context; the test-author, verifier and red-team run on the reworked code.
+- `pipestatus` note for later verifies: this host's shell is zsh, so `${PIPESTATUS[0]}` prints nothing; read exit status unpiped.
+- T4 rework (implementer, same context; 2nd dispatch) reported done. Red first: 46 tests, 11 failures, each a rule the second amendment removes. Orchestrator re-ran the verify: test_kit_analyze 46 OK, test_kit_contract 31 OK, test_kit_graph 55 OK, kit-preflight `analyze` exit 0, scoped kits clause empty — VERIFY EXIT 0; sdd-docs-refresh `analyze` exit 3 (11/11 unparseable, 0 hints). Implementer's full suite OK (skipped=2). The implementer first counted files beneath a `mkdir`'d dir as written, saw it would clear `mkdir -p bin && python3 bin/missing.py`, and reverted to exact-path; a test pins it.
+- Committed-kit survey after the amendment: exit 0/2/3 went from 5/2/31 to 6/2/30 (decision-improvement-v1 3→0); `verify-missing-path` 113→89, 24 cleared, none new, none judged a genuine catch. Still flagged and genuine: copilot-budget-mode/T4 `copilot/aesop.yaml` ×6 (now `.toml`), 74 `cd /path/to/polytropos`, prose-as-verify in codex-harness/T9 and copilot-workflow/T3. Still flagged and false (outside the amendment, unquoted): `git check-ignore -q <path>` probes of paths meant not to exist. Follow-up for a later kit, not this one.
+agent: T4 id=a62cb9c8a2766d7b7 role=test-author model=sonnet
+- T4 test-author: 41 brief-derived tests in a new `BriefDerivedGapTests` class at the end of `tests/test_kit_analyze.py`, written without reading `analyze_kit`. All pass against the code; one of its own expectations was wrong (it forgot that `missing` paths get a summary line) and it fixed the test, not the code. No implementation gap found. Orchestrator re-ran the verify with them in: test_kit_analyze 87 OK, test_kit_contract 31 OK, test_kit_graph 55 OK — VERIFY EXIT 0.
+agent: T4 id=a62cb9c8a2766d7b7 role=test-author model=sonnet findings=0 confirmed=0 marginal=0
+agent: T4 id=a392bc38152610690 role=verifier model=sonnet
+- T4 verifier: PASS, 4 findings, none blocking, none confirmed (no artifact). (1) `_module_candidates` skips a dotted `-m`/`unittest` module whose first segment is not a repo directory, so with no `tests/` dir `-m unittest tests.test_nope` is not flagged while D3's text maps `tests.test_x` unconditionally. It is the implementer's disclosed round-1 call to avoid flagging stdlib modules (`json.tool`); in this repo `tests/` exists, so it is inert. Carried to the Phase 2 review: amend D3's text to say so, or check the `tests` segment. (2) bare basenames in briefs → advisory `brief-missing-path`, D3 as written. (3) kit-preflight's own 9 advisory findings will show in T13's self-check. (4) the verifier did not re-prove red-before; the orchestrator's pre-work check did (test file absent, exit 5; `analyze` not a subcommand, exit 2).
+agent: T4 id=a392bc38152610690 role=verifier model=sonnet findings=4 confirmed=0 result=accepted
+agent: T4 id=aa5d09ba9f0e3b6e5 role=red-team model=sonnet
+- T4 red-team: 11 findings. Execution/write/crash: none (30k-case fuzz, hostile inputs; unreadable TASKS.md gives a deliberate exit 2). Orchestrator reproduced four in temp fixtures: "Implement `spike/run.py`" + `python3 spike/run.py`, `git diff --stat origin/main`, `trap … EXIT`, `--out build/report.json` — each a `verify-*` finding, so exit 3. False refusals, all D3 read literally: (1) any unquoted `/` argument that is not a file — git refs, `sed s/a/b/`, `date +%Y/%m`, package names; (2) relative paths after `cd` resolve against the repo root; (3) output and fixture-dir arguments (`--out build/x`, `rm -rf /tmp/x`); (4) creators outside rule 5's writer set (`cp`/`mv`/`ln`/`git init`/`mktemp`/`tar -C`); (5) builtins and reserved words missing from D3's set (`trap`, `exec`, `eval`, `local`, `case`/`esac`, functions defined in the verify); (6) `&&`/`||` inside `[[ … ]]` split as separators; (7) creation words too narrow for spike briefs ("Implement", "Build", "Generate", inflections) and the 40-char window — a direct collision with D17(a). Missed catches: (9) the verify fence's own words count as a creation claim (`git add nothere/x.py` → created-by T1); (10) bare script basenames are never checked, and an empty kit is "sound". Host-dependent: (8) `go`/`timeout` missing on this host is a correct refusal. Minor: (11) a FIFO TASKS.md hangs the pre-existing reader; 3000 unparseable tasks take ~15s.
+- Under the roster rule a confirmed red-team break counts as a failed verify: T4 has failed once. Its one retry needs a third D3 amendment, because findings 1–7 are D3 as written — GUARDRAILS forbids loosening the heuristic without the plan saying so. Stopped for the user's call.
+- User decision on the red-team stop (2026-10-24): "Block only on what can't start". PLAN D3 carries a third dated amendment. Path findings block only in these positions: the command word, an interpreter's script operand, the `-m`/`discover` mappings, and a literal `cd` operand; every other argument is recorded and advisory. It also brings in the full bash builtin and reserved-word set, functions defined in the verify, `[[ … ]]` operators that do not split, `cd`-relative resolution, more writers, creation claims read only before `**Verify.**`, and a wider creation-word list with an 80-char window. It writes the implementer's `-m` first-segment rule into D3, so the text now matches the code; the verifier's finding 1 adjudication stands as made. T4 gains case (11d), and the (11c) control `cat docs/nowhere.md` moves to advisory. This is T4's one retry after a failed check, the 3rd T4 dispatch overall; if it fails again T4 is blocked and goes to a Fable consult.
+- Red-team adjudication: findings 1–7 and 9 produced the D3 amendment plus tests, so they are confirmed, and none was raised by an earlier layer, so they are marginal. Findings 8, 10, 11 changed nothing: 8 is a correct host-dependent refusal; 10's bare script names are now checked only for interpreter operands, with an empty kit still "sound"; 11 is a pre-existing reader hang, a follow-up.
+agent: T4 id=aa5d09ba9f0e3b6e5 role=red-team model=sonnet findings=11 confirmed=8 marginal=8 result=revised
+- T4 retry (3rd T4 implementer dispatch) reported done; (11d) was red first (10 subtests). Orchestrator re-ran the verify: test_kit_analyze 95 OK, test_kit_contract 31 OK, test_kit_graph 55 OK, kit-preflight `analyze` exit 0 (7 advisory) — VERIFY EXIT 0. sdd-docs-refresh exit 3. Orchestrator re-probes in temp fixtures came out as the amendment says: the spike ("Implement" + `python3 spike/run.py`), `origin/main`, `trap`, and an `--out build/…` argument all exit 0; `python3 bin/missing.py`, `cd /path/to/polytropos`, and `git add nothere/x.py && python3 nothere/x.py` exit 3. Implementer's full suite OK (skipped=2).
+- Survey after the third amendment: exit 0/2/3 went from 6/2/30 to 10/2/26. All 72 `cd /path/to/polytropos` placeholders still block, plus 43 the old cross-boundary creation claim had masked. Genuine catch lost: `copilot/aesop.yaml` (renamed to `.toml`) as a grep operand is now advisory in copilot-budget-mode/T4, copilot-measure-parity/T9, copilot-skills-parity/T7 — those verifies would still fail when run. Disclosed conservative call: the word after `if`/`!`/`do`/`exec`/`time`/`{` is not a blocking position (`if python3 bin/missing.py` no longer blocks); sent to the verifier to judge against rule (1).
+agent: T4 id=ab7beef7aef57936d role=verifier model=sonnet
+- T4 re-verification: PASS, 2 findings, both confirmed. (1) The word after `if`/`then`/`else`/`elif`/`while`/`until`/`do`/`!`/`{`/`exec`/`time` was read as an argument, so `if python3 bin/missing.py`, a missing script in a loop body, `! no-such-binary-xyz`, `exec …` and `time …` all passed. That word is the command word in bash's grammar, which D3 rule (1) keeps blocking, so the code fell short of the plan text; no amendment needed. The implementer's disclosed conservative call is overruled. (2) A stale "40 characters" test name. Both went back to the implementer as a fix (4th T4 dispatch); the red-team runs on the fixed code.
+agent: T4 id=ab7beef7aef57936d role=verifier model=sonnet findings=2 confirmed=2 result=revised
+- T4 rule-1 fix (4th T4 implementer dispatch): red first (96 tests, 8 failures, each a blocking shape that exited 0), then green. Orchestrator re-ran the verify: test_kit_analyze 96 OK, test_kit_contract 31 OK, test_kit_graph 55 OK — VERIFY EXIT 0. Implementer's full suite OK (skipped=2). Committed-kit survey unchanged at 10/2/26; the only new finding is in codex-harness/T9, which already blocked on prose-as-verify.
+agent: T4 id=af2b67db2656d2863 role=red-team model=sonnet
+- T4 red-team round 2 (final code): 10 findings. The round-1 false refusals are gone, with no execution, write or traceback. Orchestrator reproduced five in temp fixtures, each exit 3: `exec 2>&1`, `arr=(a b c)`, "Prototype `spike/run.py`" + `python3 spike/run.py`, `cc -o build/app x.c && build/app`, `cd nodir 2>/dev/null || true`.
+  - Code short of the plan text: F1 an fd digit before a redirect read as a command word; F2 `NAME=(…)` array assignments split into command words; F7 a 1 MB single line takes ~47 s and a 3 MB line does not finish — superlinear, hostile input only.
+  - D3 as written: F3 a script or binary an earlier build step makes (`make && ./app`, `npm run build && node dist/x.js`, venv bins); F4 explorer verbs missing from rule (5) (Prototype, Sketch, Stub, Set up, Develop, Port, Wire up, Experiment…), which collides with D17(a) again; F5 a guarded `cd` (`|| true`, `[ -d x ] && cd x`).
+  - Missed catches in blocking positions: F8 interpreter option values hide the script (`python3 -W ignore bin/missing.py`, `bash -o pipefail x.sh`); F9 `python3.11`, `Rscript`, `java -jar`; F10 wrappers `env`/`nohup`/`sudo`/`xargs`/`command`.
+  - F6 is informational and correct.
+- Under the roster rule this is T4's second failed check after its one retry, so T4 is blocked unless the plan changes. Each round of red-teaming a static shell reader found a new tail of false refusals, and D5's fail-closed, no-opt-out gate turns each one into a driver refusal. Stopped for the user's call.
+- User decision on the second red-team stop (2026-10-24): "Only sure things block". PLAN D3 and D5 carry a fourth dated amendment.
+  - Non-strict exit 3 now comes only from `verify-unparseable` and `verify-missing-executable` (a bare command word not on PATH, not a builtin, not a defined function). An unknown word does not block after `source`/`.`/`eval`, or after an earlier `install` step.
+  - `verify-missing-path` keeps its positions but is a printed warning (exit 3 only under `--strict`), and the P0 spec review adjudicates it.
+  - Bugs fixed in the same pass, with no amendment needed: fd-number redirects, redirect-only commands, `NAME=(…)`, linear time.
+  - Carried into the later tasks: R1, T4 cases (2)/(10)/(11d) plus a new (11e), T5 steps 2–4 (the driver refusal fixture is now a missing tool, plus a warning twin), T6's commit body, and T10 step 1. Self-analyze still exits 0.
+  - What this gives up, stated in D3: the 72 `cd /path/to/polytropos` placeholders and `python3 bin/missing.py` warn instead of refusing.
+  - T4 goes back to its implementer, the 5th T4 dispatch. The user's plan change re-scopes the task, so it is not a Fable consult.
+- Red-team round 2 adjudication: F1, F2 and F7 produce bug fixes plus tests; F3, F4 and F5 produced the fourth amendment plus (11e). That makes 6 confirmed. F4 repeats round 1's creation-word class, so it is not marginal; the other 5 are marginal. F8–F10 (missed catches in what are now warning positions) and F6 (informational) change nothing and are not confirmed.
+agent: T4 id=af2b67db2656d2863 role=red-team model=sonnet findings=10 confirmed=6 marginal=5 result=revised
+- T4 fourth-amendment build (5th T4 implementer dispatch) reported done. It was red first: every flipped assertion and every (11e) quiet case failed, and the old code took more than 60 s on 3 MB lines. Orchestrator re-ran the verify: test_kit_analyze 99 OK (10.4 s, including the timing tests), test_kit_contract 31 OK, test_kit_graph 55 OK — VERIFY EXIT 0. sdd-docs-refresh exit 3. Orchestrator probes, non-strict/strict: `exec 2>&1` 0/0, `arr=(a b c)` 0/0, the "Prototype" spike 0/3, `python3 bin/missing.py` 0/3, `no-such-binary-xyz` 3/3 — as amended. Implementer's full suite OK (skipped=2).
+  - Design change flagged for the verifier: linear time meant replacing the `shlex.shlex(...)` call D3 names with an in-house `_lex`, plus an equivalence test against shlex. Two calls where D3 is silent are also flagged: NUL bytes are dropped, and inside a function body any function the verify defines counts as defined.
+  - Survey: exit 0/2/3 went from 10/2/26 to 22/2/14; no finding was added or removed. The 12 kits that stopped blocking had only `verify-missing-path`. What still blocks is 12 kits in the other dialect (`verify-unparseable`) and 2 kits whose "verify" is prose that `_extract_verify` takes from a later fence (codex-harness/T9, copilot-workflow/T3). Every one is a sure thing.
+agent: T4 id=a90177691744a5a19 role=verifier model=sonnet
+- T4 verifier (fourth-amendment build): PASS, 3 non-blocking findings, none acted on, so none confirmed. The exit rule, the D3/D5 amendments and the conformance fixes were confirmed by reading and by probes. `_lex` matched shlex on 300,000 fuzzed strings with 0 divergences; its one deliberate departure (`commenters=""`, because bash's word-start comment rule already runs in `_shell_lines`) is correct. Stub PATH in the tests is temp-only and restored. Notes: (1) `pip install foo && foo` refuses on a host with no `pip` — a sure thing, but it depends on the host; (2) only `{`-bodied functions get the "any defined function counts" treatment, not `f() ( … )`, which is the stricter side; (3) NUL-bearing verifies are moot.
+agent: T4 id=a90177691744a5a19 role=verifier model=sonnet findings=3 confirmed=0 result=accepted
+agent: T4 id=a78e6e72acb40657b role=red-team model=sonnet
+- T4 red-team round 3 (fourth-amendment code): 9 findings plus 2 lower-confidence items. No lexer divergence (600,000 strings), and no execution, write or traceback. Every false refusal is now a wrong `verify-missing-executable`, which is the only path-free blocking class left. Orchestrator reproduced four, each exit 3: `echo ${x%%;*}` (`*}`), `if true; then g() { :; }; fi; g`, `export PATH="$PWD/bin:$PATH"` then `mytool`, and `python${V}`.
+  - Functions defined where the code does not look: F1 brace on the next line, F4 `case` inside a one-line function, F5 a definition after `then`/`{`/`(` or nested, F6 `foo ( )`.
+  - Words that are not command words: F3 `;` inside `${…}`, F8 a heredoc or `case` inside `$(…)` ending the substitution early.
+  - F2 a command word with `$` mid-word.
+  - F7/L1 a verify that puts its own tool on PATH (`export PATH=…`, `npm i -g`).
+  - F9 nested `{` groups are quadratic (100,000 take 48 s).
+  - L2 repeats the known per-task hint cost.
+- After a fourth amendment, the third red-team round still finds a tail. This time it is all in one question: is this word really an undefined command word? Stopped for the user's call on whether to bound it structurally.
+- User decision on the round-3 stop (2026-10-24): "Block only on simple verifies". PLAN D3 carries a fifth dated amendment. A `verify-missing-executable` refuses only in a verify that uses none of: function definitions, `case`, unquoted `${`, multi-line or heredoc/`case` command substitutions, `PATH` assignments, `source`/`.`/`eval`, install or package-manager steps. Elsewhere it warns. Conformance fixes in the same pass: a command word with a `$` anywhere in it is dynamic, and nested `{` groups and the per-task hint must run in linear time. T4 gains (11f). Self-analyze still exits 0.
+- Round-3 adjudication: all of F1–F9 plus L1 produced the fifth amendment, the conformance fixes and (11f), so 10 are confirmed. F1/F4/F5/F6 (function shapes) are one class with round 2's function handling, but no earlier layer raised these shapes, so all 10 are marginal. L2 repeats round 1's (11), so it is neither confirmed nor marginal.
+- Retry accounting: the fourth amendment re-scoped T4 by the user's decision, so round 3 was the re-scoped task's first failed check, and this dispatch (the 6th T4 implementer dispatch) is its one retry. If the next check fails, T4 is blocked and goes to a Fable consult.
+agent: T4 id=a78e6e72acb40657b role=red-team model=sonnet findings=11 confirmed=10 marginal=10 result=revised
+- T4 fifth-amendment build (6th T4 implementer dispatch, the re-scoped task's one retry) reported done. It was red first: 16 failures, plus timing on the old code of 54.7 s for nested groups and 14.7 s for hinted tasks.
+  - Orchestrator re-ran the verify: test_kit_analyze 101 OK, test_kit_contract 31 OK, test_kit_graph 55 OK — VERIFY EXIT 0. sdd-docs-refresh exit 3.
+  - Orchestrator probes, non-strict/strict: `${x%%;*}` 0/3, nested `g()` 0/3, `export PATH` + `mytool` 0/3, `python${V}` 0/0, `true && no-such-binary-xyz` 3/3, the "Prototype" spike 0/3 — as amended. Implementer's full suite OK (skipped=2).
+  - Survey: 22/2/14 → 24/2/12. codex-harness and copilot-workflow stop refusing: their prose-as-verify holds multi-line backticks, which read as a multi-line substitution, so their 34 `verify-missing-executable` become warnings. That is the stated trade. What still refuses is only the 12 other-dialect kits.
+agent: T4 id=a7c5b3937ff467256 role=verifier model=sonnet
+- T4 verifier (fifth-amendment build): PASS, 5 non-blocking findings. 70 direct probes of the guard came out right: features count unquoted, and do not count in single quotes, heredoc bodies or comments. Finding dict keys are exactly `task`/`kind`/`detail`.
+  - (3) T4's (11e) wording was stale after the fifth amendment, so TASKS.md was corrected (confirmed).
+  - (1) `{echo,hi}` brace-expansion command words still refuse in a simple verify. Held for the red-team round, to be decided with its findings.
+  - (2)/(4) a quoted token that is exactly `install` or starts with `PATH=`, or a quoted package manager, counts as a feature. That is more permissive than the text, a deliberate asymmetry, and accepted.
+  - (5) the 7 advisory brief warnings on this kit.
+agent: T4 id=a7c5b3937ff467256 role=verifier model=sonnet findings=5 confirmed=1 result=accepted
+agent: T4 id=a7ff6a14469572e91 role=red-team model=sonnet
+- T4 red-team round 4 (fifth-amendment code): 5 findings plus a scope note. Across ~560 realistic and odd verifies and 24 stress inputs: no execution, write, hang or traceback, and no unparseable/driver divergence (structurally impossible, since it is the same `_extract_verify`). Orchestrator reproduced findings 1–4.
+  - Code short of the plan text: (1) `exec {fd}>file` reads `{fd}` as a command word; (2) multi-line `[[ … ]]` and `(( … ))` reset at each newline, so the operands become command words.
+  - New class: (3) a verify that guards its own optional tool (`command -v x >/dev/null && x`, `x 2>/dev/null || true`) refuses.
+  - (4) An empty verify fence is "sound", yet `bin/codex_execute.py` rejects a falsy verify.
+  - (5) Exotic PATH setting (`printf -v PATH`, `read PATH`, `hash -p`): low.
+  - Scope note: `analyze` covers `done` tasks too, so under T5 a finished task whose tool is now missing would refuse a run of an unrelated pending task.
+- This is the re-scoped task's retry failing its red-team check, so under the stated rule T4 is blocked. The tail is shrinking: 2 parse bugs and 1 gap in ~560 verifies. Stopped for the user's call: Fable consult, or fix and close with a stopping rule.
+- User decision (2026-10-24): "Fix and close, with a stop rule". PLAN D3/D5 carry a sixth dated amendment. Tool probes (`command -v`/`type`/`hash`/`which`) make a verify non-simple. An unknown word on the left of `||` warns. `exit_if_unsound_kit` refuses only on tasks not `done`. An empty verify fence is `verify-unparseable` (a tightening). Conformance fixes: `exec {fd}` redirections, and multi-line `[[`/`((`. Stop rule: one last red-team pass; only a traceback, a hang over 10 s, an execution or write, or a refusal of a simple verify reopens T4, and every other finding is a follow-up. T4 gains (11g). Self-analyze still exits 0.
+- Round-4 adjudication: findings 1–4 and the scope note produced the sixth amendment, fixes and (11g), so 5 are confirmed. All 5 are marginal; finding 3's class is new and no earlier layer raised it. Finding 5 (exotic PATH setting) is a follow-up, not confirmed.
+agent: T4 id=a7ff6a14469572e91 role=red-team model=sonnet findings=6 confirmed=5 marginal=5 result=revised
+- T4 sixth-amendment build (7th T4 implementer dispatch) reported done. Red first: 17 failures, 1 error. No existing assertion flipped. Orchestrator re-ran the verify: test_kit_analyze 103 OK, test_kit_contract 31 OK, test_kit_graph 55 OK — VERIFY EXIT 0. sdd-docs-refresh exit 3. Probes: `exec {fd}>…` 0, multi-line `[[ … ]]` 0, `command -v x && x` 0, empty fence 3, `no-such-binary-xyz` 3 — as amended. Implementer's full suite OK (skipped=2).
+  - The implementer also fixed four stop-rule hits it found in the round-4 probes, each a silent-case reading in the non-blocking direction: bash-style heredoc delimiters, `alias`/`enable` making a verify non-simple, more PATH-assignment shapes, and `install`/`bootstrap` script words. These were sent to the verifier to judge.
+  - Survey unchanged at 24/2/12. No committed kit has an empty fence.
+agent: T4 id=a9ae194bd6b18e5a3 role=verifier model=sonnet
+- T4 verifier (sixth-amendment build): PASS, 4 non-blocking findings, all confirmed. Probes and timing are all linear: `a || ` ×400k in 7.2 s, a 3 MB line in 0.24 s.
+  - (1) A tool probe inside `$(…)`, and (2) a missing word inside a group on the left of `||`, each still refuse a simple verify that bash runs. Strictly these are stop-rule shapes, so they go back to the implementer before the last red-team pass (8th T4 dispatch).
+  - (3) The `install`/`bootstrap` substring widening was not in the amendment text. PLAN D3's sixth amendment now lists the accepted silent-case readings, (1) and (2) included.
+  - (4) `exit_if_unsound_kit` can return while `result["exit"]` is 3 (a `done`-only refusal). T5 gains a gotcha: never branch on that value.
+agent: T4 id=a9ae194bd6b18e5a3 role=verifier model=sonnet findings=4 confirmed=4 result=revised
+- T4 item-(6) fixes (8th T4 implementer dispatch): red first (15 failures), then green. Orchestrator re-ran the verify: test_kit_analyze 104 OK, test_kit_contract 31 OK, test_kit_graph 55 OK — VERIFY EXIT 0. Probes: `x="$(command -v nosuchzz)"; … && nosuchzz` 0, `{ nosuchzz; } || true` 0, `true || nosuchzz` 3. Implementer's full suite OK (skipped=2). Survey unchanged at 24/2/12.
+agent: T4 id=a39f937ded163e62e role=red-team model=sonnet
+- T4 final red-team (stop rule): 5 findings. Re-runs of every earlier corpus, about 700 new shapes, 376 fenced blocks harvested from the repo, and an 80,000-case fuzz turned up nothing else. Orchestrator reproduced three, each exit 3: `[ -n "$GITHUB_ACTIONS" ] && nosuchtool_q annotate; true`, `true; exit 0; nosuchtool_q`, and `shopt -s extglob` + `echo @(a|b)`.
+  - STOP-RULE by the letter:
+    - F1: a word bash never reaches still refuses (the right of `||`, after `exit`, inside `if false`, or a CI-conditional `[ -n "$X" ] && tool`).
+    - F2: `shopt -s extglob` groups read `|` as a pipe.
+    - F3: a long `depends:` chain is cubic (500 tasks 10.6 s, 1000 tasks 54 s); realistic kits of ≤60 tasks are fine.
+  - Borderline: F4, a `BrokenPipeError` traceback on `analyze --json | head` past ~64 KB, likely a CLI-wide idiom.
+  - FOLLOW-UP: F5, a `blocked` task's missing tool still refuses a run of other tasks.
+  - Process slip, reported by the red-team itself: an unquoted heredoc in its own probe script ran part of its probe corpus in its shell (`echo`, `cat`, `cd /`, `exec true`, …). It reports nothing in the repo or any home dir touched, and the orchestrator's `git status` matches. Asked it for the exact list of what ran.
+- The stop rule reopens T4. Stopped for the user's call.
+- Red-team slip, facts from its follow-up report. Its zsh ran the tail of a probe corpus after an early `EOF`: `echo`, `cat` heredocs, `true`, array and arithmetic echoes, `[[ … ]]` tests, `env FOO=1 true`, `command -p true`, `builtin echo hi`, `command true`. It stopped at `exec true`, which replaced that shell. Nothing in that list writes, deletes, installs or touches the network, and the only redirections went to `/dev/null` or were fd duplications. Afterwards: repo `git status` unchanged, no new files in /tmp, nothing new in `~` within 3 hours outside `.claude` and Library. The red-team listed `~` read-only at the orchestrator's request.
+- User decision on the final-pass reopen (2026-10-24): "Only unparseable blocks". PLAN D3/D5 carry a seventh dated amendment. Non-strict exit 3, and every driver refusal, now comes only from `verify-unparseable` (None or an empty fence) on a `pending`/`in-progress` task. `verify-missing-executable` becomes a warning like paths: its rules and named features stay in the detail, and it blocks only under `--strict`. Fixes: a linear `depends:` chain, extglob groups read as one word, and a quiet exit on a closed stdout. Carried into R1, D5, T4 (11h) plus the flip instruction, T5 steps 2–4 (the refusal fixture is now an empty fence, with missing-tool and missing-script warning twins), T6's body, and T10 step 1. Self-analyze still exits 0. The sixth amendment's stop rule carries over to one last red-team pass.
+- Final-pass adjudication: F1–F5 all produced the seventh amendment, fixes and (11h), so 5 confirmed, and each is a new class, so 5 marginal.
+agent: T4 id=a39f937ded163e62e role=red-team model=sonnet findings=5 confirmed=5 marginal=5 result=revised
+- T4 seventh-amendment build (9th T4 implementer dispatch) reported done. It was red first, then green. Orchestrator re-ran the verify: test_kit_analyze 108 OK, test_kit_contract 31 OK, test_kit_graph 55 OK — VERIFY EXIT 0.
+  - Orchestrator probes, analyze/strict/gate: missing tool 0/3/returned; CI-conditional tool 0/3/returned; extglob 0/0/returned; empty fence pending 3/3/exited 3; empty fence done 3/3/returned; empty fence blocked 3/3/returned. `analyze --json | head -c 10` exits 3 with nothing on stderr. Implementer's full suite OK (skipped=2).
+  - Created-by now uses a `_Creators` index: a 1,000-task chain takes 0.15 s, down from 54 s. Sent to the verifier to check that it matches the old scan.
+  - Survey unchanged at 24/2/12, and every exit-3 kit is an unparseable one.
+agent: T4 id=aa99d4c319e3e287b role=verifier model=sonnet
+- T4 verifier (seventh-amendment build): PASS, 3 non-blocking findings, all confirmed.
+  - The exit rule, the gate on all four statuses, the result shape, the extglob gating and the BrokenPipe handling are confined and correct.
+  - `_Creators` matches the old scan on 4,000 fuzzed texts except in one place: (1) a path that is the last token of the claim text, where the old `_claims_creation` treats an empty `after` as a non-boundary. The index is right. That fix, plus (3) a stale test comment, goes back to the implementer (10th T4 dispatch).
+  - Follow-up only: (2) `analyze` with stdout absent at launch (`>&-`) raises an `AttributeError` on flush.
+agent: T4 id=aa99d4c319e3e287b role=verifier model=sonnet findings=3 confirmed=2 result=revised
+- T4 small fixes (10th T4 implementer dispatch): red first (485 subtests failing on an end-of-text path), then green. The old scan now treats an empty neighbour as a boundary, matching the index; the stale comment is fixed. Orchestrator re-ran the verify: test_kit_analyze 108 OK, test_kit_contract 31 OK, test_kit_graph 55 OK — VERIFY EXIT 0. Implementer's full suite OK (skipped=2).
+agent: T4 id=a750a625e7f78d5cc role=red-team model=sonnet
+- T4 last red-team (stop rule, seventh-amendment code): 1 STOP-RULE finding, 1 follow-up, 1 note.
+  - Clean: empty-fence detection agrees with `_extract_verify` on every whitespace and comment variant; gate status handling is exact; BrokenPipe is clean; 21 hostile verifies (touch, `$(…)`, `<(…)`, eval, source, redirections, background `&` …) left no marker file.
+  - STOP-RULE: a single-line verify of repeated unmatched `${` (or `'"` + backtick) is quadratic in `verify_tokens` (40 KB 7 s, 80 KB 28 s). Orchestrator reproduced it at 6.9 s for 40 KB. This is conformance to the linear-time clauses, so no amendment: back to the implementer (11th T4 dispatch). The pass found it, the fix closes it, and per the stop rule no further red-team round follows; the orchestrator's timing probe and the verify close it.
+  - Not a defect: (2) CLI `analyze` exits 3 for an unparseable `done`/`blocked` task, by design — `analyze` reports every task and only the gate filters, which sdd-docs-refresh's acceptance relies on.
+  - The red-team's own slip: `probe3.py` imported `probe2.py`, which re-ran its corpus as temp-fixture `analyze` calls only. No repo change.
+agent: T4 id=a750a625e7f78d5cc role=red-team model=sonnet findings=2 confirmed=1 marginal=1 result=revised
+- T4 hang fix (11th T4 implementer dispatch). The cause was `_DYNAMIC_NAME_RE` backtracking on one long `$`-dense word. Two more regexes of the same family were also replaced by linear helpers with an equivalence test. Output was saved beforehand and is byte-identical (12/12). Orchestrator re-ran the verify: test_kit_analyze 110 OK, test_kit_contract 31 OK, test_kit_graph 55 OK — VERIFY EXIT 0. Orchestrator timing probe: `"${" * 50000` (100 KB) took 0.12 s, down from a timeout. The stop-rule hit is closed, and per the stop rule no further red-team round runs. Implementer's full suite OK (skipped=2).
+- T4 done. It spent 11 implementer dispatches, across seven user-approved D3/D5 amendments driven by five red-team rounds; each amendment moved the gate toward refusing only what it knows for sure. Follow-ups for a later kit:
+  - `analyze` with stdout absent at launch (`>&-`);
+  - exotic PATH setting;
+  - process-substitution words, which are missed toward warning;
+  - `git check-ignore` probes;
+  - brace/glob command words;
+  - the `install`/`bootstrap` substring breadth.
+outcome: T4 model=opus attempts=11 result=retry-pass review=revised run=2026-10-24-93ee
+- T5 start (same phase; the fences were re-read after this session's compaction).
+- T5 gotcha wording now says `done` or `blocked`, matching the seventh amendment. T5 pre-work: every listed test file passes, and the `grep -l … | wc -l` count is 0, not 4 — VERIFY EXIT 1, red as required. (A first pre-check piped each unittest through `tail -1`, which masks exit status; the Claude driver file was re-run unpiped: 113 OK, exit 0.) Budget: 16 of 40 dispatches before T5, 0 consults.
+agent: T5 id=a65464bb7d6425824 role=implementer model=sonnet
+- T5 implementer reported done; red first (12 subtests failing). Orchestrator re-ran each verify step with its exit read separately: analyze 0, contract 0, claude 0, copilot 0, codex 0, cursor 0, grep count 0 — VERIFY EXIT 0. Each call sits 4–5 lines after `roster_for_run(` (claude 880→885, copilot 1036→1040, codex 1436→1440, cursor 209→213). R1: no existing driver fixture needed repair. Implementer's full suite OK (skipped=2).
+  - Codex's existing `cmd_run` guard already exits 2 for an empty verify on the SELECTED task, before the gate runs. That is existing, stricter behaviour, so the codex fixture puts the empty fence on a second pending task to exercise the kit-wide gate.
+  - Every driver run now prints the analyze report, including `analyze: sound`, to stderr. That is noise, and it is a follow-up.
+agent: T5 id=aa4c5ca433baa7fb1 role=test-author model=sonnet
+- T5 test-author: 6 brief-derived tests in `DriverPreflightGapTests`, all passing; no T5 gap found. They cover: a refusal writes nothing to the store or kit; a non-selected unparseable task still refuses; `in-progress` refuses; `done`/`blocked` never refuse; warnings leave the dry-run code unchanged; the re-export is the contract's own object. Two of its own expectations were wrong and it fixed the tests, not the code. Orchestrator re-ran test_kit_analyze: 120 OK, exit 0.
+agent: T5 id=aa4c5ca433baa7fb1 role=test-author model=sonnet findings=0 confirmed=0 marginal=0
+agent: T5 id=ae4cb30ff56e33377 role=verifier model=sonnet
+- T5 verifier: PASS, 8 informational findings, no artifact produced.
+  - Placement was read top-down in every `cmd_run`; nothing before the call claims, dispatches or writes. Copilot's `select_task` reads `kit_freshness` read-only.
+  - No branching on the result. The re-export is an assignment. Each driver's diff is minimal (a 4-line comment where the brief asked for 3 — cosmetic).
+  - Mutation-proven in a scratchpad copy: deleting the four calls turns `DriverPreflight*` red, with 42 failures.
+  - Codex's exit-2 empty-verify guard predates T5 (HEAD line 1400) and fails closed too, so there is no conflict with D5. Only the exit code differs.
+agent: T5 id=ae4cb30ff56e33377 role=verifier model=sonnet findings=8 confirmed=0 result=accepted
+agent: T5 id=acaf25780a2b561f7 role=red-team model=sonnet
+- T5 red-team: 4 findings. Clean otherwise: every committed kit dry-runs without a false refusal; no writes on refusal; no crash or hang (1500-task chain 0.1 s).
+  - Gate bypass, confirmed in claude, copilot and cursor; codex is covered by its older guard. (1) `--task T1 --rerun` on a `done` task whose verify is unparseable dispatches. (2) `--task T1` on a `blocked` task (the drivers' sanctioned retry) dispatches. Both come from the seventh amendment's status filter, a proxy that assumed `done`/`blocked` tasks are never dispatched. The sixth amendment's stated principle, "the drivers check only what they will run", is right; the proxy is wrong.
+  - (3) `bin/kit_scheduler.py run` is ungated, but PLAN's out-of-scope list names "wiring `analyze` into `kit_scheduler.py`", so it is a follow-up, not a defect.
+  - (4) The gate is kit-wide: an unparseable pending sibling refuses a `--task` run of a sound task. That is D5 as written.
+- Fixing (1)/(2) changes the gate's call signature and with it T5's acceptance grep text. Stopped for the user's call.
+- User decision (2026-10-24): "Also check the `--task` target". PLAN D5 carries a dated amendment. `exit_if_unsound_kit(kit_dir, tasks, out=None, selected=None)` refuses a `verify-unparseable` on any `pending`/`in-progress` task and on the `selected` task whatever its status, and the drivers call it with `selected=args.task`. T5's step 2, acceptance and verify grep are updated, and three cases per driver are added. The confirmed red-team break counts as T5's failed check, so this is its one retry (2nd T5 dispatch).
+- T5 red-team adjudication: (1) and (2) produced the D5 amendment plus tests, so they are confirmed. No earlier layer tested `--rerun` or a blocked retry, so both are marginal. (3) is out of scope per PLAN (scheduler wiring) and goes to follow-ups. (4) is D5 as written.
+agent: T5 id=acaf25780a2b561f7 role=red-team model=sonnet findings=4 confirmed=2 marginal=2 result=revised
+- T5 retry (2nd T5 implementer dispatch): red first (6 of 9 subtests: claude, copilot and cursor dispatched on `--rerun` of a done task and on a blocked retry), then green. Orchestrator re-ran each verify step unpiped: analyze 0, contract 0, claude 0, copilot 0, codex 0, cursor 0, the new grep count 0 — VERIFY EXIT 0. Codex refuses the selected-task cases with exit 2 through its older guard; the other three refuse with exit 3. Implementer's full suite OK (skipped=2).
+agent: T5 id=a1d0584500c8a1702 role=verifier model=sonnet
+- T5 verifier (retry): PASS, 3 non-blocking findings.
+  - `selected` matches by id only: an unknown id or None returns.
+  - Every dispatch path (`--rerun`, `--parent`, `--break-claim`, default selection) dispatches exactly `args.task` when it is set; there is no bypass.
+  - Codex's refusal happens before any claim or write.
+  - (1) Codex's `selected=` wiring is unreachable for the selected task, because its older guard fires first. That is inherent.
+  - (2) `SelectedTaskGateTests` accepts rc 2 or 3 for every driver. It is being tightened to exactly 3 for claude, copilot and cursor and exactly 2 for codex (3rd T5 dispatch, test-only); confirmed.
+  - (3) The changed literal passes.
+agent: T5 id=a1d0584500c8a1702 role=verifier model=sonnet findings=3 confirmed=1 result=revised
+agent: T5 id=a29acd5c0e707c82e role=red-team model=sonnet
+- T5 test tightening (3rd T5 dispatch, test-only): `_assert_refused` requires exactly 3 plus `verify-unparseable` for claude/copilot/cursor, and exactly 2 plus the codex guard text for codex, with no `dispatch:` line in either case. Orchestrator re-ran test_kit_analyze: exit 0.
+- T5 red-team (retry): no bypass, false refusal, write-on-refusal or crash on any driver. Both earlier bypasses are refused. It also checked: every unreadable-verify form; `--parent`, `--break-claim`, `--exec-mode trusted-host` and `--roster-gap`; id case/whitespace/duplicates; an in-progress task plus another `--task`; and old done/blocked unreadable tasks beside a sound pending one, which dispatch as intended. Follow-ups only: (1) an unterminated-quote verify is "sound" — by design since the seventh amendment, and the run fails at verify; (2) refusal exit codes and ordering differ by driver (codex 2 via its older guard; copilot/codex validate the graph first); (3) non-dry runs are not exercised, since they would spawn a real CLI.
+agent: T5 id=a29acd5c0e707c82e role=red-team model=sonnet findings=3 confirmed=0 marginal=0 result=accepted
+- T5 done. R1: zero driver fixtures needed repair.
+outcome: T5 model=sonnet attempts=3 result=retry-pass review=revised run=2026-10-24-93ee
+- T6 pre-work: the verify fails (exit 1) on the dirty tree, red as required. Fetched: origin/main is still 1cd9e62 and HEAD is 0a8f8a2, so Codex has not moved main. Ordering decided: T6's verify demands `tests` clean after its commit, but `tests/test_sdd_docs.py` carries the user-requested pipelines change. The orchestrator commits `docs/sdd/pipelines.html` and `tests/test_sdd_docs.py` on their own FIRST, after a green full suite, and T6's commit follows. That keeps T6's commit as the last one its verify checks.
+- Orchestrator commit beb1639 `docs(sdd): …` (`docs/sdd/pipelines.html` and `tests/test_sdd_docs.py` only, no kit work), after the orchestrator's full suite: 6326 tests OK (skipped=2), exit 0; `docs_build.py check` 0; `docs/sdd/render.py check` 0.
+- T6 brief gains the carried Phase 1 review finding 3: correct 6613705's three overclaims by name, and name the phase's amendments. The orchestrator added this before dispatch, as adjudicated at the Phase 1 review.
+agent: T6 id=a73c9d77e83d04dc6 role=implementer model=haiku
+- T6 committed 1d23d03 `feat(kits): analyze a kit's paths and verify commands before any dispatch`. It stages exactly `bin/kit_contract.py`, the four drivers and `tests/test_kit_analyze.py`. Its full suite: 6326 OK (skipped=2), exit 0; `docs_build.py check` 0. Orchestrator re-ran T6's verify: exit 0. Not pushed. The user's commit-msg hook stripped the trailer, by design.
+- Orchestrator read of 1d23d03's body. Three sentences are imprecise and go to the Phase 2 reviewer to confirm before any correction:
+  - (a) "the mutation test … asserts the exit moves from 0 to 3": since the seventh amendment, case (10) flips to exit 3 only under `strict`;
+  - (b) "the other verify dialect … is reported as unparseable with a hint": a plain `Verify:` line gets no hint;
+  - (c) the description of what 6613705 claimed about `--roles` should be checked against 6613705's actual body.
+outcome: T6 model=haiku attempts=1 result=pass review=none run=2026-10-24-93ee
+
+## Phase 2 review (opus): ACCEPT for the phase, FIX-FIRST for the next
+
+`reviewer: P2 model=opus findings=7 confirmed=7 result=accepted`
+- The reviewer ran: the T4/T5/T6 verifies (all exit 0); the full suite (6326 OK, skipped=2); docs_build/release_gate/copilot_docs checks (all 0); `--history`; probes with every spawn seam raising; a 3,000-case fuzz; and the gate tests against an empty sentinel data home (nothing written). D1, D2, D3 (as amended), D5 (as amended), D15 and D17(a) held. A1/A2 held except their "exit 3 = findings" clauses, which the seventh amendment changed.
+- Finding 1 → before T8: T8's brief marks `unrunnable` from `missing` entry states, but non-blocking arguments are recorded `missing` with no finding. D7 was never reconciled with the seventh amendment. Needs the user's decision.
+- Finding 2 → before T10: the P0 prompt never receives `analyze`'s output and allows no `unrunnable-verify` finding, yet the fourth amendment says P0 adjudicates the warnings. Headless and `direct` runs have no adjudicator at all. Needs the user's decision.
+- Finding 3 → now: A1, A2 and Constraints text predate the amendments. The orchestrator adds dated notes.
+- Finding 4 → T7: claude and cursor run the gate before graph validation, so a duplicate id plus an empty fence exits 3 with no graph findings, and the `analyze_kit` docstring is false for those two drivers. Fix in the contract: `exit_if_unsound_kit` returns without analysing on an invalid graph.
+- Finding 5 → T9's body: 1d23d03 overclaims. (a) Case (10) flips to 3 only under strict; (b) "the other verify dialect … with a hint" is true only for the hook-read dialects, and seven kits use plain `Verify:`, which gets none. (c) The 6613705 correction was confirmed accurate. The PolicyError → exit 2 claim was also confirmed. No history rewrite.
+- Finding 6 → T7: stale text in `bin/kit_contract.py:2372-2382` ("amended four times"), the `--strict` help, `tests/test_kit_analyze.py:13` and `:1357`.
+- Finding 7 → now: the D3 amendments 2–7 and the D5 amendment exist only in the uncommitted kit files. The orchestrator commits kit state before Phase 3.
+
+## Phase 3
+
+- Phase 3 start: re-read GUARDRAILS.md and PLAN.md's constraints/out-of-scope from disk (the phase-start guarantee), including the dated notes added at the Phase 2 review.
+- T7 pre-work: `tests/test_kit_evidence.py` does not exist (NO TESTS RAN, exit 5), and `accept` is not a subcommand (exit 2) — red. T7's acceptance now names `tests/test_kit_analyze.py` for the carried Phase 2 findings 4 and 6, and asks that it pass beside the verify. Budget: 20 of 40 dispatches before T7 (T1 2, T2 2, T3 1, T4 11, T5 3, T6 1), 0 consults.
+agent: T7 id=ab7f62a25042003dc role=implementer model=sonnet
+- T7 implementer reported done; red first (exit 5 and exit 2). Orchestrator re-ran each verify step unpiped: test_kit_evidence 0, test_kit_contract 0, test_attempt_ledger 0, `--help` lists accept 0, kits clause 0 — VERIFY EXIT 0. test_kit_analyze also exits 0. Implementer's full suite OK (skipped=2).
+  - Adaptations: argparse accepted `--at` as an abbreviation of `--attempt-store`, so the accept subparser sets `allow_abbrev=False`. Item (8) asserts `unknown` only on tasks with upstream, as the brief says; no-upstream tasks read `fresh -- no upstream task`.
+  - Weakness, sent to the verifier: item (8) uses an empty temp `--attempt-store` (GUARDRAILS forbids the real store in tests), so it shows only that no records means unknown. The finding-4 driver test was never run against the old code; the test-author is asked for a red-proof.
+agent: T7 id=aa7d5ae52a42b00b7 role=test-author model=sonnet
+- T7 test-author: 11 brief-derived tests in `AcceptTestAuthorTests`, all passing; no gap. They cover: no claim is left and a driver can still claim; re-accept replaces the old acceptance; nothing under `<tmp>` changes except the store; every abbreviation of a forbidden flag exits 2; quoted outcome lines refuse; the latest line wins; a later blocked line refuses; the run-id shape is exact; upstream comes from the ledger, never prose. It also red-proved finding 4: with `validate_graph` patched to `[]`, `exit_if_unsound_kit` exits 3 on the fixture, and with the guard it returns. Orchestrator re-ran test_kit_evidence: exit 0.
+agent: T7 id=aa7d5ae52a42b00b7 role=test-author model=sonnet findings=0 confirmed=0 marginal=0
+agent: T7 id=a5654f2145d9ba98d role=verifier model=sonnet
+- T7 verifier: PASS, 4 non-blocking findings, all confirmed by reading. It checked: no claim; no tree write; no forbidden flag or abbreviation; upstream from the ledger only; the invalid-graph guard hides no real refusal; parsers unchanged; the real data root's mtimes identical before and after, with no `attempts` dir created.
+  - (3) `accept --note` persists user free text unredacted, against CLAUDE.md's always-on invariant that every free-text field goes through `bin/redact.py`. The invariant wins over the brief, so this goes back to the implementer (2nd T7 dispatch); confirmed.
+  - (2) Item (8)'s comment overstates what an empty temp store proves. Reworded in the same dispatch; confirmed.
+  - (1) Follow-up, fail-safe: `recorded_outcome_result` (shared with the budget gate) refuses `* outcome:` lines that the scorecard's `OUTCOME_RE` accepts, and accepts lines without `model=` that the scorecard skips.
+  - (4) The `--run` check runs before the TASKS.md read; fine.
+agent: T7 id=a5654f2145d9ba98d role=verifier model=sonnet findings=4 confirmed=2 result=revised
+- T7 redaction fix (2nd T7 dispatch): red first, then green. `--note` goes through `bin/redact.py` (default bound) before `TaskRun.project`; stderr reports kinds and counts only, via `redact.describe`. Tests: a GitHub-token-shaped note leaves no raw token in the store, and a 5000-char note is stored cut. Item (8)'s comment is reworded. Orchestrator re-ran each verify step unpiped: all 0 — VERIFY EXIT 0. Implementer's full suite OK (skipped=2).
+agent: T7 id=aa2316c95a9a60e2d role=red-team model=sonnet
+- T7 red-team: 10 items. No forge, secret leak through the ids, claim leak, or false-fresh path beyond D6's design.
+  - Confirmed crashes, so a failed check: (1) a NOTES.md that is a directory, (2) a read-only store parent, (3) a store path that is a file. Each gives an `OSError` traceback and exit 1, not exit 2; nothing is written.
+  - Tightening: (5) `--run` checks shape only (`2026-13-45-0000` is accepted as a label; the event `ts` is still the true clock).
+  - Design limit, follow-up for T11/T12's docs: (4) `accept` binds the tree as it is when accept runs, not the tree the outcome line was written against, and the outcome line text is not authenticated (D6 by design). That is why the loop must run `accept` right after it writes the outcome line. The fenced-code outcome reading is the shared helper's grammar.
+  - Limit of `bin/redact.py`, reported only: (6) a zero-width-split `pass​word=` escapes the redaction shape.
+  - (7) `--attempt-store` inside the tree writes there: the caller's explicit seam.
+  - (8)–(10) no break.
+- T7 retry (3rd T7 dispatch, the one retry after a failed check): the CLI catches `OSError` and exits 2 with a message, and `--run` must carry a real calendar date.
+- T7 red-team adjudication: findings 1–7 are claims (8–10 report no break). Findings 1, 2, 3 and 5 produce the retry fix and tests, so 4 confirmed; no earlier layer raised any of them, so 4 marginal. Findings 4, 6 and 7 change nothing (design limit, redact limit, caller seam).
+agent: T7 id=aa2316c95a9a60e2d role=red-team model=sonnet findings=7 confirmed=4 marginal=4 result=revised
+- T7 retry (3rd T7 dispatch): red first (8 failures), then green. Orchestrator re-ran each verify step unpiped: all 0 — VERIFY EXIT 0. Orchestrator probes in a temp git fixture: NOTES.md as a directory → exit 2 `accept: [Errno 21] …`; store path that is a file → exit 2; `2026-13-45-abcd` → exit 2; a valid accept → exit 0 with `artifact=<12 hex> upstream=none`. No traceback in any stderr. The red-team's crash and date findings are closed by these probes, and no further red-team round was run. Implementer's full suite: 6355 OK (skipped=2).
+- T7 done.
+outcome: T7 model=sonnet attempts=3 result=retry-pass review=revised run=2026-10-24-93ee
+- T8 pre-work: `drift` is not a subcommand (exit 2), and `--help | grep -q drift` exits 1, so T8's verify is red. Budget: 23 of 40 dispatches before T8 (T7 took 3), 0 consults.
+agent: T8 id=a52ac0dc2391cdf66 role=implementer model=opus
+- T8 implementer reported done; red first (`drift` invalid choice, exit 2; `DriftTests` red on a stripped copy, including the invalid-graph test after it was made to assert the `duplicate-id` text). Orchestrator re-ran each verify step unpiped: test_kit_evidence 0, test_kit_contract 0, test_attempt_history 0, test_attempt_ledger 0, test_exec_policy 0, `--help` lists drift 0, kits clause 0 — VERIFY EXIT 0. Implementer's full suite OK (skipped=2).
+  - Discrepancy (brief vs repo): `_parse_block` never carries `acceptance`, so `acceptance_identity` is None for every parsed task. No CLI `accept` or driver projection ever recorded an `acceptance_ref`, and `drift` could only print `acceptance=unknown`. The implementer worked around brief test (5) by passing `acceptance` on the task dicts. User decision: parse acceptance now. PLAN D7/B1 amended and T8 brief step 6 added; 2nd T8 dispatch.
+  - Adaptations kept: confinement may be a zero-argument callable, because `on_result` reports it only after a run; `shared_with` names the one task whose run is reused, so the line stays under `MAX_LINE_BYTES`; a runner `OSError` is rc 126, as in `refresh_task`; warnings go to stderr; acceptances are read once before any append (3000 tasks: 28 s → 1.06 s).
+agent: T8 id=a52ac0dc2391cdf66 role=implementer model=opus
+- T8 2nd dispatch (warm, same agent): parse acceptance per step 6. Budget: 25 of 40 counting it (T8 attempts 2 so far), 0 consults.
+- T8 2nd dispatch reported done; red first (every new parser and TASKS.md-acceptance case failed; the pre-change-record guard passes both ways by design). `_extract_acceptance` is new, beside an unchanged `_extract_brief`. Orchestrator re-ran each verify step unpiped: evidence 0 (67), kit_contract 0, attempt_history 0, attempt_ledger 0, exec_policy 0, `--help` lists drift 0, kits clause 0 — VERIFY EXIT 0. Implementer's full suite OK (skipped=2).
+  - Committed kits, read-only, empty temp store: `graph`/`freshness` text and `--json` identical before and after on sdd-docs-refresh, observability-dashboard, graph-convergence. Only kits using the `**Acceptance.**` marker gain an identity (observability-dashboard 11/11; the other two 0).
+  - Consequence (the amendment's own): driver `attempt.started`/`task.projected` events now carry `acceptance_ref`, and drivers' `status --json` task dicts gain `acceptance`. Nothing pinned either.
+  - Follow-ups: `drift`'s per-task `latest_acceptance` scan is now the usual cost (3000 tasks over 6000 events: 22 s), the same scaling as `kit_freshness`; a fix needs a new `attempt_ledger` method. `plan_drift`'s `PLAN_FIELDS` still leaves out `acceptance`.
+agent: T8 id=a7cf78c3837dae079 role=test-author model=sonnet
+- T8 test-author: 13 tests in `DriftTestAuthorTests`, all pass; orchestrator re-ran test_kit_evidence unpiped: exit 0 (81 tests). Ambiguities raised, as observed behaviour:
+  - (1) An unclosed quote is not `verify-unparseable`. The orchestrator's prompt was wrong here; PLAN D3's seventh amendment is right, and drift runs it.
+  - (2) A `**Acceptance.**` quoted in backticks inside a brief starts the acceptance there. It also cuts the brief, through the unchanged `_extract_brief`.
+  - (3) A `**Verify.**` inside an acceptance fence cuts the acceptance short, so a later edit would not read `changed`.
+  - (4) and (5) are consistent with the rule.
+  - Orchestrator probe of (2)/(3) over committed kits: every non-line-leading marker is a quotation. Affected: codex-harness T9, copilot-workflow T3 and T4, and kit-preflight T8, whose step 6 quotes both markers. Those tasks parse an acceptance that starts mid-sentence. Every real heading is line-leading, so the T8 retry anchors `_extract_acceptance`'s markers to a line start.
+  - Follow-up, out of T8 scope: `_extract_brief` cuts the dispatched brief at a quoted marker for the same four tasks. Pre-existing, and it changes what headless drivers send.
+agent: T8 id=a52ac0dc2391cdf66 role=implementer model=opus
+- T8 3rd dispatch (warm): anchor `_extract_acceptance` markers to a line start and skip fenced ones; rewrite the ambiguity (2)/(3) tests to the anchored rule. Budget: 26 of 40 counting it, 0 consults.
+- T8 3rd dispatch reported done; red first (7 failures, re-proved with the old function patched in). Markers count only at a line start and outside a fence. Across 391 committed tasks, only the four named tasks' acceptance changed. `graph`/`freshness` are identical on three committed kits (read-only, empty temp store). Orchestrator re-ran each verify step unpiped: evidence 0 (83), kit_contract 0, attempt_history 0, attempt_ledger 0, exec_policy 0, `--help` lists drift 0, kits clause 0 — VERIFY EXIT 0. Implementer's full suite OK (skipped=2).
+- T8 test-author adjudication: ambiguities (2) and (3) are claims about the deliverable. Both produced the anchoring fix and tests, so 2 confirmed, and no earlier layer raised them, so 2 marginal. (1) was the orchestrator's prompt error; (4) and (5) were consistent.
+agent: T8 id=a7cf78c3837dae079 role=test-author model=sonnet findings=2 confirmed=2 marginal=2 result=revised
+agent: T8 id=ac65c2167a86ad4eb role=verifier model=sonnet
+- T8 verifier: PASS. It found AST-identical `_extract_brief`/`_extract_verify` versus HEAD, an event carrying exactly D7's keys, and no backfill path. Its tail-piped re-run hid the unittest exits; the orchestrator's unpiped re-run above is the evidence. 2 non-blocking findings, both already in the implementer's report, so no change: (1) `shared_with` holds one id; (2) a read-only `freshness` test reads a committed kit against a temp store.
+agent: T8 id=ac65c2167a86ad4eb role=verifier model=sonnet findings=2 confirmed=0 result=pass
+agent: T8 id=a86511b0edfb4a272 role=red-team model=sonnet
+- T8 red-team: 10 items, all on temp fixtures, with no committed kit and no repo file touched.
+  - (1) Confirmed break, so the check failed: `drift --all` exits 0 when every kit is skipped (unparseable, invalid graph or refused slug), though the kit is reported on stdout. The plan's wording allowed it, and D7's own rule (a check that cannot run is not a hold) argues against it. User decision: a skipped kit gives 3. PLAN D7 amended a third time; T8 brief step 7 added.
+  - (2) Tightening: the acceptance fence walk knows only backtick fences, so a quoted marker inside `~~~` still counts. Taken in the retry.
+  - (3) Design limit: an unclosed fence in the acceptance swallows the verify heading. No false result, because the identity already includes the verify text.
+  - (4) Design limit, follow-up: `--all` follows a symlinked kit dir, so the same kit is reported twice under two ledger namespaces.
+  - (5)–(9) No break: odd runner rc values never give CLI 1; dedupe is on stripped text; hostile TASKS.md and store paths exit 2 without a traceback; a garbage ledger never gives a false `unchanged`; the trusted-host first line is honest.
+  - (10) Not tested: an enforced-backend run, a multi-MB acceptance, a store symlinked into the tree, a closed stdout.
+agent: T8 id=a52ac0dc2391cdf66 role=implementer model=opus
+- T8 4th dispatch (warm; the one retry after the failed check): step 7 plus `~~~` fences. Budget: 27 of 40 counting it, 0 consults.
+- T8 retry (4th T8 dispatch, the one retry after the failed check): red first (9 failures), then green. Orchestrator re-ran each verify step unpiped: evidence 0 (89), kit_contract 0, attempt_history 0, attempt_ledger 0, exec_policy 0, `--help` lists drift 0, kits clause 0 — VERIFY EXIT 0; test_kit_analyze also 0. Orchestrator probe, as a real process in a temp dir: the red-team's all-skipped repro exits 3 with no traceback; an empty kits dir exits 0. Implementer's full suite OK (skipped=2).
+- T8 red-team adjudication: items 1–4 are claims; 5–9 report no break and 10 is untested. Items 1 and 2 produced the retry fix and tests, so 2 confirmed; no earlier layer raised either, so 2 marginal. Items 3 and 4 change nothing (design limits).
+- T8 done.
+agent: T8 id=a86511b0edfb4a272 role=red-team model=sonnet findings=4 confirmed=2 marginal=2 result=revised
+outcome: T8 model=opus attempts=4 result=retry-pass review=revised run=2026-10-24-93ee
+- T9 pre-work: verify red, since `git diff --quiet -- bin tests …` exits 1 (bin/kit_contract.py and tests/test_kit_analyze.py are modified; tests/test_kit_evidence.py is untracked). Brief amended with the T7/T8 carries. Budget: 27 of 40 before T9, 0 consults.
+agent: T9 id=ae776c8b08b2764dd role=implementer model=haiku
+- T9 implementer reported 45e6bc8 (not pushed). Orchestrator re-ran T9's verify unpiped: branch 0, subject 0, sources clean 0 — VERIFY EXIT 0. Implementer's full suite OK (skipped=2); `docs_build.py check` 0. Staged by name: bin/kit_contract.py, tests/test_kit_analyze.py, tests/test_kit_evidence.py.
+  - Orchestrator read the body and found three inaccurate claims: the freshness flip was misdescribed; "never a committed kit" ignored the read-only TASKS.md parse tests; and "not by a deliberate break" denied the red-first runs reported in T7 and T8. 2nd T9 dispatch (warm): amend the message only, since the commit is unpushed.
+agent: T9 id=ae776c8b08b2764dd role=implementer model=haiku
+- T9 2nd dispatch: amended the message in place, 45e6bc8 → 0a920bf. Orchestrator checks: `git diff 45e6bc8 0a920bf` is empty, so the tree is identical; no body line exceeds 80 columns; T9's verify re-run unpiped gives branch 0, subject 0, sources clean 0 — VERIFY EXIT 0. origin/main and origin/feat/route-experiment are both still 1cd9e62, so nothing was pushed.
+- T9 done.
+outcome: T9 model=haiku attempts=2 result=retry-pass review=revised run=2026-10-24-93ee
+
+## Phase 3 review (opus): FIX-FIRST, carried into T11–T13
+
+- The reviewer ran these itself: the full suite (OK, skipped=2, exit 0); docs_build, release_gate and copilot_docs checks (all 0); `analyze` on this kit (0, with warnings); `accept`/`drift` probes on temp fixtures with a temp store, enforced first line `confinement=sandbox-exec`; call chains traced by reading. D1, D6, D7 and its amendments, D8, R9 and R10 hold.
+- Finding 1 (blocking before T11): `accept` backfilled a copied sdd-docs-refresh with no flag (11 exits 0, `freshness` unknown → fresh). The cause: it takes the latest passing outcome line from any run. User decision: guard on run and date. PLAN D6/B1 amended; carried into T11 steps 5–7, with the code and tests landing in T13's commit.
+- Finding 2 (blocking before T13): T13's verify nests a `drift` that the macOS sandbox refuses, so T13 would read `drifted` in every later self-drift. User decision: move drift to a step. PLAN R6 amended; T13 verify changed and carried.
+- Finding 3 → T13 step 4: `exec_policy.py check` only finds the binary. An already-sandboxed shell gives rc 71 on every verify, so a harmless temp-fixture `drift` probe comes first.
+- Finding 4 → T11 step 6 and T12 step 10: drift's help text says "changing nothing in the tree", but the verifies it runs can write it, and `trusted-host` confines nothing.
+- Finding 5 → T12 step 10: on this repo `drift --all` exits 3 every time (skipped kits with an invalid graph, and unrunnable old-dialect tasks), so exit 3 alone is not drift. `acceptance=` reads `unknown` without an `**Acceptance.**` heading.
+- Finding 6 → T11 step 7: the step-4 sentence says when `accept` refuses, that it runs right after the outcome line (D6), and that stdout is one line.
+- Finding 7 → T13 step 5: the body corrects 0a920bf by sha on five points.
+- Finding 8: the T8 verifier line carried `result=pass`, which is outside `AGENT_RESULTS`. An enriched line with `result=accepted` is appended below; the last line wins.
+- Finding 9: the Phase 2 reviewer line at NOTES.md:240 (committed in 107833f) is wrapped in backticks, so `REVIEWER_RE` never read it. The committed line is untouched. A bare copy of that same adjudication is appended below, captured late from the still-existing record, with nothing changed.
+- Finding 10 → T11 step 6, plus a follow-up: `recorded_outcome_result`'s "Its ONE caller" docstring is corrected in T11. Follow-up: a runner raising `TypeError` gives a traceback and exit 1; `verify_runner` cannot raise it.
+- Item 11 was no change: the parser adds no grammar, no consumer misreads the field, SECURITY.md is still true, and the execute body is under its ceiling.
+- Adjudication: items 1–10 are the verdict's claims; 11 is not a defect. All 10 produced an artifact (a plan amendment, a brief carry, a defect line or a ledger line), so 10 confirmed. The verdict stood as delivered.
+- Follow-ups for a later kit: `_extract_brief` cuts a dispatched brief at a quoted marker (four committed tasks); `--all` follows symlinked kit dirs; `drift` scans `latest_acceptance` per task; `plan_drift` does not watch `acceptance`; the `TypeError` runner traceback; whether T1–T12's verifies all pass under drift's sandbox stays unknown until T13.
+reviewer: P3 model=opus findings=10 confirmed=10 result=accepted
+reviewer: P2 model=opus findings=7 confirmed=7 result=accepted
+- Finding 2 is a second `contradictory-acceptance` on T13. Its `defect:` line is not repeated, because the scorecard keeps one per task and kind, and the Phase 1 line at NOTES.md:36 already records it.
+agent: T8 id=ac65c2167a86ad4eb role=verifier model=sonnet findings=2 confirmed=0 result=accepted
+
+## Phase 4
+
+- Phase 4 start: fences re-read from disk (GUARDRAILS.md in full; PLAN.md Constraints and out of scope). Kit state committed as 006a379 after a green full suite (OK, skipped=2, exit 0).
+- T10 pre-work: verify red (test_execute_preflight finds no test file, exit 5; spec-review.md absent, exit 1). Budget: 29 of 40 before T10, 0 consults.
+agent: T10 id=ad714c457a6c9e25e role=implementer model=opus
+- T10 implementer reported done; red first (exit 5, no tests; a scratch copy against HEAD's SKILL.md failed 14 of 16, and the 2 that passed are A4's scorecard cases, which Phase 1 already made true). Six scratch mutations each tripped the test. Orchestrator re-ran each verify step unpiped: execute_preflight 0 (16), skill_entrypoints 0, docs_skill_dispositions 0, docs_build check 0, reference exists 0, no `docs-site` 0 — VERIFY EXIT 0. docs_build tests, role_ledger and reroute_live also 0; no other kit has a diff. Implementer's full suite OK (skipped=2). The SKILL.md body is under its ceiling with room for T11 (measure with `skill_inventory()`).
+  - Departures from the brief's wording, kept:
+    - exit 3 always records a `defect:` line, whether TASKS.md is fixed or the run stops (ledger.md's log-even-easy-fixes rule);
+    - the PLAN citation is dropped from runtime skill text;
+    - the prompt points at ledger.md's sanctioned list instead of copying it;
+    - the grammar lines are shown bare in an indented block, because a backtick-led line copied into NOTES.md would not parse.
+  - Open for the architect, recorded as a follow-up: no sanctioned defect kind fits an uncovered "done" item. The prompt tells the reviewer to say so rather than invent one.
+  - Follow-up, flaky under load: `test_kit_analyze.py`'s `test_case11e_analysis_time_is_linear_in_the_verify_size` has a 10 s wall-clock limit, and it failed twice at host load 26–32. It passed in the full suite and alone.
+agent: T10 id=a77f59f51a5b04e36 role=verifier model=sonnet
+- T10 verifier: PASS. Its own scratch-copy mutations tripped six tests; it found no Codex mirror drift, and copilot_docs and release_gate both exit 0. Four non-blocking observations, no change: the stricter exit-3 wording, the reference's length (read-when gated), prose-pinned tests, and an honest test header.
+- T10 done.
+agent: T10 id=a77f59f51a5b04e36 role=verifier model=sonnet findings=4 confirmed=0 result=accepted
+outcome: T10 model=opus attempts=1 result=pass review=clean run=2026-10-24-93ee
+- T11 pre-work: verify red (`grep -q 'kit_contract.py accept' skills/execute/SKILL.md` exits 1). Budget: 30 of 40 before T11, 0 consults.
+agent: T11 id=a86f70b67ef3cdb86 role=implementer model=sonnet
+- T11 dispatch adds one orchestrator clarification: the injectable clock is in-process only, never reachable from the CLI, an environment variable or a flag, since a settable clock would be a backfill door; CLI-process tests use `generate_run_id()`.
+- T11 implementer reported done; red first (`AcceptStepTests` 1 fail and 3 errors; `AcceptRunGuardTests` 7 failures and 8 errors, the reviewer's repro included). Orchestrator re-ran each verify step unpiped: execute_preflight 0 (21), skill_entrypoints 0, docs_skill_dispositions 0, role_ledger 0, reroute_live 0, docs_build check 0, the accept grep 0 — VERIFY EXIT 0. Beside it: kit_evidence 0 (102), kit_contract 0, attempt_ledger 0. `accept --help` offers no clock flag. Implementer's full suite OK (skipped=2).
+  - The guard: `accept_task(..., now=None)` refuses a line with no `run=`, a mismatched run, or a run dated neither today nor yesterday in UTC (a future date included). New helpers are `_last_outcome_line` and `recorded_outcome_run`, and `recorded_outcome_result` now goes through the first. The test run ids come from `generate_run_id()`, and re-accept tests append a fresh outcome line, as the loop would.
+agent: T11 id=a86b55572a2a72026 role=verifier model=sonnet
+- T11 verifier: PASS. Every guard probe was a CLI process on temp fixtures. A mismatched older line, a later `blocked` line, quoted or backticked lines, a `run=` with junk, future dates and dates three days old all exit 2; today and yesterday exit 0. The reviewer's repro, run over temp copies of all the committed non-preflight kits with a fresh run id, refused every task and created no store. There is no clock flag or env read, and `allow_abbrev=False` holds.
+  - (1) The `recorded_outcome_result` docstring calls the three original drivers' gate sites "inline copies". They call the re-exported helper (`claude_execute.py:222`, `copilot_execute.py:176`, `codex_execute.py:210`), and the duplicate guard is green. Wording only, no change.
+  - (2) A line carrying two `run=` pairs: the first wins. The date window still applies, so there is no backdoor. Follow-up: check that the scorecard's reader agrees on which `run=` counts.
+- T11 done.
+agent: T11 id=a86b55572a2a72026 role=verifier model=sonnet findings=2 confirmed=0 result=accepted
+outcome: T11 model=sonnet attempts=1 result=pass review=clean run=2026-10-24-93ee
+- T12 pre-work: verify red (`docs/sdd/guide.md` still contains "None is built.", so the negated grep fails). Budget: 31 of 40 before T12, 0 consults.
+agent: T12 id=ab22d51436f021855 role=implementer model=sonnet
+- T12 implementer reported done; red first (the new `GuideTests.test_roadmap_says_what_was_built` failed on "None is built."). Orchestrator re-ran each verify step unpiped: sdd_docs 0, execute_preflight 0, kit_verify_hook 0, docs_build tests 0, docs_build check 0, release_gate check 0, copilot_docs check 0, the "None is built." grep absent, kit-preflight present — VERIFY EXIT 0. spec_driven_pitch and defect_vocabulary also 0. The rot grep over the added lines is empty, and the kit_verify_hook.py change is module-docstring text only (it still parses). Implementer's full suite OK (skipped=2).
+  - Discrepancy (brief vs repo): step 1 quotes a `docs/GRAPH-ENGINEERING.md` sentence ("Edit is how this repo's own…") that lives only in `bin/kit_verify_hook.py`'s docstring. The implementer fixed the docstring and added one paragraph to the doc instead of rewording a line that does not exist. Recorded as a `stale-pin` defect below.
+  - Judgement calls, kept:
+    - REFERENCE.md is untouched, since its row lists no subcommands.
+    - The guide's failure-modes "Drift" row and its "Where polytropos stands" sentence were corrected too, since both still said nothing re-checks a kit.
+    - pipelines.html's two boxes move from `node new` to `node plain`, so no dashed styling is left without a legend entry.
+defect: T12 kind=stale-pin
+agent: T12 id=a908a89fa540592db role=verifier model=sonnet
+- T12 verifier: PASS. It checked every added claim against `--help` and the code, found `docs/sdd/render.py check` and the other generator checks at 0, `DEFECT_FOLDS` matching ledger.md, and the protected trees unchanged. Two non-blocking findings, no change: "Strong" in the P8 cell leans generous but is the brief's own wording, and three added paragraphs leave an extra blank line.
+- T12 done.
+agent: T12 id=a908a89fa540592db role=verifier model=sonnet findings=2 confirmed=0 result=accepted
+outcome: T12 model=sonnet attempts=1 result=pass review=clean run=2026-10-24-93ee
+- T13 pre-work: the clean-tree clause `git diff --quiet -- bin tests skills docs docs-site` exited 0 before any commit. It compares the worktree to the index, and T10–T12's implementers had staged their files. So T13's verify was tautological. The orchestrator tightened it to `git diff --quiet HEAD --` (exit 1 before the commit, so red), with the acceptance unchanged ("the commit exists … with sources clean").
+- T13 pre-work: verify red. Budget: 32 of 40 before T13, 0 consults.
+defect: T13 kind=tautological-verify
+agent: T13 id=a9d81ea17b66b1bb1 role=implementer model=sonnet
+- T13 implementer reported:
+  - Steps 1–5 pass: suite OK (skipped=2); docs_build, copilot_docs and release_gate checks 0; `analyze` 0 with 8 brief-only warnings; `exec_policy check` 0; the temp-fixture boundary probe gave rc 0 with `confinement=sandbox-exec`, no rc 71.
+  - Commit 7d53c11, not pushed: origin/main and origin/feat/route-experiment are both still 1cd9e62.
+  - Step 6 self-drift exit 3: `drift: 8 hold, 4 drifted, 0 unrunnable`. T4, T5, T7 and T8 are drifted with rc 1; `acceptance=unknown` for all, as expected. T13's acceptance ("0 drifted") is not met. The implementer did not re-run any task.
+  - A scout is diagnosing the four rc-1 verifies by calling `exec_policy.verify_runner` directly (no ledger write). The orchestrator is re-running T13's verify after the commit.
+- Orchestrator re-ran T13's verify after 7d53c11, each part unpiped: suite 0 (OK, skipped=2), docs_build 0, copilot_docs 0, release_gate 0, analyze 0, `git diff --quiet HEAD -- …` 0 — VERIFY EXIT 0.
+- Self-drift diagnosis (scout; each verify run once through `exec_policy.verify_runner` in-process, with no ledger write and no tree change):
+  - T4: `test_kit_graph.py` `DiamondThroughTheDriverTests`.
+  - T5: `test_claude_execute.py` (5 errors and 1 failure).
+  - T7 and T8: `test_attempt_ledger.py` (`ClaimAtTheDriverTests`, `CrashAfterDispatchTests`, `StoreLocationTests`).
+  - Common cause: each calls a driver's real `run`, which defaults to `--exec-mode enforced` and wraps the fixture verify in a second `sandbox-exec`. The nested call is refused (verify_rc=71), the fixture task blocks, and the driver exits 1. The `test_kit_contract.py` suspicion is refuted. This is an R6 environment limit, not a regression: unconfined, the suite passes.
+  - User decision: accept it as an R6 limit. T13's acceptance and PLAN R6 are amended (dated), and a kit-level `stale-plan-decision` defect is recorded below.
+- 7d53c11's message needs amending: its subject is far over the convention's ~80 characters (it copied the brief's own example); "describe the roadmap as built" overclaims, since only A–C are built; and "committed after this commit by the user" should say the orchestrator. The amend also adds the self-drift result. This is the 2nd T13 dispatch.
+defect: - kind=stale-plan-decision
+agent: T13 id=a9d81ea17b66b1bb1 role=implementer model=sonnet
+- T13 2nd dispatch (warm): amend the message only. Budget: 34 of 40 counting it, 0 consults.
+- T13 2nd dispatch: amended 7d53c11 → 16306ef with the message only. Orchestrator checks: `git diff 7d53c11 HEAD` is empty, so the tree is identical; the subject is 72 characters; no body line exceeds 80 columns; branch 0; clean-vs-HEAD 0. origin/main and origin/feat/route-experiment are both still 1cd9e62.
+- T13 self-drift result, as amended into the acceptance: 8 hold; 4 drifted (T4, T5, T7, T8), each diagnosed as the R6 nested-sandbox limit; 0 unrunnable; confinement=sandbox-exec. The `evidence.drift` events are in the real attempts store, as intended.
+- T13 done.
+outcome: T13 model=sonnet attempts=3 result=retry-pass review=revised run=2026-10-24-93ee
+
+## Phase 4 review (opus): FIX-FIRST, folded into T13's unpushed commit
+
+- The reviewer ran these itself: the full suite (OK, skipped=2, exit 0); the docs_build, release_gate, copilot_docs and `docs/sdd/render.py` checks (all 0); `analyze` on this kit (0) and `graph` (complete); accept-guard CLI probes on temp fixtures (every refusal exits 2 with an accurate reason; no store created); `analyze` with every spawn seam raising; `drift` with an injected runner. A3, A4, B2, C3, D4's loop half, D6/B1, D7, D12, D15, D17(b)(c) and the shared kit contract hold.
+- Finding 1 (blocking): the docs still overstate `drift`. The guide's P8 row says "read-only", pipelines.html says "a read-only re-run", the guide carries none of T12 step 10's caveats, and "Strong for detection" outruns the only live run (4 of 12 tasks false-drifted under R6) → 3rd T13 dispatch.
+- Finding 2 (blocking): the kit's own done check still read "every task holds" (PLAN.md Whole-kit done) and "0 drifted" (T13 acceptance). The orchestrator added dated R6-limit notes to both.
+- Finding 3: GRAPH-ENGINEERING and the hook docstring say "only the drivers do" call `record`/`precheck`, while only `bin/claude_execute.py` does (the error came from the brief); D4's docs half is unstated in the guide; SPEC-DRIVEN claims `--help` states the caveats → 3rd T13 dispatch.
+- Finding 4: 16306ef's message says four docs describe the roadmap as built (only the guide has one), omits pipelines.html, puts the trusted-host clause in `drift --help` (it is top-level), and never says nothing is live until merge, version bump and install → corrected in the same amend.
+- Finding 5: "kits finished earlier stay `unknown` by design" is too absolute, because `refresh --force` re-verifies a kit on the current tree and reads `fresh` → wording fix in the same dispatch.
+- Finding 6: SKILL.md never says what to do when `accept` exits 2, so an orchestrator might add `run=` to a line, fabricating a record. The step-4 exit-2 clause plus one test assertion go in the same dispatch. Follow-ups:
+  - the run id is minted only in the budget-stop text, and `run=` is optional in ledger.md;
+  - a session that runs past yesterday's date has every later `accept` refused (read from the code, not run);
+  - a resumed kit gets its P0 review mid-kit, and those defects would count as pre-run.
+- Finding 7 (follow-up): all 8 `analyze` warnings on this kit are noise under D3: slash commands, a `:line-range`, and bare repo file names.
+- Finding 8 (follow-up): the P0 review has never run live. This kit predates it, so the card reads `caught pre-run: 0`.
+- Finding 9 (minor, no change): a future-dated refusal message's tail; "read-only tools" for a Bash-pinned reviewer; a `PipelinesPageTests` docstring that promises more than it asserts.
+- Kit card per the reviewer: 13/13 done, first-try and review-survival figures on the card (run `python3 bin/routing_scorecard.py kit-preflight`), no session dollars yet.
+- Adjudication: 9 findings as presented. Items 1–6 produce an artifact (doc and skill fixes, kit-state notes, message corrections), so 6 confirmed; 7–9 are follow-ups or no change. The verdict stood as delivered.
+- T13 3rd dispatch (warm): the doc and skill fixes from findings 1, 3, 5 and 6 plus the message corrections, amended into 16306ef. Budget: 35 of 40 counting it, 0 consults.
+reviewer: P4 model=opus findings=9 confirmed=6 result=accepted
+agent: T13 id=a9d81ea17b66b1bb1 role=implementer model=sonnet
+- T13 3rd dispatch: amended 16306ef → af31f31 with the docs, the hook docstring, the step-4 exit-2 clause and its assertion, regenerated pages, and a corrected message. The subject is unchanged. Orchestrator re-ran these unpiped: sdd_docs, execute_preflight, kit_verify_hook, docs_build tests, spec_driven_pitch, skill_entrypoints, docs_skill_dispositions, role_ledger and reroute_live all 0; the docs_build, release_gate, copilot_docs and render.py checks 0; analyze 0; clean-vs-HEAD 0. No "read-only" claim about `drift` is left in the guide or pipelines.html. No body line exceeds 80 columns. Implementer's full suite OK (skipped=2). origin is still 1cd9e62.
+- T13's `outcome:` line was written this session after its 2nd dispatch and was still uncommitted. It is updated in place to `attempts=3`, so the budget sum counts each dispatch once. The verdict is unchanged.
+- Run budget at the end: 35 of 40 dispatches by `outcome:` attempts, 0 escalations, 0 consults.
+- Session id: resolved by write recency (`ls -t "$HOME/.claude/projects"/*/*.jsonl`). The top file was written seconds before the lookup, is about 18 MB, and is the transcript the compaction summary names for this session. The next candidate is a different project's session, so the id is not a guess.
+session: 164ceb17-fa7d-4c0f-9227-4953db2eb5fe

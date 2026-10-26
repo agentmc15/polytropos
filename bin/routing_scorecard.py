@@ -225,6 +225,63 @@ MIN_ROLE_DISPATCHES = 5
 REVIEWER_RE = re.compile(r"^\s*(?:[-*]\s+)?reviewer:\s+(\S+)\s+(.+)$")
 DEFECT_RE = re.compile(r"^\s*(?:[-*]\s+)?defect:\s+(\S+)\s+(.+)$")
 
+# Sanctioned architect-defect vocabulary (kit-preflight PLAN D9-D11). The definitions are the
+# ONE wording that ``skills/execute/references/ledger.md`` copies; a test compares the two.
+# The fold is a READ-TIME view: ``parse_defects`` still returns the raw kind and no NOTES.md is
+# ever rewritten. ``DEFECT_FOLDS`` maps a historical raw kind onto a sanctioned one;
+# ``DEFECT_EXCLUDED`` kinds are verifier incidents, not brief defects; ``DEFECT_WHEN`` is the
+# only sanctioned value of the optional ``when=`` pair on a ``defect:`` line.
+DEFECT_KINDS = (
+    ("stale-pin",
+     "the brief anchors on a file, line, phrase or identifier that no longer exists "
+     "where the brief says it does."),
+    ("tautological-verify",
+     "the verify command passes before the work is done, so a later pass proves nothing."),
+    ("unrunnable-verify",
+     "the verify command cannot execute as written: unparseable, a missing script or path, "
+     "a wrong invocation form."),
+    ("missing-helper",
+     "the brief relies on a helper, fixture or flag that no task in the kit creates and "
+     "the tree does not have."),
+    ("unspecified-path",
+     "the brief leaves a destination, file or location to the implementer's guess."),
+    ("contradictory-acceptance",
+     "two acceptance clauses, or an acceptance and its verify or a fence, cannot all hold "
+     "at once."),
+    ("stale-plan-decision",
+     "a PLAN.md decision the tree already contradicts when the task runs (kit-level; task "
+     "token `-`)."),
+    ("false-zero-spec",
+     "the brief asserts something is absent, zero or never the case that the tree shows is "
+     "present."),
+    ("underivable-requirement",
+     "an acceptance that cannot be derived from the brief plus the tree: no stated source, "
+     "no measurable form, or a criterion left incomplete."),
+)
+DEFECT_FOLDS = {
+    "incomplete-acceptance": "underivable-requirement",
+    "process-guardrail": "stale-plan-decision",
+    "unsafe-parallel-marking": "contradictory-acceptance",
+}
+DEFECT_EXCLUDED = ("verifier-destructive-restore",)
+DEFECT_WHEN = ("pre-run",)
+
+
+def canonical_defect_kind(kind):
+    """Map a raw defect kind to ``(canonical, note)`` (PLAN D9). Pure; no I/O.
+
+    Sanctioned -> ``(kind, None)``; a ``DEFECT_FOLDS`` key -> ``(folded_into, "folded")``;
+    a ``DEFECT_EXCLUDED`` member -> ``(None, "excluded")``; anything else ->
+    ``(kind, "unsanctioned")``. An exact-token map, never a similarity.
+    """
+    if kind in dict(DEFECT_KINDS):
+        return kind, None
+    if kind in DEFECT_FOLDS:
+        return DEFECT_FOLDS[kind], "folded"
+    if kind in DEFECT_EXCLUDED:
+        return None, "excluded"
+    return kind, "unsanctioned"
+
 # --- cross-repo history + snapshot/trend (Tier 5) — the ONLY new constants are STRUCTURAL
 # grammars (same species as the ledger regexes) and a schema version (same species as the
 # other four); never a price, price ratio, model id, or pricing date. ``_LABEL_RE`` bounds an
@@ -2079,7 +2136,11 @@ def role_quality_stats(records):
     - ``roles["architect"]``: from every record's ``defects``. Keys exactly ``{"defects",
       "kits_recording", "by_kind", "by_kit"}``. ``by_kit`` maps ``rec["kit"]`` to its defect
       count, for kits with >= 1 defect only; ``kits_recording = len(by_kit)``; ``by_kind``
-      tallies ``kind`` across every defect in every kit; ``defects`` is the grand total.
+      tallies the CANONICAL kind (``canonical_defect_kind``) across every non-excluded
+      defect; ``defects`` is the grand total of non-excluded defects. ``by_kit`` still
+      counts every recorded event. Optional keys, present only when non-empty: ``folded``
+      (``{raw: {"into", "count"}}``), ``unsanctioned`` (``{kind: n}``), ``excluded``
+      (``{kind: n}``), ``pre_run`` (count of counted defects carrying ``when=pre-run``).
 
     Pure and read-only: no I/O, no fabricated numbers — every empty denominator yields
     ``None``, never 0 or 100%.
@@ -2155,19 +2216,44 @@ def role_quality_stats(records):
     defects_total = 0
     by_kind = {}
     by_kit = {}
+    folded = {}
+    unsanctioned = {}
+    excluded = {}
+    pre_run = 0
     for rec in records:
         rec_defects = rec.get("defects", [])
         if rec_defects:
             by_kit[rec["kit"]] = len(rec_defects)
         for d in rec_defects:
+            canonical, note = canonical_defect_kind(d["kind"])
+            if note == "excluded":
+                excluded[d["kind"]] = excluded.get(d["kind"], 0) + 1
+                continue
             defects_total += 1
-            by_kind[d["kind"]] = by_kind.get(d["kind"], 0) + 1
+            by_kind[canonical] = by_kind.get(canonical, 0) + 1
+            if note == "folded":
+                f = folded.setdefault(d["kind"], {"into": canonical, "count": 0})
+                f["count"] += 1
+            elif note == "unsanctioned":
+                unsanctioned[d["kind"]] = unsanctioned.get(d["kind"], 0) + 1
+            if d.get("when") == "pre-run":
+                pre_run += 1
     architect = {
         "defects": defects_total,
         "kits_recording": len(by_kit),
         "by_kind": by_kind,
         "by_kit": by_kit,
     }
+    # Additive keys appear only when non-empty so every pre-existing exact-shape assertion
+    # (and the golden demo JSON) holds unchanged; consumers read them with ``.get``.
+    if folded:
+        architect["folded"] = folded
+    if unsanctioned:
+        architect["unsanctioned"] = unsanctioned
+    if excluded:
+        architect["excluded"] = excluded
+    if pre_run:
+        architect["pre_run"] = pre_run
 
     return {
         "verifier": verifier,
@@ -2936,6 +3022,21 @@ def render_history_markdown(card):
         if arch["defects"]:
             kinds = ", ".join(f"{k} {n}" for k, n in sorted(arch["by_kind"].items()))
             out.append(f"  - kinds: {kinds}")
+            if arch.get("folded"):
+                out.append("  - folded: " + ", ".join(
+                    f"{raw}\u2192{v['into']} {v['count']}"
+                    for raw, v in sorted(arch["folded"].items())))
+            if arch.get("unsanctioned"):
+                out.append("  - unsanctioned: " + ", ".join(
+                    f"{k} {n}" for k, n in sorted(arch["unsanctioned"].items())))
+            if arch.get("excluded"):
+                out.append("  - excluded: " + ", ".join(
+                    f"{k} {n}" for k, n in sorted(arch["excluded"].items())))
+            # Only once the vocabulary view has something to say: a card whose defects are
+            # all sanctioned and none pre-run renders byte-identically to before (the demo
+            # goldens are exact markdown).
+            if any(arch.get(k) for k in ("folded", "unsanctioned", "excluded", "pre_run")):
+                out.append(f"  - caught pre-run: {arch.get('pre_run', 0)}")
     out.append("")
 
     # Re-route history.
@@ -3919,7 +4020,9 @@ def parse_defects(text):
     ``defect:`` is a task id, or the sanctioned literal ``-`` for a kit-level defect (a
     stale PLAN decision and the like — not attributable to one task). The line is KEPT only
     when ``kind=`` is present; otherwise skipped with an ``unrecognized defect line`` note.
-    Event keys are exactly ``{"task", "kind"}``; unknown pairs are ignored. A repeated
+    Event keys are exactly ``{"task", "kind"}`` (plus ``"when"`` only when the line carries a
+    sanctioned ``when=`` value from ``DEFECT_WHEN``); other unknown pairs are ignored. The
+    raw kind is kept — canonicalization is ``canonical_defect_kind``'s job, not this parser's. A repeated
     ``(task, kind)`` pair keeps the FIRST occurrence and adds a note — re-runs must never
     double-count a defect. A defect of the same kind recurring in one task repeats that kind
     verbatim on its own line and the keep-first dedupe stands: one kind counts once per task
@@ -3946,7 +4049,14 @@ def parse_defects(text):
                 f"duplicate defect {kind!r} for {tid} — keeping the first occurrence")
             continue
         seen.add(key)
-        events.append({"task": tid, "kind": kind})
+        event = {"task": tid, "kind": kind}
+        when = pairs.get("when")
+        if when is not None:
+            if when in DEFECT_WHEN:
+                event["when"] = when
+            else:
+                notes.append(f"defect {tid} {kind}: unknown when={when}, ignored")
+        events.append(event)
     return events, notes
 
 

@@ -69,6 +69,7 @@ reconcile_task = _CONTRACT.reconcile_task
 finish_task_projection = _CONTRACT.finish_task_projection
 record_role_dispatch = _CONTRACT.record_role_dispatch
 roster_for_run = _CONTRACT.roster_for_run
+exit_if_unsound_kit = _CONTRACT.exit_if_unsound_kit
 record_roster = _CONTRACT.record_roster
 GAP_MODES = _CONTRACT.GAP_MODES
 exit_if_invalid_graph = _CONTRACT.exit_if_invalid_graph
@@ -206,6 +207,10 @@ def cmd_run(args):
 
     plan_text = (kit / "PLAN.md").read_text() if (kit / "PLAN.md").exists() else ""
     roster, roster_support = roster_for_run(plan_text, "cursor", args.roster_gap, slug=slug)
+    # PLAN D5: static, free, fail closed, no opt-out, before any preview, claim, or ledger.
+    # Only an unparseable verify on a task still to run fails a run (D3's seventh amendment);
+    # every other finding prints and the run goes on -- except the task `--task` selected.
+    exit_if_unsound_kit(kit, tasks, selected=args.task)
 
     task, reason = select_task(tasks, args.task, allow_rerun=args.rerun,
                                freshness=_CONTRACT.kit_freshness(kit, tasks, store=args.attempt_store))
