@@ -309,7 +309,10 @@ class CensusBumpTripwireTests(unittest.TestCase):
     The Jev judge-study design adds another (37 / 39 / 87), and the route experiment's
     docs/ROUTE-EXPERIMENT.md one more (38 / 40 / 88). docs/SPEC-DRIVEN.md (sdd-docs-refresh)
     adds one deep dive (39 / 41 / 89). The observability-dashboard kit's T8 added
-    skills/dashboard, moving only the total (39 / 41 / 90)."""
+    skills/dashboard, moving only the total (39 / 41 / 90). The spec-driven development
+    section mirrors docs/sdd/ through its own sdd_page_map(), outside this glob and outside
+    deep_dive_page_map(), so it moves only the total: five Markdown pages plus the four HTML
+    pages served beside them (39 / 41 / 99)."""
 
     def test_pinned_counts_match_the_real_tree(self):
         docs_build = _load("_t8_docs_build_real", BIN_DIR / "docs_build.py")
@@ -317,10 +320,10 @@ class CensusBumpTripwireTests(unittest.TestCase):
         self.assertEqual(len(md_sources), 39)
         page_map = docs_build.deep_dive_page_map(REPO_ROOT)
         self.assertEqual(len(page_map), 41)
-        # 90 after skills/dashboard (from main); 89 after docs/SPEC-DRIVEN.md; 88 after the route experiment; 87 after the Jev judge study; 86 after J01's Jev contract; 85 after docs/REFERENCE.md; 84 after five Codex skill parity pages; 79 since D30's V1 handoff
+        # 99 after the docs/sdd/ section (five pages, four served HTML pages); 90 after skills/dashboard (from main); 89 after docs/SPEC-DRIVEN.md; 88 after the route experiment; 87 after the Jev judge study; 86 after J01's Jev contract; 85 after docs/REFERENCE.md; 84 after five Codex skill parity pages; 79 since D30's V1 handoff
         # (78 after D29's conformance report, 77 after D34's readiness runbook, 76 before).
         # Unlike 38/40 above, this total is not a doc-only pin: every skill page counts too.
-        self.assertEqual(len(docs_build.expected_pages(REPO_ROOT)), 90)
+        self.assertEqual(len(docs_build.expected_pages(REPO_ROOT)), 99)
 
     def test_one_more_doc_breaks_the_pinned_counts(self):
         docs_build = _load("_t8_docs_build_copy", BIN_DIR / "docs_build.py")

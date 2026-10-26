@@ -2,30 +2,34 @@
 
 *"of many ways" — Odysseus's epithet, and the fourth word of the Odyssey: many models, many paths, resourceful under constraint.*
 
-polytropos is a plugin that picks the right model for the task in front of you, tells you what it will cost before you run it, and keeps the frontier model in reserve for work that actually needs it. It is not a single skill — it is a small set of routing, execution, and measurement tools sharing one philosophy across every harness they run in.
+polytropos is spec-driven development for coding agents, with the cost of every step in view. The frontier model writes the spec once; cheaper models, each pinned to its task, build against it; and every result is checked against the spec by something other than the model that produced it. Around that loop, it picks the cheapest model that will do each job and tells you what it will cost before you run it.
 
-**New here?** [Pick your harness and install it](getting-started/index.md), then [route your first task](workflows/first-route.md).
+**New here?** [Pick your harness and install it](getting-started/index.md), then [route your first task](workflows/first-route.md) or [run a kit](workflows/run-a-kit.md).
 
-## The idea, in one screen
+## Spec-driven, end to end
 
-Most sessions do not need the most expensive model available. They need the *cheapest model that will get the job done*, with a clear signal for when the job is bigger than that. polytropos operationalizes that as three moves:
+A request becomes a kit: `PLAN.md` holds the spec and the design, and `TASKS.md` holds the tasks, each with its model pin, its acceptance criteria and a verify command that proves them. Each task is verified in fresh context rather than on the implementer's word. On Claude Code you approve the spec before any design is written, the kit is checked statically and its spec reviewed before the first dispatch, and a finished kit can be re-checked for drift.
 
-- **[Route per task](skills/claude/route.md).** Estimate which tier the work needs and what it will cost before dispatching it, instead of defaulting to whatever model happens to be active.
-- **[Escalate, don't default](concepts/architect-execute-measure.md).** A frontier model does the expensive meta-work once — a codebase review, a migration plan — and hands off an execution kit of task briefs, model-pinned subagents, and verification loops that a cheaper model runs to completion, [escalating back](skills/claude/escalate.md) only when a step gets stuck.
-- **[See the spend](workflows/measure-the-savings.md).** Every recommendation is backed by a real number, computed at run time from a pricing file, never a hardcoded guess — and afterwards you can prove what the model mix actually saved.
+- **[A guide to spec-driven development](sdd/guide.md)**: the practice, the tools that do it, and where polytropos sits among them.
+- **[The two pipelines](sdd/pipelines.md)**: the usual pipeline stage by stage, then polytropos's, then the two side by side.
+- **[Guardrails and hardening](sdd/guardrails.md)**: every control, with the code that implements it, the test that proves it, the stages where it acts, and what is not a boundary.
 
-Two things here are easy to get backwards: [the same routing question has opposite answers](concepts/billing-modes.md) depending on whether you pay per token or per subscription, and [nothing can switch your session's model for you](concepts/the-one-constraint.md) — which is why model choice lives in files that pin it.
+## Cheap where it can be
+
+- **[Route per task](skills/claude/route.md).** Estimate the tier and the cost before dispatching, instead of defaulting to whatever model is active.
+- **[Escalate, don't default](concepts/architect-execute-measure.md).** Plan once on the frontier, execute on pinned cheaper models, and [escalate](skills/claude/escalate.md) one stuck task at a time.
+- **[See the spend](workflows/measure-the-savings.md).** Every figure is computed at run time from a pricing file, and afterwards you can measure what the model mix saved.
+
+Two things are easy to get backwards: [the same routing question has opposite answers](concepts/billing-modes.md) under per-token and subscription billing, and [nothing can switch your session's model for you](concepts/the-one-constraint.md), which is why model choice lives in files that pin it.
 
 ## Three harnesses, one workflow
 
-polytropos ships the same routing and cost-awareness into every agentic CLI it supports:
+- **[Claude Code](getting-started/claude.md)**: the native home, with skills, subagents and the full architect → execute → measure loop. [Skills](skills/claude/index.md).
+- **[GitHub Copilot CLI](getting-started/copilot.md)**: the same routing, adapted to Copilot's AI-Credit pricing and agent shape. [Skills](skills/copilot/index.md).
+- **[OpenAI Codex CLI](getting-started/codex.md)**: the same workflow, adapted to Codex's own pricing and prompt conventions. [Skills](skills/codex/index.md).
 
-- **[Claude Code](getting-started/claude.md)** — the plugin's native home: skills, subagents, and the architect → execute → measure loop. [Skills](skills/claude/index.md).
-- **[GitHub Copilot CLI](getting-started/copilot.md)** — the same routing logic, adapted to Copilot's AI-Credit pricing and agent shape. [Skills](skills/copilot/index.md).
-- **[OpenAI Codex CLI](getting-started/codex.md)** — the same workflow again, adapted to Codex's own pricing and prompt conventions. [Skills](skills/codex/index.md).
-
-Each gets a real, idiomatic integration rather than a lowest-common-denominator wrapper: the judgment is shared, the mechanics are not forced to match, and the rosters differ deliberately — the [parity matrix](skills/index.md) explains every gap.
+The rosters differ deliberately; the [parity matrix](skills/index.md) explains every gap.
 
 ## Where to go next
 
-[Getting started](getting-started/index.md) installs it; [Concepts](concepts/index.md) explains the design in four short pages; [Workflows](workflows/index.md) are task-shaped walkthroughs. The [skills reference](skills/index.md) covers every skill on every harness — each page carries a practical guide above the skill card itself, the exact text the model reads at run time, generated from the source so it can never drift. The [deep dives](deep-dives/index.md) are the architecture end to end; the [GitHub repository](https://github.com/agentmc15/polytropos) has the code and pricing data behind it.
+[Getting started](getting-started/index.md) installs it; [spec-driven development](sdd/guide.md) is the method; [Concepts](concepts/index.md) explains the design; [Workflows](workflows/index.md) are task-shaped walkthroughs. The [skills reference](skills/index.md) covers every skill on every harness, generated from the source. The [deep dives](deep-dives/index.md) are the architecture end to end; the [GitHub repository](https://github.com/agentmc15/polytropos) has the code and pricing data behind it.

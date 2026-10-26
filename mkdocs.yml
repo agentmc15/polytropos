@@ -51,6 +51,13 @@ nav:
     - Claude Code: getting-started/claude.md
     - GitHub Copilot CLI: getting-started/copilot.md
     - OpenAI Codex CLI: getting-started/codex.md
+  - Spec-driven development:
+    - The guide: sdd/guide.md
+    - The two pipelines: sdd/pipelines.md
+    - Guardrails and hardening: sdd/guardrails.md
+    - Why polytropos is spec-driven: deep-dives/spec-driven.md
+    - The core four, mapped: sdd/core-four.md
+    - The pitch: sdd/spec-driven-pitch.md
   - Concepts:
     - concepts/index.md
     - Two billing modes: concepts/billing-modes.md
@@ -153,7 +160,6 @@ nav:
     - Route experiment: deep-dives/route-experiment.md
     - Routing history: deep-dives/routing-history.md
     - Routing trends: deep-dives/routing-trends.md
-    - Spec-driven development: deep-dives/spec-driven.md
     - Training-data readiness: deep-dives/training-data-readiness.md
     - Workflow evaluation: deep-dives/workflow-eval.md
     - Release gate: deep-dives/release.md

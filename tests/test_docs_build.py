@@ -1040,5 +1040,100 @@ class AnchorNormalizationTests(unittest.TestCase):
         )
         self.assertIn("(#already-fine)", out)
 
+
+class FoldMermaidFencesTests(unittest.TestCase):
+    CHART = "Intro.\n\n```mermaid\nflowchart TD\n  A --> B\n\n  B --> C\n```\n\nAfter.\n"
+
+    def test_a_top_level_mermaid_fence_folds_behind_a_pointer(self):
+        out = db.fold_mermaid_fences(self.CHART, "pipelines.html")
+        self.assertIn("[standalone page](pipelines.html)", out)
+        self.assertIn('??? note "Chart source (Mermaid)"\n\n    ```mermaid\n', out)
+        self.assertIn("      A --> B\n\n      B --> C\n    ```\n", out)
+        self.assertNotRegex(out, r"(?m)^```mermaid")
+        self.assertTrue(out.startswith("Intro.\n\n"))
+        self.assertTrue(out.endswith("\nAfter.\n"))
+
+    def test_no_href_folds_without_a_pointer(self):
+        out = db.fold_mermaid_fences(self.CHART)
+        self.assertIn('??? note "Chart source (Mermaid)"', out)
+        self.assertNotIn("standalone page", out)
+
+    def test_a_tilde_fence_folds_too(self):
+        out = db.fold_mermaid_fences("~~~mermaid\nA\n~~~\n", "x.html")
+        self.assertIn("    ~~~mermaid\n    A\n    ~~~\n", out)
+
+    def test_other_fences_are_untouched(self):
+        for text in (
+            "```python\nprint(1)\n```\n",
+            "````md\n```mermaid\nA\n```\n````\n",  # nested in an outer fence
+            "```mermaid\nA\n",  # never closed
+            "No fences at all.\n",
+        ):
+            with self.subTest(text=text):
+                self.assertEqual(db.fold_mermaid_fences(text, "x.html"), text)
+
+
+class RenderSddPageTests(unittest.TestCase):
+    PAGE_MAP = {
+        "docs/sdd/guide.md": "sdd/guide.md",
+        "docs/sdd/pipelines.md": "sdd/pipelines.md",
+        "docs/sdd/pipelines.html": "sdd/pipelines.html",
+        "docs/SPEC-DRIVEN.md": "deep-dives/spec-driven.md",
+    }
+    SOURCE = (
+        "# Pipelines\n\nSee [the guide](guide.md), [the long form](../SPEC-DRIVEN.md) and "
+        "[the policy](../../SECURITY.md).\n\n```mermaid\nflowchart TD\n  A --> B\n```\n"
+    )
+
+    def test_links_resolve_from_docs_sdd_onto_site_pages(self):
+        out = db.render_sdd_page("docs/sdd/pipelines.md", self.SOURCE, self.PAGE_MAP)
+        self.assertIn("[the guide](guide.md)", out)
+        self.assertIn("[the long form](../deep-dives/spec-driven.md)", out)
+        self.assertIn(f"[the policy]({db.GITHUB_BLOB_BASE}SECURITY.md)", out)
+
+    def test_a_twin_with_diagrams_gets_the_tip_and_the_pointer(self):
+        out = db.render_sdd_page(
+            "docs/sdd/pipelines.md", self.SOURCE, self.PAGE_MAP, "pipelines.html", True
+        )
+        self.assertIn(
+            '!!! tip "Standalone page"\n    The standalone HTML version of this page is '
+            "[pipelines.html](pipelines.html), with its diagrams drawn.",
+            out,
+        )
+        self.assertIn("[standalone page](pipelines.html)", out)
+        self.assertLess(out.index("Mirrored from `docs/sdd/pipelines.md`"), out.index("!!! tip"))
+        self.assertLess(out.index("# Pipelines"), out.index("!!! note"))
+
+    def test_a_twin_without_diagrams_claims_none(self):
+        out = db.render_sdd_page("docs/sdd/guide.md", "# Guide\n\nText.\n", self.PAGE_MAP, "guide.html")
+        self.assertIn("is [guide.html](guide.html).", out)
+        self.assertNotIn("diagrams", out)
+
+    def test_no_twin_no_tip(self):
+        out = db.render_sdd_page("docs/sdd/guide.md", "# Guide\n\nText.\n", self.PAGE_MAP)
+        self.assertNotIn("!!! tip", out)
+
+
+class SddPageMapTests(unittest.TestCase):
+    def test_map_is_derived_from_the_docs_sdd_glob(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            sdd = Path(tmp) / "docs" / "sdd"
+            sdd.mkdir(parents=True)
+            for name in ("guide.md", "pipelines.md", "pipelines.html", "render.py"):
+                (sdd / name).write_text("x\n", encoding="utf-8")
+            self.assertEqual(
+                db.sdd_page_map(tmp),
+                {
+                    "docs/sdd/guide.md": "sdd/guide.md",
+                    "docs/sdd/pipelines.md": "sdd/pipelines.md",
+                    "docs/sdd/pipelines.html": "sdd/pipelines.html",
+                },
+            )
+
+    def test_no_docs_sdd_dir_means_an_empty_map(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertEqual(db.sdd_page_map(tmp), {})
+
+
 if __name__ == "__main__":
     unittest.main()

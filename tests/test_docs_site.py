@@ -106,7 +106,7 @@ class DeepDiveCoverageTests(unittest.TestCase):
 # Group 2: nav coverage, both directions.
 # ---------------------------------------------------------------------------
 
-_NAV_PAGE_TOKEN_RE = re.compile(r"(?:skills|deep-dives)/[A-Za-z0-9._/-]+\.md")
+_NAV_PAGE_TOKEN_RE = re.compile(r"(?:skills|deep-dives|sdd)/[A-Za-z0-9._/-]+\.md")
 
 
 class NavCoverageTests(unittest.TestCase):
@@ -116,9 +116,13 @@ class NavCoverageTests(unittest.TestCase):
         cls.expected = db.expected_pages(REPO_ROOT)
         # mkdocs nav entries are relative to docs_dir (docs-site/), so strip
         # that prefix from expected_pages()'s repo-relative keys before
-        # comparing against nav text.
+        # comparing against nav text. Only Markdown pages are nav pages: the
+        # SDD section's served HTML pages are reached from their mirror's
+        # link, never from the nav.
         cls.expected_nav_paths = {
-            rel_path[len("docs-site/") :] for rel_path in cls.expected
+            rel_path[len("docs-site/") :]
+            for rel_path in cls.expected
+            if rel_path.endswith(".md")
         }
 
     def test_every_expected_page_appears_exactly_once_in_nav(self):
@@ -140,7 +144,7 @@ class NavCoverageTests(unittest.TestCase):
         self.assertEqual(
             extra,
             [],
-            "mkdocs.yml nav references a skills/ or deep-dives/ path that is not "
+            "mkdocs.yml nav references a skills/, deep-dives/ or sdd/ path that is not "
             f"a generator-expected page -- those roots are generator-owned, so a "
             f"hand page may never live there: {extra!r}",
         )
@@ -226,6 +230,79 @@ class ContextLeakFenceTests(unittest.TestCase):
         self.assertEqual(
             offenders, [], f"SKILL.md contains the string 'docs-site': {offenders!r}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Group 5: the spec-driven development section -- docs/sdd/ mirrored to sdd/,
+# with its standalone HTML pages served beside the mirrors.
+# ---------------------------------------------------------------------------
+
+SDD_SOURCE = REPO_ROOT / "docs" / "sdd"
+SDD_SITE = DOCS_SITE_ROOT / "sdd"
+_MERMAID_OPENER_RE = re.compile(r"^(`{3,}|~{3,})\s*mermaid\s*$", re.MULTILINE)
+_ATTR_URL_RE = re.compile(r"""\b(?:href|src)\s*=\s*["']([^"']*)["']""", re.IGNORECASE)
+_EXTERNAL_LOAD_RE = re.compile(
+    r"""<script\b[^>]*\bsrc\s*=|<link\b[^>]*\bhref\s*=\s*["']https?:|<(?:img|iframe)\b[^>]*\bsrc\s*=\s*["']https?:|@import|url\(\s*["']?https?:""",
+    re.IGNORECASE,
+)
+
+
+class SddSectionTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.expected = db.expected_pages(REPO_ROOT)
+        cls.nav_text = MKDOCS_YML.read_text(encoding="utf-8")
+
+    def test_every_sdd_markdown_source_has_a_mirror_in_the_nav(self):
+        sources = sorted(SDD_SOURCE.glob("*.md"))
+        self.assertTrue(sources, "docs/sdd/ holds no Markdown sources")
+        for md_path in sources:
+            nav_path = f"sdd/{db.deep_dive_slug(md_path.name)}.md"
+            self.assertIn(f"docs-site/{nav_path}", self.expected)
+            self.assertIn(f": {nav_path}\n", self.nav_text, f"{nav_path} is not in the nav")
+
+    def test_every_sdd_html_page_is_served_byte_for_byte(self):
+        sources = sorted(SDD_SOURCE.glob("*.html"))
+        self.assertTrue(sources, "docs/sdd/ holds no HTML pages")
+        for html_path in sources:
+            served = f"docs-site/sdd/{html_path.name}"
+            self.assertEqual(self.expected.get(served), html_path.read_bytes(), served)
+            self.assertEqual((REPO_ROOT / served).read_bytes(), html_path.read_bytes(), served)
+
+    def test_each_mirror_links_its_standalone_twin(self):
+        for md_path in sorted(SDD_SOURCE.glob("*.md")):
+            twin = md_path.with_suffix(".html")
+            mirror = (SDD_SITE / f"{db.deep_dive_slug(md_path.name)}.md").read_text(encoding="utf-8")
+            tip = '!!! tip "Standalone page"'
+            if twin.is_file():
+                self.assertIn(tip, mirror, md_path.name)
+                self.assertIn(f"]({twin.name})", mirror, md_path.name)
+            else:
+                self.assertNotIn(tip, mirror, md_path.name)
+
+    def test_no_mermaid_fence_reaches_a_mirror_unfolded(self):
+        folded_total = 0
+        for md_path in sorted(SDD_SOURCE.glob("*.md")):
+            source_fences = len(_MERMAID_OPENER_RE.findall(md_path.read_text(encoding="utf-8")))
+            mirror = (SDD_SITE / f"{db.deep_dive_slug(md_path.name)}.md").read_text(encoding="utf-8")
+            self.assertEqual(_MERMAID_OPENER_RE.findall(mirror), [], md_path.name)
+            self.assertEqual(
+                mirror.count('??? note "Chart source (Mermaid)"'), source_fences, md_path.name
+            )
+            folded_total += source_fences
+        self.assertGreater(folded_total, 0, "no Mermaid fence exercised the fold")
+
+    def test_served_pages_load_nothing_external_and_link_nothing_missing(self):
+        """The section comment's claim: the served pages load nothing
+        external. A relative href or src must resolve beside them."""
+        for html_path in sorted(SDD_SITE.glob("*.html")):
+            text = html_path.read_text(encoding="utf-8")
+            self.assertIsNone(_EXTERNAL_LOAD_RE.search(text), html_path.name)
+            for target in _ATTR_URL_RE.findall(text):
+                if target.startswith(("http://", "https://", "mailto:", "#")) or not target:
+                    continue
+                resolved = (html_path.parent / target.split("#", 1)[0]).resolve()
+                self.assertTrue(resolved.is_file(), f"{html_path.name} -> {target}")
 
 
 if __name__ == "__main__":

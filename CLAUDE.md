@@ -123,8 +123,8 @@ loaded into every session, so keep it a list of rules, not history or rationale.
   writes one provenance sidecar beside it); skill-sanctioned graphify subcommands are the
   offline set only (never `extract`/`label`/backends/`add`/`clone`/`watch`/`global`/`install`
   without explicit user opt-in). `/graphify-out/` stays gitignored.
-- **Generated documentation is never hand-edited.** `docs-site/skills/` and
-  `docs-site/deep-dives/` are written only by `bin/docs_build.py`, `copilot-docs/` only by
+- **Generated documentation is never hand-edited.** `docs-site/{skills,deep-dives,sdd}/`
+  are written only by `bin/docs_build.py`, `copilot-docs/` only by
   `bin/copilot_docs.py`, and the marked block of `docs/RELEASE.md` only by
   `bin/release_gate.py build`. Edit the SOURCE (a SKILL.md, `docs/*.md`, `README.md`, `SECURITY.md`,
   `docs-src/fragments/`) and run that generator's `build`; both have drift tests that fail

@@ -40,6 +40,13 @@ bad plan.
 If something is wrong, fix it here. Editing a brief costs nothing; discovering the same
 problem in task eleven costs eleven dispatches.
 
+On Claude Code, the execute skill repeats part of this check mechanically before its first
+dispatch. `kit_contract.py graph` validates the task graph. `analyze` reads every path a brief
+names and every verify command without running anything, and fails on a verify the drivers
+cannot read. Then one fresh-context reviewer reads the spec against the tasks (the P0 spec
+review), unless the kit's workflow opted out of independent review. On the other harnesses,
+run the static half yourself: `python3 bin/kit_contract.py analyze --kit <kit dir>`.
+
 ## Step 3 — Execute
 
 **On Claude Code:** `/polytropos:execute <slug>`
@@ -69,6 +76,13 @@ the executor — go back to step 2.
 Do not skip this. [Measure the savings](measure-the-savings.md) turns the run into evidence
 you can pin the next kit's models with.
 
+## Step 6 — Check a finished kit for drift
+
+A kit's verify commands outlive the run. `python3 bin/kit_contract.py drift --kit <kit dir>`
+re-runs every done task's verify inside the execution boundary and reports which ones no
+longer hold. A drifted check is reported as drift, not failure: the task was accepted, and
+something has changed since.
+
 ## Boundaries
 
 - **The plan is not up for re-litigation during execution.** The driver's job is faithful
@@ -87,3 +101,5 @@ you can pin the next kit's models with.
   justified a kit.
 - [Deep dive: guide & cookbook](../deep-dives/guide.md) — every skill in narrative form,
   with worked examples.
+- [The two pipelines](../sdd/pipelines.md) — every stage of this walkthrough beside the
+  usual spec-driven pipeline, and [the guardrails](../sdd/guardrails.md) that act at each.

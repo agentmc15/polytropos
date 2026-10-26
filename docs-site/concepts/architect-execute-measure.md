@@ -65,3 +65,6 @@ a unit rather than divided; the orchestrator's own session stays one un-split li
   a worked example and the full ledger-line specification.
 - [Deep dive: spec-driven development](../deep-dives/spec-driven.md) — the kit as a spec, and
   how verification is held to it rather than to the implementer's claims.
+- [The two pipelines](../sdd/pipelines.md) and [guardrails and hardening](../sdd/guardrails.md)
+  — the loop stage by stage beside the usual spec-driven pipeline, and every control that acts
+  on it.

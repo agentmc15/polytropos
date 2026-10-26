@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Generate the docs-site skill-reference pages and deep-dive mirrors.
+"""Generate the docs-site skill-reference pages, deep-dive mirrors, and the
+spec-driven development section (docs/sdd/ mirrored, its HTML pages served).
 
 This module is deterministic, byte-stable, and offline: every run reads only
 committed repository content and produces identical output given identical
@@ -634,28 +635,38 @@ def render_deep_dive_page(source_rel_path, source_text, page_map):
     F3: any link whose rewritten target resolves to THIS very page (e.g. its
     own .html companion) is neutralized — the link is dropped and only its
     visible text survives — via rewrite_links' self_path parameter."""
+    return _render_mirror(source_rel_path, source_text, page_map, "deep-dives")
+
+
+def _render_mirror(source_rel_path, source_text, page_map, site_dir, extra_admonitions=()):
+    """The body every mirror page shares (render_deep_dive_page,
+    render_sdd_page): links resolved against the source's own directory and
+    rewritten against `site_dir`, the 'Mirrored from ...' note below the
+    source's h1, then any `extra_admonitions` (already site-relative markdown
+    blocks), then the rest of the source."""
     slug = deep_dive_slug(PurePosixPath(source_rel_path).name)
-    self_canonical = f"deep-dives/{slug}.md"
-    relative_page_map = _relativize_page_map(page_map, "deep-dives")
-    self_path = posixpath.relpath(self_canonical, start="deep-dives")
+    self_canonical = f"{site_dir}/{slug}.md"
+    relative_page_map = _relativize_page_map(page_map, site_dir)
+    self_path = posixpath.relpath(self_canonical, start=site_dir)
+    source_dir = PurePosixPath(source_rel_path).parent.as_posix()
 
     transformed = rewrite_links(
-        source_text, "docs", GITHUB_BLOB_BASE, relative_page_map, self_path=self_path
+        source_text, source_dir, GITHUB_BLOB_BASE, relative_page_map, self_path=self_path
     )
     note = (
         f"Mirrored from `{source_rel_path}` — edit the source, then run "
         "`python3 bin/docs_build.py build`."
     )
-    admonition = "!!! note\n    " + note
+    admonitions = ["!!! note\n    " + note, *extra_admonitions]
 
     h1_line, rest = _split_leading_h1(transformed)
     blocks = [_provenance_comment(source_rel_path)]
     if h1_line is not None:
         blocks.append(h1_line)
-        blocks.append(admonition)
+        blocks.extend(admonitions)
         blocks.append(rest.strip("\n"))
     else:
-        blocks.append(admonition)
+        blocks.extend(admonitions)
         blocks.append(transformed.strip("\n"))
 
     return "\n\n".join(blocks) + "\n"
@@ -677,6 +688,97 @@ def render_deep_dive_index(entries):
         "\n".join(table_lines),
     ]
     return "\n\n".join(blocks) + "\n"
+
+
+# ---------------------------------------------------------------------------
+# The spec-driven development section: every docs/sdd/*.md mirrored to
+# sdd/<slug>.md, and every docs/sdd/*.html served beside it byte for byte.
+# Unlike the docs/*.html companions (PLAN.md D6), these HTML pages ARE served:
+# the pipelines and guardrails diagrams are drawn only there, and the site
+# cannot draw Mermaid without loading a third-party script at run time, which
+# the locked toolchain does not admit. The pages load nothing external.
+# ---------------------------------------------------------------------------
+
+SDD_SOURCE_DIR = "docs/sdd"
+SDD_SITE_DIR = "sdd"
+
+
+def sdd_page_map(repo_root=REPO_ROOT):
+    """The canonical link-rewrite map for the SDD section, derived from a live
+    docs/sdd/ glob: 'docs/sdd/<name>.md' -> 'sdd/<slug>.md' and
+    'docs/sdd/<name>.html' -> 'sdd/<name>.html' (the served copy)."""
+    root = Path(repo_root)
+    mapping = {}
+    for md_path in sorted((root / SDD_SOURCE_DIR).glob("*.md")):
+        mapping[f"{SDD_SOURCE_DIR}/{md_path.name}"] = (
+            f"{SDD_SITE_DIR}/{deep_dive_slug(md_path.name)}.md"
+        )
+    for html_path in sorted((root / SDD_SOURCE_DIR).glob("*.html")):
+        mapping[f"{SDD_SOURCE_DIR}/{html_path.name}"] = f"{SDD_SITE_DIR}/{html_path.name}"
+    return mapping
+
+
+def _fence_run(stripped):
+    """(char, length) of the backtick or tilde run opening `stripped`, else
+    (None, 0) — the same CommonMark reading _fence_flags applies."""
+    char = stripped[:1]
+    if char not in ("`", "~"):
+        return None, 0
+    return char, len(stripped) - len(stripped.lstrip(char))
+
+
+def fold_mermaid_fences(text, standalone_href=None):
+    """Fold each top-level ```mermaid fence into a collapsed details block,
+    preceded by one line pointing at `standalone_href`, where the chart is
+    drawn. A mermaid fence nested inside another fence, or one that never
+    closes, is left exactly as it is."""
+    lines = text.splitlines(keepends=True)
+    out = []
+    i = 0
+    while i < len(lines):
+        stripped = lines[i].strip()
+        char, run = _fence_run(stripped)
+        if run < 3:
+            out.append(lines[i])
+            i += 1
+            continue
+        end = i + 1
+        while end < len(lines):
+            close_char, close_run = _fence_run(lines[end].strip())
+            if close_char == char and close_run >= run:
+                break
+            end += 1
+        block = lines[i : end + 1]
+        if end == len(lines) or stripped[run:].strip() != "mermaid":
+            out.extend(block)
+        else:
+            if standalone_href:
+                out.append(
+                    f"*This chart is drawn on the [standalone page]({standalone_href}); "
+                    "its Mermaid source is folded below.*\n\n"
+                )
+            out.append('??? note "Chart source (Mermaid)"\n\n')
+            for line in block:
+                body = line.rstrip("\r\n")
+                out.append(f"    {body}\n" if body.strip() else "\n")
+        i = end + 1
+    return "".join(out)
+
+
+def render_sdd_page(source_rel_path, source_text, page_map, twin_name=None, twin_has_diagrams=False):
+    """Render one docs/sdd/*.md mirror page (str). Pure, like
+    render_deep_dive_page: `page_map` is the canonical combined map, and the
+    caller says whether a standalone `twin_name` (e.g. 'pipelines.html') sits
+    beside the source and whether it draws diagrams. When it does, a tip below
+    the mirror note links it, and each Mermaid fence folds away behind a line
+    pointing at it."""
+    folded = fold_mermaid_fences(source_text, twin_name)
+    extra = []
+    if twin_name:
+        sentence = f"The standalone HTML version of this page is [{twin_name}]({twin_name})"
+        sentence += ", with its diagrams drawn." if twin_has_diagrams else "."
+        extra.append('!!! tip "Standalone page"\n    ' + sentence)
+    return _render_mirror(source_rel_path, folded, page_map, SDD_SITE_DIR, extra)
 
 
 # ---------------------------------------------------------------------------
@@ -789,7 +891,7 @@ def check_fragment_orphans(repo_root, inventory):
 # module produced. docs-site/deep-dives/ does not exist until T6 lands (its
 # entry here is forward-declared and simply has nothing to scan until then —
 # `check_site` skips any root that is not yet a directory).
-_GENERATOR_OWNED_ROOTS = ("docs-site/skills", "docs-site/deep-dives")
+_GENERATOR_OWNED_ROOTS = ("docs-site/skills", "docs-site/deep-dives", "docs-site/sdd")
 
 REBUILD_REMEDY = "python3 bin/docs_build.py build"
 
@@ -802,19 +904,21 @@ def _normalize_bytes(text):
 
 
 def expected_pages(repo_root=REPO_ROOT):
-    """Return every page this repo's docs-site/skills/ and docs-site/deep-dives/
-    trees should contain, as a dict mapping repo-relative POSIX path (e.g.
-    'docs-site/skills/claude/route.md', 'docs-site/deep-dives/guide.md') to its
-    expected UTF-8 bytes. The single source of truth for both `build` and
+    """Return every page this repo's docs-site/skills/, docs-site/deep-dives/
+    and docs-site/sdd/ trees should contain, as a dict mapping repo-relative
+    POSIX path (e.g. 'docs-site/skills/claude/route.md',
+    'docs-site/deep-dives/guide.md', 'docs-site/sdd/pipelines.html') to its
+    expected bytes. The single source of truth for both `build` and
     `check`: derives the inventory, validates+loads every fragment (raising
     ValueError on a malformed skill/fragment or an orphan fragment path — never
-    silently skipped), builds the canonical deep_dive_page_map(), and renders
-    every page (each renderer relativizes that map itself, against its own
-    site directory)."""
+    silently skipped), builds the canonical page map (deep_dive_page_map()
+    plus sdd_page_map()), and renders every page (each renderer relativizes
+    that map itself, against its own site directory). The served SDD HTML
+    pages are the one non-Markdown entry: copied verbatim, never rendered."""
     root = Path(repo_root)
     inventory = skill_inventory(root)
     check_fragment_orphans(root, inventory)
-    page_map = deep_dive_page_map(root)
+    page_map = {**deep_dive_page_map(root), **sdd_page_map(root)}
 
     pages = {}
 
@@ -847,6 +951,22 @@ def expected_pages(repo_root=REPO_ROOT):
     index_text = render_deep_dive_index(index_entries)
     pages["docs-site/deep-dives/index.md"] = _normalize_bytes(index_text)
 
+    sdd_root = root / SDD_SOURCE_DIR
+    for md_path in sorted(sdd_root.glob("*.md")):
+        twin = md_path.with_suffix(".html")
+        twin_name = twin.name if twin.is_file() else None
+        twin_has_diagrams = bool(twin_name) and "<svg" in twin.read_text(encoding="utf-8")
+        text = render_sdd_page(
+            f"{SDD_SOURCE_DIR}/{md_path.name}",
+            md_path.read_text(encoding="utf-8"),
+            page_map,
+            twin_name,
+            twin_has_diagrams,
+        )
+        pages[f"docs-site/{SDD_SITE_DIR}/{deep_dive_slug(md_path.name)}.md"] = _normalize_bytes(text)
+    for html_path in sorted(sdd_root.glob("*.html")):
+        pages[f"docs-site/{SDD_SITE_DIR}/{html_path.name}"] = html_path.read_bytes()
+
     return pages
 
 
@@ -873,8 +993,8 @@ def check_site(repo_root=REPO_ROOT):
     """Return (stale, unknown) sorted repo-relative-path lists: `stale` is every
     expected page that is missing or byte-differs from what expected_pages()
     says it should be; `unknown` is every file under a generator-owned root
-    (docs-site/skills/, docs-site/deep-dives/) that is NOT a key of
-    expected_pages() — i.e. drift the generator does not know about."""
+    (docs-site/skills/, docs-site/deep-dives/, docs-site/sdd/) that is NOT a key
+    of expected_pages() — i.e. drift the generator does not know about."""
     root = Path(repo_root)
     pages = expected_pages(root)
     stale = [
