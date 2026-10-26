@@ -1,0 +1,511 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="claude:viewport-fit-sides" content="cover">
+<title>Guardrails and Hardening</title>
+<style>
+  :root {
+    --bg: #f7f8f6; --ink: #1c2329; --muted: #5a6470; --line: #dfe3df;
+    --accent: #0f6b5c; --card: #ffffff; --code-bg: #eceeea;
+    --gate: #b45309; --weak: #9f1239; --weak-bg: #fdf0f2; --sb-bg: #e9f4f1;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #13171a; --ink: #e6e9e4; --muted: #a0a9b2; --line: #2d343a;
+      --accent: #5ccbb4; --card: #1a1f23; --code-bg: #252b30;
+      --gate: #f0a04b; --weak: #f49ab0; --weak-bg: #2c1c22; --sb-bg: #15302b;
+      color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #13171a; --ink: #e6e9e4; --muted: #a0a9b2; --line: #2d343a;
+    --accent: #5ccbb4; --card: #1a1f23; --code-bg: #252b30;
+    --gate: #f0a04b; --weak: #f49ab0; --weak-bg: #2c1c22; --sb-bg: #15302b;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  html { background: var(--bg); }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 16px/1.55 Georgia, 'Times New Roman', serif; -webkit-text-size-adjust: 100%;
+  }
+  .wrap {
+    max-width: 1180px; margin: 0 auto; padding-block: 2.6rem 4rem;
+    padding-left: max(16px, env(safe-area-inset-left, 0px));
+    padding-right: max(16px, env(safe-area-inset-right, 0px));
+  }
+  .kicker {
+    text-transform: uppercase; letter-spacing: .12em; font-size: .75rem; margin: 0;
+    color: var(--muted); font-family: ui-monospace, Menlo, monospace;
+  }
+  .kicker b { color: var(--accent); font-weight: 600; }
+  h1 { font-size: 2.1rem; line-height: 1.15; margin: .4rem 0 .5rem; text-wrap: balance; }
+  .sub { color: var(--muted); font-style: italic; margin: 0 0 1.4rem; max-width: 52rem; }
+  code {
+    font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace; font-size: .84em;
+    background: var(--code-bg); padding: .06em .32em; border-radius: 4px; overflow-wrap: anywhere;
+  }
+  a { color: var(--accent); }
+  .parts {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: .6rem;
+    margin: 0; padding: 0; list-style: none;
+  }
+  .parts a {
+    display: block; text-decoration: none; color: var(--ink); font-weight: 700;
+    background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: .55rem .8rem;
+  }
+  .parts a:hover, .parts a:focus-visible { border-color: var(--accent); }
+  .parts a span, .part-num {
+    display: block; font-family: ui-monospace, Menlo, monospace; font-size: .7rem; font-weight: 400;
+    letter-spacing: .1em; text-transform: uppercase; color: var(--accent);
+  }
+  .part { margin-top: 2.8rem; padding-top: 1.6rem; border-top: 2px solid var(--ink); scroll-margin-top: 1rem; }
+  .part-head { margin: 0 0 1.8rem; }
+  .part-num { margin: 0; }
+  .part-head h2 { font-size: 1.75rem; line-height: 1.2; margin: .15rem 0 .4rem; text-wrap: balance; }
+  .part-head .lede { color: var(--muted); margin: 0; max-width: 52rem; }
+  .block { margin: 0 0 2.4rem; scroll-margin-top: 1rem; }
+  .block > h3 { font-size: 1.25rem; margin: 0 0 .2rem; text-wrap: balance; }
+  .block > .lede { color: var(--muted); font-size: .9rem; margin: 0 0 1rem; max-width: 52rem; }
+  .lanes { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: .75rem; }
+  .lane {
+    min-width: 0; background: var(--card); border: 1px solid var(--line); border-top: 4px solid var(--accent);
+    border-radius: 8px; padding: .7rem .9rem .8rem; font-size: .9rem;
+  }
+  .lane:nth-child(2) { border-top-color: var(--gate); }
+  .lane:nth-child(3) { border-top-color: var(--weak); }
+  .lane h4 { margin: 0 0 .1rem; font-size: 1rem; }
+  .lane .tag {
+    font-family: ui-monospace, Menlo, monospace; font-size: .68rem; letter-spacing: .08em;
+    text-transform: uppercase; color: var(--muted); margin: 0 0 .35rem;
+  }
+  .lane p { margin: 0; }
+  .callout {
+    background: var(--card); border: 1px solid var(--line); border-left: 4px solid var(--gate);
+    border-radius: 8px; padding: .7rem .9rem; max-width: 52rem; font-size: .92rem;
+  }
+  .callout p { margin: 0 0 .4rem; }
+  .callout p:last-child { margin: 0; }
+  .fig { margin: 0; }
+  .fig-scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; }
+  .fig-scroll svg { display: block; width: 100%; min-width: 860px; height: auto; }
+  .fig figcaption { color: var(--muted); font-size: .86rem; margin-top: .55rem; max-width: 52rem; }
+  .scroll-hint { display: none; color: var(--muted); font-size: .82rem; font-style: italic; margin: 0 0 .4rem; }
+  .fc-box { fill: var(--card); stroke: var(--line); stroke-width: 1.5; }
+  .gb-open { stroke: var(--weak); stroke-dasharray: 5 4; }
+  .gb-host { fill: none; stroke: var(--line); stroke-width: 1.5; stroke-dasharray: 4 4; }
+  .gb-sandbox { fill: var(--sb-bg); stroke: var(--accent); stroke-width: 2; }
+  .gb-sandbox-label { fill: var(--accent); font-family: ui-monospace, Menlo, monospace; font-size: 10px; letter-spacing: .08em; }
+  .fc-edge { fill: none; stroke: var(--muted); stroke-width: 1.6; }
+  .fc-head { fill: var(--muted); }
+  .gb-blocked { stroke: var(--weak); stroke-width: 1.6; stroke-dasharray: 3 4; }
+  .gb-x { fill: var(--card); stroke: var(--weak); stroke-width: 2; }
+  .gb-x-mark { stroke: var(--weak); stroke-width: 2; fill: none; }
+  .fc-name { fill: var(--ink); font-family: Georgia, 'Times New Roman', serif; font-weight: 700; font-size: 14px; }
+  .fc-out { fill: var(--muted); font-family: ui-monospace, Menlo, monospace; font-size: 10.5px; }
+  .fc-label { fill: var(--muted); font-family: Georgia, 'Times New Roman', serif; font-size: 11.5px; font-style: italic; }
+  .fc-frame-label { fill: var(--muted); font-family: ui-monospace, Menlo, monospace; font-size: 10px; letter-spacing: .08em; }
+  .gb-note { fill: var(--ink); font-family: Georgia, 'Times New Roman', serif; font-size: 12.5px; }
+  .gb-warn { fill: var(--weak); font-family: ui-monospace, Menlo, monospace; font-size: 10.5px; font-weight: 700; }
+  .ctl-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: .75rem; }
+  .ctl {
+    min-width: 0; display: flex; flex-direction: column; gap: .35rem; font-size: .88rem;
+    background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: .7rem .9rem .8rem;
+    scroll-margin-top: 1rem;
+  }
+  .ctl h4 { margin: 0; font-size: 1rem; display: flex; align-items: baseline; gap: .5rem; text-wrap: balance; }
+  .cid {
+    font-family: ui-monospace, Menlo, monospace; font-size: .72rem; font-weight: 700; color: var(--accent);
+    border: 1px solid var(--accent); border-radius: 4px; padding: 0 .35rem; flex: none;
+  }
+  .ctl p { margin: 0; }
+  .ctl .row { color: var(--muted); font-size: .84rem; }
+  .ctl .row b {
+    font-family: ui-monospace, Menlo, monospace; font-size: .66rem; letter-spacing: .08em;
+    text-transform: uppercase; margin-right: .35rem; color: var(--ink);
+  }
+  .ctl .none { color: var(--weak); }
+  .ctl .gap { background: var(--weak-bg); color: var(--weak); border-radius: 6px; padding: .3rem .55rem; font-size: .82rem; }
+  .chips { display: flex; flex-wrap: wrap; gap: .3rem; }
+  .chip {
+    font-family: ui-monospace, Menlo, monospace; font-size: .7rem; text-decoration: none; color: var(--ink);
+    border: 1px solid var(--line); border-radius: 99px; padding: .02rem .45rem; background: var(--bg);
+  }
+  .chip:hover { border-color: var(--accent); }
+  .table-wrap { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; background: var(--card); font-size: .86rem; }
+  th, td { border: 1px solid var(--line); padding: .4rem .5rem; text-align: left; vertical-align: top; }
+  th { background: var(--code-bg); }
+  .matrix th, .matrix td { text-align: center; }
+  .matrix th:first-child, .matrix td:first-child { text-align: left; white-space: nowrap; }
+  .matrix td.on { color: var(--accent); font-size: 1.05rem; }
+  .matrix thead th { font-family: ui-monospace, Menlo, monospace; font-size: .72rem; }
+  .stage-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: .75rem; }
+  .stage-card {
+    min-width: 0; background: var(--card); border: 1px solid var(--line); border-radius: 8px;
+    padding: .65rem .85rem .75rem; font-size: .86rem; scroll-margin-top: 1rem;
+  }
+  .stage-card h4 { margin: 0 0 .35rem; font-size: 1rem; }
+  .stage-card ul { margin: 0; padding-left: 1.1rem; }
+  .stage-card li { margin: .1rem 0; }
+  .gap-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: .75rem; }
+  .gap-card {
+    min-width: 0; background: var(--card); border: 1px solid var(--line); border-left: 4px solid var(--weak);
+    border-radius: 8px; padding: .65rem .85rem .75rem; font-size: .88rem;
+  }
+  .gap-card h4 { margin: 0 0 .25rem; font-size: 1rem; }
+  .gap-card p { margin: 0; }
+  footer {
+    margin-top: 1.8rem; padding-top: .7rem; border-top: 1px solid var(--line); color: var(--muted);
+    font-size: .82rem; font-family: ui-monospace, Menlo, monospace;
+  }
+  @media (max-width: 820px) {
+    .wrap { padding-block: 1.8rem 3rem; }
+    .scroll-hint { display: block; }
+    h1 { font-size: 1.65rem; }
+    .part-head h2 { font-size: 1.45rem; }
+  }
+  @media print {
+    :root, :root[data-theme="dark"], :root:not([data-theme="light"]) {
+      --bg: #ffffff; --card: #ffffff; --ink: #1c2329; --muted: #5a6470; --line: #d6dbd6;
+    }
+    .wrap { max-width: none; padding-block: 0; }
+    .ctl, .lane, .gap-card, .stage-card, .fig, table { break-inside: avoid; page-break-inside: avoid; }
+    .fig-scroll svg { min-width: 0; }
+    * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  }
+</style>
+</head>
+<body>
+<main class="wrap">
+
+<p class="kicker"><b>polytropos</b> &middot; guardrails &middot; safety &middot; security hardening</p>
+<h1>Guardrails, safety and hardening in polytropos</h1>
+<p class="sub">polytropos dispatches coding agents, runs the checks a kit names, and writes execution state. Running a kit's checks is intentional code execution, so its safety comes from naming exactly what is confined, what is gated, what is only recorded, and what is not a boundary at all. This page lists every guardrail, how each one is built, the test that proves it, and the stages where it acts. SECURITY.md is the policy; this page maps it.</p>
+
+<nav aria-label="Parts">
+  <ol class="parts">
+    <li><a href="#posture"><span>Part 1</span>The posture</a></li>
+    <li><a href="#controls"><span>Part 2</span>Every control, and how it is implemented</a></li>
+    <li><a href="#stages"><span>Part 3</span>Stage by stage</a></li>
+    <li><a href="#gaps"><span>Part 4</span>What is not a boundary</a></li>
+  </ol>
+</nav>
+
+<section class="part" id="posture" aria-labelledby="h-posture">
+  <header class="part-head">
+    <p class="part-num">Part 1</p>
+    <h2 id="h-posture">The posture</h2>
+    <p class="lede">Three ideas hold the rest together: the approval line follows reversibility, the tool is for repositories you control, and only one thing runs inside an OS boundary.</p>
+  </header>
+
+  <section class="block" aria-labelledby="h-line">
+    <h3 id="h-line">Where the approval line sits</h3>
+    <p class="lede">The line between what runs unasked and what waits for you is reversibility, not task size. Each lane is a code path, not a policy a model is asked to follow.</p>
+    <div class="lanes">
+      <article class="lane"><p class="tag">Reversible work</p><h4>Runs without asking</h4><p>Reading, planning, checking and rehearsing. Every <code>demo</code>, <code>--demo</code> and <code>--dry-run</code> path is synthetic or spawns nothing; <code>harness_update.py check</code> and <code>preflight</code>, <code>exec_policy.py check</code> and the docs generators' <code>check</code> compare and write nothing.</p></article>
+      <article class="lane"><p class="tag">Consequential actions</p><h4>Prepared, then gated on one named switch</h4><p>Spending needs <code>--live</code> with <code>--max-usd</code>. Writing a harness home goes only through <code>harness_select.py install</code> or <code>harness_update.py apply</code>, and overwriting what it does not own takes <code>--adopt-existing</code>. Leaving the OS boundary is <code>--exec-mode trusted-host</code>; restoring a reviewer's blanket grant is <code>--review-permissions bypass</code>. Each opt-out reports itself.</p></article>
+      <article class="lane"><p class="tag">Irreversible actions</p><h4>Never on the engine's own initiative</h4><p>Nothing relocates a store. The one deletion, <code>runtime_data.py forget</code>, is a dry run unless given <code>--apply</code>. Installation never overwrites what it does not own, and <code>harness_update.py apply</code> prints the <code>~/.claude</code> remedy rather than running it.</p></article>
+    </div>
+  </section>
+
+  <section class="block" aria-labelledby="h-who">
+    <h3 id="h-who">Who it is for</h3>
+    <div class="callout"><p>polytropos is appropriate for repositories you control, run by the person who owns the machine. It is not an isolation boundary for unattended execution against untrusted repositories from a credential-rich host.</p><p>An outer sandbox — a container, a VM, a separate user account — is what limits host exposure today. polytropos does not provide one, and a kit is trusted input: its verify commands are code.</p></div>
+  </section>
+
+  <section class="block" aria-labelledby="h-boundary">
+    <h3 id="h-boundary">The execution boundary</h3>
+    <p class="lede">During a headless kit run, only the verify command runs inside the OS boundary. The model dispatch runs with your privileges, because the sandbox blocks the Keychain where subscription credentials live.</p>
+    <p class="scroll-hint">Scroll sideways to see the whole diagram.</p>
+    <figure class="fig">
+      <div class="fig-scroll">
+        <svg viewBox="0 0 1100 520" role="img" aria-label="The execution boundary during a headless kit run. The kit driver hands a brief to the model dispatch, which is not confined and edits the workspace tree with your privileges. The driver runs each verify command itself inside the macOS sandbox, which can read and write the workspace but cannot reach the network or the credential stores. The attempt ledger and the private stores sit outside the tree, where a confined check cannot reach them.">
+          <defs>
+            <marker id="gb-arrow" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="fc-head" d="M0,0 L10,5 L0,10 z"/></marker>
+          </defs>
+          <rect class="gb-host" x="8" y="8" width="1084" height="504" rx="14"/>
+          <text class="fc-frame-label" x="24" y="32">YOUR MACHINE · YOUR USER'S PRIVILEGES</text>
+
+          <rect class="gb-sandbox" x="720" y="20" width="350" height="320" rx="12"/>
+          <text class="gb-sandbox-label" x="736" y="42">OS BOUNDARY · SANDBOX-EXEC</text>
+
+          <rect class="fc-box" x="48" y="56" width="240" height="74" rx="8"/>
+          <text class="fc-name" x="168" y="88" text-anchor="middle">Kit driver</text>
+          <text class="fc-out" x="168" y="108" text-anchor="middle">bin/claude_execute.py and siblings</text>
+
+          <rect class="fc-box" x="750" y="56" width="290" height="74" rx="8"/>
+          <text class="fc-name" x="895" y="88" text-anchor="middle">Verify command</text>
+          <text class="fc-out" x="895" y="108" text-anchor="middle">the task's own check</text>
+
+          <text class="gb-note" x="752" y="178">writes: the workspace and a run scratch dir</text>
+          <text class="gb-note" x="752" y="200">network: denied</text>
+          <text class="gb-note" x="752" y="222">credential stores: unreadable</text>
+          <text class="gb-note" x="752" y="244">environment: an allowlist</text>
+          <text class="gb-note" x="752" y="266">no backend: refuses, never falls back</text>
+
+          <rect class="fc-box gb-open" x="48" y="232" width="240" height="86" rx="8"/>
+          <text class="fc-name" x="168" y="260" text-anchor="middle">Model dispatch</text>
+          <text class="fc-out" x="168" y="280" text-anchor="middle">claude, copilot, codex, agent</text>
+          <text class="gb-warn" x="168" y="301" text-anchor="middle">not confined</text>
+
+          <rect class="fc-box" x="400" y="232" width="250" height="86" rx="8"/>
+          <text class="fc-name" x="525" y="260" text-anchor="middle">Workspace tree</text>
+          <text class="fc-out" x="525" y="280" text-anchor="middle">code, TASKS.md, NOTES.md</text>
+          <text class="fc-out" x="525" y="298" text-anchor="middle">the tree a worker edits</text>
+
+          <rect class="fc-box" x="48" y="404" width="300" height="80" rx="8"/>
+          <text class="fc-name" x="198" y="432" text-anchor="middle">Attempt ledger and stores</text>
+          <text class="fc-out" x="198" y="452" text-anchor="middle">outside the tree, 0700 / 0600</text>
+          <text class="fc-out" x="198" y="470" text-anchor="middle">out of a confined check's reach</text>
+
+          <rect class="fc-box" x="740" y="404" width="150" height="60" rx="8"/>
+          <text class="fc-name" x="815" y="439" text-anchor="middle">Network</text>
+          <rect class="fc-box" x="910" y="404" width="160" height="60" rx="8"/>
+          <text class="fc-name" x="990" y="430" text-anchor="middle">Credential stores</text>
+          <text class="fc-out" x="990" y="448" text-anchor="middle">Keychain, provider keys</text>
+
+          <line class="fc-edge" x1="288" y1="93" x2="750" y2="93" marker-end="url(#gb-arrow)"/>
+          <text class="fc-label" x="519" y="84" text-anchor="middle">runs the check itself</text>
+          <line class="fc-edge" x1="168" y1="130" x2="168" y2="232" marker-end="url(#gb-arrow)"/>
+          <text class="fc-label" x="178" y="172">the brief only;</text>
+          <text class="fc-label" x="178" y="188">its provider's keys only</text>
+          <line class="fc-edge" x1="288" y1="275" x2="400" y2="275" marker-end="url(#gb-arrow)"/>
+          <text class="fc-label" x="344" y="267" text-anchor="middle">edits</text>
+          <path class="fc-edge" d="M750,115 H700 V275 H650" marker-end="url(#gb-arrow)"/>
+          <text class="fc-label" x="692" y="205" text-anchor="end">reads and writes</text>
+          <path class="fc-edge" d="M48,93 H28 V444 H48" marker-end="url(#gb-arrow)"/>
+          <text class="fc-label" x="40" y="388">records every dispatch, before and after</text>
+
+          <line class="gb-blocked" x1="815" y1="300" x2="815" y2="404"/>
+          <line class="gb-blocked" x1="990" y1="300" x2="990" y2="404"/>
+          <circle class="gb-x" cx="815" cy="340" r="9"/>
+          <path class="gb-x-mark" d="M809,334 L821,346 M821,334 L809,346"/>
+          <circle class="gb-x" cx="990" cy="340" r="9"/>
+          <path class="gb-x-mark" d="M984,334 L996,346 M996,334 L984,346"/>
+          <text class="fc-label" x="826" y="384">denied</text>
+          <text class="fc-label" x="1001" y="384">unreadable</text>
+        </svg>
+      </div>
+      <figcaption>A headless kit driver's run on macOS. The dashed red box is unconfined; the tinted box is the sandbox; a crossed line is a reach the sandbox denies. In the interactive loop the orchestrator runs each check through the session's own shell instead (Part 4).</figcaption>
+    </figure>
+  </section>
+
+  <section class="block" aria-labelledby="h-read">
+    <h3 id="h-read">How to read the controls</h3>
+    <p class="lede">Each control in Part 2 says what it stops, how it works, the code that implements it, the test classes that prove it, and the stages where it acts. Where a search of the suite found no test, the card says No test found. A red note marks a limit of the control itself.</p>
+  </section>
+</section>
+
+<section class="part" id="controls" aria-labelledby="h-controls">
+  <header class="part-head">
+    <p class="part-num">Part 2</p>
+    <h2 id="h-controls">Every control, and how it is implemented</h2>
+    <p class="lede">Grouped by layer. The letter and number identify a control everywhere on this page.</p>
+  </header>
+
+  <section class="block" id="layer-A" aria-labelledby="h-layer-A">
+    <h3 id="h-layer-A">A · Standing rules, enforced by tests</h3>
+    <p class="lede">Rules that hold for every change, written once and backed by tests that fail when one is broken.</p>
+    <div class="ctl-grid">
+      <article class="ctl" id="c-A1"><h4><span class="cid">A1</span>Invariants that fail the suite</h4><p class="row"><b>Stops</b>a rule that lives only in prose and quietly erodes</p><p><code>CLAUDE.md</code> lists the always-on invariants, and many of them are backed by tests that fail when one is broken. Each kit's <code>GUARDRAILS.md</code> adds fences for that change only.</p><p class="row"><b>Code</b><code>CLAUDE.md</code>, <code>.claude/kits/&lt;slug&gt;/GUARDRAILS.md</code></p><p class="row"><b>Proved by</b><code>tests/test_privacy_layout.py</code> <code>PrivacyLayoutTests</code>; <code>tests/test_pricing_refs.py</code> <code>LiveTreeMirrorTests</code>; <code>tests/test_kit_contract.py</code> <code>TripleImplementationTests</code></p><p class="gap">Not every invariant has a test; each card below names the tests behind its own rule.</p><div class="row"><b>Stages</b><span class="chips"><a class="chip" href="#s-1">1 Standing rules</a></span></div></article>
+      <article class="ctl" id="c-A2"><h4><span class="cid">A2</span>One kit contract</h4><p class="row"><b>Stops</b>drivers drifting apart in how they parse, validate and count a kit</p><p>Task parsing, graph validation, readiness, status transitions, budget admission, run ids and the outcome vocabulary are defined once and re-exported by every driver.</p><p class="row"><b>Code</b><code>bin/kit_contract.py</code></p><p class="row"><b>Proved by</b><code>tests/test_kit_contract.py</code> <code>TripleImplementationTests</code></p><div class="row"><b>Stages</b><span class="chips"><a class="chip" href="#s-1">1 Standing rules</a><a class="chip" href="#s-6">6 Tasks</a><a class="chip" href="#s-7">7 Analyze</a><a class="chip" href="#s-8">8 Implement</a></span></div></article>
+      <article class="ctl" id="c-A3"><h4><span class="cid">A3</span>A stdlib-only runtime</h4><p class="row"><b>Stops</b>a third-party package entering the code that runs on your machine</p><p><code>bin/</code> and <code>tests/</code> import only the Python standard library. The docs site's toolchain is the one exception, and it is hash-locked (I2).</p><p class="row"><b>Code</b><code>bin/</code>, <code>tests/</code></p><p class="row"><b>Proved by</b><code>tests/test_primitives_adversarial.py</code> <code>EngineHardConstraints</code></p><p class="gap">Only some modules carry their own stdlib-only check; no test scans the whole tree.</p><div class="row"><b>Stages</b><span class="chips"><a class="chip" href="#s-1">1 Standing rules</a><a class="chip" href="#s-release">Release and CI</a></span></div></article>
+      <article class="ctl" id="c-A4"><h4><span class="cid">A4</span>One pricing file per harness</h4><p class="row"><b>Stops</b>a price, ratio or model id typed into a skill and going stale</p><p>Prices live only in <code>data/pricing.json</code> and one sibling file per harness. The mirrors under the skills are generated by <code>bin/sync_pricing_refs.py</code>, never hand-edited.</p><p class="row"><b>Code</b><code>data/pricing.json</code>, <code>bin/sync_pricing_refs.py</code></p><p class="row"><b>Proved by</b><code>tests/test_pricing_refs.py</code> <code>LiveTreeMirrorTests</code>; <code>tests/test_docs_skill_dispositions.py</code> <code>NoNewLiteralsTests</code></p><p class="gap">The literal ban covers a named set of skill files, not every skill.</p><div class="row"><b>Stages</b><span class="chips"><a class="chip" href="#s-1">1 Standing rules</a><a class="chip" href="#s-6">6 Tasks</a><a class="chip" href="#s-10">10 Feedback</a></span></div></article>
+      <article class="ctl" id="c-A5"><h4><span class="cid">A5</span>Generated documentation is never hand-edited</h4><p class="row"><b>Stops</b>documentation that claims what its source no longer says</p><p><code>bin/docs_build.py</code>, <code>bin/copilot_docs.py</code> and <code>bin/release_gate.py build</code> write their outputs, and each has a <code>check</code> that fails on drift.</p><p class="row"><b>Code</b><code>bin/docs_build.py</code>, <code>bin/copilot_docs.py</code>, <code>bin/release_gate.py</code></p><p class="row"><b>Proved by</b><code>tests/test_release_gate.py</code> <code>ReleaseDocTests</code></p><div class="row"><b>Stages</b><span class="chips"><a class="chip" href="#s-1">1 Standing rules</a><a class="chip" href="#s-release">Release and CI</a></span></div></article>
+      <article class="ctl" id="c-A6"><h4><span class="cid">A6</span>Tests never call a real model CLI</h4><p class="row"><b>Stops</b>a test spending real credits or touching your live harness homes</p><p>Every dispatcher takes an injectable runner, tests use stubs and temporary homes, and <code>--dry-run</code> and <code>--demo</code> spawn nothing. No module in <code>bin/</code> starts a process except through <code>bin/proc_runner.py</code>.</p><p class="row"><b>Code</b><code>run_task(…, runner, verify_runner)</code> in each driver, <code>NO_REAL_CLI_TESTS</code> in <code>bin/release_gate.py</code></p><p class="row"><b>Proved by</b><code>tests/test_proc_runner_wiring.py</code> <code>OneRunnerTests</code></p><p class="gap">Nothing scans the tests for a real-CLI call; that part is a convention.</p><div class="row"><b>Stages</b><span class="chips"><a class="chip" href="#s-1">1 Standing rules</a><a class="chip" href="#s-9">9 Verify and converge</a></span></div></article>
+    </div>
+  </section>
+
+  <section class="block" id="layer-B" aria-labelledby="h-layer-B">
+    <h3 id="h-layer-B">B · Spec and plan gates</h3>
+    <p class="lede">What the architect writes into a kit, and the rules the run must honor because the kit says so.</p>
+    <div class="ctl-grid">
+      <article class="ctl" id="c-B1"><h4><span class="cid">B1</span>The approval pause</h4><p class="row"><b>Stops</b>a plan built on a spec nobody agreed to</p><p>The architect shows the spec draft and writes nothing to disk until you approve it.</p><p class="row"><b>Code</b><code>skills/architect/SKILL.md</code>, Step 1</p><p class="row"><b>Proved by</b><code>tests/test_architect_approval_pause.py</code> <code>ArchitectApprovalPauseTests</code></p><div class="row"><b>Stages</b><span class="chips"><a class="chip" href="#s-3">3 Specify</a><a class="chip" href="#s-4">4 Clarify</a></span></div></article>
+      <article class="ctl" id="c-B2"><h4><span class="cid">B2</span>Kit fences, re-read at every phase start</h4><p class="row"><b>Stops</b>constraints that a long run or a compaction quietly dropped</p><p><code>PLAN.md</code>'s out-of-scope section and the kit's <code>GUARDRAILS.md</code> bind every task. The execute loop re-reads both from disk before the first task of every phase.</p><p class="row"><b>Code</b><code>skills/execute/SKILL.md</code></p><p class="row none"><b>Proved by</b>No test found.</p><p class="gap">No test pins the re-read, and a compaction mid-phase is caught only at the next phase start.</p><div class="row"><b>Stages</b><span class="chips"><a class="chip" href="#s-3">3 Specify</a><a class="chip" href="#s-5">5 Plan</a><a class="chip" href="#s-8">8 Implement</a><a class="chip" href="#s-9">9 Verify and converge</a></span></div></article>
+      <article class="ctl" id="c-B3"><h4><span class="cid">B3</span>The red-green evidence rule</h4><p class="row"><b>Stops</b>a check that proves nothing because it passed before the work began</p><p>Before a task's work starts, its check runs on the pre-task tree. A pass there is a <code>tautological-verify</code> defect and blocks the task. Tasks marked <code>regression</code> or <code>precondition</code> are expected to pass first.</p><p class="row"><b>Code</b><code>run_precheck</code> in <code>bin/kit_verify_hook.py</code>, <code>reconcile_task</code> in <code>bin/kit_contract.py</code></p><p class="row"><b>Proved by</b><code>tests/test_kit_verify_hook.py</code> <code>PrecheckTautologicalTests</code>; <code>tests/test_claude_execute.py</code> <code>EndToEndTautologicalVerifyTests</code></p><div class="row"><b>Stages</b><span class="chips"><a class="chip" href="#s-6">6 Tasks</a><a class="chip" href="#s-9">9 Verify and converge</a></span></div></article>
+      <article class="ctl" id="c-B4"><h4><span class="cid">B4</span>The budget dial</h4><p class="row"><b>Stops</b>a run dispatching past what the plan allows</p><p><code>PLAN.md</code>'s optional <code>budget:</code> line caps dispatches, escalations, consults and model calls. Usage is recounted from what is already recorded, and a reached cap stops the run without marking the task. A budget stop never overwrites a real verdict.</p><p class="row"><b>Code</b><code>budget_gate</code> and <code>parse_plan_budget</code> in <code>bin/kit_contract.py</code></p><p class="row"><b>Proved by</b><code>tests/test_claude_execute.py</code> <code>EndToEndPlanBudgetStopTests</code>; <code>tests/test_routing_scorecard.py</code> <code>BudgetStopNeverSupersedesVerdictTests</code></p><div class="row"><b>Stages</b><span class="chips"><a class="chip" href="#s-5">5 Plan</a><a class="chip" href="#s-8">8 Implement</a></span></div></article>
+      <article class="ctl" id="c-B5"><h4><span class="cid">B5</span>Declared roles run, or the run stops</h4><p class="row"><b>Stops</b>a review step the kit asked for being skipped in silence</p><p><code>roles:</code> and <code>workflow:</code> are parsed by one grammar. A role a driver cannot sequence stops the run unless <code>--roster-gap disclose</code> prints the gap and records it in the attempt ledger.</p><p class="row"><b>Code</b><code>ROLE_CONTRACTS</code> and <code>ROLE_SUPPORT</code> in <code>bin/kit_contract.py</code></p><p class="row"><b>Proved by</b><code>tests/test_role_contract.py</code> <code>RosterCheckTests</code>, <code>SupportTests</code></p><div class="row"><b>Stages</b><span class="chips"><a class="chip" href="#s-5">5 Plan</a><a class="chip" href="#s-7">7 Analyze</a><a class="chip" href="#s-8">8 Implement</a></span></div></article>
+      <article class="ctl" id="c-B6"><h4><span class="cid">B6</span>Re-routing is upgrade-only and advisory by default</h4><p class="row"><b>Stops</b>a run quietly moving work to a weaker model</p><p>A recommendation only ever moves a tier up. In the default advisory mode it is printed and recorded, and nothing changes until a person decides.</p><p class="row"><b>Code</b><code>skills/execute/references/rerouting.md</code>, <code>bin/routing_scorecard.py</code></p><p class="row"><b>Proved by</b><code>tests/test_reroute_live.py</code> <code>UpgradeDecisionTests</code>, <code>ParseAutonomyTests</code></p><div class="row"><b>Stages</b><span class="chips"><a class="chip" href="#s-8">8 Implement</a></span></div></article>
+      <article class="ctl" id="c-B7"><h4><span class="cid">B7</span>Routing policy is selected, never learned</h4><p class="row"><b>Stops</b>observations or model output changing which policy routes a task</p><p>A Codex task's policy comes only from a <code>--policy</code> flag or <code>PLAN.md</code>'s <code>routing:</code> line. Hard filters (availability, an explicit pin, an exclusion, effort support, the budget) apply before any preference is weighed.</p><p class="row"><b>Code</b><code>bin/routing_policy.py</code></p><p class="row"><b>Proved by</b><code>tests/test_routing_policy.py</code> <code>FiltersTests</code></p><div class="row"><b>Stages</b><span class="chips"><a class="chip" href="#s-5">5 Plan</a><a class="chip" href="#s-8">8 Implement</a></span></div></article>
+    </div>
+  </section>
+
+  <section class="block" id="layer-C" aria-labelledby="h-layer-C">
+    <h3 id="h-layer-C">C · Checks before anything runs</h3>
+    <p class="lede">The kit is checked before the first dispatch, without executing anything it contains.</p>
+    <div class="ctl-grid">
+      <article class="ctl" id="c-C1"><h4><span class="cid">C1</span>The task graph is validated first</h4><p class="row"><b>Stops</b>a plan with a cycle, a duplicate id or a missing dependency running partway</p><p><code>kit_contract.py graph</code> names every such defect with its fix and exits 2. A driver dispatches nothing on an invalid graph.</p><p class="row"><b>Code</b><code>validate_graph</code> in <code>bin/kit_contract.py</code></p><p class="row"><b>Proved by</b><code>tests/test_kit_graph.py</code> <code>ValidateGraphTests</code>, <code>ZeroDispatchOnInvalidGraphTests</code></p><div class="row"><b>Stages</b><span class="chips"><a class="chip" href="#s-7">7 Analyze</a></span></div></article>
+      <article class="ctl" id="c-C2"><h4><span class="cid">C2</span>analyze is static by construction</h4><p class="row"><b>Stops</b>a pre-run check that itself executes the kit's commands</p><p><code>kit_contract.py analyze</code> checks the paths each brief names and whether each verify command can be resolved. It has no runner, so it cannot execute anything.</p><p class="row"><b>Code</b><code>analyze_kit</code> in <code>bin/kit_contract.py</code></p><p class="row"><b>Proved by</b><code>tests/test_kit_analyze.py</code> <code>StaticByConstructionTests</code></p><div class="row"><b>Stages</b><span class="chips"><a class="chip" href="#s-7">7 Analyze</a></span></div></article>
+      <article class="ctl" id="c-C3"><h4><span class="cid">C3</span>The spec review before dispatch</h4><p class="row"><b>Stops</b>contradictory acceptance or an uncovered goal reaching the implementers</p><p>In an interactive run, one opus reviewer reads the kit before the first dispatch and reports contradictions and goals no task covers.</p><p class="row"><b>Code</b><code>skills/execute/references/spec-review.md</code></p><p class="row"><b>Proved by</b><code>tests/test_execute_preflight.py</code> <code>PreDispatchStepTests</code>, <code>SpecReviewReferenceTests</code></p><p class="gap">Interactive only: headless drivers and <code>workflow: direct</code> kits print the analyze warnings, and nothing judges them.</p><div class="row"><b>Stages</b><span class="chips"><a class="chip" href="#s-7">7 Analyze</a></span></div></article>
+    </div>
+  </section>
+
+  <section class="block" id="layer-D" aria-labelledby="h-layer-D">
+    <h3 id="h-layer-D">D · The execution boundary</h3>
+    <p class="lede">How processes, paths, credentials and dispatches are confined or recorded while a kit runs.</p>
+    <div class="ctl-grid">
+      <article class="ctl" id="c-D1"><h4><span class="cid">D1</span>Verify commands run inside an OS sandbox</h4><p class="row"><b>Stops</b>a check writing outside the workspace, reaching the network or reading credentials</p><p>On macOS the kit drivers run each check under <code>sandbox-exec</code>: writes only to the workspace and a run scratch directory, network denied, credential stores unreadable, and the environment reduced to an allowlist. It refuses rather than falling back when no backend exists, and <code>--exec-mode trusted-host</code> is the named opt-out that reports itself.</p><p class="row"><b>Code</b><code>run_confined</code>, <code>verify_runner</code>, <code>_CONFIDENTIAL_HOME_PATHS</code> and <code>DEFAULT_ENV_ALLOWLIST</code> in <code>bin/exec_policy.py</code></p><p class="row"><b>Proved by</b><code>tests/test_exec_policy.py</code> <code>FailClosedTests</code>, <code>EnforcementTests</code>, <code>ProfileRenderingTests</code>; <code>tests/test_proc_runner_wiring.py</code> <code>DriverVerifyWiringTests</code></p><p class="gap">The enforcement tests run only where a sandbox is available. Linux and Windows have no backend.</p><div class="row"><b>Stages</b><span class="chips"><a class="chip" href="#s-8">8 Implement</a><a class="chip" href="#s-9">9 Verify and converge</a><a class="chip" href="#s-11">11 Keep in sync</a></span></div></article>
+      <article class="ctl" id="c-D2"><h4><span class="cid">D2</span>Every external process is bounded</h4><p class="row"><b>Stops</b>a hung or noisy process, or children that outlive the run</p><p>Each process gets a validated working directory, a wall-clock limit, an output ceiling that keeps draining, and a session of its own, so ending it ends its whole process group.</p><p class="row"><b>Code</b><code>run</code>, <code>validate_workdir</code> and <code>_terminate_tree</code> in <code>bin/proc_runner.py</code></p><p class="row"><b>Proved by</b><code>tests/test_proc_runner.py</code> <code>WorkdirTests</code>, <code>TimeoutAndTreeCleanupTests</code>, <code>OutputBoundTests</code></p><div class="row"><b>Stages</b><span class="chips"><a class="chip" href="#s-2">2 Research</a><a class="chip" href="#s-8">8 Implement</a><a class="chip" href="#s-9">9 Verify and converge</a><a class="chip" href="#s-11">11 Keep in sync</a><a class="chip" href="#s-bench">Evaluation and benchmarks</a></span></div></article>
+      <article class="ctl" id="c-D3"><h4><span class="cid">D3</span>A dispatch carries only its provider's credentials</h4><p class="row"><b>Stops</b>one provider's agent receiving another provider's keys</p><p>The environment handed to a harness CLI is a base set plus that provider's own variables.</p><p class="row"><b>Code</b><code>dispatch_env</code> and <code>PROVIDER_ENV_PREFIXES</code> in <code>bin/proc_runner.py</code></p><p class="row"><b>Proved by</b><code>tests/test_proc_runner.py</code> <code>DispatchEnvironmentTests</code>; <code>tests/test_proc_runner_wiring.py</code> <code>DriverDispatchTests</code></p><div class="row"><b>Stages</b><span class="chips"><a class="chip" href="#s-8">8 Implement</a><a class="chip" href="#s-9">9 Verify and converge</a></span></div></article>
+      <article class="ctl" id="c-D4"><h4><span class="cid">D4</span>Paths are contained without a race</h4><p class="row"><b>Stops</b>a symlink swapped in mid-operation redirecting a write</p><p>Every store, marker and install destination is reached directory-relative with <code>O_NOFOLLOW</code>. Where the runtime lacks directory-relative operations, it refuses instead of using the racy form.</p><p class="row"><b>Code</b><code>_descend</code> and <code>_require_dir_fd</code> in <code>bin/safe_paths.py</code></p><p class="row"><b>Proved by</b><code>tests/test_safe_paths.py</code> <code>ContainmentTests</code></p><p class="gap">The refusal on a host without directory-relative operations has no test.</p><div class="row"><b>Stages</b><span class="chips"><a class="chip" href="#s-8">8 Implement</a><a class="chip" href="#s-10">10 Feedback</a><a class="chip" href="#s-install">Install and update</a></span></div></article>
+      <article class="ctl" id="c-D5"><h4><span class="cid">D5</span>Every dispatch is recorded before and after</h4><p class="row"><b>Stops</b>a crash losing track of what ran, or a dead attempt counted as a success</p><p>An append-only ledger outside the tree. An attempt with no result is closed as unknown, never as success, and never replayed; a task is claimed with <code>O_EXCL</code>; prior attempts count against the budget. A logged-out CLI or a missing binary stops the run instead of escalating.</p><p class="row"><b>Code</b><code>claim</code>, <code>record_started</code> and <code>reconcile_open</code> in <code>bin/attempt_ledger.py</code></p><p class="row"><b>Proved by</b><code>tests/test_attempt_ledger.py</code> <code>LedgerRecordTests</code>, <code>ClaimTests</code>, <code>CrashAfterDispatchTests</code>, <code>BudgetCarriesAcrossRunsTests</code></p><div class="row"><b>Stages</b><span class="chips"><a class="chip" href="#s-8">8 Implement</a><a class="chip" href="#s-9">9 Verify and converge</a></span></div></article>
+      <article class="ctl" id="c-D6"><h4><span class="cid">D6</span>Codex review and acceptance are read-only</h4><p class="row"><b>Stops</b>a reviewer changing the code it is reviewing</p><p><code>bin/codex_execute.py</code> forces <code>--sandbox read-only</code> on review and acceptance, and refuses extra arguments that would override it or displace the selected model.</p><p class="row"><b>Code</b><code>cmd_review</code> and <code>cmd_accept</code> in <code>bin/codex_execute.py</code></p><p class="row"><b>Proved by</b><code>tests/test_codex_execute.py</code> <code>EndToEndRunHappyPathTests</code></p><p class="gap">The review path is tested; acceptance and the override refusal have no test.</p><div class="row"><b>Stages</b><span class="chips"><a class="chip" href="#s-9">9 Verify and converge</a></span></div></article>
+      <article class="ctl" id="c-D7"><h4><span class="cid">D7</span>Cursor is identified before it is trusted</h4><p class="row"><b>Stops</b>dispatching to some other binary that happens to be named <code>agent</code></p><p><code>--version</code> or <code>about --format json</code> must identify Cursor before any claim, ledger entry or write. Review runs under <code>--mode ask</code>, and arguments that would change the mode, model, workspace or session are refused.</p><p class="row"><b>Code</b><code>require_cursor</code>, <code>READ_ONLY_MODE</code> and <code>BLOCKED_EXTRA_ARGS</code> in <code>bin/cursor_adapter.py</code></p><p class="row"><b>Proved by</b><code>tests/test_cursor_adapter.py</code> <code>IdentityTests</code>, <code>DispatchArgvTests</code>; <code>tests/test_cursor_execute.py</code> <code>IdentityRefusalTests</code></p><div class="row"><b>Stages</b><span class="chips"><a class="chip" href="#s-8">8 Implement</a><a class="chip" href="#s-9">9 Verify and converge</a></span></div></article>
+      <article class="ctl" id="c-D8"><h4><span class="cid">D8</span>Reviewers get no blanket permission grant</h4><p class="row"><b>Stops</b>a review dispatch running with every tool pre-approved</p><p>Review carries no blanket grant by default. Claude turns the reviewer's declared tool pin into <code>--allowedTools</code>, and <code>--review-permissions bypass</code> is the named opt-out.</p><p class="row"><b>Code</b><code>role_permission_profile</code> and <code>allowed_tools_arg</code> in <code>bin/claude_execute.py</code></p><p class="row"><b>Proved by</b><code>tests/test_claude_execute.py</code> <code>RolePermissionTests</code>; <code>tests/test_copilot_execute.py</code> <code>ReviewPermissionTests</code></p><p class="gap">A pin that includes Bash still reaches everything a shell reaches (see Part 4).</p><div class="row"><b>Stages</b><span class="chips"><a class="chip" href="#s-9">9 Verify and converge</a></span></div></article>
+      <article class="ctl" id="c-D9"><h4><span class="cid">D9</span>Concurrent work cannot collide silently</h4><p class="row"><b>Stops</b>two workers' writes merging into a broken tree</p><p>Sequential by default. With <code>--max-parallel</code>, each task runs in its own copy outside the workspace, writes are measured rather than declared, a conflicting write applies nothing from that task, a worker that edits the kit is recorded as a violation, and the merged tree is verified again.</p><p class="row"><b>Code</b><code>DEFAULT_MAX_PARALLEL</code> and <code>snapshot_tree</code> in <code>bin/kit_scheduler.py</code></p><p class="row"><b>Proved by</b><code>tests/test_kit_scheduler.py</code> <code>SequentialDefaultTests</code>, <code>ConflictTests</code>, <code>MergedTreeTests</code>, <code>SecurityTests</code></p><div class="row"><b>Stages</b><span class="chips"><a class="chip" href="#s-8">8 Implement</a><a class="chip" href="#s-9">9 Verify and converge</a></span></div></article>
+      <article class="ctl" id="c-D10"><h4><span class="cid">D10</span>A code graph is read as untrusted evidence</h4><p class="row"><b>Stops</b>a crafted graph steering reads outside the repository or walking without bound</p><p>A graph's <code>source_file</code> must be relative and traversal-free; the graph has a byte ceiling; walks and searches are bounded; git is reached only with read-only verbs.</p><p class="row"><b>Code</b><code>MAX_GRAPH_BYTES</code> in <code>bin/graph_ground.py</code></p><p class="row"><b>Proved by</b><code>tests/test_graph_ground.py</code> <code>StampTests</code>, <code>FreshnessTests</code>, <code>ImpactTests</code></p><div class="row"><b>Stages</b><span class="chips"><a class="chip" href="#s-2">2 Research</a></span></div></article>
+    </div>
+  </section>
+
+  <section class="block" id="layer-E" aria-labelledby="h-layer-E">
+    <h3 id="h-layer-E">E · Independent verification</h3>
+    <p class="lede">Who decides a task is done. The builder never does.</p>
+    <div class="ctl-grid">
+      <article class="ctl" id="c-E1"><h4><span class="cid">E1</span>The loop runs the check, not the builder</h4><p class="row"><b>Stops</b>an implementer grading its own work</p><p>The orchestrator runs each task's verify command itself. An implementer's claim of success is not evidence. A failure gets one retry with the failure output, then a frontier consult.</p><p class="row"><b>Code</b><code>skills/execute/SKILL.md</code>, the loop</p><p class="row none"><b>Proved by</b>No test found.</p><p class="gap">This is a rule in the skill text the orchestrator follows; no test found pins it.</p><div class="row"><b>Stages</b><span class="chips"><a class="chip" href="#s-8">8 Implement</a><a class="chip" href="#s-9">9 Verify and converge</a></span></div></article>
+      <article class="ctl" id="c-E2"><h4><span class="cid">E2</span>A fresh-context verifier, and optional adversaries</h4><p class="row"><b>Stops</b>review that is anchored on the builder's view</p><p>A verifier with none of the builder's context re-checks acceptance against the files. A kit can add a test-author, who writes tests from the brief alone, and a red-team, who tries to break the result.</p><p class="row"><b>Code</b><code>skills/execute/SKILL.md</code>, <code>skills/execute/references/roster.md</code></p><p class="row none"><b>Proved by</b>No test found.</p><p class="gap">The role vocabulary is tested (<code>tests/test_role_contract.py</code>), but no test found checks that the verifier is dispatched without the builder's context.</p><div class="row"><b>Stages</b><span class="chips"><a class="chip" href="#s-9">9 Verify and converge</a></span></div></article>
+      <article class="ctl" id="c-E3"><h4><span class="cid">E3</span>Phase review against the plan</h4><p class="row"><b>Stops</b>a phase drifting from the plan before the next one starts</p><p>At each phase end an opus reviewer checks the phase against <code>PLAN.md</code>, and its findings are adjudicated and recorded before the run continues.</p><p class="row"><b>Code</b><code>skills/execute/SKILL.md</code>, phase boundaries</p><p class="row none"><b>Proved by</b>No test found.</p><p class="gap">This is a rule in the skill text the orchestrator follows; no test found pins it.</p><div class="row"><b>Stages</b><span class="chips"><a class="chip" href="#s-9">9 Verify and converge</a></span></div></article>
+      <article class="ctl" id="c-E4"><h4><span class="cid">E4</span>A rewritten brief is caught</h4><p class="row"><b>Stops</b>a worker editing its own brief, check or dependencies to make a task pass</p><p>The task block is re-read at projection time. A change is reported and recorded as <code>plan.drift</code>, and the verdict stays the one for the plan the run started with.</p><p class="row"><b>Code</b><code>plan_drift</code> in <code>bin/kit_contract.py</code></p><p class="row"><b>Proved by</b><code>tests/test_kit_graph.py</code> <code>PlanDriftTests</code></p><div class="row"><b>Stages</b><span class="chips"><a class="chip" href="#s-8">8 Implement</a><a class="chip" href="#s-9">9 Verify and converge</a></span></div></article>
+    </div>
+  </section>
+
+  <section class="block" id="layer-F" aria-labelledby="h-layer-F">
+    <h3 id="h-layer-F">F · Honest records and claims</h3>
+    <p class="lede">What the ledger, the release matrix and the cost figures may and may not say.</p>
+    <div class="ctl-grid">
+      <article class="ctl" id="c-F1"><h4><span class="cid">F1</span>An acceptance is bound to its own run</h4><p class="row"><b>Stops</b>backfilling acceptances for work that was finished long ago</p><p><code>kit_contract.py accept</code> refuses unless the task's latest passing outcome line carries the same <code>run=</code> id it was given, dated today or yesterday in UTC.</p><p class="row"><b>Code</b><code>accept_task</code> in <code>bin/kit_contract.py</code></p><p class="row"><b>Proved by</b><code>tests/test_kit_evidence.py</code> <code>AcceptRunGuardTests</code></p><div class="row"><b>Stages</b><span class="chips"><a class="chip" href="#s-10">10 Feedback</a></span></div></article>
+      <article class="ctl" id="c-F2"><h4><span class="cid">F2</span>drift reports, and writes nothing in the tree</h4><p class="row"><b>Stops</b>a later re-check silently failing or rewriting finished work</p><p><code>kit_contract.py drift</code> re-runs a finished kit's checks inside the execution boundary and reports drift, not failure. It writes nothing in the tree or the kit directory; its events go to the ledger outside the tree.</p><p class="row"><b>Code</b><code>drift_kit</code> in <code>bin/kit_contract.py</code></p><p class="row"><b>Proved by</b><code>tests/test_kit_evidence.py</code> <code>DriftTests</code>, <code>DriftTestAuthorTests</code></p><p class="gap">The checks it runs may write, since the workspace is writable under the policy.</p><div class="row"><b>Stages</b><span class="chips"><a class="chip" href="#s-11">11 Keep in sync</a></span></div></article>
+      <article class="ctl" id="c-F3"><h4><span class="cid">F3</span>Release claims are computed, never typed</h4><p class="row"><b>Stops</b>a release document claiming support the evidence does not show</p><p>The supported matrix in <code>docs/RELEASE.md</code> is rendered from the capability registry, the contract versions and the manifests. <code>check</code> fails on a drifted block, an unpinned workflow action, or a private store without its ignore rule.</p><p class="row"><b>Code</b><code>run_check</code> and <code>packaging_review</code> in <code>bin/release_gate.py</code></p><p class="row"><b>Proved by</b><code>tests/test_release_gate.py</code> <code>PackagingTests</code>, <code>ReleaseDocTests</code></p><div class="row"><b>Stages</b><span class="chips"><a class="chip" href="#s-release">Release and CI</a></span></div></article>
+      <article class="ctl" id="c-F4"><h4><span class="cid">F4</span>Unknown means no</h4><p class="row"><b>Stops</b>a driver relying on a capability nobody has run</p><p><code>primitives/harness-capabilities.json</code> records support, implementation and verification separately. A capability recorded as <code>unknown</code> counts as unsupported.</p><p class="row"><b>Code</b><code>UNKNOWN</code> and <code>supports</code> in <code>bin/harness_adapter.py</code></p><p class="row"><b>Proved by</b><code>tests/test_kit_contract.py</code> <code>CapabilityRegistryTests</code></p><div class="row"><b>Stages</b><span class="chips"><a class="chip" href="#s-1">1 Standing rules</a><a class="chip" href="#s-8">8 Implement</a><a class="chip" href="#s-release">Release and CI</a></span></div></article>
+      <article class="ctl" id="c-F5"><h4><span class="cid">F5</span>A subscription run is never shown as a bill</h4><p class="row"><b>Stops</b>a ChatGPT-plan Codex run reported as dollars spent</p><p>Its dollar figure is a labelled relative-burn proxy: <code>billed_usd</code> stays null and the source stays unpriced, and proxy figures never enter a priced total.</p><p class="row"><b>Code</b><code>est_cost</code> in <code>bin/codex_pricing.py</code>, <code>bin/codex_usage.py</code></p><p class="row"><b>Proved by</b><code>tests/test_codex_pricing.py</code> <code>BurnIndexTests</code>; <code>tests/test_journal_sources.py</code> <code>CodexAdapterTests</code></p><div class="row"><b>Stages</b><span class="chips"><a class="chip" href="#s-10">10 Feedback</a></span></div></article>
+    </div>
+  </section>
+
+  <section class="block" id="layer-G" aria-labelledby="h-layer-G">
+    <h3 id="h-layer-G">G · Data and privacy</h3>
+    <p class="lede">Where personal data lives, what is read, and what reaches a model.</p>
+    <div class="ctl-grid">
+      <article class="ctl" id="c-G1"><h4><span class="cid">G1</span>Stores live outside the tree, private</h4><p class="row"><b>Stops</b>personal data landing in a distributed, synced or committed tree</p><p>Every store resolves to a per-user application-data directory, namespaced per checkout, created <code>0700</code> with <code>0600</code> files. An existing in-tree store keeps being used, and migration copies without deleting the original. The ignore rules are root-anchored.</p><p class="row"><b>Code</b><code>resolve_store</code>, <code>ensure_private</code> and <code>migrate</code> in <code>bin/runtime_data.py</code></p><p class="row"><b>Proved by</b><code>tests/test_privacy_primitives.py</code> <code>ResolutionTests</code>, <code>PrivateCreationTests</code>, <code>MigrationTests</code>; <code>tests/test_privacy_layout.py</code> <code>PrivacyLayoutTests</code></p><div class="row"><b>Stages</b><span class="chips"><a class="chip" href="#s-10">10 Feedback</a><a class="chip" href="#s-install">Install and update</a></span></div></article>
+      <article class="ctl" id="c-G2"><h4><span class="cid">G2</span>Harness homes are read read-only, from JSONL</h4><p class="row"><b>Stops</b>a usage report writing into your harness home or opening its database</p><p>The usage, journal and context readers read <code>~/.claude</code>, <code>~/.copilot</code> and <code>~/.codex</code> strictly read-only, and never open a SQLite file.</p><p class="row"><b>Code</b><code>bin/copilot_usage.py</code>, <code>bin/codex_usage.py</code>, <code>bin/journal_sources.py</code></p><p class="row"><b>Proved by</b><code>tests/test_copilot_usage.py</code> <code>ReadOnlyProofTests</code>; <code>tests/test_codex_usage.py</code> <code>ReadOnlyProofTests</code>; <code>tests/test_journal_sources.py</code> <code>CodexAdapterTests</code></p><p class="gap">These are behavior tests on fixtures; no test scans the readers' source.</p><div class="row"><b>Stages</b><span class="chips"><a class="chip" href="#s-10">10 Feedback</a></span></div></article>
+      <article class="ctl" id="c-G3"><h4><span class="cid">G3</span>Free text is redacted before it is kept or sent</h4><p class="row"><b>Stops</b>a credential pasted into an inbox line reaching the digest or a model</p><p>Inbox lines pass through the redactor on the way into the journal and on the way to a model. What it caught is reported by kind and count, never by value.</p><p class="row"><b>Code</b><code>redact_all</code> and <code>describe</code> in <code>bin/redact.py</code></p><p class="row"><b>Proved by</b><code>tests/test_journal_collect.py</code> <code>InboxRedactionTests</code>; <code>tests/test_privacy_primitives.py</code> <code>RedactionTests</code></p><p class="gap">Shape-matching only (see Part 4).</p><div class="row"><b>Stages</b><span class="chips"><a class="chip" href="#s-10">10 Feedback</a></span></div></article>
+      <article class="ctl" id="c-G4"><h4><span class="cid">G4</span>Memory recall is pulled, capped and labelled</h4><p class="row"><b>Stops</b>a store being bulk-injected into a session, or a recalled fact read as an instruction</p><p>Recall returns a few relevant facts under a budget, with each one's source, scope and trust. A fact scoped to another project or provider is withheld.</p><p class="row"><b>Code</b><code>recall</code> and <code>apply_budget</code> in <code>bin/memory_recall.py</code></p><p class="row"><b>Proved by</b><code>tests/test_memory_recall.py</code> <code>BudgetTests</code>, <code>ProvenanceAndScopeTests</code>, <code>GateTests</code></p><p class="gap">That recall is pull-only, never injected, has no test of its own.</p><div class="row"><b>Stages</b><span class="chips"><a class="chip" href="#s-2">2 Research</a><a class="chip" href="#s-10">10 Feedback</a></span></div></article>
+      <article class="ctl" id="c-G5"><h4><span class="cid">G5</span>The journal summary runs isolated</h4><p class="row"><b>Stops</b>the summarizing model reading the repo's instructions or writing files</p><p>The summary runs in an empty temporary directory with a reduced environment, and is rejected if anything was written there.</p><p class="row"><b>Code</b><code>default_runner</code> in <code>bin/journal_summarize.py</code></p><p class="row"><b>Proved by</b><code>tests/test_journal_summarize.py</code> <code>IsolatedSummaryDispatchTests</code></p><div class="row"><b>Stages</b><span class="chips"><a class="chip" href="#s-10">10 Feedback</a></span></div></article>
+    </div>
+  </section>
+
+  <section class="block" id="layer-H" aria-labelledby="h-layer-H">
+    <h3 id="h-layer-H">H · Install, update and release</h3>
+    <p class="lede">How polytropos writes into a harness home, and how a release is cut.</p>
+    <div class="ctl-grid">
+      <article class="ctl" id="c-H1"><h4><span class="cid">H1</span>Installation never overwrites what it does not own</h4><p class="row"><b>Stops</b>an install replacing your own agent, skill or instructions file</p><p>Each destination is classified before a byte is written; creation uses <code>O_EXCL</code>; a managed refresh re-reads the file just before replacing it; rollback takes back only bytes this run wrote; <code>--adopt-existing</code> keeps the prior bytes.</p><p class="row"><b>Code</b><code>apply_copilot_plan</code> and <code>_rollback_written</code> in <code>bin/harness_select.py</code></p><p class="row"><b>Proved by</b><code>tests/test_install_ownership.py</code> <code>CopilotRollbackTests</code>, <code>CopilotAdoptionTests</code>, <code>CodexStalePlanTests</code>, <code>SafeCreateTests</code></p><div class="row"><b>Stages</b><span class="chips"><a class="chip" href="#s-install">Install and update</a></span></div></article>
+      <article class="ctl" id="c-H2"><h4><span class="cid">H2</span>The freshness check only reads</h4><p class="row"><b>Stops</b>a status check that changes what it reports on</p><p><code>harness_update.py check</code> compares and writes nothing. <code>apply</code> writes only the Copilot and Codex homes and the repo's generated mirrors, never <code>~/.claude</code>: that remedy is printed for you to run.</p><p class="row"><b>Code</b><code>cmd_check</code> in <code>bin/harness_update.py</code></p><p class="row"><b>Proved by</b><code>tests/test_harness_update.py</code> <code>ReadOnlyTests</code>, <code>ApplyNeverNamesTheClaudeHomeTests</code></p><div class="row"><b>Stages</b><span class="chips"><a class="chip" href="#s-install">Install and update</a></span></div></article>
+      <article class="ctl" id="c-H3"><h4><span class="cid">H3</span>The install preflight</h4><p class="row"><b>Stops</b>installing from a dirty, unpushed or credential-bearing checkout</p><p>Eight gates: the source exists, the marketplace installs from it, git can read it, it is on <code>main</code>, clean, level with origin, carries nothing credential-shaped, and its version changed.</p><p class="row"><b>Code</b><code>PREFLIGHT_GATES</code> and <code>run_preflight</code> in <code>bin/harness_update.py</code></p><p class="row"><b>Proved by</b><code>tests/test_harness_update.py</code> <code>PreflightTests</code></p><div class="row"><b>Stages</b><span class="chips"><a class="chip" href="#s-install">Install and update</a></span></div></article>
+      <article class="ctl" id="c-H4"><h4><span class="cid">H4</span>The version bump touches only the version</h4><p class="row"><b>Stops</b>a release step that edits or commits more than it says</p><p><code>release_gate.py bump</code> edits only where the version is stated and what reports it, refuses while uncommitted work is present, and never commits.</p><p class="row"><b>Code</b><code>bin/release_gate.py</code> bump</p><p class="row"><b>Proved by</b><code>tests/test_release_gate.py</code> <code>BumpPlanTests</code></p><div class="row"><b>Stages</b><span class="chips"><a class="chip" href="#s-release">Release and CI</a></span></div></article>
+    </div>
+  </section>
+
+  <section class="block" id="layer-I" aria-labelledby="h-layer-I">
+    <h3 id="h-layer-I">I · Build supply chain</h3>
+    <p class="lede">The one non-stdlib toolchain, the docs site, is pinned rather than trusted.</p>
+    <div class="ctl-grid">
+      <article class="ctl" id="c-I1"><h4><span class="cid">I1</span>Actions are pinned to commit SHAs</h4><p class="row"><b>Stops</b>a re-pointed or compromised tag changing what CI runs</p><p>Every GitHub Action is pinned to a full commit SHA, with its release in a trailing comment.</p><p class="row"><b>Code</b><code>.github/workflows/docs-site.yml</code></p><p class="row"><b>Proved by</b><code>tests/test_docs_site_workflow.py</code> <code>WorkflowBuildJobTests</code>; <code>tests/test_release_gate.py</code> <code>PackagingTests</code></p><div class="row"><b>Stages</b><span class="chips"><a class="chip" href="#s-release">Release and CI</a></span></div></article>
+      <article class="ctl" id="c-I2"><h4><span class="cid">I2</span>The docs toolchain is hash-locked</h4><p class="row"><b>Stops</b>a substituted package running inside the docs build</p><p><code>docs-src/requirements.txt</code> pins every package, transitives included, with a sha256, and CI installs with <code>--require-hashes</code>.</p><p class="row"><b>Code</b><code>docs-src/requirements.txt</code></p><p class="row"><b>Proved by</b><code>tests/test_docs_site_workflow.py</code> <code>WorkflowBuildJobTests</code></p><div class="row"><b>Stages</b><span class="chips"><a class="chip" href="#s-release">Release and CI</a></span></div></article>
+      <article class="ctl" id="c-I3"><h4><span class="cid">I3</span>Deploy credentials live only in the deploy job</h4><p class="row"><b>Stops</b>repository content running with the right to publish</p><p>The build job holds <code>contents: read</code> only. <code>pages: write</code> and <code>id-token: write</code> exist only in the deploy job, which runs no repository code.</p><p class="row"><b>Code</b><code>.github/workflows/docs-site.yml</code></p><p class="row"><b>Proved by</b><code>tests/test_docs_site_workflow.py</code> <code>WorkflowDeployJobTests</code></p><div class="row"><b>Stages</b><span class="chips"><a class="chip" href="#s-release">Release and CI</a></span></div></article>
+      <article class="ctl" id="c-I4"><h4><span class="cid">I4</span>Generated links are scheme-checked</h4><p class="row"><b>Stops</b>an unsafe link hiding in generated documentation</p><p>Each URL's scheme is checked after rewriting against a small allowlist, and control characters are refused. An unsupported scheme fails the build.</p><p class="row"><b>Code</b><code>ALLOWED_URL_SCHEMES</code> and <code>safe_href</code> in <code>bin/copilot_docs.py</code></p><p class="row"><b>Proved by</b><code>tests/test_copilot_docs_content.py</code> <code>LinkSchemeTests</code></p><div class="row"><b>Stages</b><span class="chips"><a class="chip" href="#s-release">Release and CI</a></span></div></article>
+    </div>
+  </section>
+
+  <section class="block" id="layer-J" aria-labelledby="h-layer-J">
+    <h3 id="h-layer-J">J · Spend and evaluation</h3>
+    <p class="lede">What can spend money, and what can change a routing default.</p>
+    <div class="ctl-grid">
+      <article class="ctl" id="c-J1"><h4><span class="cid">J1</span>Benchmark spending is ceiling-gated</h4><p class="row"><b>Stops</b>a benchmark spending without a stated limit</p><p>No dispatch happens without <code>--live</code> and an explicit <code>--max-usd</code>, validated finite and non-negative on every check. <code>plan</code> and <code>demo</code> spend nothing.</p><p class="row"><b>Code</b><code>validate_ceiling</code> in <code>bin/repo_bench.py</code></p><p class="row"><b>Proved by</b><code>tests/test_repo_bench.py</code> <code>RunCliTests</code></p><div class="row"><b>Stages</b><span class="chips"><a class="chip" href="#s-bench">Evaluation and benchmarks</a></span></div></article>
+      <article class="ctl" id="c-J2"><h4><span class="cid">J2</span>Target repositories are read-only</h4><p class="row"><b>Stops</b>a benchmark changing the repository it measures, or leaking the answer</p><p>A target is reached only through a read-only git verb allowlist. Sandboxes are history-free tree extractions, and reference tests are never written into a candidate's tree.</p><p class="row"><b>Code</b><code>git_target</code> and <code>READ_ONLY_GIT</code> in <code>bin/repo_bench.py</code></p><p class="row"><b>Proved by</b><code>tests/test_repo_bench.py</code> <code>AllowlistTests</code>, <code>SandboxTests</code></p><div class="row"><b>Stages</b><span class="chips"><a class="chip" href="#s-bench">Evaluation and benchmarks</a></span></div></article>
+      <article class="ctl" id="c-J3"><h4><span class="cid">J3</span>A routing default changes only through review</h4><p class="row"><b>Stops</b>one lucky run changing how every later task is routed</p><p>The policy file is written only by <code>apply</code>, which refuses a proposal below the evidence floor, from a single repeat, or without a named reviewer's acceptance. Every version is kept, and <code>rollback</code> restores one.</p><p class="row"><b>Code</b><code>apply_proposal</code> and <code>rollback_policy</code> in <code>bin/workflow_eval.py</code></p><p class="row"><b>Proved by</b><code>tests/test_workflow_eval.py</code> <code>PolicyProcessTests</code></p><div class="row"><b>Stages</b><span class="chips"><a class="chip" href="#s-10">10 Feedback</a><a class="chip" href="#s-bench">Evaluation and benchmarks</a></span></div></article>
+    </div>
+  </section>
+
+</section>
+
+<section class="part" id="stages" aria-labelledby="h-stages">
+  <header class="part-head">
+    <p class="part-num">Part 3</p>
+    <h2 id="h-stages">Stage by stage</h2>
+    <p class="lede">The stages are the ones on docs/sdd/pipelines.html, numbered the same, plus the three places polytropos acts outside a kit's lifecycle: installing and updating, releasing and building, and evaluating models.</p>
+  </header>
+
+  <section class="block" aria-labelledby="h-matrix">
+    <h3 id="h-matrix">The matrix</h3>
+    <p class="lede">A dot means at least one control in that layer acts at that stage.</p>
+    <div class="table-wrap"><table class="matrix">
+      <thead><tr><th>Layer</th><th title="Standing rules">1</th><th title="Research">2</th><th title="Specify">3</th><th title="Clarify">4</th><th title="Plan">5</th><th title="Tasks">6</th><th title="Analyze">7</th><th title="Implement">8</th><th title="Verify and converge">9</th><th title="Feedback">10</th><th title="Keep in sync">11</th><th title="Install and update">install</th><th title="Release and CI">release</th><th title="Evaluation and benchmarks">bench</th></tr></thead>
+      <tbody>
+        <tr><td><a href="#layer-A">A · Standing rules, enforced by tests</a></td><td class="on">●</td><td></td><td></td><td></td><td></td><td class="on">●</td><td class="on">●</td><td class="on">●</td><td class="on">●</td><td class="on">●</td><td></td><td></td><td class="on">●</td><td></td></tr>
+        <tr><td><a href="#layer-B">B · Spec and plan gates</a></td><td></td><td></td><td class="on">●</td><td class="on">●</td><td class="on">●</td><td class="on">●</td><td class="on">●</td><td class="on">●</td><td class="on">●</td><td></td><td></td><td></td><td></td><td></td></tr>
+        <tr><td><a href="#layer-C">C · Checks before anything runs</a></td><td></td><td></td><td></td><td></td><td></td><td></td><td class="on">●</td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+        <tr><td><a href="#layer-D">D · The execution boundary</a></td><td></td><td class="on">●</td><td></td><td></td><td></td><td></td><td></td><td class="on">●</td><td class="on">●</td><td class="on">●</td><td class="on">●</td><td class="on">●</td><td></td><td class="on">●</td></tr>
+        <tr><td><a href="#layer-E">E · Independent verification</a></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td class="on">●</td><td class="on">●</td><td></td><td></td><td></td><td></td><td></td></tr>
+        <tr><td><a href="#layer-F">F · Honest records and claims</a></td><td class="on">●</td><td></td><td></td><td></td><td></td><td></td><td></td><td class="on">●</td><td></td><td class="on">●</td><td class="on">●</td><td></td><td class="on">●</td><td></td></tr>
+        <tr><td><a href="#layer-G">G · Data and privacy</a></td><td></td><td class="on">●</td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td class="on">●</td><td></td><td class="on">●</td><td></td><td></td></tr>
+        <tr><td><a href="#layer-H">H · Install, update and release</a></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td class="on">●</td><td class="on">●</td><td></td></tr>
+        <tr><td><a href="#layer-I">I · Build supply chain</a></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td class="on">●</td><td></td></tr>
+        <tr><td><a href="#layer-J">J · Spend and evaluation</a></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td class="on">●</td><td></td><td></td><td></td><td class="on">●</td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <section class="block" aria-labelledby="h-each">
+    <h3 id="h-each">Each stage</h3>
+    <p class="lede">The controls that act at each stage, linked to their cards in Part 2.</p>
+    <div class="stage-grid">
+      <section class="stage-card" id="s-1"><h4>1 · Standing rules</h4><ul><li><a href="#c-A1">A1</a> Invariants that fail the suite</li><li><a href="#c-A2">A2</a> One kit contract</li><li><a href="#c-A3">A3</a> A stdlib-only runtime</li><li><a href="#c-A4">A4</a> One pricing file per harness</li><li><a href="#c-A5">A5</a> Generated documentation is never hand-edited</li><li><a href="#c-A6">A6</a> Tests never call a real model CLI</li><li><a href="#c-F4">F4</a> Unknown means no</li></ul></section>
+      <section class="stage-card" id="s-2"><h4>2 · Research</h4><ul><li><a href="#c-D2">D2</a> Every external process is bounded</li><li><a href="#c-D10">D10</a> A code graph is read as untrusted evidence</li><li><a href="#c-G4">G4</a> Memory recall is pulled, capped and labelled</li></ul></section>
+      <section class="stage-card" id="s-3"><h4>3 · Specify</h4><ul><li><a href="#c-B1">B1</a> The approval pause</li><li><a href="#c-B2">B2</a> Kit fences, re-read at every phase start</li></ul></section>
+      <section class="stage-card" id="s-4"><h4>4 · Clarify</h4><ul><li><a href="#c-B1">B1</a> The approval pause</li></ul></section>
+      <section class="stage-card" id="s-5"><h4>5 · Plan</h4><ul><li><a href="#c-B2">B2</a> Kit fences, re-read at every phase start</li><li><a href="#c-B4">B4</a> The budget dial</li><li><a href="#c-B5">B5</a> Declared roles run, or the run stops</li><li><a href="#c-B7">B7</a> Routing policy is selected, never learned</li></ul></section>
+      <section class="stage-card" id="s-6"><h4>6 · Tasks</h4><ul><li><a href="#c-A2">A2</a> One kit contract</li><li><a href="#c-A4">A4</a> One pricing file per harness</li><li><a href="#c-B3">B3</a> The red-green evidence rule</li></ul></section>
+      <section class="stage-card" id="s-7"><h4>7 · Analyze</h4><ul><li><a href="#c-A2">A2</a> One kit contract</li><li><a href="#c-B5">B5</a> Declared roles run, or the run stops</li><li><a href="#c-C1">C1</a> The task graph is validated first</li><li><a href="#c-C2">C2</a> analyze is static by construction</li><li><a href="#c-C3">C3</a> The spec review before dispatch</li></ul></section>
+      <section class="stage-card" id="s-8"><h4>8 · Implement</h4><ul><li><a href="#c-A2">A2</a> One kit contract</li><li><a href="#c-B2">B2</a> Kit fences, re-read at every phase start</li><li><a href="#c-B4">B4</a> The budget dial</li><li><a href="#c-B5">B5</a> Declared roles run, or the run stops</li><li><a href="#c-B6">B6</a> Re-routing is upgrade-only and advisory by default</li><li><a href="#c-B7">B7</a> Routing policy is selected, never learned</li><li><a href="#c-D1">D1</a> Verify commands run inside an OS sandbox</li><li><a href="#c-D2">D2</a> Every external process is bounded</li><li><a href="#c-D3">D3</a> A dispatch carries only its provider's credentials</li><li><a href="#c-D4">D4</a> Paths are contained without a race</li><li><a href="#c-D5">D5</a> Every dispatch is recorded before and after</li><li><a href="#c-D7">D7</a> Cursor is identified before it is trusted</li><li><a href="#c-D9">D9</a> Concurrent work cannot collide silently</li><li><a href="#c-E1">E1</a> The loop runs the check, not the builder</li><li><a href="#c-E4">E4</a> A rewritten brief is caught</li><li><a href="#c-F4">F4</a> Unknown means no</li></ul></section>
+      <section class="stage-card" id="s-9"><h4>9 · Verify and converge</h4><ul><li><a href="#c-A6">A6</a> Tests never call a real model CLI</li><li><a href="#c-B2">B2</a> Kit fences, re-read at every phase start</li><li><a href="#c-B3">B3</a> The red-green evidence rule</li><li><a href="#c-D1">D1</a> Verify commands run inside an OS sandbox</li><li><a href="#c-D2">D2</a> Every external process is bounded</li><li><a href="#c-D3">D3</a> A dispatch carries only its provider's credentials</li><li><a href="#c-D5">D5</a> Every dispatch is recorded before and after</li><li><a href="#c-D6">D6</a> Codex review and acceptance are read-only</li><li><a href="#c-D7">D7</a> Cursor is identified before it is trusted</li><li><a href="#c-D8">D8</a> Reviewers get no blanket permission grant</li><li><a href="#c-D9">D9</a> Concurrent work cannot collide silently</li><li><a href="#c-E1">E1</a> The loop runs the check, not the builder</li><li><a href="#c-E2">E2</a> A fresh-context verifier, and optional adversaries</li><li><a href="#c-E3">E3</a> Phase review against the plan</li><li><a href="#c-E4">E4</a> A rewritten brief is caught</li></ul></section>
+      <section class="stage-card" id="s-10"><h4>10 · Feedback</h4><ul><li><a href="#c-A4">A4</a> One pricing file per harness</li><li><a href="#c-D4">D4</a> Paths are contained without a race</li><li><a href="#c-F1">F1</a> An acceptance is bound to its own run</li><li><a href="#c-F5">F5</a> A subscription run is never shown as a bill</li><li><a href="#c-G1">G1</a> Stores live outside the tree, private</li><li><a href="#c-G2">G2</a> Harness homes are read read-only, from JSONL</li><li><a href="#c-G3">G3</a> Free text is redacted before it is kept or sent</li><li><a href="#c-G4">G4</a> Memory recall is pulled, capped and labelled</li><li><a href="#c-G5">G5</a> The journal summary runs isolated</li><li><a href="#c-J3">J3</a> A routing default changes only through review</li></ul></section>
+      <section class="stage-card" id="s-11"><h4>11 · Keep in sync</h4><ul><li><a href="#c-D1">D1</a> Verify commands run inside an OS sandbox</li><li><a href="#c-D2">D2</a> Every external process is bounded</li><li><a href="#c-F2">F2</a> drift reports, and writes nothing in the tree</li></ul></section>
+      <section class="stage-card" id="s-install"><h4>Install and update</h4><ul><li><a href="#c-D4">D4</a> Paths are contained without a race</li><li><a href="#c-G1">G1</a> Stores live outside the tree, private</li><li><a href="#c-H1">H1</a> Installation never overwrites what it does not own</li><li><a href="#c-H2">H2</a> The freshness check only reads</li><li><a href="#c-H3">H3</a> The install preflight</li></ul></section>
+      <section class="stage-card" id="s-release"><h4>Release and CI</h4><ul><li><a href="#c-A3">A3</a> A stdlib-only runtime</li><li><a href="#c-A5">A5</a> Generated documentation is never hand-edited</li><li><a href="#c-F3">F3</a> Release claims are computed, never typed</li><li><a href="#c-F4">F4</a> Unknown means no</li><li><a href="#c-H4">H4</a> The version bump touches only the version</li><li><a href="#c-I1">I1</a> Actions are pinned to commit SHAs</li><li><a href="#c-I2">I2</a> The docs toolchain is hash-locked</li><li><a href="#c-I3">I3</a> Deploy credentials live only in the deploy job</li><li><a href="#c-I4">I4</a> Generated links are scheme-checked</li></ul></section>
+      <section class="stage-card" id="s-bench"><h4>Evaluation and benchmarks</h4><ul><li><a href="#c-D2">D2</a> Every external process is bounded</li><li><a href="#c-J1">J1</a> Benchmark spending is ceiling-gated</li><li><a href="#c-J2">J2</a> Target repositories are read-only</li><li><a href="#c-J3">J3</a> A routing default changes only through review</li></ul></section>
+    </div>
+  </section>
+</section>
+
+<section class="part" id="gaps" aria-labelledby="h-gaps">
+  <header class="part-head">
+    <p class="part-num">Part 4</p>
+    <h2 id="h-gaps">What is not a boundary</h2>
+    <p class="lede">Do not rely on any of these. Each is a known gap, stated so that the controls above are not read as stronger than they are.</p>
+  </header>
+
+  <div class="gap-grid">
+    <article class="gap-card"><h4>Model dispatch is not confined</h4><p>The macOS sandbox blocks the Keychain, where subscription credentials live, so a confined model CLI cannot log in. A dispatch runs with your privileges, your network and its provider's login.</p></article>
+    <article class="gap-card"><h4>The interactive loop's own checks are not sandboxed</h4><p><code>exec_policy</code> confines a check when a driver, the verify hook's precheck or <code>drift</code> runs it. In the interactive <code>/polytropos:execute</code> loop, the orchestrator runs each verify command through the session's own shell.</p></article>
+    <article class="gap-card"><h4>Linux and Windows have no sandbox backend</h4><p><code>--exec-mode enforced</code> refuses there, and only the explicit trusted-host mode runs. That is a stated gap, not a silent downgrade.</p></article>
+    <article class="gap-card"><h4>A worktree or a scheduler copy is not a sandbox</h4><p>Separate directories separate files and writes. They do not separate privileges, credentials or network access, and a worker reading a file another is changing is not detected.</p></article>
+    <article class="gap-card"><h4>Benchmark candidates and judges are not yet confined</h4><p>A protected-experiment profile exists in <code>bin/exec_policy.py</code>, but nothing dispatches through it yet; benchmark setup and test commands run with the driver's privileges.</p></article>
+    <article class="gap-card"><h4>Role names are not permissions</h4><p>A prompt that says read-only does not make a reviewer read-only. A tool pin that includes Bash reaches everything a shell reaches, Copilot has no per-tool flag, and only Codex pins review to a read-only sandbox.</p></article>
+    <article class="gap-card"><h4>Execution state is not tamper-proof</h4><p><code>TASKS.md</code>, <code>NOTES.md</code> and the verify markers sit in the tree a worker edits. Edits are detected and reported, not prevented, and the ledger outside the tree is out of a confined check's reach but not an unconfined dispatch's.</p></article>
+    <article class="gap-card"><h4>A spend cap is not a provider cap</h4><p>Budget dials and <code>--max-usd</code> stop polytropos from dispatching. They cannot stop a provider from billing, or undo spend already incurred.</p></article>
+    <article class="gap-card"><h4>A capability nobody has run is not a control</h4><p>Most capability rows say <code>unknown</code>, and that is the honest state until someone runs them.</p></article>
+    <article class="gap-card"><h4>Redaction is shape-matching</h4><p>It catches strings shaped like published credential formats. A password that reads as a word, a name or an address has no shape and is not caught.</p></article>
+    <article class="gap-card"><h4>Recording an attempt is not exactly-once execution</h4><p>A process killed at its limit may already have been billed or written a file. The ledger closes it as unknown and never replays it; it cannot know what the provider billed.</p></article>
+    <article class="gap-card"><h4>An isolated summary is not proof the model had no tools</h4><p>The journal summary is shown to have run outside the project and written nothing there. No tool-restricting flag is passed.</p></article>
+    <article class="gap-card"><h4>drift cannot yet tell a nested sandbox from real drift</h4><p>A check that starts its own sandbox is refused inside <code>drift</code>'s, and reads as drifted.</p></article>
+    <article class="gap-card"><h4>Kits are trusted input</h4><p>A kit's verify commands are code. Running a kit you did not write is running its scripts.</p></article>
+    <article class="gap-card"><h4>Repository settings are not set by code</h4><p>Dependabot, secret scanning and push protection are account switches; nothing here claims they are on.</p></article>
+  </div>
+</section>
+
+<footer>Policy: SECURITY.md &middot; Rules: CLAUDE.md &middot; Stages: docs/sdd/pipelines.html &middot; Markdown form: docs/sdd/guardrails.md &middot; Long form: docs/SPEC-DRIVEN.md</footer>
+
+</main>
+</body>
+</html>

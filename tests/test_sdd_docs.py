@@ -263,6 +263,62 @@ class PipelinesPageTests(unittest.TestCase):
         pitch.check_truth(_read(PIPELINES_MD), REPO_ROOT)
 
 
+GUARDRAILS = SDD / "guardrails.html"
+GUARDRAILS_MD = SDD / "guardrails.md"
+CONTROL_CARD = re.compile(r'<article class="ctl" id="c-([A-J]\d+)">(.*?)</article>', re.DOTALL)
+CONTROL_HEAD_MD = re.compile(r"^#### ([A-J]\d+) · ", re.MULTILINE)
+CITED_TESTS_MD = re.compile(r"`tests/(test_\w+\.py)` → ((?:`\w+`(?:, )?)+)")
+
+
+class GuardrailsPageTests(unittest.TestCase):
+    """docs/sdd/guardrails.html and its Markdown twin: every guardrail, how it is built, and where.
+
+    Hand-written, like the pipelines page. Each control names the code that implements it and
+    either the test classes that prove it or, in so many words, that no test was found. Every
+    cited test class must exist, so the page cannot claim a proof the suite does not have.
+    """
+
+    def test_self_contained_and_truthful(self):
+        text = _read(GUARDRAILS)
+        low = text.lower()
+        for banned in ("<script", "<link", "@import", "<img"):
+            self.assertNotIn(banned, low)
+        self.assertIn("prefers-color-scheme: dark", text)
+        pitch.check_truth(text, REPO_ROOT)
+
+    def test_markdown_twin_carries_the_same_headings(self):
+        check_headings_carried(_read(GUARDRAILS), _read(GUARDRAILS_MD), both_ways=True)
+
+    def test_twins_name_each_other(self):
+        self.assertIn("docs/sdd/guardrails.html", _read(GUARDRAILS_MD))
+        self.assertIn("docs/sdd/guardrails.md", _read(GUARDRAILS))
+
+    def test_every_control_appears_once_in_each_form(self):
+        in_html = [m.group(1) for m in CONTROL_CARD.finditer(_read(GUARDRAILS))]
+        in_md = CONTROL_HEAD_MD.findall(_read(GUARDRAILS_MD))
+        self.assertTrue(in_html, "the HTML lists no controls")
+        self.assertEqual(len(in_html), len(set(in_html)), "a control id repeats in the HTML")
+        self.assertEqual(in_html, in_md)
+
+    def test_every_control_names_a_proof_or_says_there_is_none(self):
+        for cid, body in ((m.group(1), m.group(2)) for m in CONTROL_CARD.finditer(_read(GUARDRAILS))):
+            with self.subTest(control=cid):
+                self.assertTrue("tests/test_" in body or "No test found" in body,
+                                f"{cid} neither cites a test nor says none was found")
+
+    def test_every_cited_test_class_exists(self):
+        cited = CITED_TESTS_MD.findall(_read(GUARDRAILS_MD))
+        self.assertTrue(cited, "the Markdown cites no tests")
+        for filename, classes in cited:
+            source = _read(REPO_ROOT / "tests" / filename)
+            for name in re.findall(r"`(\w+)`", classes):
+                with self.subTest(test=f"{filename}::{name}"):
+                    self.assertRegex(source, rf"(?m)^class {name}\b")
+
+    def test_markdown_truth(self):
+        pitch.check_truth(_read(GUARDRAILS_MD), REPO_ROOT)
+
+
 class NegativeFixtureTests(unittest.TestCase):
     """The heading check must be able to fail; otherwise the live pass proves nothing."""
 
