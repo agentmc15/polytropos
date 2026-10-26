@@ -63,7 +63,7 @@
   .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 1.6rem; align-items: start; }
   .col { min-width: 0; }
   .table-wrap { overflow-x: auto; }
-  .col h2 { font-size: 1.3rem; margin: 0 0 .2rem; }
+  .col h3 { font-size: 1.3rem; margin: 0 0 .2rem; }
   .col .lede { color: var(--muted); font-size: .9rem; margin: 0 0 1rem; }
   .flow { list-style: none; margin: 0; padding: 0; }
   .flow > li { position: relative; margin: 0 0 1.55rem; }
@@ -128,7 +128,7 @@
   .t-sonnet { color: var(--sonnet); font-weight: 700; }
   .t-haiku { color: var(--haiku); font-weight: 700; }
   .compare { margin-top: 2.2rem; }
-  .compare h2 { font-size: 1.3rem; margin: 0 0 .6rem; }
+  .compare h3 { font-size: 1.3rem; margin: 0 0 .6rem; }
   table { border-collapse: collapse; width: 100%; background: var(--card); font-size: .9rem; }
   th, td { border: 1px solid var(--line); padding: .45rem .65rem; text-align: left; vertical-align: top; }
   th { background: var(--code-bg); }
@@ -136,9 +136,32 @@
     margin-top: 1.8rem; padding-top: .7rem; border-top: 1px solid var(--line); color: var(--muted);
     font-size: .82rem; font-family: ui-monospace, Menlo, monospace;
   }
+  .parts {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: .6rem;
+    margin: 0; padding: 0; list-style: none;
+  }
+  .parts a {
+    display: block; text-decoration: none; color: var(--ink); font-weight: 700;
+    background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: .55rem .8rem;
+  }
+  .parts a:hover, .parts a:focus-visible { border-color: var(--accent); }
+  .parts a span, .part-num {
+    display: block; font-family: ui-monospace, Menlo, monospace; font-size: .7rem; font-weight: 400;
+    letter-spacing: .1em; text-transform: uppercase; color: var(--accent);
+  }
+  .part { margin-top: 2.8rem; padding-top: 1.6rem; border-top: 2px solid var(--ink); scroll-margin-top: 1rem; }
+  .part-head { margin: 0 0 1.8rem; }
+  .part-num { margin: 0; }
+  .part-head h2 { font-size: 1.75rem; line-height: 1.2; margin: .15rem 0 .4rem; text-wrap: balance; }
+  .part-head .lede { color: var(--muted); margin: 0; max-width: 52rem; }
   .block { margin: 0 0 2.4rem; }
-  .block > h2 { font-size: 1.3rem; margin: 0 0 .2rem; text-wrap: balance; }
+  .block > h3 { font-size: 1.25rem; margin: 0 0 .2rem; text-wrap: balance; }
   .block > .lede { color: var(--muted); font-size: .9rem; margin: 0 0 1rem; max-width: 52rem; }
+  .group-label {
+    font-family: ui-monospace, Menlo, monospace; font-size: .72rem; letter-spacing: .08em;
+    text-transform: uppercase; color: var(--muted); margin: 1.2rem 0 .5rem;
+  }
+  .block > .lede + .group-label { margin-top: 0; }
   .stage-grid {
     list-style: none; margin: 0; padding: 0; display: grid; gap: .75rem;
     grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
@@ -148,20 +171,18 @@
     background: var(--card); border: 1px solid var(--line); border-radius: 8px;
     padding: .65rem .85rem .75rem;
   }
-  .stage h3 { margin: 0; font-size: 1rem; display: flex; align-items: baseline; gap: .45rem; }
+  .stage h4 { margin: 0; font-size: 1rem; display: flex; align-items: baseline; gap: .45rem; }
   .stage .num {
     font-family: ui-monospace, Menlo, monospace; font-size: .7rem; font-weight: 400; color: var(--muted);
     border: 1px solid var(--line); border-radius: 99px; padding: 0 .4rem;
   }
   .stage p { margin: 0; }
-  .stage .gate, .stage .in-poly { font-size: .82rem; color: var(--muted); }
-  .stage .gate b, .stage .in-poly b {
+  .stage .out, .stage .gate, .stage .where { font-size: .82rem; color: var(--muted); }
+  .stage .out b, .stage .gate b, .stage .where b {
     font-family: ui-monospace, Menlo, monospace; font-size: .66rem; letter-spacing: .08em;
-    text-transform: uppercase; margin-right: .35rem;
+    text-transform: uppercase; margin-right: .35rem; color: var(--ink);
   }
-  .stage .gate b { color: var(--ink); }
-  .stage .in-poly b { color: var(--accent); }
-  .kicker + .legend { margin-top: .5rem; }
+  .stage .where b { color: var(--accent); }
   .fig { margin: 0; }
   .fig-scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; }
   .fig-scroll svg { display: block; width: 100%; min-width: 880px; height: auto; }
@@ -178,7 +199,9 @@
   .fc-name, .fc-q { fill: var(--ink); font-family: Georgia, 'Times New Roman', serif; font-weight: 700; }
   .fc-name { font-size: 14px; }
   .fc-q { font-size: 13px; }
-  .fc-sub { fill: var(--accent); font-family: ui-monospace, Menlo, monospace; font-size: 10.5px; }
+  .fc-sub, .fc-out { font-family: ui-monospace, Menlo, monospace; font-size: 10.5px; }
+  .fc-sub { fill: var(--accent); }
+  .fc-out { fill: var(--muted); }
   .fc-num { fill: var(--muted); font-family: ui-monospace, Menlo, monospace; font-size: 10px; }
   .fc-label { fill: var(--muted); font-family: Georgia, 'Times New Roman', serif; font-size: 11.5px; font-style: italic; }
   .fc-frame-label { fill: var(--muted); font-family: ui-monospace, Menlo, monospace; font-size: 10px; letter-spacing: .08em; }
@@ -186,6 +209,7 @@
     .wrap { padding-block: 1.8rem 3rem; }
     .scroll-hint { display: block; }
     h1 { font-size: 1.65rem; }
+    .part-head h2 { font-size: 1.45rem; }
     .cols { grid-template-columns: 1fr; }
     .branch { grid-template-columns: 1fr; }
     table { font-size: .84rem; }
@@ -206,151 +230,330 @@
 
 <p class="kicker"><b>polytropos</b> &middot; spec-driven development &middot; two pipelines</p>
 <h1>The usual SDD pipeline, and <em>polytropos's</em></h1>
-<p class="sub">First the stages every spec-driven tool shares, then the flow between them, then two columns: how most AI spec-driven tools run a change, and how polytropos runs one. Both start from a written spec. The difference is in who checks the work, which model does each part, and what happens to what was learned.</p>
+<p class="sub">Part 1 walks through spec-driven development: the stages every spec-driven tool shares, what each one produces, and the gates between them. Part 2 walks through the same stages as polytropos runs them. Part 3 puts the usual AI pipeline beside polytropos's and compares the two.</p>
 
-<section class="block" aria-labelledby="h-stages">
-  <h2 id="h-stages">The stages, defined</h2>
-  <p class="lede">Every spec-driven tool walks the same stages under different names. Each stage ends at a <em>gate</em>: what must be true before the next one starts. Stages 1 to 10 follow the lifecycle table in docs/sdd/guide.md, and stage 11 is its principle P8. The last line of each card names the part of polytropos that does the stage.</p>
-  <ol class="stage-grid">
-    <li class="stage"><h3><span class="num">1</span>Standing rules</h3><p>Constraints every change obeys, written once as a constitution or rules file.</p><p class="gate"><b>Gate</b>exists before the first change</p><p class="in-poly"><b>polytropos</b><code>CLAUDE.md</code> invariants, many enforced by tests, plus each kit's <code>GUARDRAILS.md</code></p></li>
-    <li class="stage"><h3><span class="num">2</span>Research</h3><p>Map the problem and the existing code. The output is findings, not design.</p><p class="gate"><b>Gate</b>the findings are reviewed</p><p class="in-poly"><b>polytropos</b>the architect explores before planning, optionally grounded in a code graph with <code>bin/graph_ground.py</code></p></li>
-    <li class="stage"><h3><span class="num">3</span>Specify</h3><p>What to build and why, without design: the goal, scenarios, acceptance criteria and what is out of scope.</p><p class="gate"><b>Gate</b>a person approves it</p><p class="in-poly"><b>polytropos</b>the spec half of <code>PLAN.md</code>; the architect writes nothing to disk until you approve it</p></li>
-    <li class="stage"><h3><span class="num">4</span>Clarify</h3><p>Surface ambiguity while it is still cheap, and fold the answers back into the spec.</p><p class="gate"><b>Gate</b>no open question would change the plan</p><p class="in-poly"><b>polytropos</b>scoping questions before the frontier run; assumptions and open questions listed under the spec draft</p></li>
-    <li class="stage"><h3><span class="num">5</span>Plan</h3><p>How, with reasons: the architecture, the decisions and the risks.</p><p class="gate"><b>Gate</b>consistent with the standing rules</p><p class="in-poly"><b>polytropos</b>the design half of <code>PLAN.md</code>: decisions with rationale, risks with tripwires</p></li>
-    <li class="stage"><h3><span class="num">6</span>Tasks</h3><p>Ordered, checkable work, with the dependencies between the pieces.</p><p class="gate"><b>Gate</b>every task traces to the plan</p><p class="in-poly"><b>polytropos</b><code>TASKS.md</code>: per task a pinned model, a self-contained brief, acceptance, a verify command and an <code>evidence:</code> rule</p></li>
-    <li class="stage"><h3><span class="num">7</span>Analyze</h3><p>Check the spec, plan and tasks against each other before anything is built.</p><p class="gate"><b>Gate</b>no contradiction or gap</p><p class="in-poly"><b>polytropos</b><code>kit_contract.py graph</code> and <code>analyze</code> before the first dispatch, then, in an interactive run, the P0 spec review</p></li>
-    <li class="stage"><h3><span class="num">8</span>Implement</h3><p>Build against the tasks, one task at a time.</p><p class="gate"><b>Gate</b>each task verified</p><p class="in-poly"><b>polytropos</b>each task goes to the implementer on its pinned tier; the loop runs its verify command and a fresh verifier re-checks it; one retry, then a frontier consult</p></li>
-    <li class="stage"><h3><span class="num">9</span>Verify and converge</h3><p>Prove the whole matches the spec, not just each piece.</p><p class="gate"><b>Gate</b>the spec's "done" holds</p><p class="in-poly"><b>polytropos</b>a phase reviewer checks each phase against <code>PLAN.md</code>; once <code>kit_contract.py graph</code> reports every task done, the plan's done check is run</p></li>
-    <li class="stage"><h3><span class="num">10</span>Feedback</h3><p>Learn from the run: better rules and better specs next time.</p><p class="gate"><b>Gate</b>recorded where the next planner reads it</p><p class="in-poly"><b>polytropos</b><code>outcome:</code>, <code>reviewer:</code> and <code>defect:</code> lines in <code>NOTES.md</code>, graded by <code>bin/routing_scorecard.py</code> and read by the next architect</p></li>
-    <li class="stage"><h3><span class="num">11</span>Keep in sync</h3><p>After the change ships, check that the spec and the code still agree.</p><p class="gate"><b>Gate</b>drift is detected, not discovered</p><p class="in-poly"><b>polytropos</b><code>kit_contract.py drift</code> re-runs a finished kit's checks and reports drift, not failure</p></li>
+<nav aria-label="Parts">
+  <ol class="parts">
+    <li><a href="#sdd"><span>Part 1</span>Spec-driven development</a></li>
+    <li><a href="#polytropos"><span>Part 2</span>polytropos</a></li>
+    <li><a href="#side-by-side"><span>Part 3</span>Side by side</a></li>
   </ol>
+</nav>
+
+<section class="part" id="sdd" aria-labelledby="h-sdd">
+  <header class="part-head">
+    <p class="part-num">Part 1</p>
+    <h2 id="h-sdd">Spec-driven development</h2>
+    <p class="lede">Spec-driven development writes down what to build, and why, before any code, and then checks the code against that spec. Every spec-driven tool walks the same stages under different names. Each stage produces an output and ends at a <em>gate</em>: what must be true before the next stage starts.</p>
+  </header>
+
+  <section class="block" aria-labelledby="h-stages">
+    <h3 id="h-stages">The stages</h3>
+    <p class="lede">Stages 1 to 10 follow the lifecycle table in docs/sdd/guide.md, and stage 11 is its principle P8.</p>
+    <ol class="stage-grid">
+      <li class="stage"><h4><span class="num">1</span>Standing rules</h4><p>Constraints every change obeys, set once for the whole project.</p><p class="out"><b>Output</b>a constitution or rules file</p><p class="gate"><b>Gate</b>exists before the first change</p></li>
+      <li class="stage"><h4><span class="num">2</span>Research</h4><p>Map the problem and the existing code before deciding anything.</p><p class="out"><b>Output</b>findings, not design</p><p class="gate"><b>Gate</b>the findings are reviewed</p></li>
+      <li class="stage"><h4><span class="num">3</span>Specify</h4><p>What to build and why, without design.</p><p class="out"><b>Output</b>the goal, scenarios, acceptance criteria and what is out of scope</p><p class="gate"><b>Gate</b>a person approves it</p></li>
+      <li class="stage"><h4><span class="num">4</span>Clarify</h4><p>Surface ambiguity while it is still cheap to fix.</p><p class="out"><b>Output</b>questions and answers, folded back into the spec</p><p class="gate"><b>Gate</b>no open question would change the plan</p></li>
+      <li class="stage"><h4><span class="num">5</span>Plan</h4><p>How to build it, with the reasons.</p><p class="out"><b>Output</b>the architecture, the decisions and the risks</p><p class="gate"><b>Gate</b>consistent with the standing rules</p></li>
+      <li class="stage"><h4><span class="num">6</span>Tasks</h4><p>Break the plan into ordered, checkable work.</p><p class="out"><b>Output</b>a task list with the dependencies between tasks</p><p class="gate"><b>Gate</b>every task traces to the plan</p></li>
+      <li class="stage"><h4><span class="num">7</span>Analyze</h4><p>Check the spec, plan and tasks against each other before anything is built.</p><p class="out"><b>Output</b>a consistency report</p><p class="gate"><b>Gate</b>no contradiction or gap</p></li>
+      <li class="stage"><h4><span class="num">8</span>Implement</h4><p>Build against the tasks, one task at a time.</p><p class="out"><b>Output</b>code, task by task</p><p class="gate"><b>Gate</b>each task verified</p></li>
+      <li class="stage"><h4><span class="num">9</span>Verify and converge</h4><p>Prove the whole matches the spec, not just each piece.</p><p class="out"><b>Output</b>test results and review verdicts</p><p class="gate"><b>Gate</b>the spec's "done" holds</p></li>
+      <li class="stage"><h4><span class="num">10</span>Feedback</h4><p>Learn from the run.</p><p class="out"><b>Output</b>updated rules, and better specs next time</p><p class="gate"><b>Gate</b>recorded where the next planner reads it</p></li>
+      <li class="stage"><h4><span class="num">11</span>Keep in sync</h4><p>After the change ships, check that the spec and the code still agree.</p><p class="out"><b>Output</b>tests that tie the spec to the code, often run in CI</p><p class="gate"><b>Gate</b>drift is detected, not discovered</p></li>
+    </ol>
+  </section>
+
+  <section class="block" aria-labelledby="h-flow">
+    <h3 id="h-flow">The flow, with its gates</h3>
+    <p class="lede">The same stages as a flow chart, read row by row. A diamond is a gate: <em>yes</em> moves the work on, and <em>no</em> sends it back along a dashed arrow.</p>
+    <p class="scroll-hint">Scroll sideways to see the whole chart.</p>
+    <figure class="fig">
+      <div class="fig-scroll">
+        <svg viewBox="0 0 1160 768" role="img" aria-label="Flow chart of the spec-driven lifecycle. Standing rules, research, specify and clarify lead to an approval gate. Plan, tasks and analyze lead to a consistency gate. Each task is implemented and verified until none are left, and a failed task is fixed and tried again. The whole is then checked against the spec's done; feedback and drift checks feed the next change. A failed gate sends the work back.">
+          <defs>
+            <marker id="sdd-arrow" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="fc-head" d="M0,0 L10,5 L0,10 z"/></marker>
+            <marker id="sdd-arrow-back" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="fc-head-back" d="M0,0 L10,5 L0,10 z"/></marker>
+          </defs>
+
+          <!-- row 1: define, left to right -->
+          <rect class="fc-box" x="12" y="82" width="176" height="56" rx="8"/>
+          <text class="fc-num" x="22" y="96">1</text>
+          <text class="fc-name" x="100" y="111" text-anchor="middle">Standing rules</text>
+          <text class="fc-out" x="100" y="127" text-anchor="middle">constitution or rules</text>
+          <rect class="fc-box" x="242" y="82" width="176" height="56" rx="8"/>
+          <text class="fc-num" x="252" y="96">2</text>
+          <text class="fc-name" x="330" y="111" text-anchor="middle">Research</text>
+          <text class="fc-out" x="330" y="127" text-anchor="middle">findings, not design</text>
+          <rect class="fc-box" x="472" y="82" width="176" height="56" rx="8"/>
+          <text class="fc-num" x="482" y="96">3</text>
+          <text class="fc-name" x="560" y="111" text-anchor="middle">Specify</text>
+          <text class="fc-out" x="560" y="127" text-anchor="middle">goal, scenarios, criteria</text>
+          <rect class="fc-box" x="702" y="82" width="176" height="56" rx="8"/>
+          <text class="fc-num" x="712" y="96">4</text>
+          <text class="fc-name" x="790" y="111" text-anchor="middle">Clarify</text>
+          <text class="fc-out" x="790" y="127" text-anchor="middle">answers fold into spec</text>
+          <polygon class="fc-gate person" points="1020,72 1084,110 1020,148 956,110"/>
+          <text class="fc-q" x="1020" y="114" text-anchor="middle">Approved?</text>
+          <line class="fc-edge" x1="188" y1="110" x2="242" y2="110" marker-end="url(#sdd-arrow)"/>
+          <line class="fc-edge" x1="418" y1="110" x2="472" y2="110" marker-end="url(#sdd-arrow)"/>
+          <line class="fc-edge" x1="648" y1="110" x2="702" y2="110" marker-end="url(#sdd-arrow)"/>
+          <line class="fc-edge" x1="878" y1="110" x2="956" y2="110" marker-end="url(#sdd-arrow)"/>
+          <path class="fc-back" d="M1020,72 V40 H560 V82" marker-end="url(#sdd-arrow-back)"/>
+          <text class="fc-label" x="790" y="33" text-anchor="middle">no: revise the spec</text>
+          <line class="fc-edge" x1="1020" y1="148" x2="1020" y2="247" marker-end="url(#sdd-arrow)"/>
+          <text class="fc-label" x="1030" y="202">yes: approved</text>
+
+          <!-- row 2: design, right to left -->
+          <rect class="fc-box" x="932" y="247" width="176" height="56" rx="8"/>
+          <text class="fc-num" x="942" y="261">5</text>
+          <text class="fc-name" x="1020" y="276" text-anchor="middle">Plan</text>
+          <text class="fc-out" x="1020" y="292" text-anchor="middle">architecture, decisions</text>
+          <rect class="fc-box" x="702" y="247" width="176" height="56" rx="8"/>
+          <text class="fc-num" x="712" y="261">6</text>
+          <text class="fc-name" x="790" y="276" text-anchor="middle">Tasks</text>
+          <text class="fc-out" x="790" y="292" text-anchor="middle">tasks with dependencies</text>
+          <rect class="fc-box" x="472" y="247" width="176" height="56" rx="8"/>
+          <text class="fc-num" x="482" y="261">7</text>
+          <text class="fc-name" x="560" y="276" text-anchor="middle">Analyze</text>
+          <text class="fc-out" x="560" y="292" text-anchor="middle">consistency report</text>
+          <polygon class="fc-gate" points="330,237 394,275 330,313 266,275"/>
+          <text class="fc-q" x="330" y="279" text-anchor="middle">Consistent?</text>
+          <line class="fc-edge" x1="932" y1="275" x2="878" y2="275" marker-end="url(#sdd-arrow)"/>
+          <line class="fc-edge" x1="702" y1="275" x2="648" y2="275" marker-end="url(#sdd-arrow)"/>
+          <line class="fc-edge" x1="472" y1="275" x2="394" y2="275" marker-end="url(#sdd-arrow)"/>
+          <path class="fc-back" d="M330,237 V195 H790 V247" marker-end="url(#sdd-arrow-back)"/>
+          <text class="fc-label" x="560" y="188" text-anchor="middle">no: fix the tasks or the plan</text>
+          <line class="fc-edge" x1="330" y1="313" x2="330" y2="417" marker-end="url(#sdd-arrow)"/>
+          <text class="fc-label" x="340" y="348">yes</text>
+
+          <!-- row 3: the task loop, left to right -->
+          <rect class="fc-frame" x="200" y="362" width="905" height="220" rx="12"/>
+          <text class="fc-frame-label" x="214" y="574">FOR EACH TASK, IN DEPENDENCY ORDER</text>
+          <rect class="fc-box" x="242" y="417" width="176" height="56" rx="8"/>
+          <text class="fc-num" x="252" y="431">8</text>
+          <text class="fc-name" x="330" y="446" text-anchor="middle">Implement</text>
+          <text class="fc-out" x="330" y="462" text-anchor="middle">code, task by task</text>
+          <rect class="fc-box" x="472" y="417" width="176" height="56" rx="8"/>
+          <text class="fc-name" x="560" y="446" text-anchor="middle">Verify the task</text>
+          <text class="fc-out" x="560" y="462" text-anchor="middle">against its acceptance</text>
+          <polygon class="fc-gate" points="790,407 854,445 790,483 726,445"/>
+          <text class="fc-q" x="790" y="449" text-anchor="middle">Pass?</text>
+          <polygon class="fc-gate" points="1020,407 1084,445 1020,483 956,445"/>
+          <text class="fc-q" x="1020" y="449" text-anchor="middle">Tasks left?</text>
+          <line class="fc-edge" x1="418" y1="445" x2="472" y2="445" marker-end="url(#sdd-arrow)"/>
+          <line class="fc-edge" x1="648" y1="445" x2="726" y2="445" marker-end="url(#sdd-arrow)"/>
+          <line class="fc-edge" x1="854" y1="445" x2="956" y2="445" marker-end="url(#sdd-arrow)"/>
+          <text class="fc-label" x="905" y="437" text-anchor="middle">yes</text>
+          <line class="fc-edge" x1="790" y1="483" x2="790" y2="516" marker-end="url(#sdd-arrow)"/>
+          <text class="fc-label" x="800" y="503">no</text>
+          <rect class="fc-box" x="702" y="516" width="176" height="48" rx="8"/>
+          <text class="fc-name" x="790" y="537" text-anchor="middle">Fix the work</text>
+          <text class="fc-out" x="790" y="553" text-anchor="middle">using the failure</text>
+          <path class="fc-back" d="M702,540 H330 V473" marker-end="url(#sdd-arrow-back)"/>
+          <text class="fc-label" x="516" y="533" text-anchor="middle">try again</text>
+          <path class="fc-back" d="M1020,407 V390 H380 V417" marker-end="url(#sdd-arrow-back)"/>
+          <text class="fc-label" x="700" y="383" text-anchor="middle">yes: next task</text>
+          <line class="fc-edge" x1="1020" y1="483" x2="1020" y2="637" marker-end="url(#sdd-arrow)"/>
+          <text class="fc-label" x="1030" y="612">no: all done</text>
+
+          <!-- row 4: close, right to left, then back to the start -->
+          <rect class="fc-box" x="932" y="637" width="176" height="56" rx="8"/>
+          <text class="fc-num" x="942" y="651">9</text>
+          <text class="fc-name" x="1020" y="666" text-anchor="middle">Verify and converge</text>
+          <text class="fc-out" x="1020" y="682" text-anchor="middle">tests, review verdicts</text>
+          <polygon class="fc-gate" points="790,627 854,665 790,703 726,665"/>
+          <text class="fc-q" x="790" y="669" text-anchor="middle">&ldquo;Done&rdquo; holds?</text>
+          <rect class="fc-box" x="472" y="637" width="176" height="56" rx="8"/>
+          <text class="fc-num" x="482" y="651">10</text>
+          <text class="fc-name" x="560" y="666" text-anchor="middle">Feedback</text>
+          <text class="fc-out" x="560" y="682" text-anchor="middle">rules and specs improve</text>
+          <rect class="fc-box" x="242" y="637" width="176" height="56" rx="8"/>
+          <text class="fc-num" x="252" y="651">11</text>
+          <text class="fc-name" x="330" y="666" text-anchor="middle">Keep in sync</text>
+          <text class="fc-out" x="330" y="682" text-anchor="middle">spec and code agree</text>
+          <line class="fc-edge" x1="932" y1="665" x2="854" y2="665" marker-end="url(#sdd-arrow)"/>
+          <line class="fc-edge" x1="726" y1="665" x2="648" y2="665" marker-end="url(#sdd-arrow)"/>
+          <text class="fc-label" x="687" y="657" text-anchor="middle">yes</text>
+          <line class="fc-edge" x1="472" y1="665" x2="418" y2="665" marker-end="url(#sdd-arrow)"/>
+          <text class="fc-label" x="445" y="657" text-anchor="middle">later</text>
+          <path class="fc-back" d="M790,703 V735 H1135 V275 H1108" marker-end="url(#sdd-arrow-back)"/>
+          <text class="fc-label" x="962" y="752" text-anchor="middle">no: amend the spec and plan</text>
+          <path class="fc-back" d="M242,665 H100 V138" marker-end="url(#sdd-arrow-back)"/>
+          <text class="fc-label" x="112" y="268">feeds the</text>
+          <text class="fc-label" x="112" y="283">next change</text>
+        </svg>
+      </div>
+      <figcaption>A change runs top row first. The spec is approved, the plan and tasks pass a consistency check, each task is built and verified in turn, and the whole is checked against the spec's "done". The numbers match the cards above, and the small line in each box is that stage's typical output.</figcaption>
+    </figure>
+  </section>
 </section>
 
-<section class="block" aria-labelledby="h-flow">
-  <h2 id="h-flow">The flow, with its gates</h2>
-  <p class="lede">The same stages as a flow chart, read row by row. A diamond is a gate: <em>yes</em> moves the work on, and <em>no</em> sends it back along a dashed arrow.</p>
-  <p class="scroll-hint">Scroll sideways to see the whole chart.</p>
-  <figure class="fig">
-    <div class="fig-scroll">
-      <svg viewBox="0 0 1160 768" role="img" aria-label="Flow chart of the spec-driven lifecycle. Standing rules, research, specify and clarify lead to an approval gate. Plan, tasks and analyze lead to a consistency gate. Each task is implemented and verified, with one retry, until none are left. The whole is then checked against the spec's done; feedback and drift checks feed the next change. A failed gate sends the work back.">
-        <defs>
-          <marker id="fc-arrow" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="fc-head" d="M0,0 L10,5 L0,10 z"/></marker>
-          <marker id="fc-arrow-back" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="fc-head-back" d="M0,0 L10,5 L0,10 z"/></marker>
-        </defs>
+<section class="part" id="polytropos" aria-labelledby="h-polytropos">
+  <header class="part-head">
+    <p class="part-num">Part 2</p>
+    <h2 id="h-polytropos">polytropos</h2>
+    <p class="lede"><code>/polytropos:architect</code> plans a change once, on the frontier tier, and writes an execution kit: <code>PLAN.md</code>, <code>TASKS.md</code> and <code>GUARDRAILS.md</code>. <code>/polytropos:execute</code> runs the kit, sending each task to the cheapest tier that can do it and checking every result. Here are the same stages again, as polytropos runs them.</p>
+  </header>
 
-        <!-- row 1: define, left to right -->
-        <rect class="fc-box" x="12" y="82" width="176" height="56" rx="8"/>
-        <text class="fc-num" x="22" y="96">1</text>
-        <text class="fc-name" x="100" y="111" text-anchor="middle">Standing rules</text>
-        <text class="fc-sub" x="100" y="127" text-anchor="middle">CLAUDE.md, GUARDRAILS.md</text>
-        <rect class="fc-box" x="242" y="82" width="176" height="56" rx="8"/>
-        <text class="fc-num" x="252" y="96">2</text>
-        <text class="fc-name" x="330" y="111" text-anchor="middle">Research</text>
-        <text class="fc-sub" x="330" y="127" text-anchor="middle">the architect explores</text>
-        <rect class="fc-box" x="472" y="82" width="176" height="56" rx="8"/>
-        <text class="fc-num" x="482" y="96">3</text>
-        <text class="fc-name" x="560" y="111" text-anchor="middle">Specify</text>
-        <text class="fc-sub" x="560" y="127" text-anchor="middle">PLAN.md, the spec half</text>
-        <rect class="fc-box" x="702" y="82" width="176" height="56" rx="8"/>
-        <text class="fc-num" x="712" y="96">4</text>
-        <text class="fc-name" x="790" y="111" text-anchor="middle">Clarify</text>
-        <text class="fc-sub" x="790" y="127" text-anchor="middle">open questions listed</text>
-        <polygon class="fc-gate person" points="1020,72 1084,110 1020,148 956,110"/>
-        <text class="fc-q" x="1020" y="114" text-anchor="middle">Approved?</text>
-        <line class="fc-edge" x1="188" y1="110" x2="242" y2="110" marker-end="url(#fc-arrow)"/>
-        <line class="fc-edge" x1="418" y1="110" x2="472" y2="110" marker-end="url(#fc-arrow)"/>
-        <line class="fc-edge" x1="648" y1="110" x2="702" y2="110" marker-end="url(#fc-arrow)"/>
-        <line class="fc-edge" x1="878" y1="110" x2="956" y2="110" marker-end="url(#fc-arrow)"/>
-        <path class="fc-back" d="M1020,72 V40 H560 V82" marker-end="url(#fc-arrow-back)"/>
-        <text class="fc-label" x="790" y="33" text-anchor="middle">no: revise the spec</text>
-        <line class="fc-edge" x1="1020" y1="148" x2="1020" y2="247" marker-end="url(#fc-arrow)"/>
-        <text class="fc-label" x="1030" y="202">yes: you approve</text>
+  <section class="block" aria-labelledby="h-pt-stages">
+    <h3 id="h-pt-stages">Each stage in polytropos</h3>
+    <p class="lede">The numbers match Part 1. The last line of each card says where the behavior is defined.</p>
+    <p class="group-label">Before the run &middot; the architect, on the frontier tier</p>
+    <ol class="stage-grid">
+      <li class="stage"><h4><span class="num">1</span>Standing rules</h4><p><code>CLAUDE.md</code> holds always-on invariants, many enforced by tests. The architect writes each kit's <code>GUARDRAILS.md</code>, rules for that change only, and the run re-reads it from disk at every phase start.</p><p class="where"><b>Where</b>the repo's <code>CLAUDE.md</code>; the kit's <code>GUARDRAILS.md</code></p></li>
+      <li class="stage"><h4><span class="num">2</span>Research</h4><p>The architect explores before planning, optionally grounded in a code graph with <code>bin/graph_ground.py</code>. A <code>scout</code> role is available.</p><p class="where"><b>Where</b><code>skills/architect/SKILL.md</code></p></li>
+      <li class="stage"><h4><span class="num">3</span>Specify</h4><p>The spec half of <code>PLAN.md</code>: a goal, a checkable "done", constraints and an out-of-scope fence. The architect writes nothing to disk until you approve it.</p><p class="where"><b>Where</b><code>skills/architect/SKILL.md</code>, Step 1</p></li>
+      <li class="stage"><h4><span class="num">4</span>Clarify</h4><p>Scoping questions before the frontier run, then assumptions and open questions listed under the spec draft, for you to settle at the approval pause.</p><p class="where"><b>Where</b><code>skills/architect/SKILL.md</code>, Steps 0&ndash;1</p></li>
+      <li class="stage"><h4><span class="num">5</span>Plan</h4><p>The design half of <code>PLAN.md</code>: decisions with rationale, risks with tripwires, and optional <code>autonomy:</code>, <code>budget:</code>, <code>roles:</code> and <code>workflow:</code> lines.</p><p class="where"><b>Where</b><code>skills/architect/SKILL.md</code>, Step 1</p></li>
+      <li class="stage"><h4><span class="num">6</span>Tasks</h4><p><code>TASKS.md</code>: per task an id, a pinned <code>model</code>, a self-contained brief, acceptance, a verify command, an <code>evidence:</code> rule and its <code>depends:</code>.</p><p class="where"><b>Where</b><code>skills/architect/SKILL.md</code>, Step 2</p></li>
+    </ol>
+    <p class="group-label">The run &middot; the execute loop</p>
+    <ol class="stage-grid">
+      <li class="stage"><h4><span class="num">7</span>Analyze</h4><p><code>kit_contract.py graph</code> rejects duplicate ids, unknown dependencies and cycles. <code>analyze</code> checks the paths each brief names and whether each verify command can run, without running anything. Then, in an interactive run, one <span class="t-opus">opus</span> spec review looks for contradictory acceptance and uncovered goals.</p><p class="where"><b>Where</b><code>bin/kit_contract.py</code>; <code>skills/execute/references/spec-review.md</code></p></li>
+      <li class="stage"><h4><span class="num">8</span>Implement</h4><p>Each task goes to the implementer on its pinned tier, with its brief and nothing else; the implementer stops and reports if the brief is wrong. The loop then runs the verify command itself, and a check that already passed before the work blocks the task.</p><p class="where"><b>Where</b><code>skills/execute/SKILL.md</code></p></li>
+      <li class="stage"><h4><span class="num">9</span>Verify and converge</h4><p>A fresh-context verifier re-checks each task, joined by a test-author and red-team when the kit declares them. A failure gets one retry, then a frontier consult. An <span class="t-opus">opus</span> reviewer checks each phase against <code>PLAN.md</code>, and once <code>kit_contract.py graph</code> reports every task done, the plan's done check runs.</p><p class="where"><b>Where</b><code>skills/execute/SKILL.md</code></p></li>
+    </ol>
+    <p class="group-label">After the run</p>
+    <ol class="stage-grid">
+      <li class="stage"><h4><span class="num">10</span>Feedback</h4><p><code>outcome:</code>, <code>agent:</code>, <code>reviewer:</code> and <code>defect:</code> lines in <code>NOTES.md</code>, and an acceptance record from <code>accept</code> for each passing task. <code>bin/routing_scorecard.py</code> grades the tiers, the review roles and the briefs, and the next architect reads it.</p><p class="where"><b>Where</b><code>skills/execute/references/ledger.md</code></p></li>
+      <li class="stage"><h4><span class="num">11</span>Keep in sync</h4><p><code>kit_contract.py drift</code> re-runs a finished kit's verify commands inside the execution boundary and reports drift, not failure. Within a kit, <code>freshness</code> marks a finished task stale when work it relied on is re-accepted, and <code>refresh</code> re-verifies it. A check that starts its own sandbox reads drifted, a known limit.</p><p class="where"><b>Where</b><code>bin/kit_contract.py</code></p></li>
+    </ol>
+  </section>
 
-        <!-- row 2: design, right to left -->
-        <rect class="fc-box" x="932" y="247" width="176" height="56" rx="8"/>
-        <text class="fc-num" x="942" y="261">5</text>
-        <text class="fc-name" x="1020" y="276" text-anchor="middle">Plan</text>
-        <text class="fc-sub" x="1020" y="292" text-anchor="middle">PLAN.md, the design half</text>
-        <rect class="fc-box" x="702" y="247" width="176" height="56" rx="8"/>
-        <text class="fc-num" x="712" y="261">6</text>
-        <text class="fc-name" x="790" y="276" text-anchor="middle">Tasks</text>
-        <text class="fc-sub" x="790" y="292" text-anchor="middle">TASKS.md, model pinned</text>
-        <rect class="fc-box" x="472" y="247" width="176" height="56" rx="8"/>
-        <text class="fc-num" x="482" y="261">7</text>
-        <text class="fc-name" x="560" y="276" text-anchor="middle">Analyze</text>
-        <text class="fc-sub" x="560" y="292" text-anchor="middle">graph, analyze, P0 review</text>
-        <polygon class="fc-gate" points="330,237 394,275 330,313 266,275"/>
-        <text class="fc-q" x="330" y="279" text-anchor="middle">Consistent?</text>
-        <line class="fc-edge" x1="932" y1="275" x2="878" y2="275" marker-end="url(#fc-arrow)"/>
-        <line class="fc-edge" x1="702" y1="275" x2="648" y2="275" marker-end="url(#fc-arrow)"/>
-        <line class="fc-edge" x1="472" y1="275" x2="394" y2="275" marker-end="url(#fc-arrow)"/>
-        <path class="fc-back" d="M330,237 V195 H790 V247" marker-end="url(#fc-arrow-back)"/>
-        <text class="fc-label" x="560" y="188" text-anchor="middle">no: fix the tasks or the plan</text>
-        <line class="fc-edge" x1="330" y1="313" x2="330" y2="417" marker-end="url(#fc-arrow)"/>
-        <text class="fc-label" x="340" y="348">yes</text>
+  <section class="block" aria-labelledby="h-pt-flow">
+    <h3 id="h-pt-flow">The flow in polytropos</h3>
+    <p class="lede">The same flow, with the part of polytropos that does each stage named in its box. Two paths are polytropos's own: a failed task gets one retry and then a frontier consult, and a "done" that does not hold sends the work back to amend <code>PLAN.md</code>.</p>
+    <p class="scroll-hint">Scroll sideways to see the whole chart.</p>
+    <figure class="fig">
+      <div class="fig-scroll">
+        <svg viewBox="0 0 1160 768" role="img" aria-label="Flow chart of the lifecycle as polytropos runs it. Standing rules, research, specify and clarify lead to your approval. Plan, tasks and analyze lead to a consistency gate. Each task is implemented on its pinned tier and verified, with one retry and then a frontier consult, until none are left, and a phase end gets a review. The whole is then checked against the plan's done; the ledger, scorecard and drift checks feed the next change. A failed gate sends the work back.">
+          <defs>
+            <marker id="pt-arrow" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="fc-head" d="M0,0 L10,5 L0,10 z"/></marker>
+            <marker id="pt-arrow-back" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="fc-head-back" d="M0,0 L10,5 L0,10 z"/></marker>
+          </defs>
 
-        <!-- row 3: the task loop, left to right -->
-        <rect class="fc-frame" x="200" y="362" width="905" height="220" rx="12"/>
-        <text class="fc-frame-label" x="214" y="574">FOR EACH TASK, IN DEPENDENCY ORDER</text>
-        <rect class="fc-box" x="242" y="417" width="176" height="56" rx="8"/>
-        <text class="fc-num" x="252" y="431">8</text>
-        <text class="fc-name" x="330" y="446" text-anchor="middle">Implement</text>
-        <text class="fc-sub" x="330" y="462" text-anchor="middle">on the pinned tier</text>
-        <rect class="fc-box" x="472" y="417" width="176" height="56" rx="8"/>
-        <text class="fc-name" x="560" y="446" text-anchor="middle">Verify the task</text>
-        <text class="fc-sub" x="560" y="462" text-anchor="middle">loop + fresh verifier</text>
-        <polygon class="fc-gate" points="790,407 854,445 790,483 726,445"/>
-        <text class="fc-q" x="790" y="449" text-anchor="middle">Pass?</text>
-        <polygon class="fc-gate" points="1020,407 1084,445 1020,483 956,445"/>
-        <text class="fc-q" x="1020" y="449" text-anchor="middle">Tasks left?</text>
-        <line class="fc-edge" x1="418" y1="445" x2="472" y2="445" marker-end="url(#fc-arrow)"/>
-        <line class="fc-edge" x1="648" y1="445" x2="726" y2="445" marker-end="url(#fc-arrow)"/>
-        <line class="fc-edge" x1="854" y1="445" x2="956" y2="445" marker-end="url(#fc-arrow)"/>
-        <text class="fc-label" x="905" y="437" text-anchor="middle">yes</text>
-        <line class="fc-edge" x1="790" y1="483" x2="790" y2="516" marker-end="url(#fc-arrow)"/>
-        <text class="fc-label" x="800" y="503">no</text>
-        <rect class="fc-box" x="702" y="516" width="176" height="48" rx="8"/>
-        <text class="fc-name" x="790" y="537" text-anchor="middle">Retry once</text>
-        <text class="fc-sub" x="790" y="553" text-anchor="middle">then a frontier consult</text>
-        <path class="fc-back" d="M702,540 H330 V473" marker-end="url(#fc-arrow-back)"/>
-        <text class="fc-label" x="516" y="533" text-anchor="middle">retry with the failure</text>
-        <path class="fc-back" d="M1020,407 V390 H380 V417" marker-end="url(#fc-arrow-back)"/>
-        <text class="fc-label" x="700" y="383" text-anchor="middle">yes: next task (a phase end gets a review first)</text>
-        <line class="fc-edge" x1="1020" y1="483" x2="1020" y2="637" marker-end="url(#fc-arrow)"/>
-        <text class="fc-label" x="1030" y="612">no: all done</text>
+          <!-- row 1: define, left to right -->
+          <rect class="fc-box" x="12" y="82" width="176" height="56" rx="8"/>
+          <text class="fc-num" x="22" y="96">1</text>
+          <text class="fc-name" x="100" y="111" text-anchor="middle">Standing rules</text>
+          <text class="fc-sub" x="100" y="127" text-anchor="middle">CLAUDE.md, GUARDRAILS.md</text>
+          <rect class="fc-box" x="242" y="82" width="176" height="56" rx="8"/>
+          <text class="fc-num" x="252" y="96">2</text>
+          <text class="fc-name" x="330" y="111" text-anchor="middle">Research</text>
+          <text class="fc-sub" x="330" y="127" text-anchor="middle">the architect explores</text>
+          <rect class="fc-box" x="472" y="82" width="176" height="56" rx="8"/>
+          <text class="fc-num" x="482" y="96">3</text>
+          <text class="fc-name" x="560" y="111" text-anchor="middle">Specify</text>
+          <text class="fc-sub" x="560" y="127" text-anchor="middle">PLAN.md, the spec half</text>
+          <rect class="fc-box" x="702" y="82" width="176" height="56" rx="8"/>
+          <text class="fc-num" x="712" y="96">4</text>
+          <text class="fc-name" x="790" y="111" text-anchor="middle">Clarify</text>
+          <text class="fc-sub" x="790" y="127" text-anchor="middle">open questions listed</text>
+          <polygon class="fc-gate person" points="1020,72 1084,110 1020,148 956,110"/>
+          <text class="fc-q" x="1020" y="114" text-anchor="middle">Approved?</text>
+          <line class="fc-edge" x1="188" y1="110" x2="242" y2="110" marker-end="url(#pt-arrow)"/>
+          <line class="fc-edge" x1="418" y1="110" x2="472" y2="110" marker-end="url(#pt-arrow)"/>
+          <line class="fc-edge" x1="648" y1="110" x2="702" y2="110" marker-end="url(#pt-arrow)"/>
+          <line class="fc-edge" x1="878" y1="110" x2="956" y2="110" marker-end="url(#pt-arrow)"/>
+          <path class="fc-back" d="M1020,72 V40 H560 V82" marker-end="url(#pt-arrow-back)"/>
+          <text class="fc-label" x="790" y="33" text-anchor="middle">no: revise the spec</text>
+          <line class="fc-edge" x1="1020" y1="148" x2="1020" y2="247" marker-end="url(#pt-arrow)"/>
+          <text class="fc-label" x="1030" y="202">yes: you approve</text>
 
-        <!-- row 4: close, right to left, then back to the start -->
-        <rect class="fc-box" x="932" y="637" width="176" height="56" rx="8"/>
-        <text class="fc-num" x="942" y="651">9</text>
-        <text class="fc-name" x="1020" y="666" text-anchor="middle">Verify and converge</text>
-        <text class="fc-sub" x="1020" y="682" text-anchor="middle">the plan's done check</text>
-        <polygon class="fc-gate" points="790,627 854,665 790,703 726,665"/>
-        <text class="fc-q" x="790" y="669" text-anchor="middle">&ldquo;Done&rdquo; holds?</text>
-        <rect class="fc-box" x="472" y="637" width="176" height="56" rx="8"/>
-        <text class="fc-num" x="482" y="651">10</text>
-        <text class="fc-name" x="560" y="666" text-anchor="middle">Feedback</text>
-        <text class="fc-sub" x="560" y="682" text-anchor="middle">NOTES.md &rarr; scorecard</text>
-        <rect class="fc-box" x="242" y="637" width="176" height="56" rx="8"/>
-        <text class="fc-num" x="252" y="651">11</text>
-        <text class="fc-name" x="330" y="666" text-anchor="middle">Keep in sync</text>
-        <text class="fc-sub" x="330" y="682" text-anchor="middle">drift re-runs checks</text>
-        <line class="fc-edge" x1="932" y1="665" x2="854" y2="665" marker-end="url(#fc-arrow)"/>
-        <line class="fc-edge" x1="726" y1="665" x2="648" y2="665" marker-end="url(#fc-arrow)"/>
-        <text class="fc-label" x="687" y="657" text-anchor="middle">yes</text>
-        <line class="fc-edge" x1="472" y1="665" x2="418" y2="665" marker-end="url(#fc-arrow)"/>
-        <text class="fc-label" x="445" y="657" text-anchor="middle">later</text>
-        <path class="fc-back" d="M790,703 V735 H1135 V275 H1108" marker-end="url(#fc-arrow-back)"/>
-        <text class="fc-label" x="962" y="752" text-anchor="middle">no: amend PLAN.md, then re-plan</text>
-        <path class="fc-back" d="M242,665 H100 V138" marker-end="url(#fc-arrow-back)"/>
-        <text class="fc-label" x="112" y="268">feeds the</text>
-        <text class="fc-label" x="112" y="283">next change</text>
-      </svg>
-    </div>
-    <figcaption>A change runs top row first. The spec is approved, the plan and tasks pass a consistency check, each task is built and verified in turn, and the whole is checked against the spec's "done". The numbers match the cards above, and the small line in each box names the part of polytropos that does that stage.</figcaption>
-  </figure>
+          <!-- row 2: design, right to left -->
+          <rect class="fc-box" x="932" y="247" width="176" height="56" rx="8"/>
+          <text class="fc-num" x="942" y="261">5</text>
+          <text class="fc-name" x="1020" y="276" text-anchor="middle">Plan</text>
+          <text class="fc-sub" x="1020" y="292" text-anchor="middle">PLAN.md, the design half</text>
+          <rect class="fc-box" x="702" y="247" width="176" height="56" rx="8"/>
+          <text class="fc-num" x="712" y="261">6</text>
+          <text class="fc-name" x="790" y="276" text-anchor="middle">Tasks</text>
+          <text class="fc-sub" x="790" y="292" text-anchor="middle">TASKS.md, model pinned</text>
+          <rect class="fc-box" x="472" y="247" width="176" height="56" rx="8"/>
+          <text class="fc-num" x="482" y="261">7</text>
+          <text class="fc-name" x="560" y="276" text-anchor="middle">Analyze</text>
+          <text class="fc-sub" x="560" y="292" text-anchor="middle">graph, analyze, P0 review</text>
+          <polygon class="fc-gate" points="330,237 394,275 330,313 266,275"/>
+          <text class="fc-q" x="330" y="279" text-anchor="middle">Consistent?</text>
+          <line class="fc-edge" x1="932" y1="275" x2="878" y2="275" marker-end="url(#pt-arrow)"/>
+          <line class="fc-edge" x1="702" y1="275" x2="648" y2="275" marker-end="url(#pt-arrow)"/>
+          <line class="fc-edge" x1="472" y1="275" x2="394" y2="275" marker-end="url(#pt-arrow)"/>
+          <path class="fc-back" d="M330,237 V195 H790 V247" marker-end="url(#pt-arrow-back)"/>
+          <text class="fc-label" x="560" y="188" text-anchor="middle">no: fix the tasks or the plan</text>
+          <line class="fc-edge" x1="330" y1="313" x2="330" y2="417" marker-end="url(#pt-arrow)"/>
+          <text class="fc-label" x="340" y="348">yes</text>
+
+          <!-- row 3: the task loop, left to right -->
+          <rect class="fc-frame" x="200" y="362" width="905" height="220" rx="12"/>
+          <text class="fc-frame-label" x="214" y="574">FOR EACH TASK, IN DEPENDENCY ORDER</text>
+          <rect class="fc-box" x="242" y="417" width="176" height="56" rx="8"/>
+          <text class="fc-num" x="252" y="431">8</text>
+          <text class="fc-name" x="330" y="446" text-anchor="middle">Implement</text>
+          <text class="fc-sub" x="330" y="462" text-anchor="middle">on the pinned tier</text>
+          <rect class="fc-box" x="472" y="417" width="176" height="56" rx="8"/>
+          <text class="fc-name" x="560" y="446" text-anchor="middle">Verify the task</text>
+          <text class="fc-sub" x="560" y="462" text-anchor="middle">loop + fresh verifier</text>
+          <polygon class="fc-gate" points="790,407 854,445 790,483 726,445"/>
+          <text class="fc-q" x="790" y="449" text-anchor="middle">Pass?</text>
+          <polygon class="fc-gate" points="1020,407 1084,445 1020,483 956,445"/>
+          <text class="fc-q" x="1020" y="449" text-anchor="middle">Tasks left?</text>
+          <line class="fc-edge" x1="418" y1="445" x2="472" y2="445" marker-end="url(#pt-arrow)"/>
+          <line class="fc-edge" x1="648" y1="445" x2="726" y2="445" marker-end="url(#pt-arrow)"/>
+          <line class="fc-edge" x1="854" y1="445" x2="956" y2="445" marker-end="url(#pt-arrow)"/>
+          <text class="fc-label" x="905" y="437" text-anchor="middle">yes</text>
+          <line class="fc-edge" x1="790" y1="483" x2="790" y2="516" marker-end="url(#pt-arrow)"/>
+          <text class="fc-label" x="800" y="503">no</text>
+          <rect class="fc-box" x="702" y="516" width="176" height="48" rx="8"/>
+          <text class="fc-name" x="790" y="537" text-anchor="middle">Retry once</text>
+          <text class="fc-sub" x="790" y="553" text-anchor="middle">then a frontier consult</text>
+          <path class="fc-back" d="M702,540 H330 V473" marker-end="url(#pt-arrow-back)"/>
+          <text class="fc-label" x="516" y="533" text-anchor="middle">retry with the failure</text>
+          <path class="fc-back" d="M1020,407 V390 H380 V417" marker-end="url(#pt-arrow-back)"/>
+          <text class="fc-label" x="700" y="383" text-anchor="middle">yes: next task (a phase end gets a review first)</text>
+          <line class="fc-edge" x1="1020" y1="483" x2="1020" y2="637" marker-end="url(#pt-arrow)"/>
+          <text class="fc-label" x="1030" y="612">no: all done</text>
+
+          <!-- row 4: close, right to left, then back to the start -->
+          <rect class="fc-box" x="932" y="637" width="176" height="56" rx="8"/>
+          <text class="fc-num" x="942" y="651">9</text>
+          <text class="fc-name" x="1020" y="666" text-anchor="middle">Verify and converge</text>
+          <text class="fc-sub" x="1020" y="682" text-anchor="middle">the plan's done check</text>
+          <polygon class="fc-gate" points="790,627 854,665 790,703 726,665"/>
+          <text class="fc-q" x="790" y="669" text-anchor="middle">&ldquo;Done&rdquo; holds?</text>
+          <rect class="fc-box" x="472" y="637" width="176" height="56" rx="8"/>
+          <text class="fc-num" x="482" y="651">10</text>
+          <text class="fc-name" x="560" y="666" text-anchor="middle">Feedback</text>
+          <text class="fc-sub" x="560" y="682" text-anchor="middle">NOTES.md &rarr; scorecard</text>
+          <rect class="fc-box" x="242" y="637" width="176" height="56" rx="8"/>
+          <text class="fc-num" x="252" y="651">11</text>
+          <text class="fc-name" x="330" y="666" text-anchor="middle">Keep in sync</text>
+          <text class="fc-sub" x="330" y="682" text-anchor="middle">drift re-runs checks</text>
+          <line class="fc-edge" x1="932" y1="665" x2="854" y2="665" marker-end="url(#pt-arrow)"/>
+          <line class="fc-edge" x1="726" y1="665" x2="648" y2="665" marker-end="url(#pt-arrow)"/>
+          <text class="fc-label" x="687" y="657" text-anchor="middle">yes</text>
+          <line class="fc-edge" x1="472" y1="665" x2="418" y2="665" marker-end="url(#pt-arrow)"/>
+          <text class="fc-label" x="445" y="657" text-anchor="middle">later</text>
+          <path class="fc-back" d="M790,703 V735 H1135 V275 H1108" marker-end="url(#pt-arrow-back)"/>
+          <text class="fc-label" x="962" y="752" text-anchor="middle">no: amend PLAN.md, then re-plan</text>
+          <path class="fc-back" d="M242,665 H100 V138" marker-end="url(#pt-arrow-back)"/>
+          <text class="fc-label" x="112" y="268">feeds the</text>
+          <text class="fc-label" x="112" y="283">next change</text>
+        </svg>
+      </div>
+      <figcaption>The numbers match the stage cards, and the orange line in each box names the part of polytropos that does that stage.</figcaption>
+    </figure>
+  </section>
 </section>
 
-<p class="kicker">step by step &middot; the usual pipeline beside polytropos's</p>
+<section class="part" id="side-by-side" aria-labelledby="h-side">
+  <header class="part-head">
+    <p class="part-num">Part 3</p>
+    <h2 id="h-side">Side by side</h2>
+    <p class="lede">The left column is how most AI spec-driven tools run a change. The right column is how polytropos runs one. Both start from a written spec. The difference is in who checks the work, which model does each part, and what happens to what was learned.</p>
+  </header>
+
 <div class="legend" aria-label="Legend">
   <span><i class="sw" style="background:var(--person)"></i>a person decides</span>
   <span><i class="sw" style="background:var(--fable)"></i>frontier tier (<span class="t-fable">fable</span>)</span>
@@ -361,7 +564,7 @@
 <div class="cols">
 
 <section class="col" aria-labelledby="h-typical">
-  <h2 id="h-typical">Typical AI spec-driven development</h2>
+  <h3 id="h-typical">Typical AI spec-driven development</h3>
   <p class="lede">The common shape of tools such as Spec Kit and Kiro, simplified. Individual tools add steps, such as clarify, analyze, checklists, hooks or converge.</p>
   <ol class="flow">
     <li><div class="node plain"><span class="who">once per project</span><strong>Standing rules</strong>A constitution or rules file the agent reads as context.
@@ -379,7 +582,7 @@
 </section>
 
 <section class="col" aria-labelledby="h-poly">
-  <h2 id="h-poly">polytropos</h2>
+  <h3 id="h-poly">polytropos</h3>
   <p class="lede"><code>/polytropos:architect</code> writes an execution kit once; <code>/polytropos:execute</code> runs it. The source of each box is named in <code>skills/architect/SKILL.md</code> and <code>skills/execute/SKILL.md</code>.</p>
   <ol class="flow">
     <li><div class="node plain"><span class="who">always on, plus per kit</span><strong>Standing rules, enforced</strong><code>CLAUDE.md</code> invariants backed by tests, plus the kit's own <code>GUARDRAILS.md</code>, re-read from disk at every phase start.
@@ -414,7 +617,7 @@
 </div>
 
 <section class="compare" aria-labelledby="h-compare">
-  <h2 id="h-compare">What changes</h2>
+  <h3 id="h-compare">What changes</h3>
   <div class="table-wrap"><table>
     <thead><tr><th>Question</th><th>Typical AI SDD</th><th>polytropos</th></tr></thead>
     <tbody>
@@ -428,6 +631,7 @@
       <tr><td>Does the next spec learn from this one?</td><td>No record</td><td>The scorecard's defect kinds and tier and role history feed the next architect</td></tr>
     </tbody>
   </table></div>
+</section>
 </section>
 
 <footer>Long form: docs/sdd/guide.md and docs/SPEC-DRIVEN.md &middot; Source: github.com/agentmc15/polytropos</footer>
