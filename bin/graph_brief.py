@@ -15,6 +15,7 @@ into `(none)` buckets rather than raising.
 
 import argparse
 import json
+import math
 import shutil
 import tempfile
 from collections import Counter
@@ -57,19 +58,69 @@ def load_graph(path):
             "when extracting from latin-1 or other non-UTF-8 source files)"
         )
 
+    return parse_graph_bytes(raw, label=path)
+
+
+def parse_graph_bytes(raw, label="graph.json", strict=False, max_items=None):
+    """Parse already selected graph bytes; `strict` refuses ambiguous JSON for new readers.
+
+    `load_graph` retains its historical permissive JSON behavior by using the default.
+    The schema checks are shared, so the file reader and bounded callers do not drift.
+    """
     try:
-        data = json.loads(raw)
-    except json.JSONDecodeError as exc:
-        return None, f"could not parse {path} as JSON: {exc}"
+        text = raw.decode("utf-8") if isinstance(raw, bytes) else raw
+    except UnicodeDecodeError as exc:
+        return None, (f"{label} is not valid UTF-8 ({exc}) -- expected a graphify graph.json "
+                      "(graphify can embed non-UTF-8 source snippets in link 'context' fields "
+                      "when extracting from latin-1 or other non-UTF-8 source files)")
+
+    def unique(pairs):
+        obj = {}
+        for key, value in pairs:
+            if key in obj:
+                raise ValueError("duplicate JSON key")
+            obj[key] = value
+        return obj
+
+    def finite(value):
+        raise ValueError("nonfinite JSON number")
+
+    try:
+        options = {"object_pairs_hook": unique, "parse_constant": finite} if strict else {}
+        data = json.loads(text, **options)
+        if strict:
+            def bounded(value, depth=0):
+                if depth > 12:
+                    raise ValueError("graph nesting exceeds limit")
+                if isinstance(value, float) and not math.isfinite(value):
+                    raise ValueError("nonfinite JSON number")
+                if isinstance(value, list):
+                    if max_items is not None and len(value) > max_items:
+                        raise ValueError("graph item limit")
+                    for item in value:
+                        bounded(item, depth + 1)
+                elif isinstance(value, dict):
+                    if max_items is not None and len(value) > max_items:
+                        raise ValueError("graph item limit")
+                    for item in value.values():
+                        bounded(item, depth + 1)
+            bounded(data)
+    except (ValueError, RecursionError) as exc:
+        return None, f"could not parse {label} as JSON: {exc}"
 
     if not isinstance(data, dict):
-        return None, f"expected a JSON object at the top level of {path}, got {type(data).__name__}"
+        return None, f"expected a JSON object at the top level of {label}, got {type(data).__name__}"
 
     has_nodes = "nodes" in data
     has_links = "links" in data or "edges" in data
+    if strict:
+        for name in ("nodes", "links", "edges"):
+            if name in data and (not isinstance(data[name], list)
+                                 or any(not isinstance(item, dict) for item in data[name])):
+                return None, f"{label} has invalid {name} container"
     if not has_nodes and not has_links:
         return None, (
-            f"{path} is missing both 'nodes' and 'links'/'edges' -- expected a graphify "
+            f"{label} is missing both 'nodes' and 'links'/'edges' -- expected a graphify "
             "graph.json (networkx node-link JSON)"
         )
 

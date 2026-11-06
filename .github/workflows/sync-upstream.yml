@@ -1,0 +1,136 @@
+# One-way merge sync; main retains private experiments. Neither branch is force-pushed.
+# GITHUB_TOKEN writes do not trigger other workflows. No repository code is executed.
+name: sync-upstream
+
+on:
+  schedule:
+    - cron: "0 8 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sync-upstream-main
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    if: github.repository == 'agentmc15/poly-auto'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+    steps:
+      - name: Checkout private main
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Merge upstream or report required owner action
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          upstream_url=https://github.com/agentmc15/polytropos.git
+          issue_title="Sync blocked: GITHUB_TOKEN cannot update workflows"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git config core.hooksPath /dev/null
+          git config commit.gpgsign false
+          git config merge.gpgsign false
+
+          # Clear checkout's authorization header for the public, read-only fetch.
+          git -c http.https://github.com/.extraheader= fetch --no-tags "$upstream_url" main
+          upstream_sha=$(git rev-parse FETCH_HEAD)
+          if git merge-base --is-ancestor "$upstream_sha" HEAD; then
+            echo "Upstream main is already included; nothing to sync."
+            exit 0
+          else
+            status=$?
+            if [[ "$status" -ne 1 ]]; then
+              echo "::error::Unable to compare upstream and private main."
+              exit "$status"
+            fi
+          fi
+
+          report_workflow_rejection() {
+            local body issue
+            body=$(mktemp "$RUNNER_TEMP/sync-issue.XXXXXX")
+            cat > "$body" <<EOF
+          Daily sync could not push upstream commit $upstream_sha because GitHub rejected a workflow-file change made with GITHUB_TOKEN. No PAT, deploy key, or additional secret is used by this workflow.
+
+          The owner must perform this one-time merge using their own authenticated Git credentials. Run these commands in a new directory:
+
+          ~~~bash
+          git clone https://github.com/$GH_REPO.git poly-auto-sync
+          cd poly-auto-sync
+          git switch main
+          git fetch https://github.com/agentmc15/polytropos.git main
+          git merge --no-edit FETCH_HEAD
+          git push origin main
+          ~~~
+
+          If the local merge conflicts, resolve the reported files, then run \`git add <resolved-files>\` and \`git commit\` before pushing. Do not force-push main. Afterwards, close this issue; the next scheduled sync will detect already-integrated commits and do nothing.
+
+          Run: https://github.com/$GH_REPO/actions/runs/$GITHUB_RUN_ID
+          EOF
+            issue=$(gh issue list --state all --limit 100 \
+              --search "\"$issue_title\" in:title" --json number,title \
+              --jq '.[] | select(.title == "Sync blocked: GITHUB_TOKEN cannot update workflows") | .number' \
+              | head -n 1)
+            if [[ -n "$issue" ]]; then
+              gh issue edit "$issue" --body-file "$body"
+              gh issue reopen "$issue"
+            else
+              gh issue create --title "$issue_title" --body-file "$body"
+            fi
+            rm "$body"
+          }
+
+          push_or_report() {
+            local output status
+            output=$(mktemp "$RUNNER_TEMP/sync-push.XXXXXX")
+            if git push "$@" > "$output" 2>&1; then
+              cat "$output"
+              rm "$output"
+              return 0
+            else
+              status=$?
+            fi
+            cat "$output"
+            if grep -Eiq '(refusing to allow|not allowed|permission|scope).*workflow|workflow.*(permission|scope)' "$output"; then
+              report_workflow_rejection
+              echo "::error::Workflow-file push rejected; owner action is recorded in an issue."
+            else
+              echo "::error::Push failed (for example, a branch changed concurrently or upstream history was rewritten); no force-push was attempted."
+            fi
+            rm "$output"
+            return "$status"
+          }
+
+          # This branch is a pure mirror, never a destination for experiments.
+          push_or_report origin "$upstream_sha:refs/heads/upstream-main"
+          if git merge --no-edit "$upstream_sha"; then
+            push_or_report origin HEAD:refs/heads/main
+          else
+            if [[ -z "$(git diff --name-only --diff-filter=U)" ]]; then
+              echo "::error::Merge failed without file conflicts; refusing to classify it as a conflict."
+              exit 1
+            fi
+            git merge --abort
+            pr=$(gh pr list --state open --base main --head upstream-main \
+              --json number --jq '.[0].number // empty')
+            if [[ -n "$pr" ]]; then
+              echo "Conflict PR #$pr already exists; upstream-main has been refreshed."
+            else
+              gh pr create --base main --head upstream-main \
+                --title "Sync conflict: merge polytropos main" \
+                --body "Upstream main conflicts with private main. Resolve the conflicts in this PR to preserve private experiments. The upstream-main branch mirrors polytropos main and may be refreshed by subsequent syncs. Do not force-push main."
+            fi
+          fi

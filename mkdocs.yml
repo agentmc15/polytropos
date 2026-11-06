@@ -131,6 +131,7 @@ nav:
     - Aesop integration: deep-dives/aesop-integration.md
     - Codex harness: deep-dives/codex-harness.md
     - Context weight: deep-dives/context-weight.md
+    - Context travel: deep-dives/context-travel.md
     - Copilot cost visibility: deep-dives/copilot-costviz.md
     - Copilot harness: deep-dives/copilot-harness.md
     - Copilot CLI parity: deep-dives/copilot-parity.md

@@ -55,6 +55,7 @@ from exit code, failure count, signature and whether the tree changed at all, in
 import hashlib
 import importlib.util
 import json
+import math
 import os
 import re
 import secrets
@@ -343,6 +344,63 @@ def _pid_alive(pid):
 
 # ---- the ledger ------------------------------------------------------------------------------
 
+def parse_events(raw, strict=False, max_items=None):
+    """Decode supplied event bytes without opening a store -> (events, corrupt count).
+
+    Existing ledger reads keep their historical permissive JSON behavior. New
+    bounded readers opt into duplicate-key, nonfinite, depth and line limits.
+    """
+    if not isinstance(raw, bytes):
+        raise ValueError("event data must be bytes")
+    text = raw.decode("utf-8") if strict else raw.decode("utf-8", "replace")
+
+    def unique(pairs):
+        obj = {}
+        for key, value in pairs:
+            if key in obj:
+                raise ValueError("duplicate JSON key")
+            obj[key] = value
+        return obj
+
+    def finite(value):
+        raise ValueError("nonfinite JSON number")
+
+    def bounded(value, depth=0):
+        if depth > 12:
+            raise ValueError("event nesting exceeds limit")
+        if isinstance(value, float) and not math.isfinite(value):
+            raise ValueError("nonfinite JSON number")
+        if isinstance(value, list):
+            if max_items is not None and len(value) > max_items:
+                raise ValueError("event item limit")
+            for item in value:
+                bounded(item, depth + 1)
+        elif isinstance(value, dict):
+            if max_items is not None and len(value) > max_items:
+                raise ValueError("event item limit")
+            for item in value.values():
+                bounded(item, depth + 1)
+
+    out, corrupt = [], 0
+    for line in text.splitlines():
+        if not line.strip():
+            continue
+        try:
+            if strict and len(line.encode("utf-8")) > MAX_LINE_BYTES:
+                raise ValueError("event line exceeds limit")
+            options = {"object_pairs_hook": unique, "parse_constant": finite} if strict else {}
+            obj = json.loads(line, **options)
+            if strict:
+                bounded(obj)
+        except (ValueError, RecursionError):
+            corrupt += 1
+            continue
+        if not isinstance(obj, dict) or obj.get("v") != LEDGER_VERSION:
+            corrupt += 1
+            continue
+        out.append(obj)
+    return out, corrupt
+
 class AttemptLedger:
     """One kit's (or one goal's) append-only event stream plus its task claims."""
 
@@ -388,20 +446,7 @@ class AttemptLedger:
                                      missing_ok=True)
         if not raw:
             return []
-        out = []
-        self.corrupt = 0
-        for line in raw.decode("utf-8", "replace").splitlines():
-            if not line.strip():
-                continue
-            try:
-                obj = json.loads(line)
-            except ValueError:
-                self.corrupt += 1
-                continue
-            if not isinstance(obj, dict) or obj.get("v") != LEDGER_VERSION:
-                self.corrupt += 1
-                continue
-            out.append(obj)
+        out, self.corrupt = parse_events(raw)
         return out
 
     # -- claims --

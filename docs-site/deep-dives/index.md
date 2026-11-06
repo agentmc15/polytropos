@@ -7,6 +7,7 @@
 | [aesop compile round-trip — a proposal (ARCHIVED, kept as history)](aesop-compile-proposal.md) |
 | [polytropos × aesop integration](aesop-integration.md) |
 | [The Codex harness](codex-harness.md) |
+| [Context travel contract](context-travel.md) |
 | [Context weight](context-weight.md) |
 | [Copilot cost visibility](copilot-costviz.md) |
 | [The Copilot harness](copilot-harness.md) |
