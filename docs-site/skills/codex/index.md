@@ -67,6 +67,8 @@ Treat `/plugins`, `/skills`, and `/agent` in whichever Codex surface you are usi
 
 - [route](route.md) is the front door; [doctor](doctor.md) is what to run when the install
   looks wrong.
+- [Choose a skill](../../workflows/choose-a-skill.md) — every skill by situation, with the
+  skills that pair well with it.
 - [Deep dive: Codex harness](../../deep-dives/codex-harness.md) — what loads where, the
   install and refresh command set, and the ownership rules that keep your edits.
 - [Parity matrix](../index.md) — why this roster differs from the other two.

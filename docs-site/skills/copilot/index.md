@@ -65,6 +65,8 @@ This bundle ships both, and they are not interchangeable:
 
 - [route](route.md) is the front door; [budget](budget.md) is the one to know when credits
   are tight.
+- [Choose a skill](../../workflows/choose-a-skill.md) — every skill by situation, with the
+  skills that pair well with it.
 - [Deep dive: Copilot harness](../../deep-dives/copilot-harness.md) — install, model
   mechanics, and how AI Credits are accounted.
 - The [Copilot documentation center](https://github.com/agentmc15/polytropos/blob/main/copilot-docs/README.md)

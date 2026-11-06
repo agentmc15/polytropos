@@ -64,6 +64,8 @@ your say-so.
 ### Where to go next
 
 - [route](route.md) is the front door: one task in, a model and a cost estimate out.
+- [Choose a skill](../../workflows/choose-a-skill.md) — every skill by situation, with the
+  skills that pair well with it.
 - [Parity matrix](../index.md) — the same skills across all three harnesses, and why the
   rosters differ.
 - [Deep dive: how it works](../../deep-dives/how-it-works.md) — the architecture behind the

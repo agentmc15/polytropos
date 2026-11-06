@@ -69,6 +69,7 @@ nav:
     - Route one task: workflows/first-route.md
     - Run a kit: workflows/run-a-kit.md
     - Measure the savings: workflows/measure-the-savings.md
+    - Choose a skill: workflows/choose-a-skill.md
   - Skills:
     - skills/index.md
     - Claude Code:

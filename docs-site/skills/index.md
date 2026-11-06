@@ -36,7 +36,9 @@ harness bills differently, exposes different local data, and has a different ide
 "skill" even is. A dash in the matrix above is usually one of three things: a capability
 that only makes sense where that harness's billing or plumbing makes it necessary, a
 capability whose underlying data only one harness exposes, or the same job living under a
-different name. Where a dash is simply "not built yet", it says so below.
+different name. Where a dash is simply "not built yet", it says so below. For which skill fits
+which situation, and what pairs well with it, see
+[Choose a skill](../workflows/choose-a-skill.md).
 
 ### Claude Code only
 

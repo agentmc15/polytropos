@@ -23,6 +23,11 @@ much of the cheap-model work survived review unchanged, and what the run actuall
 against an all-frontier counterfactual. Then use that evidence to pin the next kit's
 models.
 
+## [Choose a skill](choose-a-skill.md)
+
+Not a walkthrough but the map behind all three: every skill on every harness, the situation
+it is for, and the skills that usually go with it.
+
 ## Before you start
 
 Every `python3 bin/…` command on these pages assumes your shell is in a polytropos

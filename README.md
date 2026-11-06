@@ -41,6 +41,55 @@ The detailed mechanics, limits, and examples live in the [documentation site](ht
 
 Polytropos also has a [Cursor headless harness](docs/CURSOR-HARNESS.md). Its adapter and bundle are separate from the three quick starts above, and its usage remains unpriced where no rates are known.
 
+## Skills at a glance
+
+Every skill, the situation it is for, and the skills that usually go with it. A name links to that skill's page on the documentation site, which carries a worked example, failure modes, and cost notes. A skill missing from a harness is usually deliberate; the [parity matrix](https://agentmc15.github.io/polytropos/skills/) says why.
+
+**Decide before you run**
+
+| Skill | Harnesses | Use it when | Pairs well with |
+|---|---|---|---|
+| [route](https://agentmc15.github.io/polytropos/skills/claude/route/) | Claude · Copilot · Codex | Before anything expensive or long-running, to see which tier the task needs and what it will cost. | `fable-check`, `frontier-check`, `escalate`, `architect` |
+| [fable-check](https://agentmc15.github.io/polytropos/skills/claude/fable-check/) | Claude | Route points at the frontier tier and you want a go/no-go, plus the effort level and task framing to run it well. | `route`, `escalate`, `architect` |
+| [frontier-check](https://agentmc15.github.io/polytropos/skills/copilot/frontier-check/) | Copilot · Codex | The same question on those harnesses: does this task need the top tier, or will a strong or policy-selected worker do. | `route`, `escalate`, `architect` |
+| [effort](https://agentmc15.github.io/polytropos/skills/copilot/effort/) | Copilot · Codex | The model is right but the reasoning level is not: raise it on evidence, lower it for routine work. | `route`, `escalate` |
+| [bench-routing](https://agentmc15.github.io/polytropos/skills/claude/bench-routing/) | Claude · Copilot · Codex | Someone proposes moving a role to a newer or higher-tier model and you want that checked against published benchmarks and, where the ledger has them, this repository's own outcomes. | `repo-bench`, `route`, `execute` |
+| [repo-bench](https://agentmc15.github.io/polytropos/skills/claude/repo-bench/) | Claude · Codex | You want models measured on this repository's own real work before re-tiering or picking a daily driver. Plan-only on Codex. | `bench-routing`, `route`, `execute` |
+
+**Plan and build**
+
+| Skill | Harnesses | Use it when | Pairs well with |
+|---|---|---|---|
+| [architect](https://agentmc15.github.io/polytropos/skills/claude/architect/) | Claude · Copilot · Codex | The work is big enough that one wrong early decision compounds: plan once at the top tier and get a kit cheaper models can run. | `execute`, `graphify`, `repo-bench` |
+| [execute](https://agentmc15.github.io/polytropos/skills/claude/execute/) | Claude · Copilot · Codex | A kit exists and its tasks need dispatching, independent verification, and a record of what happened. | `architect`, `escalate`, `budget` |
+| [escalate](https://agentmc15.github.io/polytropos/skills/claude/escalate/) | Claude · Copilot · Codex | One task with a machine-checkable outcome: try the cheapest sufficient model and climb only when the check fails. | `route`, `fable-check`, `frontier-check` |
+| [goliath](https://agentmc15.github.io/polytropos/skills/copilot/goliath/) | Copilot | A single Copilot session should run the fullest multi-role review pipeline rather than the base trio. | `architect`, `execute` |
+| [budget](https://agentmc15.github.io/polytropos/skills/copilot/budget/) | Copilot | AI Credits are the binding constraint on a kit of routine tasks whose verify commands are strong. | `execute`, `usage` |
+| [graphify](https://agentmc15.github.io/polytropos/skills/claude/graphify/) | Claude · Codex | You need repository structure — callers, dependents, impact — before planning or after a change. Needs the external graphify CLI. | `architect`, `context-weight` |
+| [assess-improvement](https://agentmc15.github.io/polytropos/skills/claude/assess-improvement/) | Claude · Codex | You want an evidence-backed answer to where a codebase could improve, with handoff briefs and nothing changed. | `architect`, `graphify` |
+
+**See what happened**
+
+| Skill | Harnesses | Use it when | Pairs well with |
+|---|---|---|---|
+| [cost-report](https://agentmc15.github.io/polytropos/skills/claude/cost-report/) | Claude | You want what was actually spent, by model and session, and where a cheaper model would have sufficed. | `route`, `dashboard`, `journal` |
+| [usage](https://agentmc15.github.io/polytropos/skills/copilot/usage/) | Copilot · Codex | The same look backward on those harnesses, read from their own local session logs. | `route`, `budget`, `journal` |
+| [dashboard](https://agentmc15.github.io/polytropos/skills/claude/dashboard/) | Claude | You want one offline page over the attempt ledger, the routing scorecard, and telemetry before deciding what to check next. | `journal`, `cost-report`, `update` |
+| [journal](https://agentmc15.github.io/polytropos/skills/claude/journal/) | Claude · Copilot · Codex | End of day: record what happened across harnesses and plan tomorrow. | `memory`, `cost-report`, `usage` |
+| [context-weight](https://agentmc15.github.io/polytropos/skills/claude/context-weight/) | Claude · Copilot · Codex | The context window is heavy and you are deciding what to prevent, prune, or measure before compacting. | `graphify`, `execute` |
+| [memory](https://agentmc15.github.io/polytropos/skills/claude/memory/) | Claude · Codex | A fact, preference, or correction should outlive the session, or you want one recalled under a budget. Recall and review only on Codex. | `journal` |
+| [lessons-loop](https://agentmc15.github.io/polytropos/skills/copilot/lessons-loop/) | Copilot | Right after a correction or an escalation, and at session start to load what applies. | `route`, `execute`, `escalate` |
+
+**Keep the install healthy**
+
+| Skill | Harnesses | Use it when | Pairs well with |
+|---|---|---|---|
+| [setup](https://agentmc15.github.io/polytropos/skills/claude/setup/) | Claude · Codex | You want model, cost, and context visible in the status line. | `update`, `cost-report`, `usage` |
+| [update](https://agentmc15.github.io/polytropos/skills/claude/update/) | Claude · Codex | After pulling changes, to check every harness install for drift; read-only until you ask for a refresh. | `setup`, `doctor` |
+| [doctor](https://agentmc15.github.io/polytropos/skills/codex/doctor/) | Codex | A Codex skill is missing, stale, or pointing at an old plugin cache. | `update`, `setup`, `route` |
+
+On Claude Code the effort dial is a session setting, and the guidance for it rides inside `route`. The [Cursor headless harness](docs/CURSOR-HARNESS.md) carries `assess-improvement` and its own kit driver outside this matrix. The same map, with the sequences these skills form, is on the site as [Choose a skill](https://agentmc15.github.io/polytropos/workflows/choose-a-skill/).
+
 ## Current model routes
 
 These are **configuration snapshots** — Claude’s checked on 2026-10-07, Codex’s and Copilot’s on 2026-09-24 — not an automatic feed of new releases or a guarantee for every account. Each harness has its own pricing and model registry; public availability and your client’s picker can still differ. The links lead to the provider catalogs used for this refresh.
