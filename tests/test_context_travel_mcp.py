@@ -3,6 +3,7 @@
 import importlib.util
 import io
 import json
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -268,7 +269,7 @@ class McpTests(unittest.TestCase):
                "POLYTROPOS_DATA_HOME": str(self.root / "fixture-data"),
                "PATH": "/usr/bin:/bin", "PYTHONDONTWRITEBYTECODE": "1"}
         result = proc.run(
-            ["/opt/homebrew/bin/python3.12", "-B", str(BIN / "context_travel_mcp.py"),
+            [sys.executable, "-B", str(BIN / "context_travel_mcp.py"),
              "--config", str(self.config_path)], cwd=self.root, within=self.root,
             env=env, timeout=5, output_limit=131072, input_text=payload, text=False)
         self.assertEqual(result["outcome"], proc.OUTCOME_OK, result["stderr"])

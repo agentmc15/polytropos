@@ -3,6 +3,7 @@
 import importlib.util
 import io
 import json
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -113,7 +114,7 @@ class CliTests(unittest.TestCase):
                "POLYTROPOS_DATA_HOME": str(self.root / "fixture-data"),
                "PATH": "/usr/bin:/bin", "PYTHONDONTWRITEBYTECODE": "1"}
         result = proc.run(
-            ["/opt/homebrew/bin/python3.12", "-B", str(BIN / "context_travel_cli.py"),
+            [sys.executable, "-B", str(BIN / "context_travel_cli.py"),
              "--config", str(self.config_path), "overview", "--format", "json"],
             cwd=self.root, within=self.root, env=env, timeout=5, output_limit=65536,
             input_text=json.dumps({"request": self.request}) + "\n", text=False)
