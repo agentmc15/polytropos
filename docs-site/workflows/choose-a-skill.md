@@ -63,6 +63,10 @@ On Claude Code the effort dial is a session setting, and the guidance for it rid
 - **Work too big for one dispatch.** Optionally [graphify](../skills/claude/graphify.md) for a map of the repository, then
   [architect](../skills/claude/architect.md) writes the kit and [execute](../skills/claude/execute.md) runs it. [Run a kit](run-a-kit.md) walks through
   it.
+- **Picking up one task from a kit.** [context-travel](../skills/claude/context-travel.md) returns a bounded, read-only
+  briefing on one explicitly identified task, so the kit, a graph or a transcript need not be loaded.
+  [execute](../skills/claude/execute.md), [architect](../skills/claude/architect.md), [route](../skills/claude/route.md) and
+  [escalate](../skills/claude/escalate.md) each treat it as optional and keep their own rules when it is unavailable.
 - **Choosing or changing the model mix.** [bench-routing](../skills/claude/bench-routing.md) weighs published benchmarks and
   [repo-bench](../skills/claude/repo-bench.md) measures on your own repository. On Claude Code, [route](../skills/claude/route.md) then uses an
   applied tier map ahead of its own defaults.
