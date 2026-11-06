@@ -163,3 +163,53 @@ status/parity documents are copied identically. PUBLIC-PARITY.md and the final
 local handoff retain the evidence, commit/tree comparison and publishing limits.
 Concurrent `docs/skills-guide` edits in the original public checkout are separate
 work and remain untouched. CT5/CT6 are not yet implemented or dispatched.
+
+## CT5 continuation — 2026-11-05
+
+The user authorized six-surface CT5 integration with exact private/public source
+parity, offline fixtures/stubs only, no installations or GitHub changes, and an
+updated full report. The isolated public candidate is the implementation root;
+the coordinator will synchronize the reviewed delta to the private candidate.
+CT5-EVIDENCE.md records baseline trees, routing assumptions, the missing-test-file
+baseline, and subsequent verification. CT6 remains planned, not dispatched.
+
+The first CT5 full suite completed 6,627 tests in 680.091 seconds with 13 failures
+and two skips. It exposed assessment-card copy drift, new skill trigger grammar,
+Copilot guide/roster and documentation audit/census omissions. These were corrected
+without weakening the existing oracles; 361 affected tests now pass (two skips),
+and the 11-test CT5 executable passed again independently. The corrected full
+suite is running against a new frozen 85-file non-kit manifest. Both failure and
+correction evidence remain in CT5-EVIDENCE.md; CT5 is not yet marked done.
+
+The second run was stopped after its legacy no-write guard rejected the legitimate
+dirty `.claude/kits/docs-site/AUDIT.md`. The guard checked only post-import Git
+status rather than a before/after comparison. This was not the initially suspected
+concurrent report edit. The owned test process group was interrupted safely;
+runner rc -2, 408.123 seconds, no leftovers. A targeted guard correction preserves
+pre-existing changes and adds fixture mutation controls before final acceptance.
+
+The corrected import guard passed 19 tests and independent source review. It
+compares actual kit-tree state around first import and reimport and detects
+change/add/delete without excluding already edited files. The final full run
+will freeze every changed repository file, including kit reporting documents,
+until completion. All previous run outcomes are preserved separately.
+
+
+## CT5 completion — 2026-11-05
+
+The final full suite passed **6,629 tests in 675.587 seconds**, with two skips,
+no failures or errors. Wrapper rc 0 in 683.255 seconds, no timeout, truncation or
+leftovers. All 93 changed repository files, including kit reports, remained
+frozen and their post-run hashes matched. The prior failed/interrupted attempts
+above remain historical evidence, not current status. Only seven kit completion,
+evidence and parity records were updated after this accepted run.
+
+The reviewed public candidate content was transferred to the private isolated
+candidate. Separate private fixtures passed 11 CT5 and 19 guard tests; release,
+documentation and Codex mirrors also passed. Both candidates retain identical
+tracked source, tests, skills, templates and workflow definitions. Final anonymous
+commits, matching trees and clean status are recorded in the local CT5 handoff.
+The full suite was run in public and not repeated in private. The original public
+documentation checkout and private critique checkout remain separate and untouched.
+CT5 is done within its offline scope; installed-client support remains unknown.
+CT6 remains planned. No installation, live run or GitHub change occurred.

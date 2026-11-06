@@ -41,6 +41,14 @@ because the review's own record moved the fingerprint it had recorded.
 
 ## Running the gate
 
+Context travel's six requested surfaces are catalogued separately in
+[`primitives/context-travel-surfaces.json`](../primitives/context-travel-surfaces.json)
+and [the surface guide](CONTEXT-TRAVEL-SURFACES.md). That catalog describes packaged
+skills and transport recipes, including separate Claude Desktop chat/Code modes.
+It does not promote the operational registry above: installed-client verification
+stays unknown until each exact client/mode has its own authorized evidence.
+Offline packaging and artifact round trips cannot certify desktop/CLI parity.
+
 ```bash
 python3 bin/release_gate.py check                 # registry, contract ids, packaging, commands, this block; exit 3 on drift
 python3 bin/release_gate.py check --run           # the same, plus every mapped test run in-process

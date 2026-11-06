@@ -37,6 +37,7 @@ Snapshot: `data/pricing.copilot.json` (cached_date 2026-09-24) — pricing sha25
 | `architect` | Do the expensive planning once — deep-plan a complex task and write an execution kit (PLAN.md + TASKS.md with model-pinned, self-contained briefs) under tasks/kits/`<slug>`/ for the execute driver to dispatch on cheaper models. Use when the user says "architect this", "plan this big task", or asks for an execution kit. | `copilot/.github/skills/architect/SKILL.md` |
 | `bench-routing` | Decide whether a new or higher model should replace what a role currently runs on — a benchmark-informed routing recommendation. Use when the user asks "should we upgrade X to Y for this role" or wants a benchmark-backed routing check. | `copilot/.github/skills/bench-routing/SKILL.md` |
 | `budget` | Run an execution kit on a cheaper ladder of models when the AI-Credits budget is tight — one-tier-lower dispatch with honest actual-vs-standard cost reporting. Use when the user says budget mode, run this cheaply, low on credits, or wants the savings measured. | `copilot/.github/skills/budget/SKILL.md` |
+| `context-travel` | Use when a kit task needs a bounded, read-only lifecycle briefing, source explanation, or comparison of supplied validated views. | `copilot/.github/skills/context-travel/SKILL.md` |
 | `context-weight` | Reach for this when your context is huge, cache reads are high, you're asking should I compact, or you want to know what filled the window — it explains what this skill can and cannot do, ranks prevent/prune/measure in priority order, and gives the checkpoint move before you compact. | `copilot/.github/skills/context-weight/SKILL.md` |
 | `effort` | Control the reasoning-effort dial for Copilot models — Copilot's per-model "Reasoning" setting, covering which models have it, how to set it, and when to turn it up or down. Use when the user asks to raise/lower reasoning effort, run at extra-high, or make a model think harder or cheaper. | `copilot/.github/skills/effort/SKILL.md` |
 | `escalate` | Run one task on the cheapest sufficient model behind a machine-checkable success check, escalating to a stronger tier — frontier last — only if the check fails. Use for "try it cheap first, fall back to the top model if it doesn't work". | `copilot/.github/skills/escalate/SKILL.md` |
@@ -130,6 +131,30 @@ lines, never folded into or silently dropped from the net. Preview any real disp
 dry run before spending anything.
 
 **Same-named agent.** No — budget is a skill-only capability in this bundle.
+
+## context-travel
+
+**When to use it:** You have an explicitly identified kit task and an authorized
+context configuration, or a complete CT3 artifact to validate, explain or compare.
+
+**How to request it:** Ask for the `context-travel` skill in the current session
+and supply the authorized config and assignment. The skill loads
+`docs/CONTEXT-TRAVEL-SURFACES.md` on demand, then uses the existing read-only query
+core only through an available, authorized CLI or separately configured MCP
+transport. The guide distinguishes Copilot CLI and desktop app modes; source
+packaging is not evidence that a client has discovered the skill.
+
+**What it does:** Carries a bounded briefing with criteria, source references and
+limitations. An imported view retains its content identity; the recipient checks
+applicability against its own current assignment and authorized binding.
+
+**Same-named agent:** No. This is a skill for the current session.
+
+**Safety and cost notes:** No model selection, execution authority, installation
+or client configuration comes from the briefing. Missing or disabled transport
+falls back to the native workflow with mandatory verification intact. Unknown
+client capability and freshness stay unknown. No cost-saving claim is established
+by the offline package and artifact checks.
 
 ## context-weight
 

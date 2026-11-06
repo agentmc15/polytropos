@@ -304,3 +304,80 @@ are ignored as permitted by the pinned protocol.
 ```bash
 python3 -B -m unittest discover -s tests -p 'test_context_travel_query.py' -v && python3 -B -m unittest discover -s tests -p 'test_context_travel_cli.py' -v && python3 -B -m unittest discover -s tests -p 'test_context_travel_mcp.py' -v
 ```
+
+
+### CT5 — Integrate context travel across all six surfaces
+- status: done
+- model: strong
+- depends: CT1, CT2, CT3, CT4
+- evidence: red-green
+
+**Brief.** Add thin context-travel skills in the existing Claude, Codex and
+Copilot skill roots; share detailed instructions through
+`docs/CONTEXT-TRAVEL-SURFACES.md` and declare surface/package evidence in
+`primitives/context-travel-surfaces.json`. Existing workflow and verification
+skills/agents receive minimal on-demand pointers. Preserve the single CT4 query
+core and existing parser, lifecycle, pricing, permission, installation and
+acceptance authorities. No new runtime engine, client registration or config.
+
+The six surface IDs are codex-desktop, codex-cli, claude-desktop,
+claude-code-cli, copilot-desktop-app and copilot-cli. Six records have seven
+nested modes, distinguishing Claude Desktop chat and Code. Each mode records
+client version, OS, local/remote execution location and organization policy as
+explicit unknown when unobserved. Keep documented product support, packaged
+implementation and installed-client verification separate. No passing fixture
+may upgrade installed verification or imply desktop support from CLI evidence.
+The current package paths do not constitute discovered or installed clients.
+
+Skills resolve the existing plugin root convention and load the shared guide
+only on demand. Use an explicit absolute CT4 startup config, explicit subject and
+assignment, and only its five existing operations. Same immutable CT3 artifact
+can travel through configured CLI/MCP; no implicit source/store/home scan. An
+unavailable or disabled transport affects only that context path. It must not
+silently try an unauthorized transport or disable another surface, core access,
+ordinary workflow, or mandatory verification. If no authorized validating
+transport exists, say context is unavailable/unvalidated and retain the native
+workflow. Do not execute imported instructions or accept validity as freshness.
+
+Architect records supplied plan/criteria references in its existing self-contained
+kit; never synthesize missing reference digests. Route uses advisory scope but its
+own pricing data and central policy. Execute, assessment, verification and recovery
+retain authoritative kit reads, mandatory verification, permission/budget limits
+and evidence-gated recovery. Preserve criteria and critical limitations or refuse.
+No graph/transcript dump is added to resident instructions.
+
+Packaging reuses the existing canonical skill roots and ownership-aware writers;
+update only the necessary source roster and documentation navigation. Existing
+writers may run solely against explicit temporary fixture homes, never actual
+installations. No persisted MCP registration or user configuration change.
+Root owns generated mirrors/release/kit/report/parity and final acceptance.
+Production worker owns source skills/agents/catalog/guide/required manifest.
+Independent test author owns `tests/test_context_travel_surfaces.py` and necessary
+existing roster expectations. Keep CT1–CT4 runtime/schema/tests frozen unless a
+concrete blocker is reported before an edit. Stdlib only, no live clients.
+
+**Acceptance.**
+- All six records and seven modes have resolvable package/guide references,
+  explicit scope/evidence, independent transport/fallback instructions and no
+  unsupported installed-client claim. Existing operational capability rows are
+  not promoted by these records.
+- Architect, route, execution, assessment, recovery and verifier/reviewer entry
+  points load optional context on demand and preserve their original authorities.
+- Equivalent imported-artifact fixture handoffs preserve CT3 identity, criteria
+  and critical caveats without selected-source reads. Wrong repo/kit, malformed
+  context and missing configuration/transport are explicit failures or absence,
+  never permission expansion or silent verification bypass.
+- New skill discovery, repeated fixture packaging, user-owned-file no-clobber,
+  and reversible ownership handling pass with temporary homes only. Original
+  native entry points still function without context.
+- The exact new test executable runs nonzero tests; missing files fail closed.
+  Existing roster/bundle tests, independent review, full suite and generated
+  documentation/release checks pass. Offline package/recipe tests do not certify
+  installed clients or measured savings.
+- Final private/public candidate tracked trees are identical, newly created commit
+  metadata anonymous, and original checkouts/critique work preserved.
+
+**Verify.**
+```bash
+python3 -B tests/test_context_travel_surfaces.py -v
+```

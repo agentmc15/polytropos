@@ -1,6 +1,8 @@
 # Context travel guardrails
 
-- CT1–CT4 are complete within their offline scopes; CT5–CT6 are not dispatched.
+- CT1–CT5 are complete within their offline scopes, including thin skill
+  integration and offline packaging across all six requested surfaces.
+  CT6 is not dispatched. Fixture-only packaging writes use temporary homes.
   No graph extraction, persistent cache, HTTP server, skill installation,
   provider adapter, dispatch, repair, merge, or deployment.
 - Do not change existing kit/task readiness, status, pricing, or acceptance rules.
@@ -34,7 +36,10 @@
 - The lifecycle view's complete/partial/refused status describes the projection,
   never work acceptance. Critical limitations travel with each role brief; an
   insufficient budget refuses rather than trimming criteria or critical caveats.
-- Keep all changes in the isolated CT1 worktree. The coordinator owns task state,
+- Keep implementation in the isolated public candidate, then synchronize the
+  identical tracked content to the isolated private CT1 candidate. Leave the
+  original public checkout and separate critique checkout untouched.
+  The coordinator owns task state,
   evidence notes, release integration, and final acceptance.
 - Startup bindings authorize explicit roots, kits, selected source files, deny
   rules and limits. Tool arguments cannot expand those grants. Imported artifacts
@@ -45,8 +50,14 @@
 - Bound JSON bytes, depth, collections, frames, response size and session state.
   Preserve mandatory criteria/critical limitations in JSON and text, or refuse.
   Synchronous calls cannot promise active cancellation or live client support.
-- CT1–CT3 runtime/schema/tests remain frozen absent a reported concrete blocker.
-- Public source parity is required. After CT4, the coordinator prepares reviewed
+- CT1–CT4 runtime/schema/tests remain frozen absent a reported concrete blocker.
+- CT5 uses the existing query, source, identity, lifecycle, installer and pricing
+  authorities. No new dispatcher, source scan, MCP registration or client config.
+  Keep context on demand and advisory; absence/refusal never bypasses verification.
+- Six surface records keep seven modes, including separate Claude Desktop chat
+  and Code modes. Product documentation, package implementation and installed-client
+  verification remain separate; offline fixtures cannot promote the latter.
+- Public source parity is required. After CT5, the coordinator prepares reviewed
   local synchronization; no publication, active public-checkout overwrite or
   copying personal/generated runtime data. Private GitHub capability differences
   must not create a separate product implementation.

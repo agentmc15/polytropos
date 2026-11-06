@@ -285,15 +285,18 @@ class LiveTreeInventoryTests(unittest.TestCase):
         records = db.skill_inventory(REPO_ROOT)
         harnesses = [r["harness"] for r in records]
         # 16 since the observability-dashboard kit added skills/dashboard (was 15, since D25
-        # added skills/assess-improvement). A roster tripwire, not a derived fact: re-derive it
-        # from `skill_inventory()` when a skill lands.
-        self.assertEqual(harnesses.count("claude"), 16)
-        self.assertEqual(harnesses.count("copilot"), 13)
-        self.assertEqual(harnesses.count("codex"), 17)
+        # added skills/assess-improvement); CT5 adds context-travel to all three harnesses.
+        # This is a roster tripwire, not a derived fact: re-derive it from
+        # `skill_inventory()` when a skill lands.
+        self.assertEqual(harnesses.count("claude"), 17)
+        self.assertEqual(harnesses.count("copilot"), 14)
+        self.assertEqual(harnesses.count("codex"), 18)
         pairs = {(r["harness"], r["name"]) for r in records}
         self.assertIn(("claude", "route"), pairs)
         self.assertIn(("copilot", "budget"), pairs)
         self.assertIn(("codex", "doctor"), pairs)
+        for harness in ("claude", "copilot", "codex"):
+            self.assertIn((harness, "context-travel"), pairs)
 
 
 class IntrospectionGuardTests(unittest.TestCase):

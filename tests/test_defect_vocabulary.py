@@ -3,11 +3,13 @@
 the optional ``when=`` pair on ``defect:`` lines, the architect aggregate's folded /
 unsanctioned / excluded / pre_run view, the card render, and ``lessons_promote`` parity.
 
-Pure-function and temp-dir only: no real kits scan, no network, no subprocess other than a
-read-only ``git diff --quiet`` guard that the module import never writes under ``.claude/kits``.
+Pure-function and temp-dir fixtures, plus a before/after snapshot of the explicit repository
+kits directory to verify that module import does not change it. No network or subprocesses.
 """
 import importlib.util
-import subprocess
+import hashlib
+import os
+import stat
 import tempfile
 import unittest
 from pathlib import Path
@@ -23,8 +25,39 @@ def _load(name):
     return mod
 
 
+def _kit_tree_snapshot(root):
+    """Capture paths, types, modes, content digests and mtimes without following symlinks."""
+    root = Path(root)
+    if not root.exists() and not root.is_symlink():
+        return None
+    snapshot = {}
+
+    def visit(path, relative):
+        info = path.lstat()
+        kind = stat.S_IFMT(info.st_mode)
+        details = [kind, stat.S_IMODE(info.st_mode), info.st_size, info.st_mtime_ns]
+        if stat.S_ISREG(info.st_mode):
+            digest = hashlib.sha256()
+            with path.open("rb") as stream:
+                for chunk in iter(lambda: stream.read(65536), b""):
+                    digest.update(chunk)
+            details.append(digest.hexdigest())
+        elif stat.S_ISLNK(info.st_mode):
+            details.append(os.readlink(path))
+        snapshot[relative] = tuple(details)
+        if stat.S_ISDIR(info.st_mode):
+            for child in sorted(path.iterdir(), key=lambda item: item.name):
+                visit(child, f"{relative}/{child.name}" if relative else child.name)
+
+    visit(root, "")
+    return snapshot
+
+
+KITS_DIR = REPO / ".claude" / "kits"
+KIT_SNAPSHOT_BEFORE_IMPORT = _kit_tree_snapshot(KITS_DIR)
 rs = _load("routing_scorecard")
 lp = _load("lessons_promote")
+KIT_SNAPSHOT_AFTER_IMPORT = _kit_tree_snapshot(KITS_DIR)
 
 SANCTIONED = [k for k, _ in rs.DEFECT_KINDS]
 
@@ -176,13 +209,38 @@ class LessonsPromoteParityTests(unittest.TestCase):
 
 class NoWriteGuardTests(unittest.TestCase):
     def test_kits_dir_unchanged_by_import(self):
+        self.assertEqual(KIT_SNAPSHOT_AFTER_IMPORT, KIT_SNAPSHOT_BEFORE_IMPORT)
+        before = _kit_tree_snapshot(KITS_DIR)
         _load("routing_scorecard")
-        r = subprocess.run(["git", "status", "--porcelain", "--", ".claude/kits"],
-                           cwd=REPO, capture_output=True, text=True)
-        # Other kits' files must be untouched; the active kit's own dir is orchestrator-owned.
-        dirty = [l for l in r.stdout.splitlines()
-                 if ".claude/kits/kit-preflight/" not in l]
-        self.assertEqual(dirty, [])
+        self.assertEqual(_kit_tree_snapshot(KITS_DIR), before)
+
+    def test_snapshot_detects_changes_to_preexisting_files_and_membership(self):
+        for mutation in ("change", "add", "delete"):
+            with self.subTest(mutation=mutation), tempfile.TemporaryDirectory() as temporary:
+                kits = Path(temporary) / "kits"
+                kits.mkdir()
+                dirty = kits / "already-edited.md"
+                dirty.write_text("preexisting edit\n")
+                before = _kit_tree_snapshot(kits)
+                if mutation == "change":
+                    dirty.write_text("changed again\n")
+                elif mutation == "add":
+                    (kits / "added.md").write_text("new\n")
+                else:
+                    dirty.unlink()
+                self.assertNotEqual(_kit_tree_snapshot(kits), before)
+
+    def test_snapshot_does_not_follow_fixture_symlink(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            kits = base / "kits"
+            kits.mkdir()
+            outside = base / "outside.md"
+            outside.write_text("outside\n")
+            (kits / "link.md").symlink_to(outside)
+            before = _kit_tree_snapshot(kits)
+            outside.write_text("changed outside\n")
+            self.assertEqual(_kit_tree_snapshot(kits), before)
 
 
 

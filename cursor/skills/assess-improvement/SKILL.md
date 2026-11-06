@@ -93,3 +93,7 @@ Deliver a scope-specific findings report plus zero or more independent task brie
 Each task brief must state: objective; exact scope and out-of-scope; existing authorities to preserve; evidence links; proposed bounded change; non-goals; acceptance criteria; deterministic/offline verification; evaluation dependencies; required approval or private/paid access; and rollback/no-promotion condition. It must be usable by a later implementer without access to the assessment conversation.
 
 If multiple candidates exist, rank only within the assessment scope using expected learning value, reversibility, evidence quality, and disruption. Do not rank by an invented probability, vendor claim, or presumed cost.
+
+## Optional context travel
+
+If the current surface separately exposes the `context-travel` skill and an explicit repository, kit, assignment, and authorized startup config are supplied, consult that skill's on-demand guide at `docs/CONTEXT-TRAVEL-SURFACES.md` for a bounded reviewer brief. This assessment card does not install or claim that skill on any surface. Treat missing, stale, partial, or refused context as advisory; retain this workflow's authoritative sources, policy, pricing, permission, and mandatory verification rules. If context travel is unavailable, continue this assessment and report that limit.

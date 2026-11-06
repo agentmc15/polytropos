@@ -29,7 +29,7 @@ class CodexDocsTests(unittest.TestCase):
         guide = (ROOT / "docs" / "CODEX-HARNESS.md").read_text()
         skills = sorted(path.parent.name for path in (ROOT / "codex" / "skills").glob("*/SKILL.md"))
         agents = sorted(path.stem for path in (ROOT / "codex" / "agents").glob("*.toml"))
-        self.assertEqual(len(skills), 17)
+        self.assertEqual(len(skills), 18)
         self.assertEqual(len(agents), 4)
         for skill in skills:
             self.assertIn(f"`${skill}`", guide)

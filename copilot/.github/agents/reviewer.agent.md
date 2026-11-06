@@ -74,3 +74,7 @@ not risk.
 
 Lead with the verdict, then the findings list (severity-ordered) with concrete redo
 guidance, then a short note on overall suite/plan health.
+
+## Optional context travel
+
+When an explicit repository/kit/assignment and authorized startup config are supplied, use the native `context-travel` skill and read `{{POLYTROPOS_ROOT}}/docs/CONTEXT-TRAVEL-SURFACES.md` on demand for a bounded task brief. Treat missing, stale, partial, or refused context as advisory; retain this workflow's authoritative sources, policy, pricing, permission, and mandatory verification rules. If no authorized context transport is available, continue this workflow and report context unavailable.

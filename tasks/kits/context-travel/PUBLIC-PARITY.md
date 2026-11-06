@@ -70,7 +70,7 @@ and verify both identities. The identifying values are intentionally not copied.
    CT5/CT6 work must pass the same parity gate; permanent source exceptions require
    an explicit documented decision rather than silent drift.
 
-Status: CT4 passed its offline gates. An isolated local public candidate is
+Historical CT4 checkpoint: CT4 passed its offline gates. An isolated local public candidate is
 prepared on `codex/context-travel-public-sync`. Publication remains excluded;
 the original public checkout is not the candidate.
 
@@ -131,6 +131,28 @@ they are not portable commands, required installation paths or durable logs.
 
 Local preparation does not update public remotes or install the plugin. No live
 client/provider compatibility, automated reverse synchronization, measured savings
-or deployment is established. CT5 and CT6 remain next in the original order and
-must retain this exact-source parity requirement. Concurrent public documentation
+or deployment is established. At this CT4 checkpoint, CT5 and CT6 were next in
+the original order and required the same exact-source parity. Concurrent public documentation
 work must be reconciled separately before eventual publication rather than erased.
+
+## CT5 continuation
+
+The user authorized six-surface CT5 work after the CT4 parity boundary. The public
+isolated candidate supplied the implementation and accepted full run: **6,629
+tests in 675.587 seconds**, two skips, no failures/errors; wrapper rc 0 in
+683.255 seconds, no timeout, truncation or leftovers. All 93 changed-file hashes
+matched after the run. Only seven kit completion/parity records changed afterward.
+
+The reviewed delta was transferred as content to the private candidate. Private
+verification passed **11 CT5 tests**, **19 import-guard tests**, release inventory,
+documentation and Codex mirror checks with separate temporary fixtures/stubs.
+The full suite was not repeated in private; its source/tests match the accepted
+public run. CT5-EVIDENCE.md retains exact commands, both unsuccessful attempts,
+the final accepted result and the separate private results.
+
+The final local CT5 handoff records both anonymous commits, the shared Git tree,
+recursive path/mode/blob parity and clean candidate status. Public/private
+histories stay separate. The original public documentation checkout and private
+critique checkout remain untouched. CT6 remains planned in the original order.
+No automatic reverse sync, actual installation, live provider/client call,
+remote update or publication occurred or is authorized.

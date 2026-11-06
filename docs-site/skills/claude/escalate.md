@@ -103,3 +103,7 @@ Re-verify Fable's output yourself. If it passes, relay it. If even Fable fails, 
 ### Cost posture
 
 In **subscription** mode the marginal dollar cost of the Fable hop is zero; the cost is rate-limit burn, so the effort/scope levers still matter. In **api** mode the whole point is that Fable runs only on the fraction of tasks the cheaper tier failed — report roughly what fraction escalated so the user can see the ladder paying off. This is the per-task sibling of `/polytropos:execute`'s blocked-task escalation valve; for multi-task work, prefer a kit (`/polytropos:architect`) over calling this in a loop.
+
+### Optional context travel
+
+When an explicit repository/kit/assignment and authorized startup config are supplied, use the native `context-travel` skill and read `${CLAUDE_PLUGIN_ROOT}/docs/CONTEXT-TRAVEL-SURFACES.md` (or resolve relative to the skill file) on demand for a bounded recovery brief. Treat missing, stale, partial, or refused context as advisory; retain this workflow's authoritative sources, policy, pricing, permission, and mandatory verification rules. If no authorized context transport is available, continue this workflow and report context unavailable.

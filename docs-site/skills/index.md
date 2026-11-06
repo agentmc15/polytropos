@@ -8,6 +8,7 @@
 | assess-improvement | [assess-improvement](claude/assess-improvement.md) | — | [assess-improvement](codex/assess-improvement.md) |
 | bench-routing | [bench-routing](claude/bench-routing.md) | [bench-routing](copilot/bench-routing.md) | [bench-routing](codex/bench-routing.md) |
 | budget | — | [budget](copilot/budget.md) | — |
+| context-travel | [context-travel](claude/context-travel.md) | [context-travel](copilot/context-travel.md) | [context-travel](codex/context-travel.md) |
 | context-weight | [context-weight](claude/context-weight.md) | [context-weight](copilot/context-weight.md) | [context-weight](codex/context-weight.md) |
 | cost-report | [cost-report](claude/cost-report.md) | — | — |
 | dashboard | [dashboard](claude/dashboard.md) | — | — |

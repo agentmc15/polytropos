@@ -1,0 +1,4 @@
+interface:
+  display_name: "Context Travel"
+  short_description: "Read bounded kit lifecycle context"
+  default_prompt: "Use $context-travel to brief this explicitly identified kit task and preserve its evidence limits."

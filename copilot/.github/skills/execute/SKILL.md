@@ -81,3 +81,7 @@ TASKS.md decides what the dispatch runs on, not this session's model.
 If the literal `{{POLYTROPOS_ROOT}}` text is still visible above, the bundle is not
 installed — tell the user to run `python3 bin/harness_select.py install --harness copilot`
 (then `/skills reload` picks the skills up in-session).
+
+## Optional context travel
+
+When an explicit repository/kit/assignment and authorized startup config are supplied, use the native `context-travel` skill and read `{{POLYTROPOS_ROOT}}/docs/CONTEXT-TRAVEL-SURFACES.md` on demand for a bounded task brief. Treat missing, stale, partial, or refused context as advisory; retain this workflow's authoritative sources, policy, pricing, permission, and mandatory verification rules. If no authorized context transport is available, continue this workflow and report context unavailable.

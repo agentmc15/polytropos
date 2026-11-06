@@ -18,7 +18,7 @@ class PortableSkillTests(unittest.TestCase):
         # a Codex port would add a bundle roster entry for no new capability. Each further
         # entry here must be its own deliberate decision, recorded the same way.
         claude_only = {"dashboard"}
-        self.assertEqual(len(claude), 16)
+        self.assertEqual(len(claude), 17)
         self.assertTrue(
             {native_names.get(name, name) for name in claude if name not in claude_only}
             .issubset(codex)

@@ -350,13 +350,15 @@ class LiveTreeInventoryTests(unittest.TestCase):
         for r in records:
             counts[r["harness"]] += 1
         # 16 since the observability-dashboard kit added skills/dashboard (was 15, since
-        # D25 added skills/assess-improvement).
-        self.assertEqual(counts["claude"], 16)
-        self.assertEqual(counts["copilot"], 13)
-        self.assertEqual(counts["codex"], 17)
+        # D25 added skills/assess-improvement); CT5 adds one skill per harness.
+        self.assertEqual(counts["claude"], 17)
+        self.assertEqual(counts["copilot"], 14)
+        self.assertEqual(counts["codex"], 18)
         self.assertIn(("claude", "route"), pairs)
         self.assertIn(("copilot", "budget"), pairs)
         self.assertIn(("codex", "doctor"), pairs)
+        for harness in ("claude", "copilot", "codex"):
+            self.assertIn((harness, "context-travel"), pairs)
 
 
 # ---------------------------------------------------------------------------
@@ -749,12 +751,16 @@ class DeepDivePageMapRealTreeTests(unittest.TestCase):
     def test_every_real_docs_md_source_is_mapped_with_lowercased_slug(self):
         page_map = db.deep_dive_page_map(REPO_ROOT)
         md_sources = sorted((REPO_ROOT / "docs").glob("*.md"))
-        self.assertEqual(len(md_sources), 40)  # CONTEXT-TRAVEL followed SPEC-DRIVEN.
+        self.assertEqual(len(md_sources), 41)  # CT5 adds CONTEXT-TRAVEL-SURFACES.
         for path in md_sources:
             key = f"docs/{path.name}"
             expected_value = f"deep-dives/{path.stem.lower()}.md"
             self.assertIn(key, page_map)
             self.assertEqual(page_map[key], expected_value)
+        self.assertEqual(
+            page_map["docs/CONTEXT-TRAVEL-SURFACES.md"],
+            "deep-dives/context-travel-surfaces.md",
+        )
 
     def test_html_companions_map_to_md_mirror_pages(self):
         page_map = db.deep_dive_page_map(REPO_ROOT)
@@ -788,9 +794,10 @@ class DeepDivePageMapRealTreeTests(unittest.TestCase):
     docs/JEV-JUDGE-STUDY.md (2026-09-25), then 39 -> 40 when the route experiment added
     docs/ROUTE-EXPERIMENT.md (2026-09-28), then 40 -> 41 when
     sdd-docs-refresh added docs/SPEC-DRIVEN.md (2026-10-23), then 41 -> 42
-    when CT1 added docs/CONTEXT-TRAVEL.md (2026-11-01)."""
+    when CT1 added docs/CONTEXT-TRAVEL.md (2026-11-01), then 42 -> 43 when
+    CT5 added docs/CONTEXT-TRAVEL-SURFACES.md (2026-11-05)."""
         page_map = db.deep_dive_page_map(REPO_ROOT)
-        self.assertEqual(len(page_map), 42)
+        self.assertEqual(len(page_map), 43)
 
 
 class DeepDivesNeverMirrorHtmlFilesLiveTreeTests(unittest.TestCase):

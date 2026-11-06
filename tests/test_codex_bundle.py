@@ -67,6 +67,7 @@ EXPECTED_SKILL_STEMS = (
     | {
         "effort", "execute", "doctor", "context-weight", "bench-routing", "memory",
         "assess-improvement", "graphify", "repo-bench", "setup", "update",
+        "context-travel",
     }
 )
 

@@ -59,3 +59,7 @@ python3 "$POLYTROPOS_ROOT/bin/codex_execute.py" run --kit tasks/kits/<slug> --ta
 ```
 
 Do not call `prepare --role recovery`: caller-supplied evidence cannot unlock recovery. Report planned, dispatched, and observed model-role records separately; unknown observed identity stays `unknown`.
+
+### Optional context travel
+
+When an explicit repository/kit/assignment and authorized startup config are supplied, use the native `context-travel` skill and read `{{POLYTROPOS_ROOT}}/docs/CONTEXT-TRAVEL-SURFACES.md` on demand for a bounded recovery brief. Treat missing, stale, partial, or refused context as advisory; retain this workflow's authoritative sources, policy, pricing, permission, and mandatory verification rules. If no authorized context transport is available, continue this workflow and report context unavailable.

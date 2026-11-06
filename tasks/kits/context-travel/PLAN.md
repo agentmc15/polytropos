@@ -20,6 +20,14 @@ Repository visibility and enabled GitHub capabilities may differ; product and
 workflow definitions should remain in parity, with private-only execution gated.
 The alternative Claude-first pilot is not adopted.
 
+CT4 and its local public synchronization are complete. CT5 completed its
+authorized six-surface offline scope on 2026-11-05: 11 targeted tests, 19 import
+guard tests, independent review and 6,629 full-suite tests passed (two skips).
+The reviewed public candidate content was copied to the private candidate;
+private targeted, release and generated-document checks passed. Tracked source
+parity is required at the local commit boundary. No installation or GitHub
+changes occurred. The full report retains all CT1–CT6 briefs and failed attempts.
+
 ## Scope and decisions
 
 - CT1 adds data validation, identity construction, canonical bytes/digests,
@@ -38,6 +46,11 @@ The alternative Claude-first pilot is not adopted.
   pinned to the published 2025-11-25 protocol, with bounded synchronous requests.
 - Repository identities are explicit caller-supplied identifiers. Never infer
   equivalence from local directory names, remotes, or credentials.
+- CT5 adds one thin context-travel skill per existing Claude/Codex/Copilot bundle,
+  a shared on-demand guide, six declarative surface records with seven modes, and
+  brief integration pointers in existing workflow/verification definitions.
+  No runtime parser, lifecycle engine, pricing policy or installer is replaced.
+  Existing ownership-aware writers are exercised only against temporary fixtures.
 - Preserve existing task IDs; namespace them by repository ID and relative kit
   path. Track checkout/revision applicability separately from stable task identity.
 - `bin/kit_contract.py` remains the sole owner of task parsing, readiness, status,
@@ -58,11 +71,10 @@ The alternative Claude-first pilot is not adopted.
 
 ## Future work, outside the current task
 
-CT5 skill integration across Codex desktop/CLI, Claude
-desktop/CLI, and GitHub Copilot desktop/CLI; CT6 independent comparative evaluation.
+CT6 independent comparative evaluation remains planned.
 Incremental indexes, provider integrations, PRs, merges, deployments, and live
-client verification are outside CT4. Claude desktop chat and Code modes will
-need separate capability records. Nothing in CT1 claims surface compatibility.
+client verification are outside CT5. Claude desktop chat and Code modes have
+separate capability records; no fixture result establishes installed support.
 
 ## Done and evidence
 
@@ -100,3 +112,10 @@ attached public polytropos checkout are not modified during CT4 implementation.
 After CT4, prepare local synchronization in isolation without publication or
 overwriting the active public checkout. Record exact tracked-tree parity and
 remaining release gates; never equate local preparation with public availability.
+
+CT5 repeats the policy preview: the configured mid worker is not available through
+this app's host delegation tool. The integration/permission-boundary scope admits
+strong; the strong preview selects the ordinary configured worker. Host-tool
+delegation is outside the central driver's enforcement and is not a live driver
+run or ledger record. Independent test authoring and read-only verification remain
+separate from implementation and coordinator acceptance. No model CLI runs.

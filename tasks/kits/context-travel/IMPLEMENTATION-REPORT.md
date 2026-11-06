@@ -4,11 +4,12 @@ Updated: 2026-11-05 (original plan: 2026-11-01)
 
 ## Status and authorization
 
-CT1–CT4 are implemented and accepted within their offline scopes. The latest
-full suite passed **6,616 tests with zero failures or errors and two
-configuration-dependent skips**. CT4's 48 targeted tests, independent review and
-documentation/release checks also passed. Earlier results and failed runs are
-retained with their corrections and limits.
+CT1–CT5 are implemented and accepted within their offline scopes. The latest
+full suite passed **6,629 tests with zero failures or errors and two
+configuration-dependent skips**. CT5's 11 targeted tests, 19 import-guard tests,
+independent review and documentation/release checks also passed. Both isolated
+repository candidates carry identical tracked content. Earlier results and failed
+runs are retained with their corrections and limits.
 
 The user requested continuation and identified the separate critique branch as
 `kit/context-travel`. Its uncommitted draft has now been reviewed read-only.
@@ -18,7 +19,8 @@ alternative. The user chose the original CT1 -> CT2 -> CT3 -> CT4 -> CT5 -> CT6
 order. CT2 implements the strengthened read/privacy/evidence requirements;
 the alternative pilot sequence is not adopted. No other agent's branch has been
 modified. CT4 completed its offline scope on 2026-11-05.
-CT5–CT6 remain planned and unimplemented. The user also required the same
+CT5 completed its offline scope for all six surfaces on 2026-11-05; CT6 remains
+planned and unimplemented. The user also required the same
 codebase in public polytropos and private poly-auto, and selected CT4 completion
 followed by reviewed local synchronization. Their private repository exists to
 use Copilot workflow capabilities available to private/internal repositories;
@@ -29,6 +31,8 @@ remain shared. Publication is still excluded.
 test ownership, observed failing cases, corrections, source digests and checks.
 [CT3-EVIDENCE.md](CT3-EVIDENCE.md) records the completed pure lifecycle-view task.
 [CT4-EVIDENCE.md](CT4-EVIDENCE.md) records the completed offline transport work.
+[CT5-EVIDENCE.md](CT5-EVIDENCE.md) records six-surface integration and final
+verification, including both unsuccessful attempts and their corrections.
 [PUBLIC-PARITY.md](PUBLIC-PARITY.md) records the local drift assessment and
 the prepared local synchronization candidate. Its reviewed tracked tree matches
 the private candidate; the original public checkout's concurrent documentation
@@ -119,7 +123,7 @@ live integration, universal reliability, or a financial benefit.
 | CT2 | Explicit, bounded, privacy-aware source readers | Complete; targeted, independent, full-suite and documentation checks passed |
 | CT3 | Lifecycle projection and role-specific briefing selection | Complete; targeted, independent, full-suite and documentation checks passed |
 | CT4 | CLI and MCP adapters calling the same query core | Complete; targeted, independent, full-suite and documentation checks passed |
-| CT5 | Six-surface skill integration and packaging | Pending; planning only |
+| CT5 | Six-surface skill integration and packaging | Complete; offline fixtures, independent review, full suite and source parity passed |
 | CT6 | Independent baseline/control/candidate evaluation | Pending; planning only |
 
 The intended query operations are `overview`, `brief`, `explain`, `changes`, and
@@ -127,11 +131,11 @@ The intended query operations are `overview`, `brief`, `explain`, `changes`, and
 
 ## Complete CT1–CT6 task briefs
 
-These six tasks comprise Phase 1. CT1–CT4 are complete.
-CT5–CT6 remain planning briefs, not dispatched work.
+These six tasks comprise Phase 1. CT1–CT5 are complete within their offline
+scopes; CT6 remains a planning brief, not dispatched work.
 Proposed new filenames below do not mean those files exist. Final ownership and
 verification commands must be checked against the checkout before each task is
-admitted. The active executable TASKS.md now contains CT1–CT4.
+admitted. The active executable TASKS.md now contains CT1–CT5.
 
 ### CT1 — Define the briefing contract and identities
 
@@ -472,9 +476,10 @@ undoes external actions already performed.
 
 ### Execution and approval boundaries for the complete task set
 
-- Only CT1 is implemented in this change; its actual verification is recorded below.
-- CT2–CT6 require their own implementation admission and scoped task entries before
-  execution. Their briefs here are planning output requested by the user.
+- CT1–CT5 passed their offline gates, including targeted and full-suite checks
+  and local candidate source parity. Evidence is recorded below.
+- CT6 requires its own implementation admission and scoped task entry before
+  execution. Its brief remains planning output requested by the user.
 - Every implemented task uses temporary fixtures/stubs first and preserves the
   existing task, execution, evidence, permission, and pricing authorities.
 - Local data-contract or adapter success does not authorize installations, paid
@@ -486,14 +491,21 @@ undoes external actions already performed.
 
 All six requested surfaces are explicit targets:
 
-| Surface | Intended access | CT1 compatibility evidence |
+| Surface | CT5 packaged procedure | Installed-client evidence |
 | --- | --- | --- |
-| Codex desktop | Native skills plus read-only context tools | Not exercised |
-| Codex CLI | Native skills, CLI queries, MCP | Not exercised |
-| Claude Desktop | Code-mode plugin; MCP briefings for chat | Not exercised; modes must be tracked separately |
-| Claude Code CLI | Existing plugin, CLI queries, MCP | Not exercised |
-| GitHub Copilot desktop | Skills/custom agents and MCP | Not exercised |
-| GitHub Copilot CLI | Existing agent workflows, CLI queries, MCP | Not exercised |
+| Codex desktop | Codex native skill; conditional CLI or separately authorized MCP; bounded artifact fallback | Unknown |
+| Codex CLI | Same native skill and explicit CT4 query/config procedure | Unknown |
+| Claude Desktop | Separate chat artifact/validator and Code conditional-execution modes | Unknown for each mode |
+| Claude Code CLI | Root plugin skill and explicit CT4 query/config procedure | Unknown |
+| GitHub Copilot desktop | Copilot bundle skill with conditional execution and artifact fallback | Unknown |
+| GitHub Copilot CLI | Same bundle skill and explicit CT4 query/config procedure | Unknown |
+
+The six records and seven modes are in
+`primitives/context-travel-surfaces.json`; their detailed on-demand procedure is
+`docs/CONTEXT-TRAVEL-SURFACES.md`. Native source packaging does not prove any app
+loads the skill or exposes execution. Every mode records client version, OS,
+execution location, organization policy and product/installed evidence as unknown.
+No MCP server registration or client configuration is installed by CT5.
 
 One shared core owns data semantics. Surface adapters preserve native discovery,
 permissions, model control, and billing. Product support, repository
@@ -512,21 +524,23 @@ policy rejection must not trigger a permission-bypassing fallback.
 ## Preserving existing Polytropos skills
 
 - Architect remains responsible for decomposition, decisions, acceptance criteria,
-  and task briefs. It will consume relevant maintained context and contribute its
-  outputs to the view.
+  and task briefs. CT5 adds optional bounded briefing consumption and explicit
+  intent/criteria references; maintained indexing remains later work.
 - Route, effort, and frontier-check retain central selection and harness-specific
   pricing. Briefings supply bounded task information; they do not select a model
   or grant a budget.
 - Graphify remains an optional external mapping tool. No extraction or install
-  is part of CT1.
+  is part of CT1–CT5.
 - Execute and escalate retain execution, verification, and recovery boundaries.
 - Memory and context-weight remain relevance and context-budget tools.
-- Assessment, usage, and journal workflows can consume connected evidence later.
+- Assessment has an optional reviewer-context entry point in CT5. Usage and
+  journal workflows can consume connected evidence later.
 
 Existing entry points remain supported. Shared task semantics are not copied
 into the new layer. Context is retrieved on demand rather than bulk-loaded into
 resident instructions. Index absence needs an explicit fallback under existing
-policy. No skill is installed or modified by CT1.
+policy. CT5 modifies source skills and packaging definitions but performs no
+actual installation; fixture packaging writes only to temporary homes.
 
 ## CT1 implementation
 
@@ -697,7 +711,54 @@ expired; committed summaries/digests remain, and the new CT4 logs are also
 temporary. Public synchronization follows the full-suite gate and must preserve
 exact tracked content across both repositories.
 
+## CT5 implementation
+
+CT5 adds three thin native `context-travel` skills and a shared on-demand guide,
+plus six surface records with seven distinct modes. Claude Desktop chat and Code
+stay separate. Existing architect, route, execute, assess-improvement, recovery,
+implementer and verifier/reviewer definitions receive short advisory pointers.
+The same CT4 core owns parsing and queries; routing, pricing, permissions,
+acceptance and existing mandatory verification remain unchanged. Detailed context
+is requested on demand, not added to resident instructions.
+
+The guide provides complete synthetic config/assignment JSON and exact CLI/MCP
+operations. An imported artifact carries the complete CT3 `data` projection,
+criteria and caveats. Each recipient validates with its own authorized binding
+and compares the carried task/checkout/revision/assignment/role to its destination.
+Structural validity is not freshness or assignment applicability. Missing or
+disabled transport affects that context path alone; unavailable context never
+silently bypasses native verification. These are skill instructions and declared
+recipes, not automatic mode detection or enforcement by a new runtime engine.
+
+The dedicated test executable passed **11 tests** under both coordinator and
+independent verification. Fixtures cover discovery, no-clobber/idempotence and
+rollback in temporary homes, executable guide examples, CLI/MCP payload parity,
+source-free imported views, retained criteria/caveats and explicit invalid/unbound
+refusals. All installed-client evidence stays unknown. The frozen changes also
+passed bundle/roster checks, six Codex documentation tests, 16 documentation-builder
+checks and the regenerated documentation/release checks. The final full suite
+passed **6,629 tests in 675.587 seconds**, with two skips and no failures/errors.
+The wrapper exited 0 in 683.255 seconds without timeout, truncation or leftovers.
+All 93 changed files remained frozen through completion and their hashes matched.
+Only seven kit completion/parity records changed afterward. The reviewed content
+is synchronized locally; no measured saving or live support is claimed. The first full run executed 6,627 tests and failed 13 integration checks:
+assessment-copy consistency, skill-trigger grammar, Copilot guide/roster entries
+and documentation audit/census bookkeeping. The source corrections preserve the
+existing strict checks; 361 affected-module tests now pass with two skips, and
+the direct 11-test suite passes under coordinator and independent verification.
+The corrected run was interrupted after 408.123 seconds when a legacy test
+mistook the legitimate dirty audit file for an import write. It checked only
+post-import Git status. That guard now compares before/after state around first import and reimport,
+with negative fixture controls for dirty-file mutation, add/delete and symlinks.
+Its 19 tests pass; no audit exemption was added.
+Neither failed/interrupted attempt is acceptance. The final accepted run and
+private targeted checks are recorded separately.
+[CT5-EVIDENCE.md](CT5-EVIDENCE.md) retains all three runs, initial and corrected hashes,
+exact commands, and the portability/applicability findings.
+
 ## Local public synchronization
+
+### CT4 checkpoint (historical)
 
 After CT4, the reviewed tracked delta was applied to a separate public worktree
 from the known local common base. It contains the same source, tests, skills,
@@ -717,6 +778,21 @@ The original public checkout acquired concurrent documentation work during CT4;
 it was left separate and must be reconciled before a future publication. Source
 parity is established between the reviewed candidate revisions, not every active
 checkout. No remote was fetched or changed, and no plugin was installed.
+
+### CT5 checkpoint
+
+The implementation root for CT5 was the isolated public candidate. Its reviewed
+tracked delta was copied locally to the isolated private candidate without
+transferring history. Both receive identical completion records. The final CT5
+handoff records anonymous commit metadata, clean candidate worktrees and exact
+recursive path/mode/blob parity. The original public documentation checkout and
+private critique checkout remain separate and untouched.
+
+The public candidate supplied the accepted **6,629-test** full run. In private,
+**11 CT5 tests and 19 guard tests** passed with separate temporary fixtures;
+release inventory, documentation and Codex mirror checks passed. The full suite
+was not repeated in private. No installation, live client/provider run, remote
+change or publication occurred. Installed-client capabilities remain unknown.
 
 ## CT1 verification approach and evidence
 
@@ -839,13 +915,14 @@ CT1 provides the portable data contract; CT2 adds selected-source observations;
 CT3 composes the read-only lifecycle view and role briefings entirely in memory;
 CT4 exposes these through bounded CLI/MCP adapters. All four have passed their
 offline gates. They do not provide a maintained repository index, graph refresh,
-skill wiring, provider
-integration, automation, repair, merge, deployment or verified six-surface
+maintained retrieval, provider integration, automation, repair, merge, deployment
+or verified six-surface
 compatibility. The earlier driver precheck and acceptance-drift gaps remain
 unchanged. No cost saving or reliability rate has been measured by these tests.
 
-CT4 is complete in the original order chosen by the user. CT5 adds surface
-integration, and CT6 the independent cost/quality comparison. The provider and
+CT5 adds source skill integration and conditional recipes in the original order;
+its full-suite and local source-parity gates passed. CT6 is the independent cost/quality
+comparison and remains unimplemented. The provider and
 incremental-scaling phases remain later milestones. Existing architect, routing
 and execution authorities remain in place.
 

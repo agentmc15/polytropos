@@ -310,7 +310,8 @@ class RealTreeIdempotenceTests(unittest.TestCase):
     added skills/dashboard (merged from main), then 99 once the spec-driven development
     section mirrored docs/sdd/ (five Markdown pages plus the four HTML pages served beside
     them, 2026-10-26), then 100 when CT1 added docs/CONTEXT-TRAVEL.md
-    (2026-11-01) -- this test derives the count dynamically for the
+    (2026-11-01), then 104 when CT5 added three native skill pages and
+    docs/CONTEXT-TRAVEL-SURFACES.md (2026-11-05) -- this test derives the count dynamically for the
     build assertions, and the literal below is only the tripwire that makes a change in
     the page set announce itself."""
 
@@ -318,7 +319,7 @@ class RealTreeIdempotenceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = _copy_real_dirs(tmp, ("skills", "copilot", "codex", "docs"))
             expected_count = len(db.expected_pages(root))
-            self.assertEqual(expected_count, 100, "the pinned page-set size (100 total)")
+            self.assertEqual(expected_count, 104, "the pinned page-set size (104 total)")
 
             code1, out1, err1 = _run_main(["build", "--repo-root", str(root)])
             self.assertEqual(code1, 0, f"stderr={err1!r}")

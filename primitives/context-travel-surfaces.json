@@ -1,0 +1,32 @@
+{
+  "schema_version": "polytropos.context-travel-surfaces/1",
+  "surfaces": [
+    {
+      "id": "codex-desktop", "skill_root": "codex/skills/context-travel",
+      "modes": [{"id": "codex-desktop", "client_version": "unknown", "os": "unknown", "execution_location": "unknown", "organization_policy": "unknown", "documented_product": "unknown", "packaged_implementation": "native skill source", "installed_client": "unknown", "transport": "conditional-local-cli", "fallback": "bounded-artifact-handoff"}]
+    },
+    {
+      "id": "codex-cli", "skill_root": "codex/skills/context-travel",
+      "modes": [{"id": "codex-cli", "client_version": "unknown", "os": "unknown", "execution_location": "unknown", "organization_policy": "unknown", "documented_product": "unknown", "packaged_implementation": "native skill source", "installed_client": "unknown", "transport": "conditional-local-cli", "fallback": "bounded-artifact-handoff"}]
+    },
+    {
+      "id": "claude-desktop", "skill_root": "skills/context-travel",
+      "modes": [
+        {"id": "claude-desktop-chat", "client_version": "unknown", "os": "unknown", "execution_location": "unknown", "organization_policy": "unknown", "documented_product": "unknown", "packaged_implementation": "native skill source; artifact procedure", "installed_client": "unknown", "transport": "bounded-artifact-handoff", "fallback": "existing-workflow"},
+        {"id": "claude-desktop-code", "client_version": "unknown", "os": "unknown", "execution_location": "unknown", "organization_policy": "unknown", "documented_product": "unknown", "packaged_implementation": "native skill source; conditional CLI procedure", "installed_client": "unknown", "transport": "conditional-local-cli", "fallback": "bounded-artifact-handoff"}
+      ]
+    },
+    {
+      "id": "claude-code-cli", "skill_root": "skills/context-travel",
+      "modes": [{"id": "claude-code-cli", "client_version": "unknown", "os": "unknown", "execution_location": "unknown", "organization_policy": "unknown", "documented_product": "unknown", "packaged_implementation": "native skill source; local CLI procedure", "installed_client": "unknown", "transport": "conditional-local-cli", "fallback": "bounded-artifact-handoff"}]
+    },
+    {
+      "id": "copilot-desktop-app", "skill_root": "copilot/.github/skills/context-travel",
+      "modes": [{"id": "copilot-desktop-app", "client_version": "unknown", "os": "unknown", "execution_location": "unknown", "organization_policy": "unknown", "documented_product": "unknown", "packaged_implementation": "native skill source; conditional CLI procedure", "installed_client": "unknown", "transport": "conditional-local-cli", "fallback": "bounded-artifact-handoff"}]
+    },
+    {
+      "id": "copilot-cli", "skill_root": "copilot/.github/skills/context-travel",
+      "modes": [{"id": "copilot-cli", "client_version": "unknown", "os": "unknown", "execution_location": "unknown", "organization_policy": "unknown", "documented_product": "unknown", "packaged_implementation": "native skill source; local CLI procedure", "installed_client": "unknown", "transport": "conditional-local-cli", "fallback": "bounded-artifact-handoff"}]
+    }
+  ]
+}
