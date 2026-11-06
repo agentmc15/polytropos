@@ -124,3 +124,7 @@ that tier's resolved id from the `prefs` output.
 Write the kit files to disk under `tasks/kits/<slug>/`, then report the slug, the phase/task
 breakdown, and the per-task model pins with a one-line rationale each. Keep the plan tight —
 every decision earns its place or is cut.
+
+## Optional context travel
+
+When an explicit repository/kit/assignment and authorized startup config are supplied, use the native `context-travel` skill and read `{{POLYTROPOS_ROOT}}/docs/CONTEXT-TRAVEL-SURFACES.md` on demand for a bounded task brief. Treat missing, stale, partial, or refused context as advisory; retain this workflow's authoritative sources, policy, pricing, permission, and mandatory verification rules. If no authorized context transport is available, continue this workflow and report context unavailable.

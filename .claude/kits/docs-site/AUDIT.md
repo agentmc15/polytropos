@@ -51,14 +51,15 @@ audit task** — this is the disposition record that T9–T14 applied.
 
 ## Disposition summary
 
-40 `keep`, 3 `enrich`, 3 `relocate` — the current roster shape after five Codex port addenda
+43 `keep`, 3 `enrich`, 3 `relocate` — the current roster shape after five Codex port addenda
 plus one Claude addendum, `claude/dashboard` (added by the observability-dashboard kit's T8,
 entry below). The original pass recorded 34/3/3. The robustness the user asked for
 lands in fragments and reference files, not in fatter skill cards. One of those `keep`s
 (`claude/assess-improvement`) is the unreviewed addendum described in Method, and
 `claude/dashboard` is a second, so the reviewed shape of that pass was 33/3/3. The five Codex
 `keep` addenda below mean only that the original audit did not alter their cards; they do not
-claim D1 review.
+claim D1 review. The three CT5 context-travel addenda below record a scoped
+2026-11-05 integration review, not a backdated claim about the original pass.
 
 - `enrich` (a missing ACTING fact, nothing else): `claude/cost-report`, `copilot/journal`,
   `codex/bench-routing`.
@@ -1398,3 +1399,44 @@ and the sentinel exposure.
 - fragment-notes: generated page must preserve the no-clobber and scope limits of apply.
 - sentinels: `tests/test_codex_setup_update_skills.py` and the Codex roster, metadata, and
   docs-site checks.
+
+
+## Context-travel CT5 addenda — 2026-11-05
+
+These three source cards are intentionally thin. Their shared guide is loaded on
+demand; the review checked explicit binding, conditional transport, advisory
+scope, mandatory-verification fallback and honest installed-client unknowns.
+No original D1 measurement or installed-client probe is claimed.
+
+### claude/context-travel
+- verdict: keep
+- skill-md: keep the thin root-resolution and conditional context procedure;
+  preserve existing assessment/execution authority and no-context fallback.
+- references: shared `docs/CONTEXT-TRAVEL-SURFACES.md` and
+  `primitives/context-travel-surfaces.json`, loaded on demand, not copied.
+- fragment-notes: the generated page must distinguish Claude Desktop chat/Code
+  recipes from verified client support; unknown evidence stays unknown.
+- sentinels: `tests/test_context_travel_surfaces.py`, `tests/test_skill_entrypoints.py`
+  and generated documentation checks.
+
+### codex/context-travel
+- verdict: keep
+- skill-md: keep the thin native skill and metadata; explicit config and authorized
+  local execution do not change routing, pricing, verification or permissions.
+- references: the same shared surface guide and declarative catalog; no new
+  deprecated prompt or installed MCP configuration is required.
+- fragment-notes: distinguish the source skill from desktop/CLI discovery and
+  installed-client verification; artifact applicability is checked separately.
+- sentinels: `tests/test_context_travel_surfaces.py`, Codex bundle/roster/metadata
+  checks and generated documentation checks.
+
+### copilot/context-travel
+- verdict: keep
+- skill-md: keep the thin placeholder-resolved native skill; a disabled context
+  transport leaves mandatory native verification active.
+- references: the same shared surface guide and catalog, with no copied parser,
+  pricing logic, lifecycle engine or MCP registration.
+- fragment-notes: distinguish Copilot desktop and CLI recipes from observed client
+  support; neither installation nor measured savings follows from fixture checks.
+- sentinels: `tests/test_context_travel_surfaces.py`, Copilot manifest/guide roster
+  checks and generated documentation checks.

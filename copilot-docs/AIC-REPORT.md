@@ -12,8 +12,8 @@ Prefs source: `(none — defaults)`
 | `install.html` | html | estimated | 5011 | 0.0000 | 0.0000 | HTML is a deterministic render of its Markdown source — zero cost |
 | `SAFETY.md` | markdown | estimated | 4945 | 1.2592 | 0.0126 | Prospective estimate: assumes the manifest's declared input-token convention and treats this document's own measured lexeme count as a stand-in for model output tokens — not a historical usage measurement. |
 | `safety.html` | html | estimated | 6802 | 0.0000 | 0.0000 | HTML is a deterministic render of its Markdown source — zero cost |
-| `SKILLS.md` | markdown | estimated | 22805 | 12.5500 | 0.1255 | Prospective estimate: assumes the manifest's declared input-token convention and treats this document's own measured lexeme count as a stand-in for model output tokens — not a historical usage measurement. |
-| `skills.html` | html | estimated | 26945 | 0.0000 | 0.0000 | HTML is a deterministic render of its Markdown source — zero cost |
+| `SKILLS.md` | markdown | estimated | 24313 | 12.8050 | 0.1280 | Prospective estimate: assumes the manifest's declared input-token convention and treats this document's own measured lexeme count as a stand-in for model output tokens — not a historical usage measurement. |
+| `skills.html` | html | estimated | 28642 | 0.0000 | 0.0000 | HTML is a deterministic render of its Markdown source — zero cost |
 | `AGENTS.md` | markdown | estimated | 16454 | 11.3790 | 0.1138 | Prospective estimate: assumes the manifest's declared input-token convention and treats this document's own measured lexeme count as a stand-in for model output tokens — not a historical usage measurement. |
 | `agents.html` | html | estimated | 20746 | 0.0000 | 0.0000 | HTML is a deterministic render of its Markdown source — zero cost |
 | `MODELS.md` | markdown | estimated | 16561 | 9.9770 | 0.0998 | Prospective estimate: assumes the manifest's declared input-token convention and treats this document's own measured lexeme count as a stand-in for model output tokens — not a historical usage measurement. |
@@ -25,4 +25,4 @@ Prefs source: `(none — defaults)`
 | `AIC-REPORT.md` | markdown | deterministic | n/a | 0.0000 | 0.0000 | self-referential artifact: its own byte size does not exist yet when it is generated, so its measured-size fields are null/n/a and it always carries zero authoring/render cost. |
 | `aic-report.html` | html | deterministic | n/a | 0.0000 | 0.0000 | self-referential artifact: its own byte size does not exist yet when it is generated, so its measured-size fields are null/n/a and it always carries zero authoring/render cost. |
 
-**Totals (estimated Markdown only):** 51.9154 AIC / $0.5192
+**Totals (estimated Markdown only):** 52.1704 AIC / $0.5217

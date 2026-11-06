@@ -60,7 +60,7 @@ EXPECTED_MANIFEST_PAIRS = {
 AIC_REPORT_PAIR = ("AIC-REPORT.md", "aic-report.html")
 
 EXPECTED_SKILLS = {
-    "architect", "bench-routing", "budget", "context-weight", "effort", "escalate", "execute",
+    "architect", "bench-routing", "budget", "context-travel", "context-weight", "effort", "escalate", "execute",
     "frontier-check", "goliath", "journal", "lessons-loop", "route", "usage",
 }
 EXPECTED_AGENTS = {

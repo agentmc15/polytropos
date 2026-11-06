@@ -7,6 +7,7 @@
 | architect | Plan complex Codex work as a policy-routed execution kit. | [architect](architect.md) |
 | assess-improvement | Assess an existing repository for a small, evidence-backed improvement opportunity and produce a scoped findings report and handoff briefs. Use for evidence-driven improvement planning, including multi-harness Polytropos assessments. Not for implementing or activating a change. | [assess-improvement](assess-improvement.md) |
 | bench-routing | Compare benchmark priors with central Codex worker-role assignments. | [bench-routing](bench-routing.md) |
+| context-travel | Use when a kit task needs a bounded, read-only lifecycle briefing, source explanation, or comparison of supplied validated views. | [context-travel](context-travel.md) |
 | context-weight | Analyze how Codex context grows, what resident instructions cost, and where fidelity stops. Use for context-window pressure, growth curves, loaded-surface audits, or compaction questions. | [context-weight](context-weight.md) |
 | doctor | Diagnose Codex plugin, policy, app configuration, agents, skills, and managed-install state without changing it. | [doctor](doctor.md) |
 | effort | Choose a data-derived reasoning effort for a policy-routed Codex run. | [effort](effort.md) |

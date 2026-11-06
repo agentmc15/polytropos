@@ -165,6 +165,11 @@ VERSION_SOURCES = (
     ("decision calibration report", "decision_eval", "CALIBRATION_VERSION"),
     ("decision recovery report", "decision_eval", "RECOVERY_REPORT_VERSION"),
     ("context candidate manifest", "decision_context", "CONTEXT_VERSION"),
+    ("context travel contract", "context_travel", "CONTRACT_VERSION"),
+    ("context source observations", "context_readers", "CONTRACT_VERSION"),
+    ("lifecycle view contract", "lifecycle_view", "CONTRACT_VERSION"),
+    ("context query configuration", "context_travel_query", "CONFIG_VERSION"),
+    ("context query envelope", "context_travel_query", "QUERY_VERSION"),
     ("training snapshot", "training_data", "SNAPSHOT_VERSION"),
     ("training cause taxonomy", "training_data", "TAXONOMY_VERSION"),
     ("training label lifecycle", "training_data", "LIFECYCLE_VERSION"),
@@ -1674,11 +1679,11 @@ def _review_workflow(text, findings, rel):
         grants = [ln.strip() for ln in top.group(1).splitlines() if ln.strip()]
         if grants != ["contents: read"]:
             findings.append(f"{rel}: top-level permissions are {grants}, expected ['contents: read']")
-    head, sep, _deploy = text.partition("\n  deploy:")
-    if not sep:
-        findings.append(f"{rel}: no deploy job")
+    outside_deploy = re.sub(
+        r"^  deploy:[^\n]*\n(?:(?:[ \t]{3,}[^\n]*|[ \t]*)\n)*", "", text, flags=re.M
+    )
     for credential in ("pages: write", "id-token: write"):
-        if credential in head:
+        if credential in outside_deploy:
             findings.append(f"{rel}: {credential!r} appears outside the deploy job")
 
 

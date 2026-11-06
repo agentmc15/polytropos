@@ -147,6 +147,13 @@ These are properties with code behind them, not conventions:
   directory-relative with `O_NOFOLLOW`, so a symlink swapped in mid-operation has nothing to
   redirect. Where the runtime lacks directory-relative file operations it refuses rather than
   falling back to the racy form.
+- **Selected context reads have a narrower, measured boundary.**
+  `safe_paths.confined_read_stable_bytes` additionally walks an absolute root without following
+  symlinks, refuses non-regular or multiply linked files, and compares two bounded reads plus
+  descriptor/path metadata. It reports actual bytes consumed even on refusal. This establishes
+  only consistency during that file observation; another writer can change or restore bytes
+  later, and separate files are not an atomic snapshot. `context_readers` applies caller deny
+  rules before this helper opens a selected source and never derives a personal store path.
 
 - **Verification runs inside an OS boundary, on macOS.** The kit drivers and the verify hook
   run each verify command under `sandbox-exec` (`bin/exec_policy.py`): writes limited to the
@@ -351,6 +358,8 @@ surface. The documentation site is the one exception, and it is pinned rather th
   repository content through a third-party toolchain — holds `contents: read` and nothing else.
   `pages: write` and `id-token: write` (which mints an OIDC token) exist only in the deploy job,
   which runs no repository code.
+  Non-deployment workflows need no `deploy` job; the release gate still checks their action
+  pins and top-level read-only permissions, and rejects these credentials in every other job.
 
 - **Generated documentation rejects unsafe links.** `bin/copilot_docs.py` validates a URL's
   scheme after link rewriting against a small allowlist (`http`, `https`, `mailto`, plus

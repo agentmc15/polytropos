@@ -25,3 +25,7 @@ python3 "$POLYTROPOS_ROOT/bin/codex_execute.py" accept --kit tasks/kits/<slug> -
 ```
 
 The driver uses workers for ordinary work and reserves Astra for final acceptance or a bounded correction; that is the `reserved` routing policy and the default. A kit that declares `routing: policy=adaptive` in PLAN.md, or a run passed `--policy adaptive`, may dispatch a hard task straight to an eligible capable model without a failed cheaper attempt; the run's `- routing:` note line and `--dry-run` say which policy was in force. It creates no warm pool. Recovery needs recorded lower-tier attempts and a real nonzero verification result, unresolved integration conflict, or failed lower-tier correction. Rerun verification independently before acceptance. Treat planned, dispatched, and observed model-role records as different facts, leaving unavailable observations `unknown`.
+
+## Optional context travel
+
+When an explicit repository/kit/assignment and authorized startup config are supplied, use the native `context-travel` skill and read `{{POLYTROPOS_ROOT}}/docs/CONTEXT-TRAVEL-SURFACES.md` on demand for a bounded task brief. Treat missing, stale, partial, or refused context as advisory; retain this workflow's authoritative sources, policy, pricing, permission, and mandatory verification rules. If no authorized context transport is available, continue this workflow and report context unavailable.

@@ -372,6 +372,49 @@ class PackagingTests(unittest.TestCase):
             review = rg.packaging_review(_fixture_root(tmp), tracked=TRACKED_OK)
         self.assertFalse(any("outside the deploy job" in f for f in review["findings"]))
 
+    def test_non_deployment_workflow_is_clean_without_a_filename_exemption(self):
+        workflow = MINIMAL_WORKFLOW.split("  deploy:")[0]
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _fixture_root(tmp, **{".github/workflows/maintenance.yml": workflow})
+            review = rg.packaging_review(root, tracked=TRACKED_OK)
+        self.assertEqual(review["findings"], [])
+
+    def test_non_deployment_workflow_retains_pin_and_top_level_permission_checks(self):
+        workflow = MINIMAL_WORKFLOW.split("  deploy:")[0]
+        for bad, finding in (
+            (workflow.replace("actions/checkout@11d5960a326750d5838078e36cf38b85af677262",
+                              "actions/checkout@v4"), "not pinned to a full commit SHA"),
+            (workflow.replace("permissions:\n  contents: read\n",
+                              "permissions:\n  contents: write\n"), "top-level permissions are"),
+            (workflow.replace("permissions:\n  contents: read\n", ""),
+             "no top-level permissions block"),
+        ):
+            with self.subTest(finding=finding), tempfile.TemporaryDirectory() as tmp:
+                root = _fixture_root(tmp, **{".github/workflows/maintenance.yml": bad})
+                findings = rg.packaging_review(root, tracked=TRACKED_OK)["findings"]
+                self.assertTrue(any(finding in item for item in findings), findings)
+
+    def test_deployment_credentials_are_rejected_without_or_after_a_deploy_job(self):
+        for credential in ("pages: write", "id-token: write"):
+            for deployment in ("absent", "before", "after"):
+                workflow = MINIMAL_WORKFLOW.split("  deploy:")[0]
+                bad_job = f"  maintenance:\n    permissions:\n      {credential}\n"
+                deploy_job = "  deploy:" + MINIMAL_WORKFLOW.split("  deploy:")[1]
+                if deployment == "before":
+                    workflow += deploy_job + "\n" + bad_job
+                elif deployment == "after":
+                    workflow += bad_job + "\n" + deploy_job
+                else:
+                    workflow += bad_job
+                with self.subTest(credential=credential, deployment=deployment), \
+                        tempfile.TemporaryDirectory() as tmp:
+                    root = _fixture_root(tmp, **{".github/workflows/maintenance.yml": workflow})
+                    findings = rg.packaging_review(root, tracked=TRACKED_OK)["findings"]
+                    self.assertIn(
+                        f".github/workflows/maintenance.yml: {credential!r} appears outside the deploy job",
+                        findings,
+                    )
+
     def test_unhashed_package_is_a_finding(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = _fixture_root(tmp, **{"docs-src/requirements.txt": "mkdocs==1.6.1\n"})

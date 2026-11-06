@@ -69,3 +69,7 @@ python3 "$POLYTROPOS_ROOT/bin/codex_execute.py" run --kit tasks/kits/<slug> --ta
 
 Planned, dispatched, and observed model-role facts are different records. An unobserved runtime identity remains `unknown`.
 Later, `bin/codex_execute.py` resolves each worker task and passes the selected id as `codex exec --model <id>`; that execution step is separate from planning.
+
+### Optional context travel
+
+When an explicit repository/kit/assignment and authorized startup config are supplied, use the native `context-travel` skill and read `{{POLYTROPOS_ROOT}}/docs/CONTEXT-TRAVEL-SURFACES.md` on demand for a bounded planning brief. Treat missing, stale, partial, or refused context as advisory; retain this workflow's authoritative sources, policy, pricing, permission, and mandatory verification rules. If no authorized context transport is available, continue this workflow and report context unavailable.

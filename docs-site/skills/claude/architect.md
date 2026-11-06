@@ -156,3 +156,7 @@ End with exactly what happens next, e.g.:
 > Kit ready at `.claude/kits/<slug>/`. Switch back to your daily driver (`/model opus`) and run `/polytropos:execute <slug>`. Blocked tasks escalate back to Fable one at a time — you won't pay Fable prices for execution.
 
 The kit's model-pinned agents mean the model mix is enforced automatically during execution — nobody has to remember to downgrade.
+
+### Optional context travel
+
+When an explicit repository/kit/assignment and authorized startup config are supplied, use the native `context-travel` skill and read `${CLAUDE_PLUGIN_ROOT}/docs/CONTEXT-TRAVEL-SURFACES.md` (or `../../docs/CONTEXT-TRAVEL-SURFACES.md` relative to the `context-travel` skill) on demand for a bounded planning brief. Treat missing, stale, partial, or refused context as advisory; retain this workflow's authoritative sources, policy, pricing, permission, and mandatory verification rules. If no authorized context transport is available, continue this workflow and report context unavailable.

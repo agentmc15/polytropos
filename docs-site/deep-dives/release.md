@@ -46,6 +46,14 @@ because the review's own record moved the fingerprint it had recorded.
 
 ## Running the gate
 
+Context travel's six requested surfaces are catalogued separately in
+[`primitives/context-travel-surfaces.json`](https://github.com/agentmc15/polytropos/blob/main/primitives/context-travel-surfaces.json)
+and [the surface guide](context-travel-surfaces.md). That catalog describes packaged
+skills and transport recipes, including separate Claude Desktop chat/Code modes.
+It does not promote the operational registry above: installed-client verification
+stays unknown until each exact client/mode has its own authorized evidence.
+Offline packaging and artifact round trips cannot certify desktop/CLI parity.
+
 ```bash
 python3 bin/release_gate.py check                 # registry, contract ids, packaging, commands, this block; exit 3 on drift
 python3 bin/release_gate.py check --run           # the same, plus every mapped test run in-process
@@ -174,6 +182,11 @@ Contract versions are read from the module that owns each one; package versions 
 | decision calibration report | `bin/decision_eval.py` | `polytropos.decision-calibration/1` |
 | decision recovery report | `bin/decision_eval.py` | `polytropos.decision-recovery-report/1` |
 | context candidate manifest | `bin/decision_context.py` | `polytropos.context-candidates/1` |
+| context travel contract | `bin/context_travel.py` | `polytropos.context-travel/1` |
+| context source observations | `bin/context_readers.py` | `polytropos.context-sources/1` |
+| lifecycle view contract | `bin/lifecycle_view.py` | `polytropos.lifecycle-view/1` |
+| context query configuration | `bin/context_travel_query.py` | `polytropos.context-query-config/1` |
+| context query envelope | `bin/context_travel_query.py` | `polytropos.context-query/1` |
 | training snapshot | `bin/training_data.py` | `polytropos.training-snapshot/1` |
 | training cause taxonomy | `bin/training_data.py` | `polytropos.training-cause-taxonomy/1` |
 | training label lifecycle | `bin/training_data.py` | `polytropos.training-label-lifecycle/1` |

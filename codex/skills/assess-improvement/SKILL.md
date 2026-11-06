@@ -57,3 +57,7 @@ Return a scope-specific findings report and zero or more self-contained task bri
 Stop when evidence is insufficient, no small recurring signal exists, required evidence is unavailable, or the next step needs authorization not already granted. Each task brief must identify its objective, exact scope, preserved authorities, evidence, bounded change, non-goals, acceptance criteria, deterministic/offline verification, evaluation dependencies, later approvals, and rollback or no-promotion condition.
 
 When ranking multiple candidates, rank only within the assessed scope using expected learning value, reversibility, evidence quality, and disruption—not an invented probability, vendor claim, or presumed cost.
+
+## Optional context travel
+
+When an explicit repository/kit/assignment and authorized startup config are supplied, use the native `context-travel` skill and read `{{POLYTROPOS_ROOT}}/docs/CONTEXT-TRAVEL-SURFACES.md` on demand for a bounded review brief. Treat missing, stale, partial, or refused context as advisory; retain this workflow's authoritative sources, policy, pricing, permission, and mandatory verification rules. If no authorized context transport is available, continue this workflow and report context unavailable.

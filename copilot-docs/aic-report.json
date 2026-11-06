@@ -32,7 +32,7 @@
       "kind": "markdown",
       "title": "GitHub Copilot CLI Documentation Center",
       "authoring_mode": "estimated",
-      "sources_sha256": "857a3cefae92bad8bdd294c4ddc192dfd1631da59f601c456c3ff5fc97f8a26e",
+      "sources_sha256": "00d18cb940f2528cbeb2c4ad06466ebf88d481942693b4b5a87c5d2c7d58c237",
       "measurement": {
         "bytes": 3586,
         "words": 564,
@@ -77,7 +77,7 @@
       "kind": "markdown",
       "title": "Installing the Copilot CLI bundle",
       "authoring_mode": "estimated",
-      "sources_sha256": "eb32dcf6a96a91dc362d8d506434302d94053717480ced0e74450873f8fb6247",
+      "sources_sha256": "6799616deb9bbf7138f97bb6427f1eb22c38066e4bb67b40f4a8a380af314bc8",
       "measurement": {
         "bytes": 3516,
         "words": 551,
@@ -167,12 +167,12 @@
       "kind": "markdown",
       "title": "Skills reference",
       "authoring_mode": "estimated",
-      "sources_sha256": "1f1064cc728a6c55778e3629b838ebebc7780de8b9e9830ea5394b2019081fe4",
+      "sources_sha256": "e767fd46a82128fdb88666d896b878dde435deea5954e38c5cc4e160342b5cf6",
       "measurement": {
-        "bytes": 22805,
-        "words": 3768,
-        "lexemes": 5301,
-        "ai_output_lexemes": 4150
+        "bytes": 24313,
+        "words": 3991,
+        "lexemes": 5606,
+        "ai_output_lexemes": 4405
       },
       "cost": {
         "model_id": "gpt-6-sol",
@@ -186,8 +186,8 @@
         "cache_hit_assumed": 0.8,
         "rates_used": "base",
         "warnings": [],
-        "usd": 0.1255,
-        "aic": 12.549999999999999,
+        "usd": 0.12805,
+        "aic": 12.805,
         "uncertainty": "Prospective estimate: assumes the manifest's declared input-token convention and treats this document's own measured lexeme count as a stand-in for model output tokens \u2014 not a historical usage measurement."
       },
       "resolved_model_id": "gpt-6-sol"
@@ -199,7 +199,7 @@
       "authoring_mode": "estimated",
       "markdown_source": "SKILLS.md",
       "measurement": {
-        "bytes": 26945
+        "bytes": 28642
       },
       "cost": {
         "usd": 0.0,
@@ -212,7 +212,7 @@
       "kind": "markdown",
       "title": "Agents reference",
       "authoring_mode": "estimated",
-      "sources_sha256": "b5d1e1eb3f535f9ea06aefae194c98583e9c22cbcf638f8e12ea6bb6835ac883",
+      "sources_sha256": "28c94ead697d8032e791b0c79c3b0dd0dcbdb877d444fd7bcb5fb3d0d0d0576d",
       "measurement": {
         "bytes": 16454,
         "words": 2662,
@@ -257,7 +257,7 @@
       "kind": "markdown",
       "title": "Models and preferences",
       "authoring_mode": "estimated",
-      "sources_sha256": "361ad53e6e313240efe9cfd291257ce73dd4dc529b65d302b9c530e8ef1c1a76",
+      "sources_sha256": "cc10186d53449b3b8f318682fc81d2410d997c9e0b54c0d05cad2e945e7e15a1",
       "measurement": {
         "bytes": 16561,
         "words": 2662,
@@ -302,7 +302,7 @@
       "kind": "markdown",
       "title": "Costs and AIC accounting",
       "authoring_mode": "estimated",
-      "sources_sha256": "de2c59483b4e360da4c6086102357c70ab76b86ad8d3711f105cedbeea28c5e7",
+      "sources_sha256": "56aaae4f057d60ff023218ec5c5636a457f901569b675980512942cf24242b95",
       "measurement": {
         "bytes": 8430,
         "words": 1350,
@@ -347,7 +347,7 @@
       "kind": "markdown",
       "title": "Practical workflows",
       "authoring_mode": "estimated",
-      "sources_sha256": "382504208cce61e9d198377c47242dd05af8657fccea41e125a65a81d37ca208",
+      "sources_sha256": "8722d4c5571ea49739ecb53233d1760539c5f42cb408590e8752f53b39b85834",
       "measurement": {
         "bytes": 12380,
         "words": 1997,
@@ -426,7 +426,7 @@
     }
   ],
   "totals": {
-    "usd": 0.5191537499999999,
-    "aic": 51.915375
+    "usd": 0.5217037499999999,
+    "aic": 52.17037499999999
   }
 }

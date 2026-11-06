@@ -21,6 +21,7 @@ process with the same uid and no confinement can still reach the root itself. Co
 NAMES is the property here.
 """
 
+import errno
 import os
 import re
 import stat
@@ -38,6 +39,16 @@ class SafePathExists(SafePathError):
     catch and report rather than treat as a bug: an installer whose plan said "absent" and
     whose apply found a file has a STALE PLAN, not a broken path.
     """
+
+
+class SourceReadError(SafePathError):
+    """A refused stable read, including physical bytes read before refusal."""
+
+    def __init__(self, reason_code, bytes_read=0, opened=0):
+        super().__init__(reason_code)
+        self.reason_code = reason_code
+        self.bytes_read = bytes_read
+        self.opened = opened
 
 
 #: Directory-relative operations needed to resolve a path without a check-then-use race.
@@ -297,6 +308,103 @@ def confined_read_bytes(root, rel_path, what="confined read", missing_ok=False):
             return fh.read()
     finally:
         os.close(dir_fd)
+
+
+def confined_read_stable_bytes(root, rel_path, *, max_bytes, read_budget,
+                               what="stable confined read"):
+    """Read one regular file twice within a physical byte budget, refusing links.
+
+    The absolute root is walked from `/` without following links, unlike the older
+    confined reader's trusted-root open. File metadata and both byte sequences must
+    agree. This is a local observation, not an atomic multi-file snapshot.
+    """
+    consumed = opened = 0
+
+    def refuse(reason):
+        raise SourceReadError(reason, consumed, opened) from None
+
+    if (type(max_bytes) is not int or type(read_budget) is not int
+            or max_bytes < 0 or read_budget < 0):
+        refuse("invalid-limit")
+    if not dir_fd_supported() or not hasattr(os, "O_NOFOLLOW") or not hasattr(os, "O_NONBLOCK"):
+        refuse("unavailable")
+    if type(rel_path) is not str or not rel_path or "\\" in rel_path:
+        refuse("forbidden")
+    try:
+        parts = safe_parts(rel_path, what)
+    except SafePathError:
+        refuse("forbidden")
+    if "/".join(parts) != rel_path:
+        refuse("forbidden")
+    root_path = Path(root)
+    if not root_path.is_absolute() or ".." in root_path.parts:
+        refuse("forbidden")
+
+    fds = []
+    try:
+        fd = os.open("/", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        fds.append(fd)
+        for part in root_path.parts[1:] + tuple(parts[:-1]):
+            fd = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                         dir_fd=fd)
+            fds.append(fd)
+        parent = fd
+        leaf = parts[-1]
+
+        def identity(st):
+            return (st.st_dev, st.st_ino, st.st_mode, st.st_nlink, st.st_size,
+                    st.st_mtime_ns, st.st_ctime_ns)
+
+        baseline = payload = None
+        for pass_number in range(2):
+            leaf_fd = os.open(leaf, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
+                              dir_fd=parent)
+            opened += 1
+            try:
+                before = os.fstat(leaf_fd)
+                if not stat.S_ISREG(before.st_mode):
+                    refuse("forbidden")
+                if before.st_nlink != 1:
+                    refuse("forbidden")
+                if baseline is not None and identity(before) != baseline:
+                    refuse("inconsistent")
+                if before.st_size > max_bytes or 2 * before.st_size > read_budget:
+                    refuse("over-limit")
+                chunks = []
+                remaining = before.st_size
+                while remaining:
+                    chunk = os.read(leaf_fd, min(remaining, 65536, read_budget - consumed))
+                    consumed += len(chunk)
+                    if not chunk:
+                        refuse("inconsistent")
+                    chunks.append(chunk)
+                    remaining -= len(chunk)
+                data = b"".join(chunks)
+                after = os.fstat(leaf_fd)
+                if identity(after) != identity(before):
+                    refuse("inconsistent")
+                if pass_number == 0:
+                    baseline, payload = identity(before), data
+                elif data != payload:
+                    refuse("inconsistent")
+            finally:
+                os.close(leaf_fd)
+        final = os.stat(leaf, dir_fd=parent, follow_symlinks=False)
+        if identity(final) != baseline:
+            refuse("inconsistent")
+        return {"data": payload, "bytes_read": consumed, "opened": opened,
+                "identity": (final.st_dev, final.st_ino), "links": final.st_nlink}
+    except SourceReadError:
+        raise
+    except FileNotFoundError:
+        refuse("inconsistent" if opened else "missing")
+    except OSError as exc:
+        refuse("forbidden" if exc.errno in (errno.EACCES, errno.EPERM,
+                                            errno.ELOOP, errno.ENOTDIR)
+               else "unavailable")
+    finally:
+        for fd in reversed(fds):
+            os.close(fd)
 
 
 def confined_unlink(root, rel_path, what="confined delete", missing_ok=True):

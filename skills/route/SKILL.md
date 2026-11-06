@@ -71,3 +71,7 @@ exists and its `repo` matches the project being routed for, prefer its `tiers` /
 `daily_driver` model ids over the default tier picks and SAY SO, citing `source_run` and
 `applied_at`. If any id in it is missing from `data/pricing.json`, ignore the file and
 say it is stale. Absent file = no change to this skill's behavior.
+
+## Optional context travel
+
+When an explicit repository/kit/assignment and authorized startup config are supplied, use the native `context-travel` skill and read `${CLAUDE_PLUGIN_ROOT}/docs/CONTEXT-TRAVEL-SURFACES.md` (or `../../docs/CONTEXT-TRAVEL-SURFACES.md` relative to the `context-travel` skill) on demand for a bounded scope brief. Treat missing, stale, partial, or refused context as advisory; retain this workflow's authoritative sources, policy, pricing, permission, and mandatory verification rules. If no authorized context transport is available, continue this workflow and report context unavailable.

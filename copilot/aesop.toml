@@ -47,6 +47,7 @@ agents = [
 ]
 skills = [
     "lessons-loop",
+    "context-travel",
     "route",
     "usage",
     "context-weight",

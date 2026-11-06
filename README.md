@@ -67,6 +67,7 @@ Every skill, the situation it is for, and the skills that usually go with it. A 
 | [budget](https://agentmc15.github.io/polytropos/skills/copilot/budget/) | Copilot | AI Credits are the binding constraint on a kit of routine tasks whose verify commands are strong. | `execute`, `usage` |
 | [graphify](https://agentmc15.github.io/polytropos/skills/claude/graphify/) | Claude · Codex | You need repository structure — callers, dependents, impact — before planning or after a change. Needs the external graphify CLI. | `architect`, `context-weight` |
 | [assess-improvement](https://agentmc15.github.io/polytropos/skills/claude/assess-improvement/) | Claude · Codex | You want an evidence-backed answer to where a codebase could improve, with handoff briefs and nothing changed. | `architect`, `graphify` |
+| [context-travel](https://agentmc15.github.io/polytropos/skills/claude/context-travel/) | Claude · Copilot · Codex | A kit task is explicitly identified and you want a bounded, read-only briefing on it, or a supplied briefing explained or two compared, instead of loading the kit, graph, or transcript into context. Needs an operator-supplied config; the briefing is advisory. | `execute`, `architect`, `route`, `escalate` |
 
 **See what happened**
 

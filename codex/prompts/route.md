@@ -23,3 +23,7 @@ Choose `cheap` for mechanical work, `mid` for routine work, and `strong` for dif
 That is the `reserved` policy, the default. When the user explicitly asks for direct routing, preview the opt-in `adaptive` policy with `prepare --role implementer --model <tier> --policy adaptive --preference <cost|balanced|quality> --explain`: it may send a hard task straight to an eligible capable model, the frontier included, and prints the floor, the model and effort, every alternative with the filter that set it aside, and an `est.` API-equivalent figure when `--profile` is given. Hard filters (availability, pins, unsupported effort, budget) apply before any preference. Never switch the default yourself; a kit opts in through a PLAN.md `routing:` line or the run's `--policy` flag.
 
 For multi-task work use `$architect` and `$execute`; for a one-off, prepare through central policy rather than a custom dispatch recipe.
+
+## Optional context travel
+
+When an explicit repository/kit/assignment and authorized startup config are supplied, use the native `context-travel` skill and read `{{POLYTROPOS_ROOT}}/docs/CONTEXT-TRAVEL-SURFACES.md` on demand for a bounded scope brief. Treat missing, stale, partial, or refused context as advisory; retain this workflow's authoritative sources, policy, pricing, permission, and mandatory verification rules. If no authorized context transport is available, continue this workflow and report context unavailable.

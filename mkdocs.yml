@@ -77,6 +77,7 @@ nav:
       - architect: skills/claude/architect.md
       - assess-improvement: skills/claude/assess-improvement.md
       - bench-routing: skills/claude/bench-routing.md
+      - context-travel: skills/claude/context-travel.md
       - context-weight: skills/claude/context-weight.md
       - cost-report: skills/claude/cost-report.md
       - dashboard: skills/claude/dashboard.md
@@ -95,6 +96,7 @@ nav:
       - architect: skills/copilot/architect.md
       - bench-routing: skills/copilot/bench-routing.md
       - budget: skills/copilot/budget.md
+      - context-travel: skills/copilot/context-travel.md
       - context-weight: skills/copilot/context-weight.md
       - effort: skills/copilot/effort.md
       - escalate: skills/copilot/escalate.md
@@ -110,6 +112,7 @@ nav:
       - architect: skills/codex/architect.md
       - assess-improvement: skills/codex/assess-improvement.md
       - bench-routing: skills/codex/bench-routing.md
+      - context-travel: skills/codex/context-travel.md
       - context-weight: skills/codex/context-weight.md
       - doctor: skills/codex/doctor.md
       - effort: skills/codex/effort.md
@@ -132,6 +135,8 @@ nav:
     - Aesop integration: deep-dives/aesop-integration.md
     - Codex harness: deep-dives/codex-harness.md
     - Context weight: deep-dives/context-weight.md
+    - Context travel: deep-dives/context-travel.md
+    - Context travel across surfaces: deep-dives/context-travel-surfaces.md
     - Copilot cost visibility: deep-dives/copilot-costviz.md
     - Copilot harness: deep-dives/copilot-harness.md
     - Copilot CLI parity: deep-dives/copilot-parity.md

@@ -212,9 +212,12 @@ class ValueParityAgainstOriginalYamlTests(unittest.TestCase):
         self.assertEqual(len(ORIGINAL_AGENTS), 12)
         self.assertEqual(self.manifest["primitives"]["agents"], ORIGINAL_AGENTS)
 
-    def test_skills_same_13_names_same_order(self):
+    def test_original_skills_keep_order_with_ct5_addition(self):
         self.assertEqual(len(ORIGINAL_SKILLS), 13)
-        self.assertEqual(self.manifest["primitives"]["skills"], ORIGINAL_SKILLS)
+        self.assertEqual(
+            self.manifest["primitives"]["skills"],
+            [ORIGINAL_SKILLS[0], "context-travel", *ORIGINAL_SKILLS[1:]],
+        )
 
     def test_instructions_block_scope(self):
         blocks = self.manifest["primitives"]["instructions"]["blocks"]
